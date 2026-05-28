@@ -1,3 +1,4 @@
 # Go build artifacts
 /tailvm-go/tailvm
 /tailvm
+/bin/
