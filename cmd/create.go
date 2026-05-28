@@ -1,9 +1,14 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
+	"strings"
 
+	"github.com/hanthor/tailvm-go/pkg/kubevirt"
+	"github.com/hanthor/tailvm-go/pkg/types"
 	"github.com/spf13/cobra"
 )
 
@@ -43,21 +48,19 @@ KubeVirt examples:
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
 
-		// Enforce unique names
 		if existing := resolveBackend(name); existing != "" && !createForce {
 			return fmt.Errorf("VM %q already exists (backend: %s). Use --force to overwrite", name, existing)
 		}
 
 		if createKubevirt {
-			return createKubevirtVM(name)
+			return runKubevirtCreate(name)
 		}
-		return createQemuVM(name)
+		return fmt.Errorf("QEMU backend: use Python tailvm for now")
 	},
 }
 
 func init() {
 	rootCmd.AddCommand(createCmd)
-
 	createCmd.Flags().BoolVarP(&createKubevirt, "kubevirt", "k", false, "Use KubeVirt backend")
 	createCmd.Flags().StringVar(&createMem, "mem", "4G", "Memory allocation")
 	createCmd.Flags().IntVar(&createCPU, "cpu", 2, "CPU cores")
@@ -70,15 +73,91 @@ func init() {
 	createCmd.Flags().StringVarP(&createNamespace, "namespace", "n", "default", "[kubevirt] Namespace")
 	createCmd.Flags().StringVar(&createNode, "node", "", "[kubevirt] Schedule on specific node")
 	createCmd.Flags().StringVar(&createCloudInitPassword, "cloud-init-password", "", "[kubevirt] Cloud-init password")
-	createCmd.Flags().StringVar(&createCloudInit, "cloud-init", "", "[kubevirt] Extra cloud-init user-data YAML (tailscale, SSH keys, etc.)")
+	createCmd.Flags().StringVar(&createCloudInit, "cloud-init", "", "[kubevirt] Extra cloud-init user-data YAML")
 }
 
-func createQemuVM(name string) error {
-	fmt.Fprintf(os.Stderr, "QEMU backend not yet implemented in Go version. Use Python tailvm for now.\n")
+func runKubevirtCreate(name string) error {
+	ns := createNamespace
+	if ns == "" {
+		ns = "default"
+	}
+
+	hasISO := createISO != ""
+	hasContainer := createContainerDisk != ""
+	hasPVC := createPVC != ""
+
+	if hasISO {
+		dv := kubevirt.GenerateDataVolume(name+"-iso", ns, createISO)
+		if err := applyResource(dv); err != nil {
+			return fmt.Errorf("creating ISO DataVolume: %w", err)
+		}
+		fmt.Fprintf(os.Stderr, "ISO DataVolume: %s-iso (importing from %s)\n", name, createISO)
+
+		diskSize := createDisk
+		if diskSize == "" {
+			diskSize = "20G"
+		}
+		pvc := kubevirt.GeneratePVC(name+"-disk", ns, diskSize)
+		if err := applyResource(pvc); err != nil {
+			return fmt.Errorf("creating boot PVC: %w", err)
+		}
+		fmt.Fprintf(os.Stderr, "Boot PVC: %s-disk (%s)\n", name, diskSize)
+	} else if hasContainer && createDisk != "" {
+		pvc := kubevirt.GeneratePVC(name+"-data", ns, createDisk)
+		if err := applyResource(pvc); err != nil {
+			return fmt.Errorf("creating data PVC: %w", err)
+		}
+	} else if !hasPVC && !hasContainer {
+		diskSize := createDisk
+		if diskSize == "" {
+			diskSize = "20G"
+		}
+		pvc := kubevirt.GeneratePVC(name+"-disk", ns, diskSize)
+		if err := applyResource(pvc); err != nil {
+			return fmt.Errorf("creating boot PVC: %w", err)
+		}
+	}
+
+	opts := types.CreateOpts{
+		Name:              name,
+		Namespace:         ns,
+		Mem:               createMem,
+		CPU:               createCPU,
+		Disk:              createDisk,
+		ISO:               createISO,
+		ContainerDisk:     createContainerDisk,
+		PVC:               createPVC,
+		Node:              createNode,
+		CloudInitPassword: createCloudInitPassword,
+		CloudInitExtra:    createCloudInit,
+	}
+	vm := kubevirt.GenerateVM(opts)
+	if err := applyResource(vm); err != nil {
+		return fmt.Errorf("creating VM: %w", err)
+	}
+
+	if registryStore != nil {
+		if err := registryStore.Set(name, types.RegistryEntry{
+			Backend:   "kubevirt",
+			Namespace: ns,
+		}); err != nil {
+			return fmt.Errorf("saving registry: %w", err)
+		}
+	}
+
+	fmt.Fprintf(os.Stderr, "VM %q created in ns/%s\n", name, ns)
+	fmt.Fprintf(os.Stderr, "  Start:  tailvm start %s\n", name)
 	return nil
 }
 
-func createKubevirtVM(name string) error {
-	fmt.Fprintf(os.Stderr, "KubeVirt backend not yet implemented in Go version. Use Python tailvm for now.\n")
-	return nil
+func applyResource(obj map[string]any) error {
+	data, err := json.Marshal(obj)
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command("kubectl", "apply", "-f", "-")
+	cmd.Stdin = strings.NewReader(string(data))
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }

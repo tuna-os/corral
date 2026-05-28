@@ -3,13 +3,14 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"os/exec"
 
+	"github.com/hanthor/tailvm-go/pkg/kubevirt"
 	"github.com/spf13/cobra"
 )
 
 var (
 	startNoViewer bool
+	forceDelete   bool
 )
 
 var startCmd = &cobra.Command{
@@ -17,15 +18,19 @@ var startCmd = &cobra.Command{
 	Short: "Start a VM",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		name, _ := requireOrPrompt(args, "start")
+		name, err := requireOrPrompt(args, "start")
+		if err != nil {
+			return err
+		}
 		backend, err := requireBackend(name)
 		if err != nil {
 			return err
 		}
 		if backend == "kubevirt" {
-			return startKubevirt(name)
+			ns, _ := resolveNamespace(name)
+			return kubevirt.NewClient(ns).StartVM(name)
 		}
-		return startQemu(name)
+		return fmt.Errorf("QEMU backend: use Python tailvm for now")
 	},
 }
 
@@ -34,15 +39,19 @@ var stopCmd = &cobra.Command{
 	Short: "Stop a VM",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		name, _ := requireOrPrompt(args, "stop")
+		name, err := requireOrPrompt(args, "stop")
+		if err != nil {
+			return err
+		}
 		backend, err := requireBackend(name)
 		if err != nil {
 			return err
 		}
 		if backend == "kubevirt" {
-			return stopKubevirt(name)
+			ns, _ := resolveNamespace(name)
+			return kubevirt.NewClient(ns).StopVM(name)
 		}
-		return stopQemu(name)
+		return fmt.Errorf("QEMU backend: use Python tailvm for now")
 	},
 }
 
@@ -51,15 +60,19 @@ var deleteCmd = &cobra.Command{
 	Short: "Delete a VM and its disks",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		name, _ := requireOrPrompt(args, "delete")
+		name, err := requireOrPrompt(args, "delete")
+		if err != nil {
+			return err
+		}
 		backend, err := requireBackend(name)
 		if err != nil {
 			return err
 		}
 		if backend == "kubevirt" {
-			return deleteKubevirt(name, forceDelete)
+			ns, _ := resolveNamespace(name)
+			return kubevirt.NewClient(ns).DeleteVM(name)
 		}
-		return deleteQemu(name, forceDelete)
+		return fmt.Errorf("QEMU backend: use Python tailvm for now")
 	},
 }
 
@@ -68,15 +81,24 @@ var infoCmd = &cobra.Command{
 	Short: "Show VM details",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		name, _ := requireOrPrompt(args, "view details for")
+		name, err := requireOrPrompt(args, "view details for")
+		if err != nil {
+			return err
+		}
 		backend, err := requireBackend(name)
 		if err != nil {
 			return err
 		}
 		if backend == "kubevirt" {
-			return infoKubevirt(name)
+			ns, _ := resolveNamespace(name)
+			data, err := kubevirt.NewClient(ns).VMInfo(name)
+			if err != nil {
+				return err
+			}
+			fmt.Println(string(data))
+			return nil
 		}
-		return infoQemu(name)
+		return fmt.Errorf("QEMU backend: use Python tailvm for now")
 	},
 }
 
@@ -85,15 +107,19 @@ var viewerCmd = &cobra.Command{
 	Short: "Launch VNC viewer for a VM",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		name, _ := requireOrPrompt(args, "view")
+		name, err := requireOrPrompt(args, "view")
+		if err != nil {
+			return err
+		}
 		backend, err := requireBackend(name)
 		if err != nil {
 			return err
 		}
 		if backend == "kubevirt" {
-			return viewerKubevirt(name)
+			ns, _ := resolveNamespace(name)
+			return kubevirt.NewClient(ns).Viewer(name)
 		}
-		return viewerQemu(name)
+		return fmt.Errorf("QEMU backend: use Python tailvm for now")
 	},
 }
 
@@ -102,19 +128,10 @@ var logsCmd = &cobra.Command{
 	Short: "Tail VM logs",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		name, _ := requireOrPrompt(args, "view logs for")
-		backend, err := requireBackend(name)
-		if err != nil {
-			return err
-		}
-		if backend == "kubevirt" {
-			return logsKubevirt(name)
-		}
-		return logsQemu(name)
+		_, err := requireOrPrompt(args, "view logs for")
+		return err
 	},
 }
-
-var forceDelete bool
 
 func init() {
 	rootCmd.AddCommand(startCmd)
@@ -125,7 +142,6 @@ func init() {
 	rootCmd.AddCommand(logsCmd)
 
 	startCmd.Flags().BoolVar(&startNoViewer, "no-viewer", false, "Don't launch VNC viewer")
-
 	deleteCmd.Flags().BoolVarP(&forceDelete, "force", "f", false, "Skip confirmation")
 }
 
@@ -133,12 +149,10 @@ func requireOrPrompt(args []string, action string) (string, error) {
 	if len(args) == 1 && args[0] != "" {
 		return args[0], nil
 	}
-	// TODO: interactive name selection via TUI
 	names := allVMNames()
 	if len(names) == 0 {
-		return "", fmt.Errorf("no VMs found. Create one first: tailvm create <name>")
+		return "", fmt.Errorf("no VMs found. Create one: tailvm create <name>")
 	}
-	// For now, just print available names
 	fmt.Fprintf(os.Stderr, "Available VMs to %s:\n", action)
 	for _, n := range names {
 		fmt.Fprintf(os.Stderr, "  %s\n", n)
@@ -148,8 +162,17 @@ func requireOrPrompt(args []string, action string) (string, error) {
 
 func allVMNames() []string {
 	var names []string
+	// KubeVirt VMs
+	client := kubevirt.NewClient("")
+	vms, err := client.ListVMs()
+	if err == nil {
+		for _, vm := range vms {
+			names = append(names, vm.Name)
+		}
+	}
 	// QEMU VMs
-	qemuDir := filepathJoin(homeDir(), qemuBaseDir)
+	home, _ := os.UserHomeDir()
+	qemuDir := home + "/.local/share/tailvm/vms"
 	if entries, err := os.ReadDir(qemuDir); err == nil {
 		for _, e := range entries {
 			if e.IsDir() && e.Name() != "cache" {
@@ -157,26 +180,14 @@ func allVMNames() []string {
 			}
 		}
 	}
-	// KubeVirt VMs
-	out, err := exec.Command("kubectl", "get", "vms", "-A", "-o", "jsonpath={.items[*].metadata.name}").Output()
-	if err == nil {
-		for _, n := range splitFields(string(out)) {
-			names = append(names, n)
-		}
-	}
 	return uniq(names)
 }
 
-// Stub backends — panic until implemented
-func startQemu(n string) error    { return fmt.Errorf("QEMU backend: use Python tailvm for now") }
-func startKubevirt(n string) error { return fmt.Errorf("KubeVirt backend: use Python tailvm for now") }
-func stopQemu(n string) error     { return fmt.Errorf("QEMU backend: use Python tailvm for now") }
-func stopKubevirt(n string) error { return fmt.Errorf("KubeVirt backend: use Python tailvm for now") }
-func deleteQemu(n string, f bool) error  { return fmt.Errorf("QEMU backend: use Python tailvm for now") }
-func deleteKubevirt(n string, f bool) error { return fmt.Errorf("KubeVirt backend: use Python tailvm for now") }
-func infoQemu(n string) error     { return fmt.Errorf("QEMU backend: use Python tailvm for now") }
-func infoKubevirt(n string) error { return fmt.Errorf("KubeVirt backend: use Python tailvm for now") }
-func viewerQemu(n string) error   { return fmt.Errorf("QEMU backend: use Python tailvm for now") }
-func viewerKubevirt(n string) error { return fmt.Errorf("KubeVirt backend: use Python tailvm for now") }
-func logsQemu(n string) error     { return fmt.Errorf("QEMU backend: use Python tailvm for now") }
-func logsKubevirt(n string) error { return fmt.Errorf("KubeVirt backend: use Python tailvm for now") }
+func resolveNamespace(name string) (string, string) {
+	if registryStore != nil {
+		if entry, ok := registryStore.Get(name); ok && entry.Namespace != "" {
+			return entry.Namespace, entry.Backend
+		}
+	}
+	return "default", resolveBackend(name)
+}
