@@ -2,11 +2,11 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 	"sort"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/hanthor/tailvm-go/pkg/kubevirt"
+	"github.com/hanthor/tailvm-go/pkg/qemu"
 	"github.com/hanthor/tailvm-go/pkg/types"
 	"github.com/spf13/cobra"
 )
@@ -37,14 +37,14 @@ func runList() error {
 		printVMList(vms)
 	}
 
-	// QEMU VMs (stub)
-	qemuVMs := listQemuVMs()
+	// QEMU VMs
+	qemuVMs, _ := qemu.List()
 	for _, vm := range qemuVMs {
 		status := stoppedStyle.Render("○ Stopped")
 		if vm.Running {
 			status = runningStyle.Render("● Running")
 		}
-		fmt.Printf("%-20s  %-6s  %-16s  %-12s  %-4v  %-6v  %s\n",
+		fmt.Printf("%-20s  %-6s  %-16s  %-12s  %-4d  %-6s  %s\n",
 			vm.Name, "qemu", status, "—", vm.CPU, vm.Mem, "—")
 	}
 
@@ -83,36 +83,18 @@ func printVMList(vms []types.VM) {
 	}
 }
 
-func listQemuVMs() []types.VM {
-	home, _ := os.UserHomeDir()
-	qemuDir := home + "/.local/share/tailvm/vms"
-	entries, err := os.ReadDir(qemuDir)
-	if err != nil {
-		return nil
-	}
-	var vms []types.VM
-	for _, e := range entries {
-		if !e.IsDir() || e.Name() == "cache" {
-			continue
-		}
-		vms = append(vms, types.VM{
-			Name:    e.Name(),
-			Backend: "qemu",
-		})
-	}
-	return vms
-}
-
 func resolveBackend(name string) string {
 	if registryStore != nil {
 		if entry, ok := registryStore.Get(name); ok {
 			return entry.Backend
 		}
 	}
-	// Check cluster
 	client := kubevirt.NewClient("")
 	if client.VMExists(name) {
 		return "kubevirt"
+	}
+	if qemu.Exists(name) {
+		return "qemu"
 	}
 	return ""
 }

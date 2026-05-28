@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/hanthor/tailvm-go/pkg/registry"
 	"github.com/spf13/cobra"
 )
@@ -27,7 +28,11 @@ Run without arguments to launch the interactive TUI.`,
 		return nil
 	},
 	Run: func(cmd *cobra.Command, args []string) {
-		runTUI()
+		p := tea.NewProgram(newTUIModel(), tea.WithAltScreen())
+		if _, err := p.Run(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 	},
 }
 

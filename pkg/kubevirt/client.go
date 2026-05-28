@@ -17,10 +17,20 @@ type Client struct {
 	Namespace string
 }
 
+// DefaultNamespace is the default namespace for KubeVirt VMs.
+const DefaultNamespace = "tailvm"
+
+// EnsureNamespace creates the namespace if it doesn't exist.
+func EnsureNamespace() {
+	exec.Command("kubectl", "create", "ns", DefaultNamespace, "--dry-run=client", "-o", "yaml").Run()
+	exec.Command("kubectl", "label", "ns", DefaultNamespace,
+		"pod-security.kubernetes.io/enforce=privileged", "--overwrite").Run()
+}
+
 // NewClient creates a KubeVirt client.
 func NewClient(ns string) *Client {
 	if ns == "" {
-		ns = "default"
+		ns = DefaultNamespace
 	}
 	return &Client{Namespace: ns}
 }
@@ -29,6 +39,36 @@ func NewClient(ns string) *Client {
 func (c *Client) VMExists(name string) bool {
 	cmd := exec.Command("kubectl", "get", "vm", name, "-n", c.Namespace, "-o", "name")
 	return cmd.Run() == nil
+}
+
+// DataVolumeStatus returns the import progress for a VM's ISO DataVolume.
+func DataVolumeStatus(name, ns string) string {
+	out, err := exec.Command("kubectl", "get", "datavolume", name+"-iso", "-n", ns, "-o", "json").Output()
+	if err != nil {
+		return ""
+	}
+	var dv struct {
+		Status struct {
+			Phase    string `json:"phase"`
+			Progress string `json:"progress"`
+		} `json:"status"`
+	}
+	if json.Unmarshal(out, &dv) != nil {
+		return ""
+	}
+	switch dv.Status.Phase {
+	case "Succeeded":
+		return "✓ ready"
+	case "ImportInProgress", "ImportScheduled":
+		if dv.Status.Progress != "" {
+			return "↓ " + dv.Status.Progress
+		}
+		return "↓ importing"
+	case "Pending", "PVCBound", "WaitForFirstConsumer":
+		return "↓ queued"
+	default:
+		return "↓ " + dv.Status.Phase
+	}
 }
 
 // ListVMs returns all KubeVirt VMs with status information.
@@ -80,6 +120,8 @@ func (c *Client) ListVMs() ([]types.VM, error) {
 			status = "● Running"
 		} else if running {
 			status = "◐ Starting"
+		} else if iso := DataVolumeStatus(name, ns); iso != "" && iso != "✓ ready" {
+			status = iso
 		}
 
 		vms = append(vms, types.VM{
@@ -543,6 +585,110 @@ func GenerateProxyDeployment(name, namespace string, ports []int) map[string]any
 			},
 		},
 	}
+}
+
+// ExposedPorts returns the currently exposed proxy ports for a VM.
+func ExposedPorts(name, ns string) []int {
+	out, err := exec.Command("kubectl", "get", "svc", name+"-proxy", "-n", ns, "-o", "json").Output()
+	if err != nil {
+		return nil
+	}
+	var svc struct {
+		Spec struct {
+			Ports []struct {
+				Port int `json:"port"`
+			} `json:"ports"`
+		} `json:"spec"`
+	}
+	if json.Unmarshal(out, &svc) != nil {
+		return nil
+	}
+	var ports []int
+	for _, p := range svc.Spec.Ports {
+		ports = append(ports, p.Port)
+	}
+	return ports
+}
+
+// ApplyProxy creates/updates the proxy resources for a VM.
+func ApplyProxy(name, ns string, ports []int) error {
+	// RBAC
+	rbac := GenerateProxyRBAC(name, ns)
+	if err := applyManifest(rbac); err != nil {
+		return fmt.Errorf("proxy RBAC: %w", err)
+	}
+	// Service
+	svc := GenerateProxyService(name, ns, ports)
+	svcData, _ := json.Marshal(svc)
+	if err := applyManifest(string(svcData)); err != nil {
+		return fmt.Errorf("proxy service: %w", err)
+	}
+	// Deployment
+	deploy := GenerateProxyDeployment(name, ns, ports)
+	deployData, _ := json.Marshal(deploy)
+	if err := applyManifest(string(deployData)); err != nil {
+		return fmt.Errorf("proxy deployment: %w", err)
+	}
+	return nil
+}
+
+// DeleteProxy removes all proxy resources for a VM.
+func DeleteProxy(name, ns string) error {
+	for _, kind := range []string{"deploy", "svc", "sa", "role", "rolebinding"} {
+		rname := name + "-proxy"
+		if kind != "deploy" && kind != "svc" {
+			rname = "tailvm-" + name + "-proxy"
+		}
+		exec.Command("kubectl", "delete", kind, rname, "-n", ns, "--ignore-not-found").Run()
+	}
+	return nil
+}
+
+// GenerateProxyRBAC creates RBAC resources for the proxy.
+func GenerateProxyRBAC(name, ns string) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: tailvm-%s-proxy
+  namespace: %s
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: tailvm-%s-proxy
+  namespace: %s
+rules:
+  - apiGroups: ["subresources.kubevirt.io"]
+    resources: ["virtualmachineinstances/vnc"]
+    verbs: ["get"]
+  - apiGroups: ["kubevirt.io"]
+    resources: ["virtualmachineinstances"]
+    verbs: ["get"]
+  - apiGroups: ["kubevirt.io"]
+    resources: ["virtualmachineinstances/portforward"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: tailvm-%s-proxy
+  namespace: %s
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: tailvm-%s-proxy
+subjects:
+  - kind: ServiceAccount
+    name: tailvm-%s-proxy
+`, name, ns, name, ns, name, ns, name, name)
+}
+
+func applyManifest(yaml string) error {
+	cmd := exec.Command("kubectl", "apply", "-f", "-")
+	cmd.Stdin = strings.NewReader(yaml)
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }
 
 func parseMem(s string) int {

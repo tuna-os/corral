@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/hanthor/tailvm-go/pkg/kubevirt"
+	"github.com/hanthor/tailvm-go/pkg/qemu"
 	"github.com/spf13/cobra"
 )
 
@@ -30,7 +31,7 @@ var startCmd = &cobra.Command{
 			ns, _ := resolveNamespace(name)
 			return kubevirt.NewClient(ns).StartVM(name)
 		}
-		return fmt.Errorf("QEMU backend: use Python tailvm for now")
+		return qemu.Start(name)
 	},
 }
 
@@ -51,7 +52,7 @@ var stopCmd = &cobra.Command{
 			ns, _ := resolveNamespace(name)
 			return kubevirt.NewClient(ns).StopVM(name)
 		}
-		return fmt.Errorf("QEMU backend: use Python tailvm for now")
+		return qemu.Stop(name)
 	},
 }
 
@@ -72,7 +73,7 @@ var deleteCmd = &cobra.Command{
 			ns, _ := resolveNamespace(name)
 			return kubevirt.NewClient(ns).DeleteVM(name)
 		}
-		return fmt.Errorf("QEMU backend: use Python tailvm for now")
+		return qemu.Delete(name)
 	},
 }
 
@@ -98,7 +99,12 @@ var infoCmd = &cobra.Command{
 			fmt.Println(string(data))
 			return nil
 		}
-		return fmt.Errorf("QEMU backend: use Python tailvm for now")
+		data, err := qemu.Info(name)
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(data))
+		return nil
 	},
 }
 
@@ -119,7 +125,7 @@ var viewerCmd = &cobra.Command{
 			ns, _ := resolveNamespace(name)
 			return kubevirt.NewClient(ns).Viewer(name)
 		}
-		return fmt.Errorf("QEMU backend: use Python tailvm for now")
+		return qemu.Viewer(name)
 	},
 }
 
@@ -162,7 +168,6 @@ func requireOrPrompt(args []string, action string) (string, error) {
 
 func allVMNames() []string {
 	var names []string
-	// KubeVirt VMs
 	client := kubevirt.NewClient("")
 	vms, err := client.ListVMs()
 	if err == nil {
@@ -170,15 +175,9 @@ func allVMNames() []string {
 			names = append(names, vm.Name)
 		}
 	}
-	// QEMU VMs
-	home, _ := os.UserHomeDir()
-	qemuDir := home + "/.local/share/tailvm/vms"
-	if entries, err := os.ReadDir(qemuDir); err == nil {
-		for _, e := range entries {
-			if e.IsDir() && e.Name() != "cache" {
-				names = append(names, e.Name())
-			}
-		}
+	qemuVMs, _ := qemu.List()
+	for _, vm := range qemuVMs {
+		names = append(names, vm.Name)
 	}
 	return uniq(names)
 }
@@ -189,5 +188,5 @@ func resolveNamespace(name string) (string, string) {
 			return entry.Namespace, entry.Backend
 		}
 	}
-	return "default", resolveBackend(name)
+	return kubevirt.DefaultNamespace, resolveBackend(name)
 }

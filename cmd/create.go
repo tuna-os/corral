@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/hanthor/tailvm-go/pkg/kubevirt"
+	"github.com/hanthor/tailvm-go/pkg/qemu"
 	"github.com/hanthor/tailvm-go/pkg/types"
 	"github.com/spf13/cobra"
 )
@@ -55,7 +56,7 @@ KubeVirt examples:
 		if createKubevirt {
 			return runKubevirtCreate(name)
 		}
-		return fmt.Errorf("QEMU backend: use Python tailvm for now")
+		return runQemuCreate(name)
 	},
 }
 
@@ -70,7 +71,7 @@ func init() {
 	createCmd.Flags().BoolVar(&createForce, "force", false, "Overwrite existing VM")
 	createCmd.Flags().StringVar(&createContainerDisk, "container-disk", "", "[kubevirt] Container disk image")
 	createCmd.Flags().StringVar(&createPVC, "pvc", "", "[kubevirt] Existing PVC to use")
-	createCmd.Flags().StringVarP(&createNamespace, "namespace", "n", "default", "[kubevirt] Namespace")
+	createCmd.Flags().StringVarP(&createNamespace, "namespace", "n", "tailvm", "[kubevirt] Namespace")
 	createCmd.Flags().StringVar(&createNode, "node", "", "[kubevirt] Schedule on specific node")
 	createCmd.Flags().StringVar(&createCloudInitPassword, "cloud-init-password", "", "[kubevirt] Cloud-init password")
 	createCmd.Flags().StringVar(&createCloudInit, "cloud-init", "", "[kubevirt] Extra cloud-init user-data YAML")
@@ -79,8 +80,9 @@ func init() {
 func runKubevirtCreate(name string) error {
 	ns := createNamespace
 	if ns == "" {
-		ns = "default"
+		ns = kubevirt.DefaultNamespace
 	}
+	kubevirt.EnsureNamespace()
 
 	hasISO := createISO != ""
 	hasContainer := createContainerDisk != ""
@@ -147,6 +149,24 @@ func runKubevirtCreate(name string) error {
 
 	fmt.Fprintf(os.Stderr, "VM %q created in ns/%s\n", name, ns)
 	fmt.Fprintf(os.Stderr, "  Start:  tailvm start %s\n", name)
+	return nil
+}
+
+func runQemuCreate(name string) error {
+	if err := qemu.Create(types.CreateOpts{
+		Name:  name,
+		Mem:   createMem,
+		CPU:   createCPU,
+		Disk:  createDisk,
+		ISO:   createISO,
+		QCOW:  createQCOW,
+		Force: createForce,
+	}); err != nil {
+		return err
+	}
+	if registryStore != nil {
+		registryStore.Set(name, types.RegistryEntry{Backend: "qemu"})
+	}
 	return nil
 }
 
