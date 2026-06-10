@@ -7,10 +7,29 @@ import (
 	"math/big"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
-	"github.com/hanthor/tailvm-go/pkg/types"
+	"github.com/hanthor/corral/pkg/types"
 )
+
+// LastPassword holds the cloud-init password from the most recent GenerateVM call.
+var LastPassword string
+
+// LoadSSHPublicKey reads the first available SSH public key from ~/.ssh/.
+func LoadSSHPublicKey() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	for _, name := range []string{"id_ed25519.pub", "id_rsa.pub", "id_ecdsa.pub"} {
+		key, err := os.ReadFile(filepath.Join(home, ".ssh", name))
+		if err == nil && len(key) > 0 {
+			return strings.TrimSpace(string(key))
+		}
+	}
+	return ""
+}
 
 // Client interacts with the Kubernetes cluster via kubectl.
 type Client struct {
@@ -20,10 +39,14 @@ type Client struct {
 // DefaultNamespace is the default namespace for KubeVirt VMs.
 const DefaultNamespace = "tailvm"
 
-// EnsureNamespace creates the namespace if it doesn't exist.
-func EnsureNamespace() {
-	exec.Command("kubectl", "create", "ns", DefaultNamespace, "--dry-run=client", "-o", "yaml").Run()
-	exec.Command("kubectl", "label", "ns", DefaultNamespace,
+// EnsureNamespace creates the namespace if it doesn't exist and labels it
+// for privileged pods (needed by the bootc builder Job).
+func EnsureNamespace(ns string) {
+	if ns == "" {
+		ns = DefaultNamespace
+	}
+	exec.Command("kubectl", "create", "ns", ns).Run() // no-op if it exists
+	exec.Command("kubectl", "label", "ns", ns,
 		"pod-security.kubernetes.io/enforce=privileged", "--overwrite").Run()
 }
 
@@ -85,11 +108,11 @@ func (c *Client) ListVMs() ([]types.VM, error) {
 				Namespace string `json:"namespace"`
 			} `json:"metadata"`
 			Spec struct {
-				Running *bool `json:"running"`
+				Running  *bool `json:"running"`
 				Template struct {
 					Spec struct {
 						Domain struct {
-							CPU    struct{ Cores int } `json:"cpu"`
+							CPU    struct{ Cores int }    `json:"cpu"`
 							Memory struct{ Guest string } `json:"memory"`
 						} `json:"domain"`
 						NodeSelector map[string]string `json:"nodeSelector"`
@@ -176,7 +199,7 @@ func (c *Client) StopVM(name string) error {
 	return cmd.Run()
 }
 
-// DeleteVM deletes a KubeVirt VM and its PVCs/DataVolumes.
+// DeleteVM deletes a KubeVirt VM and its PVCs/DataVolumes/proxy resources.
 func (c *Client) DeleteVM(name string) error {
 	// Stop first
 	virtctl, _ := c.ensureVirtctl()
@@ -188,17 +211,77 @@ func (c *Client) DeleteVM(name string) error {
 	exec.Command("kubectl", "delete", "vm", name, "-n", c.Namespace, "--ignore-not-found").Run()
 
 	// Delete PVCs and DataVolumes
-	for _, suffix := range []string{"disk", "data", "iso"} {
+	for _, suffix := range []string{"disk", "data", "iso", "bootc-disk"} {
 		pvc := name + "-" + suffix
 		exec.Command("kubectl", "delete", "pvc", pvc, "-n", c.Namespace, "--ignore-not-found").Run()
 		exec.Command("kubectl", "delete", "datavolume", pvc, "-n", c.Namespace, "--ignore-not-found").Run()
 	}
+
+	// Delete proxy resources if any
+	DeleteProxy(name, c.Namespace)
 	return nil
+}
+
+// Logs tails the virt-launcher pod logs for a VM.
+func (c *Client) Logs(name string) error {
+	cmd := exec.Command("kubectl", "logs", "-n", c.Namespace,
+		"-l", "vm.kubevirt.io/name="+name, "-c", "compute", "--tail=100", "-f")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }
 
 // VMInfo returns JSON info about a VM.
 func (c *Client) VMInfo(name string) ([]byte, error) {
 	return exec.Command("kubectl", "get", "vm", name, "-n", c.Namespace, "-o", "json").Output()
+}
+
+// SSH opens an SSH session to a VM via virtctl ssh.
+func (c *Client) SSH(name, username, identityFile, command string, port int, password string) error {
+	virtctl, err := c.ensureVirtctl()
+	if err != nil {
+		return err
+	}
+
+	args := []string{"ssh", "--namespace=" + c.Namespace, "--username=" + username}
+	if identityFile != "" {
+		args = append(args, "--identity-file="+identityFile)
+	}
+	if command != "" {
+		args = append(args, "--command="+command)
+	}
+	if port != 22 && port != 0 {
+		args = append(args, fmt.Sprintf("--port=%d", port))
+	}
+	args = append(args,
+		"--local-ssh-opts=-o StrictHostKeyChecking=no",
+		"--local-ssh-opts=-o UserKnownHostsFile=/dev/null",
+	)
+	args = append(args, "vm/"+name)
+
+	if password != "" {
+		return runWithSSHPass(password, virtctl, args...)
+	}
+
+	cmd := exec.Command(virtctl, args...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+// runWithSSHPass runs a command with sshpass for password-based auth.
+func runWithSSHPass(password, bin string, args ...string) error {
+	sshpass, err := exec.LookPath("sshpass")
+	if err != nil {
+		return fmt.Errorf("sshpass not found (needed for password auth) — install: brew install sshpass")
+	}
+	allArgs := append([]string{"-p", password, bin}, args...)
+	cmd := exec.Command(sshpass, allArgs...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }
 
 // Viewer launches VNC viewer using virtctl proxy + xdg-open.
@@ -284,7 +367,7 @@ func GenerateVM(opts types.CreateOpts) map[string]any {
 	if hasISO {
 		// ISO as CD-ROM (bootOrder 1)
 		volumes = append(volumes, map[string]any{
-			"name": "iso",
+			"name":                  "iso",
 			"persistentVolumeClaim": map[string]any{"claimName": name + "-iso"},
 		})
 		disks = append(disks, map[string]any{
@@ -293,7 +376,7 @@ func GenerateVM(opts types.CreateOpts) map[string]any {
 			"bootOrder": 1,
 		})
 		volumes = append(volumes, map[string]any{
-			"name": "rootdisk",
+			"name":                  "rootdisk",
 			"persistentVolumeClaim": map[string]any{"claimName": name + "-disk"},
 		})
 		disks = append(disks, map[string]any{
@@ -312,7 +395,7 @@ func GenerateVM(opts types.CreateOpts) map[string]any {
 		})
 		if diskSize != "" {
 			volumes = append(volumes, map[string]any{
-				"name": "datadisk",
+				"name":                  "datadisk",
 				"persistentVolumeClaim": map[string]any{"claimName": name + "-data"},
 			})
 			disks = append(disks, map[string]any{
@@ -322,7 +405,7 @@ func GenerateVM(opts types.CreateOpts) map[string]any {
 		}
 	} else if opts.PVC != "" {
 		volumes = append(volumes, map[string]any{
-			"name": "rootdisk",
+			"name":                  "rootdisk",
 			"persistentVolumeClaim": map[string]any{"claimName": opts.PVC},
 		})
 		disks = append(disks, map[string]any{
@@ -331,7 +414,7 @@ func GenerateVM(opts types.CreateOpts) map[string]any {
 		})
 	} else {
 		volumes = append(volumes, map[string]any{
-			"name": "rootdisk",
+			"name":                  "rootdisk",
 			"persistentVolumeClaim": map[string]any{"claimName": name + "-disk"},
 		})
 		disks = append(disks, map[string]any{
@@ -345,7 +428,20 @@ func GenerateVM(opts types.CreateOpts) map[string]any {
 	if pwd == "" {
 		pwd = randomPassword()
 	}
+	LastPassword = pwd
+
 	userData := fmt.Sprintf("#cloud-config\npassword: %s\nchpasswd:\n  expire: False\nssh_pwauth: true\n", pwd)
+	if opts.SSHPublicKey != "" {
+		userData += fmt.Sprintf("ssh_authorized_keys:\n  - %s\n", opts.SSHPublicKey)
+	}
+	// Join the tailnet on first boot. Skipped when the extra cloud-init
+	// already declares runcmd — two runcmd keys would be invalid YAML.
+	if opts.TailscaleAuthKey != "" && !strings.Contains(opts.CloudInitExtra, "runcmd:") {
+		userData += fmt.Sprintf(`runcmd:
+  - ['sh', '-c', 'command -v tailscale >/dev/null 2>&1 || curl -fsSL https://tailscale.com/install.sh | sh']
+  - ['tailscale', 'up', '--auth-key=%s', '--hostname=%s', '--ssh']
+`, opts.TailscaleAuthKey, name)
+	}
 	if opts.CloudInitExtra != "" {
 		userData += opts.CloudInitExtra
 	}
@@ -445,10 +541,10 @@ func GenerateProxyService(name, namespace string, ports []int) map[string]any {
 	svcPorts := []map[string]any{}
 	for _, p := range ports {
 		svcPorts = append(svcPorts, map[string]any{
-			"port":     p,
+			"port":       p,
 			"targetPort": p,
-			"name":     fmt.Sprintf("port-%d", p),
-			"protocol": "TCP",
+			"name":       fmt.Sprintf("port-%d", p),
+			"protocol":   "TCP",
 		})
 	}
 
@@ -456,8 +552,8 @@ func GenerateProxyService(name, namespace string, ports []int) map[string]any {
 		"apiVersion": "v1",
 		"kind":       "Service",
 		"metadata": map[string]any{
-			"name":        name + "-proxy",
-			"namespace":   namespace,
+			"name":      name + "-proxy",
+			"namespace": namespace,
 			"annotations": map[string]string{
 				"tailscale.com/expose":   "true",
 				"tailscale.com/hostname": name + "-vm",
@@ -485,10 +581,6 @@ func GenerateProxyDeployment(name, namespace string, ports []int) map[string]any
 		})
 	}
 
-	// Build shell script
-	var script strings.Builder
-	script.WriteString("apk add --no-cache curl socat >/dev/null 2>&1\n")
-
 	hasVNC := false
 	for _, p := range ports {
 		if p == 5900 {
@@ -496,6 +588,10 @@ func GenerateProxyDeployment(name, namespace string, ports []int) map[string]any
 			break
 		}
 	}
+
+	// Build shell script
+	var script strings.Builder
+	script.WriteString("apk add --no-cache curl socat jq >/dev/null 2>&1\n")
 	if hasVNC {
 		script.WriteString(fmt.Sprintf("/tmp/virtctl vnc %s -n %s --proxy-only --address=0.0.0.0 --port=5900 &\n", name, namespace))
 	}
@@ -504,7 +600,7 @@ func GenerateProxyDeployment(name, namespace string, ports []int) map[string]any
   IP=$(curl -sS --cacert /var/run/secrets/kubernetes.io/serviceaccount/ca.crt \
        -H "Authorization: Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" \
        "https://kubernetes.default.svc/apis/kubevirt.io/v1/namespaces/%s/virtualmachineinstances/%s" | \
-       python3 -c "import sys,json; print(json.load(sys.stdin).get('status',{}).get('interfaces',[{}])[0].get('ipAddress',''))" 2>/dev/null)
+       jq -r '.status.interfaces[0].ipAddress // empty' 2>/dev/null)
   if [ -n "$IP" ]; then
 `, namespace, name))
 
@@ -515,6 +611,24 @@ func GenerateProxyDeployment(name, namespace string, ports []int) map[string]any
 		script.WriteString(fmt.Sprintf("    socat TCP-LISTEN:%d,fork,reuseaddr TCP:$IP:%d &\n", p, p))
 	}
 	script.WriteString("    wait\n  fi\n  sleep 5\ndone\n")
+
+	// virtctl is only needed for the VNC proxy
+	var initContainers []map[string]any
+	if hasVNC {
+		initContainers = append(initContainers, map[string]any{
+			"name":  "install-tools",
+			"image": "alpine:latest",
+			"securityContext": map[string]any{
+				"allowPrivilegeEscalation": false,
+				"capabilities":             map[string]any{"drop": []string{"ALL"}},
+				"seccompProfile":           map[string]any{"type": "RuntimeDefault"},
+			},
+			"command": []string{"sh", "-c", "apk add --no-cache curl >/dev/null 2>&1\ncurl -sSL \"https://github.com/kubevirt/kubevirt/releases/download/v1.8.2/virtctl-v1.8.2-linux-amd64\" -o /tmp/virtctl\nchmod +x /tmp/virtctl"},
+			"volumeMounts": []map[string]any{
+				{"name": "tools", "mountPath": "/tmp"},
+			},
+		})
+	}
 
 	return map[string]any{
 		"apiVersion": "apps/v1",
@@ -547,29 +661,15 @@ func GenerateProxyDeployment(name, namespace string, ports []int) map[string]any
 					"securityContext": map[string]any{
 						"seccompProfile": map[string]any{"type": "RuntimeDefault"},
 					},
-					"initContainers": []map[string]any{
-						{
-							"name":  "install-tools",
-							"image": "alpine:latest",
-							"securityContext": map[string]any{
-								"allowPrivilegeEscalation": false,
-								"capabilities":            map[string]any{"drop": []string{"ALL"}},
-								"seccompProfile":          map[string]any{"type": "RuntimeDefault"},
-							},
-							"command": []string{"sh", "-c", "apk add --no-cache curl socat >/dev/null 2>&1\ncurl -sSL \"https://github.com/kubevirt/kubevirt/releases/download/v1.8.2/virtctl-v1.8.2-linux-amd64\" -o /tmp/virtctl\nchmod +x /tmp/virtctl"},
-							"volumeMounts": []map[string]any{
-								{"name": "tools", "mountPath": "/tmp"},
-							},
-						},
-					},
+					"initContainers": initContainers,
 					"containers": []map[string]any{
 						{
 							"name":  "proxy",
 							"image": "alpine:latest",
 							"securityContext": map[string]any{
 								"allowPrivilegeEscalation": false,
-								"capabilities":            map[string]any{"drop": []string{"ALL"}},
-								"seccompProfile":          map[string]any{"type": "RuntimeDefault"},
+								"capabilities":             map[string]any{"drop": []string{"ALL"}},
+								"seccompProfile":           map[string]any{"type": "RuntimeDefault"},
 							},
 							"command": []string{"sh", "-c", script.String()},
 							"ports":   containerPorts,
@@ -681,6 +781,59 @@ subjects:
   - kind: ServiceAccount
     name: tailvm-%s-proxy
 `, name, ns, name, ns, name, ns, name, name)
+}
+
+// Apply marshals a manifest object and pipes it to kubectl apply.
+func Apply(obj map[string]any) error {
+	data, err := json.Marshal(obj)
+	if err != nil {
+		return err
+	}
+	return applyManifest(string(data))
+}
+
+// CreateVM provisions the namespace, disks, and VirtualMachine described by opts.
+// Used by both the CLI create command and the web UI.
+func CreateVM(opts types.CreateOpts) error {
+	ns := opts.Namespace
+	if ns == "" {
+		ns = DefaultNamespace
+		opts.Namespace = ns
+	}
+	EnsureNamespace(ns)
+
+	name := opts.Name
+	hasISO := opts.ISO != ""
+	hasContainer := opts.ContainerDisk != ""
+	hasPVC := opts.PVC != ""
+	diskSize := opts.Disk
+	if diskSize == "" {
+		diskSize = "20G"
+	}
+
+	if hasISO {
+		if err := Apply(GenerateDataVolume(name+"-iso", ns, opts.ISO)); err != nil {
+			return fmt.Errorf("creating ISO DataVolume: %w", err)
+		}
+		fmt.Fprintf(os.Stderr, "ISO DataVolume: %s-iso (importing from %s)\n", name, opts.ISO)
+		if err := Apply(GeneratePVC(name+"-disk", ns, diskSize)); err != nil {
+			return fmt.Errorf("creating boot PVC: %w", err)
+		}
+		fmt.Fprintf(os.Stderr, "Boot PVC: %s-disk (%s)\n", name, diskSize)
+	} else if hasContainer && opts.Disk != "" {
+		if err := Apply(GeneratePVC(name+"-data", ns, opts.Disk)); err != nil {
+			return fmt.Errorf("creating data PVC: %w", err)
+		}
+	} else if !hasPVC && !hasContainer {
+		if err := Apply(GeneratePVC(name+"-disk", ns, diskSize)); err != nil {
+			return fmt.Errorf("creating boot PVC: %w", err)
+		}
+	}
+
+	if err := Apply(GenerateVM(opts)); err != nil {
+		return fmt.Errorf("creating VM: %w", err)
+	}
+	return nil
 }
 
 func applyManifest(yaml string) error {

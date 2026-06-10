@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/hanthor/tailvm-go/pkg/types"
+	"github.com/hanthor/corral/pkg/types"
 )
 
 func TestNewStoreAt(t *testing.T) {

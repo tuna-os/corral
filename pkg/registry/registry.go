@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/hanthor/tailvm-go/pkg/types"
+	"github.com/hanthor/corral/pkg/types"
 )
 
 // Store manages VM registry persistence.
@@ -84,5 +84,6 @@ func (s *Store) writeAll(reg map[string]types.RegistryEntry) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(s.path, data, 0644)
+	// 0600: entries carry cloud-init passwords
+	return os.WriteFile(s.path, data, 0600)
 }

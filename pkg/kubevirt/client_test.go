@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/hanthor/tailvm-go/pkg/types"
+	"github.com/hanthor/corral/pkg/types"
 )
 
 func TestGenerateVM_Basic(t *testing.T) {

@@ -5,9 +5,9 @@ import (
 	"sort"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/hanthor/tailvm-go/pkg/kubevirt"
-	"github.com/hanthor/tailvm-go/pkg/qemu"
-	"github.com/hanthor/tailvm-go/pkg/types"
+	"github.com/hanthor/corral/pkg/kubevirt"
+	"github.com/hanthor/corral/pkg/qemu"
+	"github.com/hanthor/corral/pkg/types"
 	"github.com/spf13/cobra"
 )
 
@@ -30,36 +30,25 @@ func init() {
 }
 
 func runList() error {
-	// KubeVirt VMs
-	client := kubevirt.NewClient("")
-	vms, err := client.ListVMs()
-	if err == nil {
-		printVMList(vms)
-	}
+	var vms []types.VM
+	kvms, _ := kubevirt.NewClient("").ListVMs()
+	vms = append(vms, kvms...)
+	qvms, _ := qemu.List()
+	vms = append(vms, qvms...)
 
-	// QEMU VMs
-	qemuVMs, _ := qemu.List()
-	for _, vm := range qemuVMs {
-		status := stoppedStyle.Render("○ Stopped")
-		if vm.Running {
-			status = runningStyle.Render("● Running")
-		}
-		fmt.Printf("%-20s  %-6s  %-16s  %-12s  %-4d  %-6s  %s\n",
-			vm.Name, "qemu", status, "—", vm.CPU, vm.Mem, "—")
+	if len(vms) == 0 {
+		fmt.Println("No VMs found. Create one: corral create <name>")
+		return nil
 	}
-
+	printVMList(vms)
 	return nil
 }
 
 func printVMList(vms []types.VM) {
-	if len(vms) == 0 {
-		return
-	}
-
 	sort.Slice(vms, func(i, j int) bool { return vms[i].Name < vms[j].Name })
 
 	fmt.Printf("%s\n", headerStyle.Render(
-		fmt.Sprintf("%-20s  %-6s  %-16s  %-12s  %-4s  %-6s  %s",
+		fmt.Sprintf("%-20s  %-8s  %-16s  %-12s  %-4s  %-6s  %s",
 			"NAME", "BACKEND", "STATUS", "NAMESPACE", "CPU", "MEM", "NODE")))
 	fmt.Println("────────────────────────────────────────────────────────────────────────────────────────────────────")
 
@@ -71,15 +60,33 @@ func printVMList(vms []types.VM) {
 			status = "◐ Starting"
 		}
 
-		proxyIcon := "○"
-		if vm.VNC == "on" {
-			proxyIcon = "🔵"
-		} else if vm.VNC == "pending" {
-			proxyIcon = "⏳"
+		ns := vm.Namespace
+		if ns == "" {
+			ns = "—"
+		}
+		node := vm.Node
+		if node == "" {
+			node = "—"
 		}
 
-		fmt.Printf("%-20s  %-6s  %-16s  %-12s  %-4d  %-6s  %s  ports:%s\n",
-			vm.Name, "kubevirt", status, vm.Namespace, vm.CPU, vm.Mem, vm.Node, proxyIcon)
+		extra := ""
+		switch vm.Backend {
+		case "kubevirt":
+			proxyIcon := "○"
+			if vm.VNC == "on" {
+				proxyIcon = "🔵"
+			} else if vm.VNC == "pending" {
+				proxyIcon = "⏳"
+			}
+			extra = "ports:" + proxyIcon
+		case "qemu":
+			if vm.VNC != "" {
+				extra = "vnc:" + vm.VNC
+			}
+		}
+
+		fmt.Printf("%-20s  %-8s  %-16s  %-12s  %-4d  %-6s  %s  %s\n",
+			vm.Name, vm.Backend, status, ns, vm.CPU, vm.Mem, node, extra)
 	}
 }
 
@@ -89,9 +96,13 @@ func resolveBackend(name string) string {
 			return entry.Backend
 		}
 	}
+	// Check all KubeVirt namespaces (VMExists only checks one)
 	client := kubevirt.NewClient("")
-	if client.VMExists(name) {
-		return "kubevirt"
+	vms, _ := client.ListVMs()
+	for _, vm := range vms {
+		if vm.Name == name {
+			return "kubevirt"
+		}
 	}
 	if qemu.Exists(name) {
 		return "qemu"

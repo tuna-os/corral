@@ -11,9 +11,9 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/hanthor/tailvm-go/pkg/kubevirt"
-	"github.com/hanthor/tailvm-go/pkg/qemu"
-	"github.com/hanthor/tailvm-go/pkg/types"
+	"github.com/hanthor/corral/pkg/kubevirt"
+	"github.com/hanthor/corral/pkg/qemu"
+	"github.com/hanthor/corral/pkg/types"
 )
 
 // ── Styles ────────────────────────────────────────────────────────
@@ -24,6 +24,10 @@ var (
 	tuiProxyOn  = "🔵"
 	tuiProxyOff = "○"
 	tuiHelp     = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+
+	// postQuitAction is set by the TUI when an action needs to run
+	// after the Bubble Tea program quits (e.g. SSH, Viewer).
+	postQuitAction func()
 )
 
 // ── VM item for the list ──────────────────────────────────────────
@@ -34,8 +38,8 @@ type vmItem struct {
 }
 
 func (i vmItem) Title() string       { return i.vm.Name }
-func (i vmItem) Description() string  { return i.display }
-func (i vmItem) FilterValue() string  { return i.vm.Name }
+func (i vmItem) Description() string { return i.display }
+func (i vmItem) FilterValue() string { return i.vm.Name }
 
 func vmToItem(vm types.VM) vmItem {
 	proxy := tuiProxyOff
@@ -51,16 +55,37 @@ func vmToItem(vm types.VM) vmItem {
 	}
 }
 
+// ── Action item for the actions menu ──────────────────────────────
+
+type actionItem struct {
+	id    string
+	label string
+}
+
+func (a actionItem) Title() string       { return a.label }
+func (a actionItem) Description() string { return "" }
+func (a actionItem) FilterValue() string { return a.label }
+
+var actionsListItems = []actionItem{
+	{id: "start", label: "▶  Start"},
+	{id: "stop", label: "■  Stop"},
+	{id: "ssh", label: "🔑 SSH"},
+	{id: "viewer", label: "🖵  Viewer (VNC)"},
+	{id: "ports", label: "✎  Edit ports"},
+	{id: "delete", label: "✕  Delete"},
+}
+
 // ── Main model ────────────────────────────────────────────────────
 
 type tuiModel struct {
-	list     list.Model
-	quitting bool
-	state    string // "list", "actions", "edit"
-	selected types.VM
-	edit     editModel
-	width    int
-	height   int
+	list        list.Model
+	actionsList list.Model
+	quitting    bool
+	state       string // "list", "actions", "edit", "confirmDelete"
+	selected    types.VM
+	edit        editModel
+	width       int
+	height      int
 }
 
 func newTUIModel() tuiModel {
@@ -75,17 +100,46 @@ func newTUIModel() tuiModel {
 	}
 
 	if len(items) == 0 {
-		fmt.Println("No VMs found. Create one: tailvm create <name>")
+		fmt.Println("No VMs found. Create one: corral create <name>")
 		os.Exit(0)
 	}
 
 	l := list.New(items, vmItemDelegate{}, 0, 0)
-	l.Title = "TailVM"
+	l.Title = "Corral"
 	l.SetShowStatusBar(false)
 	l.SetFilteringEnabled(false)
 	l.Styles.Title = tuiTitle
 
-	return tuiModel{list: l, state: "list"}
+	m := tuiModel{list: l, state: "list"}
+	m.actionsList = m.newActionsList()
+	return m
+}
+
+func (m *tuiModel) newActionsList() list.Model {
+	title := "Actions"
+	if m.selected.Name != "" {
+		b := m.selected.Backend
+		if b == "" {
+			b = "qemu"
+		}
+		title = fmt.Sprintf("%s (%s)", m.selected.Name, b)
+	}
+
+	listItems := make([]list.Item, len(actionsListItems))
+	for i, a := range actionsListItems {
+		listItems[i] = a
+	}
+
+	l := list.New(listItems, actionItemDelegate{}, 30, len(listItems)*2+2)
+	l.Title = title
+	l.SetShowStatusBar(false)
+	l.SetFilteringEnabled(false)
+	l.SetShowHelp(false)
+	l.SetShowTitle(true)
+	l.Styles.Title = tuiTitle
+	l.KeyMap.Quit.Unbind()
+	l.KeyMap.ForceQuit.Unbind()
+	return l
 }
 
 func (m tuiModel) Init() tea.Cmd { return nil }
@@ -110,59 +164,78 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 
+		if m.state == "confirmDelete" {
+			switch msg.String() {
+			case "y", "Y":
+				m.performAction("delete")
+				m.refreshList()
+				m.state = "list"
+			case "ctrl+c":
+				m.quitting = true
+				return m, tea.Quit
+			default:
+				m.state = "actions"
+			}
+			return m, nil
+		}
+
+		if m.state == "actions" {
+			switch msg.String() {
+			case "esc":
+				m.state = "list"
+				return m, nil
+			case "q", "ctrl+c":
+				m.quitting = true
+				return m, tea.Quit
+			case "enter":
+				if item, ok := m.actionsList.SelectedItem().(actionItem); ok {
+					switch item.id {
+					case "ports":
+						m.state = "edit"
+						m.edit = newEditModel(m.selected)
+						return m, m.edit.Init()
+					case "start", "stop":
+						m.performAction(item.id)
+						m.refreshList()
+						m.state = "list"
+						return m, nil
+					case "ssh", "viewer":
+						actionID := item.id
+						postQuitAction = func() { m.performAction(actionID) }
+						m.quitting = true
+						return m, tea.Quit
+					case "delete":
+						m.state = "confirmDelete"
+						return m, nil
+					}
+				}
+			}
+			var cmd tea.Cmd
+			m.actionsList, cmd = m.actionsList.Update(msg)
+			return m, cmd
+		}
+
+		// VM list state
 		switch msg.String() {
 		case "ctrl+c", "q":
 			m.quitting = true
 			return m, tea.Quit
 		case "enter":
-			if m.state == "list" {
-				if item, ok := m.list.SelectedItem().(vmItem); ok {
-					m.selected = item.vm
-					m.state = "actions"
-					return m, nil
-				}
-			}
-			return m, nil
-		case "esc":
-			if m.state == "actions" {
-				m.state = "list"
+			if item, ok := m.list.SelectedItem().(vmItem); ok {
+				m.selected = item.vm
+				m.actionsList = m.newActionsList()
+				m.state = "actions"
 				return m, nil
-			}
-		case "e":
-			if m.state == "actions" {
-				m.state = "edit"
-				m.edit = newEditModel(m.selected)
-				return m, m.edit.Init()
-			}
-		case "s":
-			if m.state == "actions" {
-				m.performAction("start")
-				m.refreshList()
-				m.state = "list"
-			}
-		case "x":
-			if m.state == "actions" {
-				m.performAction("stop")
-				m.refreshList()
-				m.state = "list"
-			}
-		case "d":
-			if m.state == "actions" {
-				m.performAction("delete")
-				m.refreshList()
-				m.state = "list"
-			}
-		case "v":
-			if m.state == "actions" {
-				m.performAction("viewer")
-				m.state = "list"
 			}
 		}
 	}
 
-	var cmd tea.Cmd
-	m.list, cmd = m.list.Update(msg)
-	return m, cmd
+	if m.state == "list" {
+		var cmd tea.Cmd
+		m.list, cmd = m.list.Update(msg)
+		return m, cmd
+	}
+	return m, nil
 }
 
 func (m *tuiModel) performAction(action string) {
@@ -201,6 +274,22 @@ func (m *tuiModel) performAction(action string) {
 		} else {
 			qemu.Viewer(name)
 		}
+	case "ssh":
+		user := os.Getenv("USER")
+		if user == "" {
+			user = "root"
+		}
+		password := ""
+		if registryStore != nil {
+			if entry, ok := registryStore.Get(name); ok {
+				password = entry.Password
+			}
+		}
+		if backend == "kubevirt" {
+			kubevirt.NewClient(ns).SSH(name, user, "", "", 22, password)
+		} else {
+			qemu.SSH(name, user, "", "", 22, password)
+		}
 	}
 }
 
@@ -226,40 +315,39 @@ func (m tuiModel) View() string {
 		return m.edit.View()
 	}
 
+	if m.state == "confirmDelete" {
+		return fmt.Sprintf("\n  %s\n\n  %s\n",
+			tuiTitle.Render(fmt.Sprintf(" Delete %s and its disks? ", m.selected.Name)),
+			tuiHelp.Render("y confirm  any other key cancel"))
+	}
+
 	if m.state == "actions" {
-		return m.actionsView()
+		return m.actionsList.View()
 	}
 
 	return m.list.View()
 }
 
-func (m tuiModel) actionsView() string {
-	vm := m.selected
-	b := vm.Backend
-	if b == "" {
-		b = "qemu"
+// ── Actions list delegate ─────────────────────────────────────────
+
+type actionItemDelegate struct{}
+
+func (d actionItemDelegate) Height() int                               { return 1 }
+func (d actionItemDelegate) Spacing() int                              { return 1 }
+func (d actionItemDelegate) Update(msg tea.Msg, m *list.Model) tea.Cmd { return nil }
+func (d actionItemDelegate) Render(w io.Writer, m list.Model, index int, li list.Item) {
+	a, ok := li.(actionItem)
+	if !ok {
+		return
 	}
 
-	var sb strings.Builder
-	sb.WriteString(tuiTitle.Render(fmt.Sprintf(" %s (%s) ", vm.Name, b)))
-	sb.WriteString("\n\n")
-
-	actions := []struct {
-		key, label string
-	}{
-		{"s", "▶  Start"},
-		{"x", "■  Stop"},
-		{"v", "🖵  Viewer (VNC)"},
-		{"e", "✎  Edit ports"},
-		{"d", "✕  Delete"},
+	label := a.label
+	if index == m.Index() {
+		label = tuiRunning.Render("▶ " + label)
+	} else {
+		label = "  " + label
 	}
-	for _, a := range actions {
-		sb.WriteString(fmt.Sprintf("  [%s] %s\n", tuiRunning.Render(a.key), a.label))
-	}
-
-	sb.WriteString("\n")
-	sb.WriteString(tuiHelp.Render("  esc back  ctrl+c quit"))
-	return sb.String()
+	fmt.Fprint(w, label)
 }
 
 // ── Edit model (port toggles) ─────────────────────────────────────
@@ -275,7 +363,6 @@ type editModel struct {
 }
 
 func newEditModel(vm types.VM) editModel {
-	// Get current exposed ports
 	current := exposedPorts(vm.Name, vm.Namespace)
 	toggled := make(map[int]bool)
 	for _, p := range current {
@@ -283,7 +370,6 @@ func newEditModel(vm types.VM) editModel {
 	}
 
 	allPorts := append([]int{}, types.DefaultPorts...)
-	// Add any custom ports not in defaults
 	for _, p := range current {
 		found := false
 		for _, dp := range types.DefaultPorts {
@@ -337,18 +423,15 @@ func (m editModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.toggled[p] = !m.toggled[p]
 				m.applyPorts()
 			} else if m.cursor == len(m.ports) {
-				// "Add port" selected
 				m.adding = true
 				m.addInput.Focus()
 				return m, textinput.Blink
 			} else if m.cursor == len(m.ports)+1 {
-				// "Remove all" selected
 				m.toggled = make(map[int]bool)
 				m.applyPorts()
 			}
 		case "backspace":
 			if m.cursor < len(m.ports) {
-				// Remove custom port
 				p := m.ports[m.cursor]
 				isDefault := false
 				for _, dp := range types.DefaultPorts {
@@ -397,7 +480,6 @@ func (m *editModel) applyPorts() {
 		}
 	}
 	if len(enabled) == 0 {
-		// Delete proxy resources
 		kubevirt.DeleteProxy(m.vm.Name, m.vm.Namespace)
 	} else {
 		kubevirt.ApplyProxy(m.vm.Name, m.vm.Namespace, enabled)
@@ -457,12 +539,12 @@ func exposedPorts(name, ns string) []int {
 	return kubevirt.ExposedPorts(name, ns)
 }
 
-// ── List delegate ─────────────────────────────────────────────────
+// ── List delegates ────────────────────────────────────────────────
 
 type vmItemDelegate struct{}
 
-func (d vmItemDelegate) Height() int                             { return 2 }
-func (d vmItemDelegate) Spacing() int                            { return 0 }
+func (d vmItemDelegate) Height() int                               { return 2 }
+func (d vmItemDelegate) Spacing() int                              { return 0 }
 func (d vmItemDelegate) Update(msg tea.Msg, m *list.Model) tea.Cmd { return nil }
 func (d vmItemDelegate) Render(w io.Writer, m list.Model, index int, li list.Item) {
 	i, ok := li.(vmItem)

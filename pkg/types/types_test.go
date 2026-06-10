@@ -19,9 +19,17 @@ func TestDefaultPorts(t *testing.T) {
 	has22 := false
 	has5900 := false
 	for _, p := range DefaultPorts {
-		if p == 22 { has22 = true }
-		if p == 5900 { has5900 = true }
+		if p == 22 {
+			has22 = true
+		}
+		if p == 5900 {
+			has5900 = true
+		}
 	}
-	if !has22 { t.Error("default ports should include 22 (SSH)") }
-	if !has5900 { t.Error("default ports should include 5900 (VNC)") }
+	if !has22 {
+		t.Error("default ports should include 22 (SSH)")
+	}
+	if !has5900 {
+		t.Error("default ports should include 5900 (VNC)")
+	}
 }

@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Corral · Virtual Environment</title>
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+</head>
+<body>
+<header>
+  <button id="btn-menu" class="icon-btn" aria-label="Menu">☰</button>
+  <div class="brand">🤠 <strong>Corral</strong> <span>Virtual Environment</span></div>
+  <div class="spacer"></div>
+  <button id="btn-create" class="btn primary">Create VM</button>
+</header>
+
+<div class="layout">
+  <aside id="tree"></aside>
+  <main id="content"></main>
+</div>
+
+<dialog id="create-dialog">
+  <form id="create-form">
+    <h2>Create virtual machine</h2>
+    <label>Name <input name="name" required pattern="[a-z0-9][a-z0-9-]*" placeholder="myvm"></label>
+    <div class="row">
+      <label>Namespace <input name="namespace" value="tailvm"></label>
+      <label>Node <input name="node" placeholder="(any)"></label>
+    </div>
+    <div class="row">
+      <label>CPU <input name="cpu" type="number" value="2" min="1"></label>
+      <label>Memory <input name="mem" value="4G"></label>
+      <label>Disk <input name="disk" value="20G"></label>
+    </div>
+    <label>Boot source
+      <select name="sourceType">
+        <option value="containerDisk">Container disk image</option>
+        <option value="iso">Installer ISO (URL, via CDI)</option>
+        <option value="bootc">Bootc image (OS disk built on-cluster)</option>
+        <option value="pvc">Existing PVC</option>
+      </select>
+    </label>
+    <label>Source <input name="source" placeholder="quay.io/containerdisks/fedora:42" required></label>
+    <label id="sshkey-field" hidden>SSH public key (baked into the bootc disk)
+      <textarea name="sshKey" rows="3" placeholder="ssh-ed25519 AAAA…"></textarea>
+    </label>
+    <p class="hint">Cloud-init VMs get your SSH key and Tailscale auth key (if configured) automatically.
+      Bootc builds take a few minutes — a live build log opens after submit.</p>
+    <div class="dialog-actions">
+      <button type="button" class="btn" id="btn-cancel">Cancel</button>
+      <button type="submit" class="btn primary">Create</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="build-dialog">
+  <h2 id="build-title">Building bootc disk…</h2>
+  <pre class="yaml" id="build-log" style="min-height:200px;max-height:50vh"></pre>
+  <div class="dialog-actions">
+    <button type="button" class="btn" id="btn-build-close">Close</button>
+  </div>
+</dialog>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

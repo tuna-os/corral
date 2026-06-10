@@ -2,3 +2,6 @@
 /tailvm-go/tailvm
 /tailvm
 /bin/
+/corral
+build/
+dist/

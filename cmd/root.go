@@ -5,16 +5,16 @@ import (
 	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/hanthor/tailvm-go/pkg/registry"
+	"github.com/hanthor/corral/pkg/registry"
 	"github.com/spf13/cobra"
 )
 
 var registryStore *registry.Store
 
 var rootCmd = &cobra.Command{
-	Use:   "tailvm",
-	Short: "TailVM — QEMU/KubeVirt VMs with Tailscale VNC",
-	Long: `TailVM manages virtual machines across QEMU (local)
+	Use:   "corral",
+	Short: "Corral — herd your VMs into your tailnet",
+	Long: `Corral manages virtual machines across QEMU (local)
 and KubeVirt (Kubernetes) backends, with automatic
 Tailscale service exposure for VNC, SSH, RDP, and custom ports.
 
@@ -32,6 +32,9 @@ Run without arguments to launch the interactive TUI.`,
 		if _, err := p.Run(); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
+		}
+		if postQuitAction != nil {
+			postQuitAction()
 		}
 	},
 }

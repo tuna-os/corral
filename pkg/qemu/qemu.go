@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/hanthor/tailvm-go/pkg/types"
+	"github.com/hanthor/corral/pkg/types"
 )
 
 // VMHome returns the QEMU VM directory.
@@ -134,6 +134,7 @@ func Create(opts types.CreateOpts) error {
 	// VNC port — use hash of name for stability
 	vncDisplay := hashDisplay(name)
 	vncPort := 5900 + vncDisplay
+	sshPort := 2200 + vncDisplay // host port forwarded to guest :22
 
 	// Tailscale IP
 	tailscaleIP, err := tailscaleIPv4()
@@ -152,6 +153,7 @@ func Create(opts types.CreateOpts) error {
 		HasISO:      hasISO,
 		TailscaleIP: tailscaleIP,
 		VncDisplay:  vncDisplay,
+		SSHPort:     sshPort,
 	})
 	unitPath := filepath.Join(systemdUserDir(), "tailvm-"+name+".service")
 	if err := os.MkdirAll(systemdUserDir(), 0755); err != nil {
@@ -172,6 +174,7 @@ func Create(opts types.CreateOpts) error {
 		"disk_size":    diskSize,
 		"vnc_port":     vncPort,
 		"vnc_display":  vncDisplay,
+		"ssh_port":     sshPort,
 		"tailscale_ip": tailscaleIP,
 		"iso":          isoPath,
 		"has_iso":      hasISO,
@@ -180,8 +183,9 @@ func Create(opts types.CreateOpts) error {
 	os.WriteFile(filepath.Join(vmDir, "metadata.json"), data, 0644)
 
 	fmt.Fprintf(os.Stderr, "VM %q created.\n", name)
-	fmt.Fprintf(os.Stderr, "  Start:   tailvm start %s\n", name)
+	fmt.Fprintf(os.Stderr, "  Start:   corral start %s\n", name)
 	fmt.Fprintf(os.Stderr, "  VNC:     vnc://%s:%d\n", tailscaleIP, vncPort)
+	fmt.Fprintf(os.Stderr, "  SSH:     corral ssh %s  (forwarded %s:%d → guest :22)\n", name, tailscaleIP, sshPort)
 	return nil
 }
 
@@ -209,15 +213,8 @@ func Start(name string) error {
 	fmt.Fprintf(os.Stderr, "VM %q started.\n", name)
 
 	// Show VNC info
-	metaFile := filepath.Join(VMHome(), name, "metadata.json")
-	if data, err := os.ReadFile(metaFile); err == nil {
-		var meta struct {
-			VncPort    int    `json:"vnc_port"`
-			Tailscale  string `json:"tailscale_ip"`
-		}
-		if json.Unmarshal(data, &meta) == nil {
-			fmt.Fprintf(os.Stderr, "  VNC: vnc://%s:%d\n", meta.Tailscale, meta.VncPort)
-		}
+	if meta, err := readMetadata(name); err == nil {
+		fmt.Fprintf(os.Stderr, "  VNC: vnc://%s:%d\n", meta.Tailscale, meta.VncPort)
 	}
 	return nil
 }
@@ -258,19 +255,99 @@ func Info(name string) ([]byte, error) {
 	return os.ReadFile(metaFile)
 }
 
-// Viewer launches VNC viewer.
-func Viewer(name string) error {
-	metaFile := filepath.Join(VMHome(), name, "metadata.json")
-	data, err := os.ReadFile(metaFile)
+// SSH opens an SSH session to a QEMU VM. The guest's port 22 is forwarded
+// to a host port (bound on the host's Tailscale IP) via QEMU user networking.
+func SSH(name, username, identityFile, command string, port int, password string) error {
+	meta, err := readMetadata(name)
 	if err != nil {
-		return fmt.Errorf("VM %q not found", name)
+		return fmt.Errorf("VM %q not found: %w", name, err)
 	}
-	var meta struct {
-		VncPort   int    `json:"vnc_port"`
-		Tailscale string `json:"tailscale_ip"`
+
+	host := meta.Tailscale
+	if host == "" || host == "127.0.0.1" {
+		return fmt.Errorf("VM %q has no Tailscale IP — is Tailscale running?", name)
+	}
+
+	// Default to the forwarded SSH port; -p overrides
+	if port == 22 || port == 0 {
+		if meta.SSHPort == 0 {
+			return fmt.Errorf("VM %q has no forwarded SSH port — recreate it with this corral version", name)
+		}
+		port = meta.SSHPort
+	}
+
+	sshBin, _ := exec.LookPath("ssh")
+	if sshBin == "" {
+		return fmt.Errorf("ssh not found in PATH")
+	}
+
+	args := []string{
+		"-o", "StrictHostKeyChecking=no",
+		"-o", "UserKnownHostsFile=/dev/null",
+		"-p", fmt.Sprintf("%d", port),
+	}
+	if identityFile != "" {
+		args = append(args, "-i", identityFile)
+	}
+	args = append(args, fmt.Sprintf("%s@%s", username, host))
+	if command != "" {
+		args = append(args, command)
+	}
+
+	if password != "" {
+		return runWithSSHPassQemu(password, sshBin, args...)
+	}
+
+	cmd := exec.Command(sshBin, args...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+// runWithSSHPassQemu runs an ssh command with sshpass.
+func runWithSSHPassQemu(password, bin string, args ...string) error {
+	sshpass, err := exec.LookPath("sshpass")
+	if err != nil {
+		return fmt.Errorf("sshpass not found (needed for password auth) — install: brew install sshpass")
+	}
+	allArgs := append([]string{"-p", password, bin}, args...)
+	cmd := exec.Command(sshpass, allArgs...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+// vmMetadata is the on-disk metadata.json schema.
+type vmMetadata struct {
+	Name      string `json:"name"`
+	CPU       int    `json:"cpu"`
+	Memory    string `json:"memory"`
+	Disk      string `json:"disk_size"`
+	VncPort   int    `json:"vnc_port"`
+	SSHPort   int    `json:"ssh_port"`
+	Tailscale string `json:"tailscale_ip"`
+}
+
+// readMetadata parses the VM metadata.json file.
+func readMetadata(name string) (vmMetadata, error) {
+	var meta vmMetadata
+	data, err := os.ReadFile(filepath.Join(VMHome(), name, "metadata.json"))
+	if err != nil {
+		return meta, err
 	}
 	if json.Unmarshal(data, &meta) != nil {
-		return fmt.Errorf("invalid metadata")
+		return meta, fmt.Errorf("invalid metadata")
+	}
+	return meta, nil
+}
+
+// Viewer launches VNC viewer.
+func Viewer(name string) error {
+	meta, err := readMetadata(name)
+	if err != nil {
+		return err
 	}
 
 	vncURL := fmt.Sprintf("vnc://%s:%d", meta.Tailscale, meta.VncPort)
@@ -340,15 +417,21 @@ func hashDisplay(name string) int {
 
 type generateUnitOpts struct {
 	Name, QemuPath, Mem, DiskPath, ISOPath, TailscaleIP string
-	CPU                                                  int
-	HasISO                                               bool
-	VncDisplay                                           int
+	CPU                                                 int
+	HasISO                                              bool
+	VncDisplay                                          int
+	SSHPort                                             int
 }
 
 func generateUnit(opts generateUnitOpts) string {
 	isoPart := ""
 	if opts.HasISO && opts.ISOPath != "" {
 		isoPart = fmt.Sprintf(" -cdrom %s -boot once=d,menu=on", opts.ISOPath)
+	}
+
+	hostfwd := ""
+	if opts.SSHPort != 0 {
+		hostfwd = fmt.Sprintf(",hostfwd=tcp:%s:%d-:22", opts.TailscaleIP, opts.SSHPort)
 	}
 
 	mem := opts.Mem
@@ -373,7 +456,7 @@ ExecStart=%s \
   -vnc %s:%d \
   -vga virtio \
   -display none \
-  -netdev user,id=net0 \
+  -netdev user,id=net0%s \
   -device virtio-net-pci,netdev=net0 \
   -device virtio-rng-pci%s
 Restart=no
@@ -383,5 +466,5 @@ StandardError=journal
 [Install]
 WantedBy=default.target
 `, opts.Name, opts.QemuPath, opts.Name, mem, opts.CPU,
-		opts.DiskPath, opts.TailscaleIP, opts.VncDisplay, isoPart)
+		opts.DiskPath, opts.TailscaleIP, opts.VncDisplay, hostfwd, isoPart)
 }

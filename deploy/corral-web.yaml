@@ -1,0 +1,127 @@
+# Corral web UI — Proxmox-style dashboard for KubeVirt, served in-cluster.
+# Image: built from Containerfile by CI, pushed to ghcr (private →
+# needs the ghcr-pull secret, see README.md).
+# Reachable at http://corral.<tailnet>.ts.net via the Tailscale operator.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tailvm
+  labels:
+    pod-security.kubernetes.io/enforce: privileged
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: corral-web
+  namespace: tailvm
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: corral-web
+rules:
+  - apiGroups: ["kubevirt.io"]
+    resources: ["virtualmachines", "virtualmachineinstances"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["subresources.kubevirt.io"]
+    resources:
+      - virtualmachines/start
+      - virtualmachines/stop
+      - virtualmachines/restart
+      - virtualmachines/migrate
+      - virtualmachineinstances/vnc
+      - virtualmachineinstances/console
+      - virtualmachineinstances/pause
+      - virtualmachineinstances/unpause
+    verbs: ["get", "update"]
+  - apiGroups: ["cdi.kubevirt.io"]
+    resources: ["datavolumes"]
+    verbs: ["get", "list", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "create", "patch"]
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list"]
+  # VM deletion also cleans up per-VM proxy resources (tailvm CLI feature)
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "delete"]
+  - apiGroups: [""]
+    resources: ["services", "serviceaccounts"]
+    verbs: ["get", "delete"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles", "rolebindings"]
+    verbs: ["get", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: corral-web
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: corral-web
+subjects:
+  - kind: ServiceAccount
+    name: corral-web
+    namespace: tailvm
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: corral-web
+  namespace: tailvm
+  labels:
+    app: corral-web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: corral-web
+  template:
+    metadata:
+      labels:
+        app: corral-web
+    spec:
+      serviceAccountName: corral-web
+      imagePullSecrets:
+        - name: ghcr-pull
+      containers:
+        - name: corral-web
+          image: ghcr.io/hanthor/corral:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8006
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8006
+            initialDelaySeconds: 2
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: corral-web
+  namespace: tailvm
+  annotations:
+    tailscale.com/expose: "true"
+    tailscale.com/hostname: "corral"
+spec:
+  selector:
+    app: corral-web
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8006

@@ -1,6 +1,6 @@
 package main
 
-import "github.com/hanthor/tailvm-go/cmd"
+import "github.com/hanthor/corral/cmd"
 
 func main() {
 	cmd.Execute()

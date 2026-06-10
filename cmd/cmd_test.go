@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/hanthor/tailvm-go/pkg/registry"
-	"github.com/hanthor/tailvm-go/pkg/types"
+	"github.com/hanthor/corral/pkg/registry"
+	"github.com/hanthor/corral/pkg/types"
 )
 
 func TestResolveBackend_Registry(t *testing.T) {
@@ -55,17 +55,6 @@ func TestUniq(t *testing.T) {
 	got := uniq(input)
 	if len(got) != 3 {
 		t.Fatalf("expected 3, got %d: %v", len(got), got)
-	}
-}
-
-func TestSplitFields(t *testing.T) {
-	input := "  hello   world  foo   "
-	got := splitFields(input)
-	if len(got) != 3 {
-		t.Fatalf("expected 3, got %d: %v", len(got), got)
-	}
-	if got[0] != "hello" || got[1] != "world" || got[2] != "foo" {
-		t.Errorf("wrong fields: %v", got)
 	}
 }
 

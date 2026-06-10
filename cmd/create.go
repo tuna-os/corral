@@ -1,15 +1,13 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
-	"strings"
 
-	"github.com/hanthor/tailvm-go/pkg/kubevirt"
-	"github.com/hanthor/tailvm-go/pkg/qemu"
-	"github.com/hanthor/tailvm-go/pkg/types"
+	"github.com/hanthor/corral/pkg/config"
+	"github.com/hanthor/corral/pkg/kubevirt"
+	"github.com/hanthor/corral/pkg/qemu"
+	"github.com/hanthor/corral/pkg/types"
 	"github.com/spf13/cobra"
 )
 
@@ -27,6 +25,8 @@ var (
 	createNode              string
 	createCloudInitPassword string
 	createCloudInit         string
+	createBootc             string
+	createTSAuthKey         string
 )
 
 var createCmd = &cobra.Command{
@@ -39,12 +39,16 @@ Kubernetes KubeVirt VM. The backend choice is persisted so
 subsequent commands (start, stop, viewer...) auto-detect it.
 
 QEMU examples:
-  tailvm create myvm --iso https://example.com/ubuntu.iso
-  tailvm create myvm --qcow ./template.qcow2 --disk 40G
+  corral create myvm --iso https://example.com/ubuntu.iso
+  corral create myvm --qcow ./template.qcow2 --disk 40G
 
 KubeVirt examples:
-  tailvm create myvm --kubevirt --iso https://example.com/bluefin.iso
-  tailvm create myvm --kubevirt --container-disk quay.io/containerdisks/ubuntu:24.04`,
+  corral create myvm --kubevirt --iso https://example.com/bluefin.iso
+  corral create myvm --kubevirt --container-disk quay.io/containerdisks/ubuntu:24.04
+
+Bootc examples:
+  corral create myvm --bootc quay.io/centos-bootc/centos-bootc:stream9
+  corral create myvm --bootc quay.io/centos-bootc/centos-bootc:stream9 --disk 30G`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
@@ -53,6 +57,9 @@ KubeVirt examples:
 			return fmt.Errorf("VM %q already exists (backend: %s). Use --force to overwrite", name, existing)
 		}
 
+		if createBootc != "" {
+			return runBootcCreate(name)
+		}
 		if createKubevirt {
 			return runKubevirtCreate(name)
 		}
@@ -75,49 +82,22 @@ func init() {
 	createCmd.Flags().StringVar(&createNode, "node", "", "[kubevirt] Schedule on specific node")
 	createCmd.Flags().StringVar(&createCloudInitPassword, "cloud-init-password", "", "[kubevirt] Cloud-init password")
 	createCmd.Flags().StringVar(&createCloudInit, "cloud-init", "", "[kubevirt] Extra cloud-init user-data YAML")
+	createCmd.Flags().StringVar(&createBootc, "bootc", "", "Bootc container image URI (builds disk on-cluster)")
+	createCmd.Flags().StringVar(&createTSAuthKey, "ts-authkey", "", "[kubevirt] Tailscale auth key for the VM (default: config/TS_AUTHKEY)")
+}
+
+// tsAuthKey resolves the Tailscale auth key: flag > env/config file.
+func tsAuthKey() string {
+	if createTSAuthKey != "" {
+		return createTSAuthKey
+	}
+	return config.AuthKey()
 }
 
 func runKubevirtCreate(name string) error {
 	ns := createNamespace
 	if ns == "" {
 		ns = kubevirt.DefaultNamespace
-	}
-	kubevirt.EnsureNamespace()
-
-	hasISO := createISO != ""
-	hasContainer := createContainerDisk != ""
-	hasPVC := createPVC != ""
-
-	if hasISO {
-		dv := kubevirt.GenerateDataVolume(name+"-iso", ns, createISO)
-		if err := applyResource(dv); err != nil {
-			return fmt.Errorf("creating ISO DataVolume: %w", err)
-		}
-		fmt.Fprintf(os.Stderr, "ISO DataVolume: %s-iso (importing from %s)\n", name, createISO)
-
-		diskSize := createDisk
-		if diskSize == "" {
-			diskSize = "20G"
-		}
-		pvc := kubevirt.GeneratePVC(name+"-disk", ns, diskSize)
-		if err := applyResource(pvc); err != nil {
-			return fmt.Errorf("creating boot PVC: %w", err)
-		}
-		fmt.Fprintf(os.Stderr, "Boot PVC: %s-disk (%s)\n", name, diskSize)
-	} else if hasContainer && createDisk != "" {
-		pvc := kubevirt.GeneratePVC(name+"-data", ns, createDisk)
-		if err := applyResource(pvc); err != nil {
-			return fmt.Errorf("creating data PVC: %w", err)
-		}
-	} else if !hasPVC && !hasContainer {
-		diskSize := createDisk
-		if diskSize == "" {
-			diskSize = "20G"
-		}
-		pvc := kubevirt.GeneratePVC(name+"-disk", ns, diskSize)
-		if err := applyResource(pvc); err != nil {
-			return fmt.Errorf("creating boot PVC: %w", err)
-		}
 	}
 
 	opts := types.CreateOpts{
@@ -132,9 +112,60 @@ func runKubevirtCreate(name string) error {
 		Node:              createNode,
 		CloudInitPassword: createCloudInitPassword,
 		CloudInitExtra:    createCloudInit,
+		SSHPublicKey:      kubevirt.LoadSSHPublicKey(),
+		TailscaleAuthKey:  tsAuthKey(),
 	}
-	vm := kubevirt.GenerateVM(opts)
-	if err := applyResource(vm); err != nil {
+	if opts.TailscaleAuthKey != "" {
+		fmt.Fprintln(os.Stderr, "Tailscale auth key found — VM will join the tailnet on first boot")
+	}
+	if err := kubevirt.CreateVM(opts); err != nil {
+		return err
+	}
+
+	if registryStore != nil {
+		if err := registryStore.Set(name, types.RegistryEntry{
+			Backend:   "kubevirt",
+			Namespace: ns,
+			Password:  kubevirt.LastPassword,
+		}); err != nil {
+			return fmt.Errorf("saving registry: %w", err)
+		}
+	}
+
+	fmt.Fprintf(os.Stderr, "VM %q created in ns/%s\n", name, ns)
+	fmt.Fprintf(os.Stderr, "  Start:  corral start %s\n", name)
+	fmt.Fprintf(os.Stderr, "  SSH:    corral ssh %s\n", name)
+	return nil
+}
+
+func runBootcCreate(name string) error {
+	ns := createNamespace
+	if ns == "" {
+		ns = kubevirt.DefaultNamespace
+	}
+	kubevirt.EnsureNamespace(ns)
+
+	// Load SSH public key from localhost
+	sshKey := kubevirt.LoadSSHPublicKey()
+	if sshKey == "" {
+		return fmt.Errorf("no SSH public key found in ~/.ssh/ — needed for bootc VM access")
+	}
+
+	diskSize := createDisk
+	if diskSize == "" {
+		diskSize = "50Gi" // bootc GNOME images need more space
+	}
+
+	// Build the bootc disk on-cluster
+	build, err := kubevirt.BootcBuildDisk(name, ns, createBootc, sshKey, diskSize, os.Stderr)
+	if err != nil {
+		return fmt.Errorf("bootc build: %w", err)
+	}
+
+	// Create the VM using the built PVC with kernel boot
+	vm := kubevirt.GenerateBootcVM(name, ns, build.PVCName, createBootc,
+		build.RootUUID, build.KernelVersion, createMem, createCPU, createNode)
+	if err := kubevirt.Apply(vm); err != nil {
 		return fmt.Errorf("creating VM: %w", err)
 	}
 
@@ -142,13 +173,15 @@ func runKubevirtCreate(name string) error {
 		if err := registryStore.Set(name, types.RegistryEntry{
 			Backend:   "kubevirt",
 			Namespace: ns,
+			Extra:     map[string]string{"bootc_image": createBootc},
 		}); err != nil {
 			return fmt.Errorf("saving registry: %w", err)
 		}
 	}
 
 	fmt.Fprintf(os.Stderr, "VM %q created in ns/%s\n", name, ns)
-	fmt.Fprintf(os.Stderr, "  Start:  tailvm start %s\n", name)
+	fmt.Fprintf(os.Stderr, "  Start:  corral start %s\n", name)
+	fmt.Fprintf(os.Stderr, "  SSH:    corral ssh %s\n", name)
 	return nil
 }
 
@@ -168,16 +201,4 @@ func runQemuCreate(name string) error {
 		registryStore.Set(name, types.RegistryEntry{Backend: "qemu"})
 	}
 	return nil
-}
-
-func applyResource(obj map[string]any) error {
-	data, err := json.Marshal(obj)
-	if err != nil {
-		return err
-	}
-	cmd := exec.Command("kubectl", "apply", "-f", "-")
-	cmd.Stdin = strings.NewReader(string(data))
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
 }
