@@ -128,11 +128,9 @@ corral web                                  # http://127.0.0.1:8006
 corral web --addr "$(tailscale ip -4):8006" # share with your tailnet
 ```
 
-Or serve it from the cluster (image built by CI to `ghcr.io/hanthor/corral`):
+Or serve it from the cluster (public image built by CI to `ghcr.io/hanthor/corral`):
 
 ```bash
-kubectl create secret docker-registry ghcr-pull -n tailvm \
-  --docker-server=ghcr.io --docker-username=<you> --docker-password=<token>
 kubectl apply -f deploy/corral-web.yaml
 # → http://corral.<tailnet>.ts.net
 ```

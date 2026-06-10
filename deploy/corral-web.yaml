@@ -1,6 +1,6 @@
 # Corral web UI — Proxmox-style dashboard for KubeVirt, served in-cluster.
-# Image: built from Containerfile by CI, pushed to ghcr (private →
-# needs the ghcr-pull secret, see README.md).
+# Image: built from Containerfile by CI, pushed to ghcr.io/hanthor/corral
+# (public — no pull secret needed).
 # Reachable at http://corral.<tailnet>.ts.net via the Tailscale operator.
 ---
 apiVersion: v1
@@ -89,8 +89,6 @@ spec:
         app: corral-web
     spec:
       serviceAccountName: corral-web
-      imagePullSecrets:
-        - name: ghcr-pull
       containers:
         - name: corral-web
           image: ghcr.io/hanthor/corral:latest
