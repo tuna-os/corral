@@ -125,7 +125,8 @@ func (c *Client) ListVMs() ([]types.VM, error) {
 				} `json:"template"`
 			} `json:"spec"`
 			Status struct {
-				Ready bool `json:"ready"`
+				Ready           bool   `json:"ready"`
+				PrintableStatus string `json:"printableStatus"`
 			} `json:"status"`
 		} `json:"items"`
 	}
@@ -140,19 +141,20 @@ func (c *Client) ListVMs() ([]types.VM, error) {
 	for _, vm := range result.Items {
 		name := vm.Metadata.Name
 		ns := vm.Metadata.Namespace
-		running := vm.Spec.Running != nil && *vm.Spec.Running
+		// Derive state from KubeVirt's authoritative printableStatus — spec.running
+		// is empty on VMs that use spec.runStrategy (the newer field).
+		ps := vm.Status.PrintableStatus
+		running := ps == "Running" || ps == "Paused" || ps == "Migrating" || ps == "Stopping"
 		node := "—"
 		if n, ok := vm.Spec.Template.Spec.NodeSelector["kubernetes.io/hostname"]; ok {
 			node = n
 		}
 
-		status := "○ Stopped"
-		if vm.Status.Ready {
-			status = "● Running"
-		} else if running {
-			status = "◐ Starting"
-		} else if iso := DataVolumeStatus(name, ns); iso != "" && iso != "✓ ready" {
-			status = iso
+		status := statusLabel(ps)
+		if !running && !vm.Status.Ready {
+			if iso := DataVolumeStatus(name, ns); iso != "" && iso != "✓ ready" {
+				status = iso
+			}
 		}
 
 		cpu := vm.Spec.Template.Spec.Domain.CPU
@@ -183,6 +185,26 @@ func (c *Client) ListVMs() ([]types.VM, error) {
 		vms = append(vms, v)
 	}
 	return vms, nil
+}
+
+// statusLabel maps KubeVirt's printableStatus to a Corral status string.
+func statusLabel(ps string) string {
+	switch ps {
+	case "Running":
+		return "● Running"
+	case "Paused":
+		return "⏸ Paused"
+	case "Migrating":
+		return "⇄ Migrating"
+	case "Starting", "Provisioning", "WaitingForVolumeBinding":
+		return "◐ " + ps
+	case "Stopping", "Terminating":
+		return "◌ " + ps
+	case "Stopped", "":
+		return "○ Stopped"
+	default:
+		return "○ " + ps
+	}
 }
 
 func totalVCPU(sockets, cores, threads int) int {
