@@ -75,6 +75,7 @@ var actionsListItems = []actionItem{
 	{id: "migrate", label: "Migrate"},
 	{id: "hardware", label: "Edit CPU / RAM"},
 	{id: "snapshot", label: "Snapshot"},
+	{id: "export", label: "Export (backup disk)"},
 	{id: "ssh", label: "SSH"},
 	{id: "viewer", label: "Viewer (VNC)"},
 	{id: "ports", label: "Edit ports"},
@@ -221,7 +222,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.refreshList()
 						m.state = "list"
 						return m, nil
-					case "ssh", "viewer":
+					case "ssh", "viewer", "export":
 						actionID := item.id
 						postQuitAction = func() { m.performAction(actionID) }
 						m.quitting = true
@@ -303,6 +304,15 @@ func (m *tuiModel) performAction(action string) {
 	case "snapshot":
 		if backend == "kubevirt" {
 			kubevirt.NewClient(ns).Snapshot(name, "")
+		}
+	case "export":
+		if backend == "kubevirt" {
+			out, err := kubevirt.NewClient(ns).Export(name, "", "")
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "export failed:", err)
+			} else {
+				fmt.Println("Exported to", out)
+			}
 		}
 	case "delete":
 		if backend == "kubevirt" {

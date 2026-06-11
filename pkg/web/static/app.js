@@ -206,6 +206,8 @@ function renderVM(main, vm) {
         <button class="btn" data-act="migrate" ${vm.ready && vm.liveMigratable ? '' : 'disabled'}
           title="${vm.liveMigratable ? 'Live-migrate to another node' : 'Not live-migratable (persistent RWO disk)'}">${icon('migrate')} Migrate</button>
         <button class="btn" data-act="clone">${icon('clone')} Clone</button>
+        <button class="btn" data-act="export" ${vm.running ? 'disabled' : ''}
+          title="${vm.running ? 'Stop the VM to export its disk' : 'Download a disk backup'}">${icon('download')} Export</button>
         <button class="btn danger" data-act="delete">${icon('trash')} Delete</button>
       </div>
     </div>
@@ -268,6 +270,11 @@ async function vmAction(vm, act) {
   }
   if (act === 'migrate') return migrateVM(vm);
   if (act === 'clone') return cloneVM(vm);
+  if (act === 'export') {
+    toast('Preparing backup… the download will start when ready.');
+    window.location.href = `/api/vms/${vm.namespace}/${vm.name}/export`;
+    return;
+  }
   try {
     await api(`/api/vms/${vm.namespace}/${vm.name}/${act}`, { method: 'POST' });
   } catch (e) { toast(e.message); }

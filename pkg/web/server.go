@@ -60,6 +60,7 @@ func Serve(addr string) error {
 	mux.HandleFunc("POST /api/vms/{ns}/{name}/expand", handleExpand)
 	mux.HandleFunc("POST /api/vms/{ns}/{name}/clone", handleClone)
 	mux.HandleFunc("GET /api/vms/{ns}/{name}/guestinfo", handleGuestInfo)
+	mux.HandleFunc("GET /api/vms/{ns}/{name}/export", handleExport)
 	mux.HandleFunc("POST /api/vms/{ns}/{name}/volumes", handleAddVolume)
 	mux.HandleFunc("DELETE /api/vms/{ns}/{name}/volumes/{vol}", handleRemoveVolume)
 	mux.HandleFunc("GET /api/vms/{ns}/{name}/snapshots", handleListSnapshots)
@@ -325,6 +326,42 @@ func handleVMAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResp(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// handleExport streams a VM disk backup (gzip) to the browser. The VM must be
+// stopped (its RWO disk can't be read while running). The disk is exported to a
+// pod-local temp file via virtctl, then streamed and removed.
+func handleExport(w http.ResponseWriter, r *http.Request) {
+	ns, name := r.PathValue("ns"), r.PathValue("name")
+	if exec.Command("kubectl", "get", "vmi", name, "-n", ns).Run() == nil {
+		errResp(w, http.StatusConflict, fmt.Errorf("stop %s before exporting (its disk is in use while running)", name))
+		return
+	}
+	tmp, err := os.CreateTemp("", name+"-*.img.gz")
+	if err != nil {
+		errResp(w, http.StatusInternalServerError, err)
+		return
+	}
+	tmpName := tmp.Name()
+	tmp.Close()
+	defer os.Remove(tmpName)
+
+	if _, err := kubevirt.NewClient(ns).Export(name, "", tmpName); err != nil {
+		errResp(w, http.StatusInternalServerError, err)
+		return
+	}
+	f, err := os.Open(tmpName)
+	if err != nil {
+		errResp(w, http.StatusInternalServerError, err)
+		return
+	}
+	defer f.Close()
+	w.Header().Set("Content-Type", "application/gzip")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", name+".img.gz"))
+	if st, err := f.Stat(); err == nil {
+		w.Header().Set("Content-Length", strconv.FormatInt(st.Size(), 10))
+	}
+	io.Copy(w, f)
 }
 
 func handleDeleteVM(w http.ResponseWriter, r *http.Request) {

@@ -493,9 +493,14 @@ func (c *Client) Export(name, volume, outputPath string) (string, error) {
 	if outputPath == "" {
 		outputPath = name + ".img.gz"
 	}
-	args := []string{"vmexport", "download", name + "-export",
+	expName := name + "-export"
+	// Clear any export left over from an interrupted run so --vm can recreate it.
+	exec.Command("kubectl", "delete", "vmexport", expName, "-n", c.Namespace, "--ignore-not-found").Run()
+	// --port-forward tunnels straight to the exporter pod (internal links); the
+	// export proxy has no external Ingress, so external links never appear.
+	args := []string{"vmexport", "download", expName,
 		"--namespace=" + c.Namespace, "--vm=" + name, "--volume=" + volume,
-		"--output=" + outputPath, "--format=gzip", "--insecure"}
+		"--output=" + outputPath, "--format=gzip", "--insecure", "--port-forward"}
 	cmd := exec.Command(virtctl, args...)
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
