@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 	"time"
 
@@ -538,6 +539,82 @@ func (c *Client) GuestInfo(name string) (map[string]any, error) {
 		res["users"] = users
 	}
 	return res, nil
+}
+
+// ── Observability: events + metrics ───────────────────────────────
+
+// EventInfo is one row in the Proxmox-style task/event log.
+type EventInfo struct {
+	Time    string `json:"time"`
+	Type    string `json:"type"` // Normal | Warning
+	Reason  string `json:"reason"`
+	Object  string `json:"object"` // kind/name
+	Message string `json:"message"`
+}
+
+// Events returns recent Kubernetes events for a VM (its VM/VMI objects and its
+// virt-launcher pod), newest first.
+func (c *Client) Events(name string) ([]EventInfo, error) {
+	out, err := exec.Command("kubectl", "get", "events", "-n", c.Namespace, "-o", "json").Output()
+	if err != nil {
+		return nil, err
+	}
+	var res struct {
+		Items []struct {
+			Type           string `json:"type"`
+			Reason         string `json:"reason"`
+			Message        string `json:"message"`
+			LastTimestamp  string `json:"lastTimestamp"`
+			EventTime      string `json:"eventTime"`
+			InvolvedObject struct {
+				Kind string `json:"kind"`
+				Name string `json:"name"`
+			} `json:"involvedObject"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(out, &res); err != nil {
+		return nil, err
+	}
+	launcher := "virt-launcher-" + name
+	evs := []EventInfo{}
+	for _, it := range res.Items {
+		n := it.InvolvedObject.Name
+		if n != name && !strings.HasPrefix(n, launcher) {
+			continue
+		}
+		t := it.LastTimestamp
+		if t == "" {
+			t = it.EventTime
+		}
+		evs = append(evs, EventInfo{
+			Time:    t,
+			Type:    it.Type,
+			Reason:  it.Reason,
+			Object:  it.InvolvedObject.Kind + "/" + n,
+			Message: it.Message,
+		})
+	}
+	sort.Slice(evs, func(i, j int) bool { return evs[i].Time > evs[j].Time })
+	if len(evs) > 50 {
+		evs = evs[:50]
+	}
+	return evs, nil
+}
+
+// Metrics returns the VM's live CPU and memory usage (its virt-launcher pod),
+// via metrics-server. Empty strings if metrics aren't available yet.
+func (c *Client) Metrics(name string) map[string]string {
+	out, err := exec.Command("kubectl", "top", "pod", "-n", c.Namespace,
+		"-l", "kubevirt.io/vm="+name, "--no-headers").Output()
+	res := map[string]string{"cpu": "", "mem": ""}
+	if err != nil {
+		return res
+	}
+	if f := strings.Fields(string(out)); len(f) >= 3 {
+		res["cpu"] = f[1]
+		res["mem"] = f[2]
+	}
+	return res
 }
 
 // ── Storage / capability detection ────────────────────────────────

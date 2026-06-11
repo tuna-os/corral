@@ -280,6 +280,7 @@ dialog .hint { color: var(--muted); font-size: .78rem; }
   font-size: .9rem;
 }
 td .btn { cursor: pointer; }
+tr.ev-warn td { color: var(--yellow); }
 
 /* ── Mobile ─────────────────────────────────────────────── */
 @media (max-width: 760px) {

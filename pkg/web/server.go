@@ -60,6 +60,8 @@ func Serve(addr string) error {
 	mux.HandleFunc("POST /api/vms/{ns}/{name}/expand", handleExpand)
 	mux.HandleFunc("POST /api/vms/{ns}/{name}/clone", handleClone)
 	mux.HandleFunc("GET /api/vms/{ns}/{name}/guestinfo", handleGuestInfo)
+	mux.HandleFunc("GET /api/vms/{ns}/{name}/events", handleEvents)
+	mux.HandleFunc("GET /api/vms/{ns}/{name}/metrics", handleMetrics)
 	mux.HandleFunc("GET /api/vms/{ns}/{name}/export", handleExport)
 	mux.HandleFunc("POST /api/vms/{ns}/{name}/volumes", handleAddVolume)
 	mux.HandleFunc("DELETE /api/vms/{ns}/{name}/volumes/{vol}", handleRemoveVolume)

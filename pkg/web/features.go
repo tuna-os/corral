@@ -156,3 +156,20 @@ func handleGuestInfo(w http.ResponseWriter, r *http.Request) {
 	}
 	jsonResp(w, http.StatusOK, info)
 }
+
+// GET /api/vms/{ns}/{name}/events
+func handleEvents(w http.ResponseWriter, r *http.Request) {
+	ns, name := r.PathValue("ns"), r.PathValue("name")
+	evs, err := kubevirt.NewClient(ns).Events(name)
+	if err != nil {
+		errResp(w, http.StatusBadGateway, err)
+		return
+	}
+	jsonResp(w, http.StatusOK, evs)
+}
+
+// GET /api/vms/{ns}/{name}/metrics
+func handleMetrics(w http.ResponseWriter, r *http.Request) {
+	ns, name := r.PathValue("ns"), r.PathValue("name")
+	jsonResp(w, http.StatusOK, kubevirt.NewClient(ns).Metrics(name))
+}

@@ -189,6 +189,7 @@ const TABS = [
   ['terminal', 'Terminal'],
   ['hardware', 'Hardware'],
   ['snapshots', 'Snapshots'],
+  ['events', 'Events'],
   ['yaml', 'YAML'],
 ];
 
@@ -237,6 +238,7 @@ function renderTab(vm) {
         <dt>Node</dt><dd>${esc(vm.node || '—')}</dd>
         <dt>vCPUs</dt><dd>${vm.cpu}</dd>
         <dt>Memory</dt><dd>${esc(vm.mem)}</dd>
+        <dt>Live usage</dt><dd id="vm-usage">${vm.running ? '…' : '—'}</dd>
         <dt>Pod IP</dt><dd>${esc(vm.ip || '—')}</dd>
         <dt>Live-migratable</dt><dd>${vm.liveMigratable ? 'yes' : 'no'}</dd>
         <dt>Guest agent</dt><dd>${vm.agentConnected ? 'connected' : 'not connected'}</dd>
@@ -244,12 +246,14 @@ function renderTab(vm) {
         <dt>SSH</dt><dd><code>corral ssh ${esc(vm.name)}</code></dd>
       </dl>
       <div id="guest-info"></div>`;
+      if (vm.running) loadMetrics(vm);
       if (vm.agentConnected) loadGuestInfo(vm);
       break;
     case 'console': connectVNC(vm, body); break;
     case 'terminal': connectTTY(vm, body); break;
     case 'hardware': renderHardware(vm, body); break;
     case 'snapshots': renderSnapshots(vm, body); break;
+    case 'events': renderEvents(vm, body); break;
     case 'yaml':
       body.innerHTML = `<pre class="yaml">loading…</pre>`;
       api(`/api/vms/${vm.namespace}/${vm.name}`)
@@ -331,6 +335,29 @@ async function loadGuestInfo(vm) {
 }
 
 const gib = (b) => (Number(b || 0) / 1073741824).toFixed(1);
+
+async function loadMetrics(vm) {
+  try {
+    const m = await api(`/api/vms/${vm.namespace}/${vm.name}/metrics`);
+    const el = $('#vm-usage');
+    if (el) el.textContent = (m.cpu || m.mem) ? `${m.cpu || '?'} CPU · ${m.mem || '?'} mem` : 'no metrics yet';
+  } catch { /* metrics-server may be absent */ }
+}
+
+async function renderEvents(vm, body) {
+  body.innerHTML = `<p class="muted">loading…</p>`;
+  let evs;
+  try { evs = await api(`/api/vms/${vm.namespace}/${vm.name}/events`); }
+  catch (e) { body.innerHTML = `<p class="console-msg">${esc(e.message)}</p>`; return; }
+  if (!evs.length) { body.innerHTML = `<p class="muted">No recent events.</p>`; return; }
+  body.innerHTML = `<table><thead><tr>
+      <th>Time</th><th>Type</th><th>Reason</th><th>Object</th><th>Message</th>
+    </tr></thead><tbody>
+    ${evs.map((e) => `<tr class="${e.type === 'Warning' ? 'ev-warn' : ''}">
+      <td>${esc(e.time || '')}</td><td>${esc(e.type)}</td><td>${esc(e.reason)}</td>
+      <td>${esc(e.object)}</td><td>${esc(e.message)}</td></tr>`).join('')}
+    </tbody></table>`;
+}
 
 async function renderHardware(vm, body) {
   body.innerHTML = `<pre class="yaml">loading…</pre>`;
