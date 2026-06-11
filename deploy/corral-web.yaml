@@ -1,7 +1,8 @@
 # Corral web UI — Proxmox-style dashboard for KubeVirt, served in-cluster.
-# Image: built from Containerfile by CI, pushed to ghcr.io/hanthor/corral
-# (public — no pull secret needed).
-# Reachable at http://corral.<tailnet>.ts.net via the Tailscale operator.
+# Image: built from Containerfile by CI, pushed to
+# ghcr.io/hanthor/corral (public — no pull secret needed).
+# Reachable at https://corral.<tailnet>.ts.net via the Tailscale operator
+# (Ingress with ingressClassName: tailscale terminates HTTPS).
 ---
 apiVersion: v1
 kind: Namespace
@@ -113,9 +114,6 @@ kind: Service
 metadata:
   name: corral-web
   namespace: tailvm
-  annotations:
-    tailscale.com/expose: "true"
-    tailscale.com/hostname: "corral"
 spec:
   selector:
     app: corral-web
@@ -123,3 +121,19 @@ spec:
     - name: http
       port: 80
       targetPort: 8006
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: corral-web
+  namespace: tailvm
+spec:
+  defaultBackend:
+    service:
+      name: corral-web
+      port:
+        number: 80
+  ingressClassName: tailscale
+  tls:
+    - hosts:
+        - corral

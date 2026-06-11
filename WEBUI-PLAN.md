@@ -5,7 +5,7 @@ modern, mobile-friendly web UI that works in tandem with the `corral`
 CLI/TUI. Single Go binary, no JS build step, served locally (`corral web`)
 or on the cluster itself.
 
-Live deployment: `http://corral.manatee-basking.ts.net` (Tailscale operator,
+Live deployment: `https://corral.manatee-basking.ts.net` (Tailscale operator,
 manifest at [`deploy/corral-web.yaml`](deploy/corral-web.yaml)).
 Code: [`pkg/web/`](pkg/web/), command
 [`cmd/web.go`](cmd/web.go).

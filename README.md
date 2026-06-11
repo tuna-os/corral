@@ -132,7 +132,7 @@ Or serve it from the cluster (public image built by CI to `ghcr.io/hanthor/corra
 
 ```bash
 kubectl apply -f deploy/corral-web.yaml
-# → http://corral.<tailnet>.ts.net
+# → https://corral.<tailnet>.ts.net
 ```
 
 No auth is built in — tailnet membership *is* the auth. Never bind a public
