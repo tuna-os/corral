@@ -25,7 +25,6 @@ var (
 	createNode              string
 	createCloudInitPassword string
 	createCloudInit         string
-	createBootc             string
 	createTSAuthKey         string
 	createInstanceType      string
 	createPreference        string
@@ -48,9 +47,8 @@ KubeVirt examples:
   corral create myvm --kubevirt --iso https://example.com/bluefin.iso
   corral create myvm --kubevirt --container-disk quay.io/containerdisks/ubuntu:24.04
 
-Bootc examples:
-  corral create myvm --bootc quay.io/centos-bootc/centos-bootc:stream9
-  corral create myvm --bootc quay.io/centos-bootc/centos-bootc:stream9 --disk 30G`,
+Boot a container image as a VM? Install the bootc extension:
+  corral plugin install bootc && corral bootc create myvm --image quay.io/centos-bootc/centos-bootc:stream9`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
@@ -59,9 +57,6 @@ Bootc examples:
 			return fmt.Errorf("VM %q already exists (backend: %s). Use --force to overwrite", name, existing)
 		}
 
-		if createBootc != "" {
-			return runBootcCreate(name)
-		}
 		if createKubevirt {
 			return runKubevirtCreate(name)
 		}
@@ -84,7 +79,6 @@ func init() {
 	createCmd.Flags().StringVar(&createNode, "node", "", "[kubevirt] Schedule on specific node")
 	createCmd.Flags().StringVar(&createCloudInitPassword, "cloud-init-password", "", "[kubevirt] Cloud-init password")
 	createCmd.Flags().StringVar(&createCloudInit, "cloud-init", "", "[kubevirt] Extra cloud-init user-data YAML")
-	createCmd.Flags().StringVar(&createBootc, "bootc", "", "Bootc container image URI (builds disk on-cluster)")
 	createCmd.Flags().StringVar(&createTSAuthKey, "ts-authkey", "", "[kubevirt] Tailscale auth key for the VM (default: config/TS_AUTHKEY)")
 	createCmd.Flags().StringVar(&createInstanceType, "instancetype", "", "[kubevirt] Cluster instancetype for sizing (overrides --cpu/--mem)")
 	createCmd.Flags().StringVar(&createPreference, "preference", "", "[kubevirt] Cluster preference (guest device/firmware defaults)")
@@ -133,56 +127,6 @@ func runKubevirtCreate(name string) error {
 			Backend:   "kubevirt",
 			Namespace: ns,
 			Password:  kubevirt.LastPassword,
-		}); err != nil {
-			return fmt.Errorf("saving registry: %w", err)
-		}
-	}
-
-	fmt.Fprintf(os.Stderr, "VM %q created in ns/%s\n", name, ns)
-	fmt.Fprintf(os.Stderr, "  Start:  corral start %s\n", name)
-	fmt.Fprintf(os.Stderr, "  SSH:    corral ssh %s\n", name)
-	return nil
-}
-
-func runBootcCreate(name string) error {
-	if !kubevirt.BootcAvailable() {
-		return fmt.Errorf("--bootc needs the optional bootc plugin (build with `-tags bootc`)")
-	}
-	ns := createNamespace
-	if ns == "" {
-		ns = kubevirt.DefaultNamespace
-	}
-	kubevirt.EnsureNamespace(ns)
-
-	// Load SSH public key from localhost
-	sshKey := kubevirt.LoadSSHPublicKey()
-	if sshKey == "" {
-		return fmt.Errorf("no SSH public key found in ~/.ssh/ — needed for bootc VM access")
-	}
-
-	diskSize := createDisk
-	if diskSize == "" {
-		diskSize = "50Gi" // bootc GNOME images need more space
-	}
-
-	// Build the bootc disk on-cluster
-	build, err := kubevirt.BootcBuildDisk(name, ns, createBootc, sshKey, diskSize, os.Stderr)
-	if err != nil {
-		return fmt.Errorf("bootc build: %w", err)
-	}
-
-	// Create the VM using the built PVC with kernel boot
-	vm := kubevirt.GenerateBootcVM(name, ns, build.PVCName, createBootc,
-		build.RootUUID, build.KernelVersion, createMem, createCPU, createNode)
-	if err := kubevirt.Apply(vm); err != nil {
-		return fmt.Errorf("creating VM: %w", err)
-	}
-
-	if registryStore != nil {
-		if err := registryStore.Set(name, types.RegistryEntry{
-			Backend:   "kubevirt",
-			Namespace: ns,
-			Extra:     map[string]string{"bootc_image": createBootc},
 		}); err != nil {
 			return fmt.Errorf("saving registry: %w", err)
 		}

@@ -5,6 +5,7 @@ import (
 	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/hanthor/corral/pkg/plugin"
 	"github.com/hanthor/corral/pkg/registry"
 	"github.com/spf13/cobra"
 )
@@ -40,6 +41,20 @@ Run without arguments to launch the interactive TUI.`,
 }
 
 func Execute() {
+	// kubectl-style plugin dispatch: if the first arg isn't a built-in command
+	// or flag but a `corral-<arg>` plugin exists, hand off to it.
+	if len(os.Args) > 1 {
+		first := os.Args[1]
+		if first != "" && first[0] != '-' {
+			if c, _, err := rootCmd.Find(os.Args[1:]); (err != nil || c == rootCmd) && plugin.IsInstalled(first) {
+				if err := plugin.Dispatch(first, os.Args[2:]); err != nil {
+					fmt.Fprintln(os.Stderr, err)
+					os.Exit(1)
+				}
+				return
+			}
+		}
+	}
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

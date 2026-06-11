@@ -282,6 +282,23 @@ dialog .hint { color: var(--muted); font-size: .78rem; }
 td .btn { cursor: pointer; }
 tr.ev-warn td { color: var(--yellow); }
 
+/* ── Extensions store ───────────────────────────────────── */
+.ext-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
+.ext-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ext-head { display: flex; align-items: center; gap: 8px; }
+.ext-head .pill { margin-left: auto; }
+.ext-desc { color: var(--muted); font-size: .85rem; flex: 1; }
+.ext-actions { display: flex; gap: 8px; align-items: center; }
+.ext-actions a.btn { text-decoration: none; }
+
 /* ── Mobile ─────────────────────────────────────────────── */
 @media (max-width: 760px) {
   .icon-btn { display: block; }

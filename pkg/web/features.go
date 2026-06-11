@@ -6,8 +6,71 @@ import (
 	"net/http"
 
 	"github.com/hanthor/corral/pkg/kubevirt"
+	"github.com/hanthor/corral/pkg/plugin"
 	"github.com/hanthor/corral/pkg/types"
 )
+
+// ── Extensions (plugins) store ────────────────────────────────────
+
+type pluginItem struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Version     string `json:"version"`
+	Homepage    string `json:"homepage,omitempty"`
+	Installed   bool   `json:"installed"`
+	InStore     bool   `json:"inStore"`
+}
+
+// GET /api/plugins — marketplace entries merged with installed state.
+func handlePlugins(w http.ResponseWriter, r *http.Request) {
+	installed := map[string]bool{}
+	for _, p := range plugin.Installed() {
+		installed[p.Name] = true
+	}
+	items := []pluginItem{}
+	seen := map[string]bool{}
+	if idx, err := plugin.FetchIndex(); err == nil {
+		for _, e := range idx.Plugins {
+			items = append(items, pluginItem{e.Name, e.Description, e.Version, e.Homepage, installed[e.Name], true})
+			seen[e.Name] = true
+		}
+	}
+	for _, p := range plugin.Installed() {
+		if !seen[p.Name] {
+			items = append(items, pluginItem{Name: p.Name, Installed: true})
+		}
+	}
+	jsonResp(w, http.StatusOK, items)
+}
+
+// POST /api/plugins/{name}/install
+func handleInstallPlugin(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	idx, err := plugin.FetchIndex()
+	if err != nil {
+		errResp(w, http.StatusBadGateway, err)
+		return
+	}
+	e := idx.Find(name)
+	if e == nil {
+		errResp(w, http.StatusNotFound, fmt.Errorf("no plugin %q in the marketplace", name))
+		return
+	}
+	if err := e.Install(); err != nil {
+		errResp(w, http.StatusInternalServerError, err)
+		return
+	}
+	jsonResp(w, http.StatusOK, map[string]string{"installed": name})
+}
+
+// DELETE /api/plugins/{name}
+func handleRemovePlugin(w http.ResponseWriter, r *http.Request) {
+	if err := plugin.Remove(r.PathValue("name")); err != nil {
+		errResp(w, http.StatusInternalServerError, err)
+		return
+	}
+	jsonResp(w, http.StatusOK, map[string]string{"status": "removed"})
+}
 
 // This file holds the HTTP handlers for the advanced VM operations
 // (scale, volumes, expand, snapshots, clone, guest info, capabilities).

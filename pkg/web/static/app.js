@@ -97,6 +97,12 @@ function renderTree() {
     onclick: () => select({ type: 'dc' }),
   }));
 
+  tree.appendChild(treeRow({
+    lvl: 0, icon: icon('extension'), label: 'Extensions',
+    sel: selected.type === 'extensions',
+    onclick: () => select({ type: 'extensions' }),
+  }));
+
   const byNode = (nodeName) => vms.filter((v) => v.node === nodeName);
   const placed = new Set();
 
@@ -145,7 +151,47 @@ function renderContent() {
     else return renderVM(main, vm);
   }
   if (selected.type === 'node') return renderNode(main, selected.name);
+  if (selected.type === 'extensions') return renderExtensions(main);
   return renderDatacenter(main);
+}
+
+async function renderExtensions(main) {
+  main.innerHTML = `<div class="page-head"><h1>${icon('extension')} Extensions</h1></div>
+    <p class="muted" style="margin-bottom:14px">Optional plugins from the Corral marketplace.
+      Installed plugins add <code>corral &lt;name&gt;</code> commands.</p>
+    <div id="ext-list"><p class="muted">loading…</p></div>`;
+  let list;
+  try { list = await api('/api/plugins'); }
+  catch (e) { $('#ext-list').innerHTML = `<p class="console-msg">${esc(e.message)}</p>`; return; }
+  if (!list.length) { $('#ext-list').innerHTML = `<p class="muted">No extensions available.</p>`; return; }
+  $('#ext-list').innerHTML = `<div class="ext-grid">${list.map((p) => `
+    <div class="ext-card">
+      <div class="ext-head">${icon('extension')} <strong>${esc(p.name)}</strong>
+        <span class="muted">${esc(p.version || '')}</span>
+        ${p.installed ? '<span class="pill on">installed</span>' : ''}</div>
+      <div class="ext-desc">${esc(p.description || '')}</div>
+      <div class="ext-actions">
+        ${p.installed
+          ? `<button class="btn sm danger" data-ext-rm="${esc(p.name)}">Remove</button>`
+          : (p.inStore ? `<button class="btn sm primary" data-ext-add="${esc(p.name)}">Install</button>` : '')}
+        ${p.homepage ? `<a class="btn sm" href="${esc(p.homepage)}" target="_blank" rel="noopener">Homepage</a>` : ''}
+      </div>
+    </div>`).join('')}</div>`;
+  main.querySelectorAll('[data-ext-add]').forEach((b) => {
+    b.onclick = async () => {
+      b.disabled = true; b.textContent = 'Installing…';
+      try { await api(`/api/plugins/${b.dataset.extAdd}/install`, { method: 'POST' }); toast('Installed'); }
+      catch (e) { toast(e.message); }
+      renderExtensions(main);
+    };
+  });
+  main.querySelectorAll('[data-ext-rm]').forEach((b) => {
+    b.onclick = async () => {
+      try { await api(`/api/plugins/${b.dataset.extRm}`, { method: 'DELETE' }); toast('Removed'); }
+      catch (e) { toast(e.message); }
+      renderExtensions(main);
+    };
+  });
 }
 
 function renderDatacenter(main) {

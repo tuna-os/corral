@@ -22,7 +22,7 @@ itself — you install the KubeVirt stack, then run Corral against it.
 | Live migration | RWX/migratable storage **and same-CPU-vendor nodes** |
 | Templates, instancetypes, image library, events/metrics | (built into Corral) |
 | Secondary NICs | Multus + a NetworkAttachmentDefinition |
-| Boot a container image as a VM (`--bootc`) | optional `bootc` plugin |
+| Boot a container image as a VM (`corral bootc`) | the `bootc` extension |
 
 Corral detects what the cluster supports (`GET /api/capabilities`) and
 greys out controls it can't do — so you can start minimal and add pieces.
@@ -128,7 +128,6 @@ the cluster default if absent).
 ### Web UI (in-cluster)
 
 ```bash
-# Lean image (no bootc). Use ghcr.io/hanthor/corral:bootc for the bootc plugin.
 kubectl apply -f https://raw.githubusercontent.com/hanthor/corral/main/deploy/corral-web.yaml
 ```
 
@@ -168,16 +167,18 @@ spec:
       "ipam":{"type":"dhcp"} }
 ```
 
-## 7. (Optional) bootc plugin
+## 7. Extensions (the marketplace)
 
-bootc — building a bootable **container image** into a VM disk on-cluster — is
-niche, so it's a build-time plugin, not in the default binary/image:
+Niche features ship as plugins — krew-style `corral-<name>` binaries installed
+from a curated marketplace (browse in the web UI's **Extensions** tab, or):
 
 ```bash
-go build -tags bootc -o corral .           # CLI with bootc
-# or run the web UI from ghcr.io/hanthor/corral:bootc
-corral create dev --bootc quay.io/centos-bootc/centos-bootc:stream9
+corral plugin search
+corral plugin install bootc        # flagship: boot a container image as a VM
+corral bootc create dev --image quay.io/centos-bootc/centos-bootc:stream9
 ```
+
+Plugins live in `~/.local/share/corral/plugins` and run as `corral <name> …`.
 
 ---
 

@@ -53,11 +53,10 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Build binaries (lean + bootc plugin) and fetch kubectl/virtctl
+      - name: Build binary and fetch kubectl/virtctl
         run: |
           mkdir -p build
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o build/corral .
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags bootc -ldflags="-s -w" -o build/corral-bootc .
           curl -fsSLo build/kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
           curl -fsSLo build/virtctl "https://github.com/kubevirt/kubevirt/releases/download/${VIRTCTL_VERSION}/virtctl-${VIRTCTL_VERSION}-linux-amd64"
 
@@ -68,15 +67,12 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push images (default lean + :bootc variant)
+      - name: Build and push image
         run: |
           docker build -f Containerfile \
             -t "$IMAGE:latest" -t "$IMAGE:${GITHUB_SHA::7}" .
-          docker build -f Containerfile --build-arg BIN=corral-bootc \
-            -t "$IMAGE:bootc" .
           docker push "$IMAGE:latest"
           docker push "$IMAGE:${GITHUB_SHA::7}"
-          docker push "$IMAGE:bootc"
 
   release-binaries:
     needs: test
@@ -102,3 +98,36 @@ jobs:
         with:
           name: corral-binaries
           path: dist/
+
+  publish-plugins:
+    # Builds marketplace plugin binaries and publishes them to a rolling
+    # "plugins" release that marketplace/index.json points at.
+    needs: test
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build corral-bootc plugin (linux amd64 + arm64)
+        run: |
+          mkdir -p plugins-dist
+          for arch in amd64 arm64; do
+            CGO_ENABLED=0 GOOS=linux GOARCH=$arch \
+              go build -tags bootc -ldflags="-s -w" \
+              -o "plugins-dist/corral-bootc-linux-$arch" ./cmd/corral-bootc
+          done
+          ls -lh plugins-dist/
+
+      - name: Publish to the rolling "plugins" release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view plugins >/dev/null 2>&1 \
+            || gh release create plugins --title "Corral plugins" \
+                 --notes "Rolling release of marketplace plugin binaries (auto-updated by CI)." --latest=false
+          gh release upload plugins plugins-dist/* --clobber

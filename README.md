@@ -29,10 +29,11 @@ VMs are cattle. Stop treating each one like a networking project.
   `~/.config/tailvm/config.yaml` (or `TS_AUTHKEY`) and every cloud-init VM
   runs `tailscale up` on first boot — it shows up as a real machine on your
   tailnet, MagicDNS name and all.
-- **Boot any bootable container** *(optional `bootc` plugin)*. `corral create
-  dev --bootc ghcr.io/...` builds the OS disk *on the cluster* from a bootc
-  image and boots it as a VM. bootc is niche, so it's an opt-in build
-  (`-tags bootc` / the `corral:bootc` image), not in the default binary.
+- **Extensions with a marketplace.** Niche features ship as plugins:
+  `corral plugin search`, `corral plugin install bootc`, then `corral bootc
+  create dev --image ghcr.io/...` builds an OS disk *on the cluster* from a
+  bootable container image and boots it as a VM. Browse/install from the web
+  UI's **Extensions** tab too. The core binary stays lean.
 - **Point-and-shoot TUI.** Run `corral` bare for a Bubble Tea interface:
   pick a VM, hit Start / Stop / SSH / VNC / Delete, or toggle which ports
   (SSH, VNC, RDP, HTTP, …) are published to the tailnet as
@@ -75,8 +76,9 @@ corral ssh web
 # Cluster VM from an installer ISO (CDI imports it for you, progress in `corral list`)
 corral create bluefin --kubevirt --iso https://download.example/bluefin.iso
 
-# Bootable container → running VM, disk built on-cluster
-corral create dev --bootc quay.io/centos-bootc/centos-bootc:stream9
+# Bootable container → running VM, disk built on-cluster (bootc extension)
+corral plugin install bootc
+corral bootc create dev --image quay.io/centos-bootc/centos-bootc:stream9
 corral start dev && corral ssh dev -u root
 
 # Everything, both backends, one table
@@ -95,13 +97,25 @@ corral list
 Nothing is ever bound to `0.0.0.0` — local VM ports attach to the host's
 Tailscale IP only.
 
-## The bootc pipeline (optional plugin)
+## Extensions & the marketplace
 
-bootc is an **opt-in plugin** — it's compiled in only with `go build -tags
-bootc` (CLI) or by running the `ghcr.io/hanthor/corral:bootc` image for the web
-UI. The default binary/image omits it, and the web UI hides the bootc create
-option unless the server has it. `--bootc` turns a bootable container image
-into a running VM without any local tooling:
+Corral has a krew-style plugin system. Plugins are standalone `corral-<name>`
+binaries in `~/.local/share/corral/plugins`; once installed they run as
+`corral <name> …`. A curated marketplace (`marketplace/index.json`) lists
+installable ones:
+
+```bash
+corral plugin search
+corral plugin install bootc
+corral plugin list
+```
+
+The web UI has an **Extensions** tab to browse and install the same plugins.
+
+### The bootc plugin
+
+The flagship extension, `corral bootc`, turns a bootable container image into a
+running VM without any local tooling:
 
 1. Corral creates a PVC and runs a privileged Job **using your image as the
    builder** — `bootc install to-filesystem` onto an XFS loopback disk, your
@@ -151,9 +165,10 @@ interface. Feature roadmap: [`WEBUI-PLAN.md`](WEBUI-PLAN.md).
 corral                  TUI
 corral web              Proxmox-style web UI [--addr host:port]
 corral list             all VMs, both backends
-corral create <name>    --kubevirt | --bootc IMG | (default: local qemu)
+corral create <name>    --kubevirt | (default: local qemu)
                         --mem 4G --cpu 2 --disk 20G --iso … --container-disk …
-                        --pvc … --node … --cloud-init … --ts-authkey …
+                        --pvc … --node … --cloud-init … --instancetype … --ts-authkey …
+corral plugin           search | install <name> | list | remove <name>   (extensions)
 corral start|stop <name>
 corral restart <name>   restart a VM
 corral pause|unpause    [kubevirt] freeze / resume a running VM
