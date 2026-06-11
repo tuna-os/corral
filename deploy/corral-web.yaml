@@ -1,5 +1,5 @@
 # Corral web UI — Proxmox-style dashboard for KubeVirt, served in-cluster.
-# Image: built from Containerfile by CI, pushed to
+# Image: built from the corral repo Containerfile, pushed to
 # ghcr.io/hanthor/corral (public — no pull secret needed).
 # Reachable at https://corral.<tailnet>.ts.net via the Tailscale operator
 # (Ingress with ingressClassName: tailscale terminates HTTPS).
@@ -31,17 +31,51 @@ rules:
       - virtualmachines/stop
       - virtualmachines/restart
       - virtualmachines/migrate
+      - virtualmachines/addvolume
+      - virtualmachines/removevolume
       - virtualmachineinstances/vnc
       - virtualmachineinstances/console
       - virtualmachineinstances/pause
       - virtualmachineinstances/unpause
+      - virtualmachineinstances/guestosinfo
+      - virtualmachineinstances/filesystemlist
+      - virtualmachineinstances/userlist
     verbs: ["get", "update"]
+  # Snapshot / restore / clone / export (Proxmox-parity ops)
+  - apiGroups: ["snapshot.kubevirt.io"]
+    resources: ["virtualmachinesnapshots", "virtualmachinerestores"]
+    verbs: ["get", "list", "create", "delete"]
+  - apiGroups: ["clone.kubevirt.io"]
+    resources: ["virtualmachineclones"]
+    verbs: ["get", "list", "create", "delete"]
+  - apiGroups: ["export.kubevirt.io"]
+    resources: ["virtualmachineexports"]
+    verbs: ["get", "list", "create", "delete"]
   - apiGroups: ["cdi.kubevirt.io"]
     resources: ["datavolumes"]
     verbs: ["get", "list", "create", "delete"]
+  # PVC: create (new disks), patch (online expand), delete (cleanup)
   - apiGroups: [""]
     resources: ["persistentvolumeclaims"]
-    verbs: ["get", "list", "create", "delete"]
+    verbs: ["get", "list", "create", "patch", "update", "delete"]
+  # Capability detection (storage classes + snapshot classes)
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses"]
+    verbs: ["get", "list"]
+  - apiGroups: ["snapshot.storage.k8s.io"]
+    resources: ["volumesnapshotclasses", "volumesnapshots"]
+    verbs: ["get", "list"]
+  # Export download: virtctl vmexport --port-forward needs the token secret +
+  # a port-forward to the exporter pod.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/portforward"]
+    verbs: ["create"]
   - apiGroups: [""]
     resources: ["namespaces"]
     verbs: ["get", "list", "create", "patch"]
