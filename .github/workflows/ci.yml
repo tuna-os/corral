@@ -120,6 +120,7 @@ jobs:
             CGO_ENABLED=0 GOOS=linux GOARCH=$arch \
               go build -ldflags="-s -w" -o "dist/corral-linux-$arch" .
           done
+          (cd dist && sha256sum * > SHA256SUMS)
           ls -lh dist/
 
       - uses: actions/upload-artifact@v4
