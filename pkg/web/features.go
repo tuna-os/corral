@@ -174,6 +174,20 @@ func handleMetrics(w http.ResponseWriter, r *http.Request) {
 	jsonResp(w, http.StatusOK, kubevirt.NewClient(ns).Metrics(name))
 }
 
+// POST /api/vms/{ns}/{name}/template  body: {on: bool}  — mark/unmark template
+func handleMarkTemplate(w http.ResponseWriter, r *http.Request) {
+	ns, name := r.PathValue("ns"), r.PathValue("name")
+	var b struct {
+		On bool `json:"on"`
+	}
+	json.NewDecoder(r.Body).Decode(&b)
+	if err := kubevirt.NewClient(ns).MarkTemplate(name, b.On); err != nil {
+		errResp(w, http.StatusInternalServerError, err)
+		return
+	}
+	jsonResp(w, http.StatusOK, map[string]bool{"isTemplate": b.On})
+}
+
 // GET /api/instancetypes — cluster instancetypes + preferences for the create wizard
 func handleInstanceTypes(w http.ResponseWriter, r *http.Request) {
 	jsonResp(w, http.StatusOK, map[string][]string{

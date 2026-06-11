@@ -20,6 +20,7 @@ type VM struct {
 	Namespace      string `json:"namespace,omitempty"`
 	LiveMigratable bool   `json:"liveMigratable"` // VMI LiveMigratable condition
 	AgentConnected bool   `json:"agentConnected"` // qemu-guest-agent reachable
+	IsTemplate     bool   `json:"isTemplate"`     // labeled corral.dev/template=true
 }
 
 // Capabilities reports what optional operations the cluster supports, so the

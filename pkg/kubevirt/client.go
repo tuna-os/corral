@@ -104,8 +104,9 @@ func (c *Client) ListVMs() ([]types.VM, error) {
 	var result struct {
 		Items []struct {
 			Metadata struct {
-				Name      string `json:"name"`
-				Namespace string `json:"namespace"`
+				Name      string            `json:"name"`
+				Namespace string            `json:"namespace"`
+				Labels    map[string]string `json:"labels"`
 			} `json:"metadata"`
 			Spec struct {
 				Running  *bool `json:"running"`
@@ -156,16 +157,17 @@ func (c *Client) ListVMs() ([]types.VM, error) {
 
 		cpu := vm.Spec.Template.Spec.Domain.CPU
 		v := types.VM{
-			Name:      name,
-			Backend:   "kubevirt",
-			Namespace: ns,
-			Status:    status,
-			Ready:     vm.Status.Ready,
-			Running:   running,
-			CPU:       totalVCPU(cpu.Sockets, cpu.Cores, cpu.Threads),
-			Mem:       vm.Spec.Template.Spec.Domain.Memory.Guest,
-			Node:      node,
-			VNC:       c.proxyStatus(name, ns),
+			Name:       name,
+			Backend:    "kubevirt",
+			Namespace:  ns,
+			Status:     status,
+			Ready:      vm.Status.Ready,
+			Running:    running,
+			CPU:        totalVCPU(cpu.Sockets, cpu.Cores, cpu.Threads),
+			Mem:        vm.Spec.Template.Spec.Domain.Memory.Guest,
+			Node:       node,
+			VNC:        c.proxyStatus(name, ns),
+			IsTemplate: vm.Metadata.Labels["corral.dev/template"] == "true",
 		}
 		// Overlay live VMI facts (actual node, IP, migratability, agent).
 		// LiveMigratable reflects REAL viability: KubeVirt's condition AND a

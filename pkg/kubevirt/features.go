@@ -435,6 +435,8 @@ func (c *Client) Clone(src, dst string) error {
 		"spec": map[string]any{
 			"source": map[string]any{"apiGroup": "kubevirt.io", "kind": "VirtualMachine", "name": src},
 			"target": map[string]any{"apiGroup": "kubevirt.io", "kind": "VirtualMachine", "name": dst},
+			// Copy all labels except the template marker — a clone isn't a template.
+			"labelFilters": []string{"*", "!corral.dev/template"},
 		},
 	}
 	return Apply(obj)
@@ -539,6 +541,31 @@ func (c *Client) GuestInfo(name string) (map[string]any, error) {
 		res["users"] = users
 	}
 	return res, nil
+}
+
+// ── Templates ─────────────────────────────────────────────────────
+
+// MarkTemplate labels (or unlabels) a VM as a golden template. Templates are
+// ordinary stopped VMs that "create from template" clones.
+func (c *Client) MarkTemplate(name string, on bool) error {
+	val := "corral.dev/template=true"
+	if !on {
+		val = "corral.dev/template-" // trailing - removes the label
+	}
+	out, err := exec.Command("kubectl", "label", "vm", name, "-n", c.Namespace, val, "--overwrite").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("label vm: %s", strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// CreateFromTemplate clones a template VM into a new VM (via VirtualMachineClone,
+// which copies disks too). The clone is not itself a template.
+func (c *Client) CreateFromTemplate(template, newName string) error {
+	if err := c.Clone(template, newName); err != nil {
+		return err
+	}
+	return nil
 }
 
 // ── Instancetypes / preferences ───────────────────────────────────
