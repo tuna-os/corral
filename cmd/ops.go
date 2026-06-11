@@ -193,6 +193,78 @@ Examples:
 	},
 }
 
+// ── template subcommands ──────────────────────────────────────────
+
+var templateCmd = &cobra.Command{
+	Use:   "template",
+	Short: "Manage golden VM templates (KubeVirt)",
+}
+
+var templateMarkCmd = &cobra.Command{
+	Use:   "mark [name]",
+	Short: "Mark a VM as a template",
+	Args:  cobra.MaximumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		c, name, err := kubevirtOnly(args, "template")
+		if err != nil {
+			return err
+		}
+		return c.MarkTemplate(name, true)
+	},
+}
+
+var templateUnmarkCmd = &cobra.Command{
+	Use:   "unmark [name]",
+	Short: "Remove the template mark from a VM",
+	Args:  cobra.MaximumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		c, name, err := kubevirtOnly(args, "template")
+		if err != nil {
+			return err
+		}
+		return c.MarkTemplate(name, false)
+	},
+}
+
+var templateListCmd = &cobra.Command{
+	Use:   "ls",
+	Short: "List template VMs",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		vms, err := kubevirt.NewClient("").ListVMs()
+		if err != nil {
+			return err
+		}
+		n := 0
+		for _, vm := range vms {
+			if vm.IsTemplate {
+				fmt.Printf("%-30s  %s  %d CPU / %s\n", vm.Name, vm.Namespace, vm.CPU, vm.Mem)
+				n++
+			}
+		}
+		if n == 0 {
+			fmt.Println("No templates. Mark one: corral template mark <vm>")
+		}
+		return nil
+	},
+}
+
+var templateNewCmd = &cobra.Command{
+	Use:   "new [template] [newname]",
+	Short: "Create a new VM from a template (clone)",
+	Args:  cobra.ExactArgs(2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		c, tmpl, err := kubevirtOnly(args[:1], "template")
+		if err != nil {
+			return err
+		}
+		if err := c.CreateFromTemplate(tmpl, args[1]); err != nil {
+			return err
+		}
+		fmt.Printf("Creating %s from template %s…\n", args[1], tmpl)
+		return nil
+	},
+}
+
 // ── snapshot subcommands ──────────────────────────────────────────
 
 var snapshotCmd = &cobra.Command{
@@ -279,7 +351,8 @@ var snapshotDeleteCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.AddCommand(restartCmd, pauseCmd, unpauseCmd, migrateCmd, scaleCmd, addDiskCmd, rmDiskCmd, exportCmd, snapshotCmd)
+	rootCmd.AddCommand(restartCmd, pauseCmd, unpauseCmd, migrateCmd, scaleCmd, addDiskCmd, rmDiskCmd, exportCmd, snapshotCmd, templateCmd)
+	templateCmd.AddCommand(templateMarkCmd, templateUnmarkCmd, templateListCmd, templateNewCmd)
 
 	migrateCmd.Flags().StringVar(&migrateNode, "node", "", "Target node (default: scheduler chooses)")
 	scaleCmd.Flags().IntVar(&scaleCPU, "cpu", 0, "New vCPU count")
