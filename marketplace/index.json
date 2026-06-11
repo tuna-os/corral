@@ -9,6 +9,46 @@
         "linux/amd64": { "url": "https://github.com/hanthor/corral/releases/download/plugins/corral-bootc-linux-amd64" },
         "linux/arm64": { "url": "https://github.com/hanthor/corral/releases/download/plugins/corral-bootc-linux-arm64" }
       }
+    },
+    {
+      "name": "snapsched",
+      "description": "Scheduled VM snapshots with retention — a CronJob snapshots the VM per tick and prunes beyond --keep. Run `corral snapsched add <vm> --every 6h --keep 12`.",
+      "version": "0.1.0",
+      "homepage": "https://github.com/hanthor/corral/tree/main/cmd/corral-snapsched",
+      "platforms": {
+        "linux/amd64": { "url": "https://github.com/hanthor/corral/releases/download/plugins/corral-snapsched-linux-amd64" },
+        "linux/arm64": { "url": "https://github.com/hanthor/corral/releases/download/plugins/corral-snapsched-linux-arm64" }
+      }
+    },
+    {
+      "name": "schedule",
+      "description": "VM autostart/shutdown windows — CronJobs flip the VM's runStrategy on cron schedules. Run `corral schedule add <vm> --start \"0 9 * * 1-5\" --stop \"0 18 * * 1-5\"`.",
+      "version": "0.1.0",
+      "homepage": "https://github.com/hanthor/corral/tree/main/cmd/corral-schedule",
+      "platforms": {
+        "linux/amd64": { "url": "https://github.com/hanthor/corral/releases/download/plugins/corral-schedule-linux-amd64" },
+        "linux/arm64": { "url": "https://github.com/hanthor/corral/releases/download/plugins/corral-schedule-linux-arm64" }
+      }
+    },
+    {
+      "name": "gpu",
+      "description": "GPU/PCI passthrough — discover device-plugin resources, permit them in the KubeVirt CR, attach to VMs. Run `corral gpu list`, `corral gpu attach <vm> --device amd.com/gpu`.",
+      "version": "0.1.0",
+      "homepage": "https://github.com/hanthor/corral/tree/main/cmd/corral-gpu",
+      "platforms": {
+        "linux/amd64": { "url": "https://github.com/hanthor/corral/releases/download/plugins/corral-gpu-linux-amd64" },
+        "linux/arm64": { "url": "https://github.com/hanthor/corral/releases/download/plugins/corral-gpu-linux-arm64" }
+      }
+    },
+    {
+      "name": "windows",
+      "description": "First-class Windows VMs — UEFI + TPM + Hyper-V enlightenments, installer ISO via CDI, virtio-win driver CD-ROM, optional RDP. Run `corral windows create <name> --iso <url>`.",
+      "version": "0.1.0",
+      "homepage": "https://github.com/hanthor/corral/tree/main/cmd/corral-windows",
+      "platforms": {
+        "linux/amd64": { "url": "https://github.com/hanthor/corral/releases/download/plugins/corral-windows-linux-amd64" },
+        "linux/arm64": { "url": "https://github.com/hanthor/corral/releases/download/plugins/corral-windows-linux-arm64" }
+      }
     }
   ]
 }
