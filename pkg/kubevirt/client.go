@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/hanthor/corral/pkg/shell"
 	"github.com/hanthor/corral/pkg/types"
 )
 
@@ -34,7 +35,25 @@ func LoadSSHPublicKey() string {
 // Client interacts with the Kubernetes cluster via kubectl.
 type Client struct {
 	Namespace string
+	Runner    shell.Runner // injected for tests; defaults to shell.Real
 }
+
+func (c *Client) runner() shell.Runner {
+	if c.Runner != nil {
+		return c.Runner
+	}
+	if defaultClientRunner != nil {
+		return defaultClientRunner
+	}
+	return shell.Real{}
+}
+
+// defaultClientRunner is a package-level runner override for tests.
+// Set it to intercept all client calls without modifying each NewClient call site.
+var defaultClientRunner shell.Runner
+
+// SetDefaultRunner overrides the runner for all kubevirt clients (for unit tests).
+func SetDefaultRunner(r shell.Runner) { defaultClientRunner = r }
 
 // DefaultNamespace is the default namespace for KubeVirt VMs.
 const DefaultNamespace = "tailvm"
@@ -45,12 +64,12 @@ func EnsureNamespace(ns string) {
 	if ns == "" {
 		ns = DefaultNamespace
 	}
-	exec.Command("kubectl", "create", "ns", ns).Run() // no-op if it exists
-	exec.Command("kubectl", "label", "ns", ns,
-		"pod-security.kubernetes.io/enforce=privileged", "--overwrite").Run()
+	runPkg("kubectl", "create", "ns", ns) // no-op if it exists
+	runPkg("kubectl", "label", "ns", ns,
+		"pod-security.kubernetes.io/enforce=privileged", "--overwrite")
 }
 
-// NewClient creates a KubeVirt client.
+// NewClient creates a KubeVirt client using the real os/exec runner.
 func NewClient(ns string) *Client {
 	if ns == "" {
 		ns = DefaultNamespace
@@ -58,15 +77,22 @@ func NewClient(ns string) *Client {
 	return &Client{Namespace: ns}
 }
 
+// NewClientWithRunner creates a KubeVirt client with a custom Runner (for tests).
+func NewClientWithRunner(ns string, r shell.Runner) *Client {
+	c := NewClient(ns)
+	c.Runner = r
+	return c
+}
+
 // VMExists checks if a VirtualMachine exists in the cluster.
 func (c *Client) VMExists(name string) bool {
-	cmd := exec.Command("kubectl", "get", "vm", name, "-n", c.Namespace, "-o", "name")
-	return cmd.Run() == nil
+	_, err := c.runner().Run("kubectl", "get", "vm", name, "-n", c.Namespace, "-o", "name")
+	return err == nil
 }
 
 // DataVolumeStatus returns the import progress for a VM's ISO DataVolume.
 func DataVolumeStatus(name, ns string) string {
-	out, err := exec.Command("kubectl", "get", "datavolume", name+"-iso", "-n", ns, "-o", "json").Output()
+	out, err := runPkg("kubectl", "get", "datavolume", name+"-iso", "-n", ns, "-o", "json")
 	if err != nil {
 		return ""
 	}
@@ -96,7 +122,7 @@ func DataVolumeStatus(name, ns string) string {
 
 // ListVMs returns all KubeVirt VMs with status information.
 func (c *Client) ListVMs() ([]types.VM, error) {
-	out, err := exec.Command("kubectl", "get", "vms", "-A", "-o", "json").Output()
+	out, err := c.runner().Run("kubectl", "get", "vms", "-A", "-o", "json")
 	if err != nil {
 		return nil, err
 	}
@@ -233,7 +259,7 @@ type vmiStatus struct {
 
 // vmiStatusIndex returns live per-VMI facts keyed by "namespace/name".
 func vmiStatusIndex() map[string]vmiStatus {
-	out, err := exec.Command("kubectl", "get", "vmis", "-A", "-o", "json").Output()
+	out, err := runPkg("kubectl", "get", "vmis", "-A", "-o", "json")
 	if err != nil {
 		return nil
 	}
@@ -295,10 +321,8 @@ func (c *Client) StartVM(name string) error {
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command(virtctl, "start", name, "-n", c.Namespace)
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	_, err = c.runner().Run(virtctl, "start", name, "-n", c.Namespace)
+	return err
 }
 
 // StopVM stops a KubeVirt VirtualMachine.
@@ -307,10 +331,8 @@ func (c *Client) StopVM(name string) error {
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command(virtctl, "stop", name, "-n", c.Namespace)
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	_, err = c.runner().Run(virtctl, "stop", name, "-n", c.Namespace)
+	return err
 }
 
 // DeleteVM deletes a KubeVirt VM and its PVCs/DataVolumes/proxy resources.
@@ -318,24 +340,24 @@ func (c *Client) DeleteVM(name string) error {
 	// Stop first
 	virtctl, _ := c.ensureVirtctl()
 	if virtctl != "" {
-		exec.Command(virtctl, "stop", name, "-n", c.Namespace).Run()
+		c.runner().Run(virtctl, "stop", name, "-n", c.Namespace)
 	}
 
 	// Delete VM
-	exec.Command("kubectl", "delete", "vm", name, "-n", c.Namespace, "--ignore-not-found").Run()
+	c.runner().Run("kubectl", "delete", "vm", name, "-n", c.Namespace, "--ignore-not-found")
 
 	// Delete PVCs and DataVolumes
 	for _, suffix := range []string{"disk", "data", "iso", "bootc-disk"} {
 		pvc := name + "-" + suffix
-		exec.Command("kubectl", "delete", "pvc", pvc, "-n", c.Namespace, "--ignore-not-found").Run()
-		exec.Command("kubectl", "delete", "datavolume", pvc, "-n", c.Namespace, "--ignore-not-found").Run()
+		c.runner().Run("kubectl", "delete", "pvc", pvc, "-n", c.Namespace, "--ignore-not-found")
+		c.runner().Run("kubectl", "delete", "datavolume", pvc, "-n", c.Namespace, "--ignore-not-found")
 	}
 
 	// Delete hotplug disks and snapshots labeled for this VM
-	exec.Command("kubectl", "delete", "pvc", "-n", c.Namespace,
-		"-l", "corral.dev/vm="+name, "--ignore-not-found").Run()
-	exec.Command("kubectl", "delete", "vmsnapshot", "-n", c.Namespace,
-		"-l", "corral.dev/vm="+name, "--ignore-not-found").Run()
+	c.runner().Run("kubectl", "delete", "pvc", "-n", c.Namespace,
+		"-l", "corral.dev/vm="+name, "--ignore-not-found")
+	c.runner().Run("kubectl", "delete", "vmsnapshot", "-n", c.Namespace,
+		"-l", "corral.dev/vm="+name, "--ignore-not-found")
 
 	// Delete proxy resources if any
 	DeleteProxy(name, c.Namespace)
@@ -353,7 +375,7 @@ func (c *Client) Logs(name string) error {
 
 // VMInfo returns JSON info about a VM.
 func (c *Client) VMInfo(name string) ([]byte, error) {
-	return exec.Command("kubectl", "get", "vm", name, "-n", c.Namespace, "-o", "json").Output()
+	return c.runner().Run("kubectl", "get", "vm", name, "-n", c.Namespace, "-o", "json")
 }
 
 // SSH opens an SSH session to a VM via virtctl ssh.
@@ -451,7 +473,7 @@ func (c *Client) portInUse(port int) bool {
 }
 
 func (c *Client) ensureVirtctl() (string, error) {
-	path, err := exec.LookPath("virtctl")
+	path, err := c.runner().LookPath("virtctl")
 	if err != nil {
 		return "", fmt.Errorf("virtctl not found — install: brew install kubevirt-cli")
 	}
@@ -685,6 +707,21 @@ func GenerateDataVolume(name, namespace, isoURL string) map[string]any {
 	}
 }
 
+// GenerateBootDataVolume creates a CDI DataVolume that imports a qcow2/raw disk
+// image from a URL into a bootable PVC (sized, optional StorageClass).
+func GenerateBootDataVolume(name, namespace, url, size, storageClass string) map[string]any {
+	if size == "" {
+		size = "20G"
+	}
+	dv := GenerateDataVolume(name, namespace, url)
+	pvc := dv["spec"].(map[string]any)["pvc"].(map[string]any)
+	pvc["resources"].(map[string]any)["requests"].(map[string]any)["storage"] = size
+	if storageClass != "" {
+		pvc["storageClassName"] = storageClass
+	}
+	return dv
+}
+
 // GenerateProxyService creates the unified proxy Service with Tailscale annotation.
 func GenerateProxyService(name, namespace string, ports []int) map[string]any {
 	svcPorts := []map[string]any{}
@@ -838,7 +875,7 @@ func GenerateProxyDeployment(name, namespace string, ports []int) map[string]any
 
 // ExposedPorts returns the currently exposed proxy ports for a VM.
 func ExposedPorts(name, ns string) []int {
-	out, err := exec.Command("kubectl", "get", "svc", name+"-proxy", "-n", ns, "-o", "json").Output()
+	out, err := runPkg("kubectl", "get", "svc", name+"-proxy", "-n", ns, "-o", "json")
 	if err != nil {
 		return nil
 	}
@@ -954,6 +991,7 @@ func CreateVM(opts types.CreateOpts) error {
 	name := opts.Name
 	hasISO := opts.ISO != ""
 	hasContainer := opts.ContainerDisk != ""
+	hasImport := opts.ImportURL != ""
 	hasPVC := opts.PVC != ""
 	diskSize := opts.Disk
 	if diskSize == "" {
@@ -970,6 +1008,12 @@ func CreateVM(opts types.CreateOpts) error {
 			return fmt.Errorf("creating boot PVC: %w", err)
 		}
 		fmt.Fprintf(os.Stderr, "Boot PVC: %s-disk (%s)\n", name, diskSize)
+	} else if hasImport {
+		// CDI imports the qcow2/raw image straight into the boot disk PVC.
+		if err := Apply(GenerateBootDataVolume(name+"-disk", ns, opts.ImportURL, diskSize, sc)); err != nil {
+			return fmt.Errorf("creating import DataVolume: %w", err)
+		}
+		fmt.Fprintf(os.Stderr, "Importing %s → %s-disk (%s)\n", opts.ImportURL, name, diskSize)
 	} else if hasContainer && opts.Disk != "" {
 		if err := Apply(GeneratePVCWithClass(name+"-data", ns, opts.Disk, sc)); err != nil {
 			return fmt.Errorf("creating data PVC: %w", err)
@@ -986,12 +1030,27 @@ func CreateVM(opts types.CreateOpts) error {
 	return nil
 }
 
+// applyManifest pipes a YAML manifest string to kubectl apply.
 func applyManifest(yaml string) error {
-	cmd := exec.Command("kubectl", "apply", "-f", "-")
-	cmd.Stdin = strings.NewReader(yaml)
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	_, err := applyRunner.RunStdin(yaml, "kubectl", "apply", "-f", "-")
+	return err
+}
+
+// applyRunner is the Runner used by Apply. Set during tests.
+var applyRunner shell.Runner = shell.Real{}
+
+// SetApplyRunner overrides the runner for Apply (for unit tests).
+func SetApplyRunner(r shell.Runner) { applyRunner = r }
+
+// defaultPackageRunner is used by package-level functions that shell out directly.
+var defaultPackageRunner shell.Runner = shell.Real{}
+
+// SetPackageRunner overrides the runner for package-level kubectl calls (for unit tests).
+func SetPackageRunner(r shell.Runner) { defaultPackageRunner = r }
+
+// runPkg is a helper for package-level functions to use the testable runner.
+func runPkg(name string, args ...string) ([]byte, error) {
+	return defaultPackageRunner.Run(name, args...)
 }
 
 // cpuSpec builds a hotplug-ready CPU topology: one core/thread per socket so

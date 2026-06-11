@@ -113,3 +113,11 @@ backend like Longhorn would unlock those (but not cross-vendor live migration).
   resources. No secrets access.
 - The websocket bridges shell out to `virtctl` per connection; connections
   die with the page, and the child process is killed on disconnect.
+
+## Related docs
+
+- [SPEC.md](SPEC.md) — full spec
+- [docs/api.md](docs/api.md) — REST API reference
+- [docs/architecture.md](docs/architecture.md) — package map & design decisions
+- [docs/kubevirt-proxmox-setup.md](docs/kubevirt-proxmox-setup.md) — setup guide
+- [HANDOFF.md](HANDOFF.md) — current state for developers

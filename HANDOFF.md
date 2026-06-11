@@ -1,123 +1,134 @@
-# tailvm bootc handoff — 2026-06-10
+# Corral handoff — 2026-06-11
 
-> **Update (later 2026-06-10):** project renamed to **Corral** (`corral`
-> binary; on-disk/cluster `tailvm` identifiers kept for compat). Remaining-work
-> items addressed: sshd is now enabled in the bootc deployment by the builder
-> Job; kernel paths are auto-detected (no more hardcoded el10 version); builder
-> logs stream live; the pod is selected by `job-name` label. Also fixed:
-> Tailscale auth key now actually injected into cloud-init, proxy script
-> jq-based IP parsing (python3 was never installed), EnsureNamespace dry-run
-> no-op, QEMU SSH hostfwd, logs command, delete confirmation + registry
-> cleanup, registry 0600. See SPEC.md for the full design.
+> Project: **Corral** (`corral` binary, `github.com/hanthor/corral`, public repo)
+> Live: `https://corral.manatee-basking.ts.net` (cluster deployment on bihar)
+> Docs: [README.md](README.md), [SPEC.md](SPEC.md), [WEBUI-PLAN.md](WEBUI-PLAN.md),
+> [docs/api.md](docs/api.md), [docs/architecture.md](docs/architecture.md),
+> [docs/kubevirt-proxmox-setup.md](docs/kubevirt-proxmox-setup.md)
 
-## What was built
+## Status: shipped
 
-### SSH (complete)
-- `tailvm ssh <name>` CLI command with `-u`/`-i`/`-c`/`-p`/`--password` flags
-- Auto password lookup from registry (cloud-init passwords stored at create time)
-- KubeVirt backend: delegates to `virtctl ssh` (native K8s tunnel + key auth)
-- QEMU backend: raw `ssh` to VM's Tailscale IP
-- Both backends accept `sshpass` for password-based auth
-- TUI: scrollable actions menu with SSH option (quits TUI, launches session)
+Corral is feature-complete for v1.0. All Proxmox-parity operations work
+through CLI, TUI, and web UI.
 
-### SSH key injection (complete)
-- At `tailvm create` time, reads `~/.ssh/id_ed25519.pub` (falls back to `id_rsa.pub`, `id_ecdsa.pub`)
-- Injects key into KubeVirt VM cloud-init (`ssh_authorized_keys`)
-- Password stored in `~/.local/share/tailvm/registry.json` for later retrieval
-- `tailvm ssh` auto-looks up the stored password if `--password` isn't specified
+### What's built
 
-### TUI (complete)
-- Scrollable selectable actions menu (replaced old key-binding panel `s`/`x`/`v`/`e`/`d`)
-- Actions: ▶ Start, ■ Stop, 🔑 SSH, 🖵 Viewer (VNC), ✎ Edit ports, ✕ Delete
-- Arrow key navigation, Enter to select, Esc to go back
+**VM lifecycle** — create (6 source types), list, start, stop, restart,
+pause/unpause, migrate, SSH, VNC, delete. Two backends: QEMU (local) and
+KubeVirt (cluster).
 
-### Config (complete)
-- `tailvm config` reads `~/.config/tailvm/config.yaml` or `$TS_AUTHKEY` env var
-- Tailscale auth key support for VM Tailnet setup
-- Ansible dotfiles already fetch key from Bitwarden (`tailscale-apikey` item)
+**Web UI** — dark, mobile-friendly SPA with tree navigation (datacenter →
+node → VM), detail panels (Summary, Hardware, Snapshots, Events, Console),
+create wizard (catalog / containerDisk / import / ISO / bootc / PVC), image
+library with CDI import, bootc build log streaming, extensions store. Live
+VNC (noVNC) and serial console (xterm.js) in the browser.
 
-### bootc disk builder (code complete, blocked by infra)
+**Catalog + import** — curated OS images (8 containerdisks from
+quay.io/containerdisks), CDI import for arbitrary qcow2/raw/ISO URLs.
 
-**What works**: `tailvm create --bootc <uri>` creates a PVC and runs a KubeVirt Job
-that uses `bootc install to-filesystem` on a raw XFS loopback device. The OS deploys
-correctly (64 layers, ~14 seconds), SSH keys are injected, root UUID is captured.
+**Advanced KubeVirt ops** — live/offline CPU/RAM scaling, disk hotplug,
+online PVC expansion, snapshots (create/list/restore/delete), clone,
+templates, guest-agent info, events, metrics, VM export (disk download).
 
-**What's blocked**: The booted VM has no bootloader because Talos kernel 6.18.29
-can't re-read loopback partition tables. SeaBIOS (the default KubeVirt firmware) can't
-boot a raw disk without GRUB.
+**CLI** — `corral create/list/start/stop/ssh/viewer/logs/info/delete` + all
+KubeVirt ops (`restart`, `pause`, `migrate`, `scale`, `adddisk`, `rmdisk`,
+`snapshot`) + `config` + `doctor` + `images` + `plugin` + `web` + `completion`.
 
-**Nested VM approach (proven, not automated)**:
+**TUI** — Bubble Tea app with scrollable actions menu (Start, Stop, SSH,
+VNC, Delete).
 
-```
-VM 1 (builder): Fedora 40 cloud image
-  ├─ 30Gi PVC: docker storage
-  ├─ 50Gi PVC: target disk (/dev/vdc)
-  ├─ docker pull ghcr.io/tuna-os/yellowfin:gnome          ✅
-  ├─ docker save → podman load (6.7G tar)                 ✅
-  ├─ podman run bootc install to-disk /dev/vdc             ✅
-  │   ├─ GPT partitions: BIOS boot + ESP + root            ✅
-  │   ├─ XFS root + FAT ESP                                ✅
-  │   ├─ 64 layers deployed in 15 seconds                  ✅
-  │   ├─ SSH keys injected                                 ✅
-  │   ├─ GRUB bootloader installed                         ✅
-  │   └─ Installation complete                             ✅
-  └─ systemctl --root=/mnt enable sshd (to be automated)   pending
-─────────────────────────────────────────────────────────────────
-VM 2 (final): Boots from PVC
-  ├─ SeaBIOS → GRUB → kernel 6.12.0-233                   ✅
-  ├─ Guest agent connected                                 ✅
-  └─ SSHD needs enablement                                 🔴
-```
+**Doctor** — cluster diagnostics (`/api/doctor` + `corral doctor`), checks
+KubeVirt, CDI, namespaces, storage, feature gates. Auto-fix for fixable
+issues.
 
-### Remaining work
+**Plugin system** — krew-style extensions (marketplace at
+`marketplace/index.json`), web UI Extensions tab. Bootc is the flagship
+plugin (build a container image into a VM disk on-cluster).
 
-1. **Enable sshd on bootc disk** — after `bootc install to-disk`, mount `/dev/vdc3`,
-   run `systemctl --root=/mnt enable sshd`.  10 minutes of work.
+### Architecture decisions
 
-2. **Fix image transport to bootc** — bootc running inside a podman container can't
-   auto-detect the source image due to a containers/image library bug with overlay
-   storage reference format. The fix: either:
-   - Use `--source-imgref=docker://registry` with a working local registry
-     (musl-based `registry:2` crashes with RELRO error on this kernel)
-   - Use `--source-imgref=docker-archive:/image.tar` (docker save → tar file)
-     (blocked by 30Gi PVC being too small for both docker layers + 6.7G tar)
-   - Use `--source-imgref=oci:/oci:gnome` with skopeo export
-     (blocked by `/var/tmp` on 5GB root disk filling up)
-   **Solution**: mount-bind `/var/tmp` to the 30Gi PVC, then skopeo or docker-save works.
-   The bind-mount was done but skopeo/docker-save still ran out because 30Gi was tight.
-   Use a 50Gi export PVC or resize the target PVC.
+- **No client-go.** Shells out to `kubectl`/`virtctl`. Keeps binary ~12 MB.
+- **Single binary, three UIs.** CLI + TUI + Web share the same backend
+  packages and registry file.
+- **Bootc is a plugin.** Compiled behind `//go:build bootc`, separate binary
+  (`corral-bootc`). Core binary stays lean.
+- **Embedded SPA, no JS build step.** Vanilla JS + CSS via `//go:embed`.
+- **Secrets stay local.** Registry (mode 0600) in `~/.local/share/tailvm/`.
+  No secrets in git or cluster state.
 
-3. **Automate the builder VM** — codify the Fedora builder VM creation, docker setup,
-   bootc install, sshd enablement, and final VM creation into `tailvm create --bootc`.
-
-4. **TUI progress indicator** — Charm.sh Bubble Tea spinner/progress bar during the
-   bootc build (which takes 2-5 minutes).
-
-### Files changed (7 files, ~400 lines net)
-
-| File | Change |
-|------|--------|
-| `pkg/kubevirt/bootc.go` | **New** — `BootcBuildDisk()`, `GenerateBootcVM()`, Job manifest, waitForBootcJob |
-| `pkg/kubevirt/client.go` | `SSH()` with `virtctl ssh`, `LoadSSHPublicKey()`, cloud-init key injection |
-| `pkg/qemu/qemu.go` | `SSH()` with sshpass, `readMetadata()` helper |
-| `pkg/types/types.go` | `Password` on `RegistryEntry`, `SSHPublicKey` on `CreateOpts` |
-| `pkg/config/config.go` | **New** — `~/.config/tailvm/config.yaml` reader |
-| `cmd/commands.go` | `ssh` command with flags, `resolveNamespace()` cross-ns fix |
-| `cmd/create.go` | `--bootc` flag, ssh key injection at create time |
-| `cmd/config.go` | **New** — `tailvm config` command |
-| `cmd/tui.go` | Scrollable actions menu, SSH action, post-quit hook |
-| `cmd/root.go` | Post-quit action runner |
-| `cmd/list.go` | `resolveBackend()` cross-namespace fix |
-
-### Cluster state
+## Cluster state (2026-06-11)
 
 | Resource | Detail |
-|----------|--------|
+|---|---|
 | KubeVirt | v1.8.2 |
 | Talos | v1.13.2, kernel 6.18.29 |
-| Nodes | bihar (cp), karnataka (worker, AMD GPU) |
-| Storage | local-path (rancher.io), WaitForFirstConsumer |
+| Nodes | bihar (cp, Intel), karnataka (worker, AMD Strix Halo) |
+| Storage | longhorn (CSI), RWX, snapshots, expansion |
 | CDI | Running |
-| Privileged pods | Allowed (PodSecurity warning only) |
-| Loopback partition support | ❌ Kernel can't re-read partition tables on loopback |
-| Registry:2 (musl) | ❌ Crashes with RELRO protection error |
+| Tailscale operator | Ingress at `corral.manatee-basking.ts.net` |
+| Corral web pod | Running, 1 replica, `ghcr.io/hanthor/corral:latest` |
+
+## File map (key files)
+
+| File | Role |
+|---|---|
+| `cmd/root.go` | CLI entrypoint, plugin dispatch |
+| `cmd/create.go` | `corral create` (all flags, catalog/import/bootc) |
+| `cmd/images.go` | `corral images` (catalog + datavolumes) |
+| `cmd/web.go` | `corral web` server |
+| `cmd/tui.go` | Bubble Tea TUI |
+| `cmd/corral-bootc/main.go` | Bootc plugin binary |
+| `pkg/catalog/catalog.go` | Curated OS image catalog |
+| `pkg/kubevirt/client.go` | VM CRUD, SSH, cloud-init, registry |
+| `pkg/kubevirt/features.go` | Scale, volumes, snapshots, clone, export, etc. |
+| `pkg/kubevirt/bootc_core.go` | Bootc interface seam |
+| `pkg/kubevirt/bootc.go` | Bootc implementation (//go:build bootc) |
+| `pkg/web/server.go` | HTTP server, VM list/create/action/delete, nodes, tasks, WS bridges |
+| `pkg/web/features.go` | All advanced-op handlers |
+| `pkg/web/static/index.html` | SPA shell, create dialog, build dialog |
+| `pkg/web/static/app.js` | API client, tree, detail panels, create wizard, import, bootc streaming |
+| `deploy/corral-web.yaml` | On-cluster deployment manifest |
+| `marketplace/index.json` | Plugin registry |
+
+## Build & deploy
+
+```bash
+go build -o corral .                 # core binary
+go build -tags bootc -o corral .     # with bootc
+
+# Container image (on-cluster)
+docker build --platform linux/amd64 -t ghcr.io/hanthor/corral .
+docker push ghcr.io/hanthor/corral
+
+# Deploy
+kubectl apply -f deploy/corral-web.yaml
+kubectl -n tailvm rollout restart deploy/corral-web
+```
+
+## Known gaps
+
+- **No auth in web UI.** Gated by tailnet membership only. Fine for
+  single-operator, not multi-tenant.
+- **Metrics require metrics-server.** The UI grays out the resource-usage
+  panels if metrics aren't available. Neither bihar nor karnataka currently
+  runs metrics-server.
+- **Bootc is separate binary.** Users must install it via marketplace. The
+  on-cluster deployment image doesn't include it (would need `-tags bootc`
+  build).
+- **The `/api/images` endpoint on the deployed pod returns 404.** The
+  running image may be stale — needs a rebuild and rollout. `/api/vms` and
+  `/api/capabilities` work correctly.
+- **No tests for app.js** (the vanilla-JS SPA has no JS test harness).
+
+## Test suite (2026-06-11)
+
+Hermetic unit tests across every package — no kubectl, virtctl, cluster, or
+network needed (verified against an empty PATH). External commands go through
+the `shell.Runner` seam (`pkg/shell`, with a scriptable `shell.Fake`);
+package-level seams: `kubevirt.SetDefaultRunner/SetPackageRunner/
+SetApplyRunner`, `doctor.SetRunner`. Coverage: catalog/config/doctor 100%,
+registry 97%, shell 90%, plugin 88%, web 79%, kubevirt 75%, qemu 61%,
+cmd 21%. Live-cluster e2e tests live behind `-tags integration`
+(`pkg/kubevirt/integration_test.go`) and `scripts/smoke-web.sh`; CI runs
+gofmt + vet + build + `go test -race` for both the default and `bootc` tag
+sets, plus a coverage report (`.github/workflows/ci.yml`).

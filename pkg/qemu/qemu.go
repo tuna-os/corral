@@ -382,7 +382,13 @@ func Logs(name string) error {
 }
 
 func findQEMU() (qemu, qemuImg string, err error) {
-	// Try Homebrew paths first
+	// PATH first — covers any install location (and lets tests inject fakes).
+	if q, e1 := exec.LookPath("qemu-system-x86_64"); e1 == nil {
+		if qi, e2 := exec.LookPath("qemu-img"); e2 == nil {
+			return q, qi, nil
+		}
+	}
+	// Fall back to known install locations not always on PATH.
 	for _, base := range []string{
 		"/home/linuxbrew/.linuxbrew/bin",
 		"/usr/bin",

@@ -1,5 +1,8 @@
 # Build your own KubeVirt "Proxmox" with Corral
 
+> Full project docs: [README.md](../README.md), [SPEC.md](../SPEC.md),
+> [API reference](api.md), [architecture](architecture.md)
+
 This guide turns a plain Kubernetes cluster into a Proxmox-style virtualization
 host: a web UI with in-browser consoles, live CPU/RAM scaling, snapshots,
 backups, templates, and more — all driven by **KubeVirt** and the **Corral**

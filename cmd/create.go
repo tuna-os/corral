@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/hanthor/corral/pkg/catalog"
 	"github.com/hanthor/corral/pkg/config"
 	"github.com/hanthor/corral/pkg/kubevirt"
 	"github.com/hanthor/corral/pkg/qemu"
@@ -20,6 +21,8 @@ var (
 	createQCOW              string
 	createForce             bool
 	createContainerDisk     string
+	createImage             string
+	createImport            string
 	createPVC               string
 	createNamespace         string
 	createNode              string
@@ -57,7 +60,7 @@ Boot a container image as a VM? Install the bootc extension:
 			return fmt.Errorf("VM %q already exists (backend: %s). Use --force to overwrite", name, existing)
 		}
 
-		if createKubevirt {
+		if createKubevirt || createImage != "" || createImport != "" {
 			return runKubevirtCreate(name)
 		}
 		return runQemuCreate(name)
@@ -74,6 +77,8 @@ func init() {
 	createCmd.Flags().StringVar(&createQCOW, "qcow", "", "[qemu] QCOW2 template")
 	createCmd.Flags().BoolVar(&createForce, "force", false, "Overwrite existing VM")
 	createCmd.Flags().StringVar(&createContainerDisk, "container-disk", "", "[kubevirt] Container disk image")
+	createCmd.Flags().StringVar(&createImage, "image", "", "[kubevirt] OS image from the catalog (see `corral images`)")
+	createCmd.Flags().StringVar(&createImport, "import", "", "[kubevirt] Import a qcow2/raw disk image URL via CDI")
 	createCmd.Flags().StringVar(&createPVC, "pvc", "", "[kubevirt] Existing PVC to use")
 	createCmd.Flags().StringVarP(&createNamespace, "namespace", "n", "tailvm", "[kubevirt] Namespace")
 	createCmd.Flags().StringVar(&createNode, "node", "", "[kubevirt] Schedule on specific node")
@@ -98,6 +103,15 @@ func runKubevirtCreate(name string) error {
 		ns = kubevirt.DefaultNamespace
 	}
 
+	containerDisk := createContainerDisk
+	if createImage != "" {
+		img := catalog.Find(createImage)
+		if img == nil {
+			return fmt.Errorf("unknown image %q — see `corral images`", createImage)
+		}
+		containerDisk = img.ContainerDisk
+	}
+
 	opts := types.CreateOpts{
 		Name:              name,
 		Namespace:         ns,
@@ -105,7 +119,8 @@ func runKubevirtCreate(name string) error {
 		CPU:               createCPU,
 		Disk:              createDisk,
 		ISO:               createISO,
-		ContainerDisk:     createContainerDisk,
+		ContainerDisk:     containerDisk,
+		ImportURL:         createImport,
 		PVC:               createPVC,
 		Node:              createNode,
 		CloudInitPassword: createCloudInitPassword,

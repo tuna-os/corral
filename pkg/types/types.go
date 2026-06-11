@@ -50,6 +50,7 @@ type CreateOpts struct {
 	QCOW              string
 	Force             bool
 	ContainerDisk     string
+	ImportURL         string // qcow2/raw disk image URL → CDI import as the boot disk
 	PVC               string
 	Namespace         string
 	Node              string
