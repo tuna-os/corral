@@ -47,16 +47,20 @@ the source of truth there.
 | xterm.js serial console | `virtctl console` over WS bridge | ✅ shipped |
 | Start / shutdown / reboot | virtctl start/stop/restart | ✅ shipped |
 | Pause / resume | virtctl pause/unpause | ✅ shipped |
-| Live migration | `virtctl migrate` | ✅ shipped (button) |
+| Live migration | `virtctl migrate` (gated on real viability — same CPU vendor) | ✅ shipped |
 | Create VM wizard | container-disk / ISO (CDI) / bootc / PVC sources | ✅ shipped (single dialog) |
 | Build OS from container (no Proxmox equivalent!) | bootc disk built on-cluster, live build log in UI | ✅ shipped |
-| Hardware view | parse VM spec (disks, volumes, firmware) | ✅ shipped (read-only) |
-| Delete guest + storage | DeleteVM (PVCs, DataVolumes, proxy) | ✅ shipped |
+| Hardware view + **editing** | edit CPU/RAM (live hotplug or offline), add/expand/detach disks | ✅ shipped |
+| CPU / memory hotplug | LiveUpdate + sockets/maxGuest, live-migrate to apply | ✅ shipped |
+| Volume hotplug | `virtctl addvolume/removevolume` (HotplugVolumes gate) | ✅ shipped |
+| Snapshots / restore | VirtualMachineSnapshot / Restore CRDs, capability-gated | ✅ shipped |
+| Clone | VirtualMachineClone CRD | ✅ shipped |
+| Guest-agent info | `virtctl guestosinfo/fslist/userlist` in Summary | ✅ shipped |
+| Heroicons icon set | inline SVG, no CDN, replaces emojis | ✅ shipped |
+| Delete guest + storage | DeleteVM (PVCs, DataVolumes, hotplug disks, snapshots, proxy) | ✅ shipped |
 | Mobile-usable UI | responsive drawer layout | ✅ shipped |
+| Online disk expansion | patch PVC (needs expandable StorageClass) | ✅ shipped (gated) |
 | Resource graphs (CPU/mem/IO) | metrics-server / Prometheus scrape | ⏳ phase 2 |
-| Snapshots | VirtualMachineSnapshot CRD (needs snapshot controller + CSI) | ⏳ phase 2 |
-| Clone | VirtualMachineClone CRD | ⏳ phase 2 |
-| Hardware editing (add disk/NIC, resize) | patch VM spec, hotplug volumes | ⏳ phase 2 |
 | Storage view (pools → PVCs) | StorageClasses + PVC browser | ⏳ phase 2 |
 | Templates | golden PVCs / DataSources + clone-on-create | ⏳ phase 3 |
 | Backup / restore | VM export API / Velero | ⏳ phase 3 |
@@ -67,16 +71,29 @@ the source of truth there.
 | Task log | recent K8s events for VM objects | ⏳ phase 2 |
 | ISO upload | CDI upload proxy (`virtctl image-upload`) | ⏳ phase 3 |
 
+## Cluster constraints (important)
+
+Some operations depend on cluster capabilities, not Corral. The UI gates on
+these (`/api/capabilities`, per-VM `liveMigratable`):
+
+- **Live migration / CPU+RAM hotplug** need `vmRolloutStrategy: LiveUpdate`,
+  masquerade networking (Corral sets it), migratable storage, **and a target
+  node with the same CPU vendor**. You cannot live-migrate between an Intel and
+  an AMD host — on the Bihar (Intel) + Karnataka (AMD) cluster live migration is
+  impossible, so CPU/RAM changes fall back to a single offline reboot.
+- **Add disk** needs the `HotplugVolumes` feature gate.
+- **Online expand** needs a StorageClass with `allowVolumeExpansion: true`.
+- **Snapshots/clone** of persistent VMs need a `VolumeSnapshotClass`.
+
+`local-path` (the current default) has no expansion or snapshot support; a CSI
+backend like Longhorn would unlock those (but not cross-vendor live migration).
+
 ## Phase 2 (next)
 
 1. **Events tab** — `kubectl get events --field-selector involvedObject.name=<vm>`
    rendered as Proxmox's task log; surfaces scheduling/import errors fast.
 2. **Metrics** — `kubectl top pod` for virt-launcher pods (works once
    metrics-server is installed); sparkline on the summary tab.
-3. **Snapshots tab** — list/create/revert `VirtualMachineSnapshot` (requires
-   deploying the snapshot controller; local-path CSI has no snapshot support,
-   so this may need a storage upgrade — document the gap in the UI).
-4. **Volume hotplug** — `virtctl addvolume/removevolume` from the Hardware tab.
 
 ## Phase 3 (later)
 

@@ -42,6 +42,13 @@ corral list                 # unified table, both backends
 corral create <name> [flags]
 corral start  <name>
 corral stop   <name>
+corral restart <name>                  # kubevirt: virtctl restart; qemu: stop+start
+corral pause|unpause <name>            # kubevirt only
+corral scale  <name> [--cpu N] [--mem 8G]   # kubevirt: live hotplug or offline reboot
+corral migrate <name> [--node X]       # kubevirt: live-migrate (needs same-vendor target)
+corral adddisk <name> [--size 10Gi]    # kubevirt: hotplug a new disk
+corral rmdisk  <name> --volume <pvc>   # kubevirt: detach a hotplugged disk
+corral snapshot create|ls|restore|rm <name> [snap]   # kubevirt
 corral delete <name> [-f|--force]      # confirms unless --force
 corral info   <name>                   # JSON (VM manifest / metadata.json)
 corral viewer <name>                   # VNC viewer via xdg-open
@@ -51,6 +58,21 @@ corral config                          # show config + Tailscale auth key status
 corral web [--addr host:port]          # Proxmox-style web UI (default 127.0.0.1:8006)
 corral completion <shell>              # cobra built-in
 ```
+
+### 2.0 KubeVirt operations & cluster requirements
+
+The scale/migrate/snapshot/hotplug operations (CLI, TUI, and web UI) depend on
+cluster capabilities. Corral detects them and gates the UI rather than failing:
+
+- **CPU/RAM change** — always works; live-hotplugged when the VM is genuinely
+  live-migratable (`vmRolloutStrategy: LiveUpdate`, masquerade net, migratable
+  storage, **and a same-CPU-vendor target node**), else a single offline
+  stop→patch→start. New VMs get `cpu.maxSockets` + `memory.maxGuest` headroom.
+- **Live migration** — impossible between different CPU vendors (e.g. Intel↔AMD);
+  Corral returns a clear error instead of leaving a migration stuck in Scheduling.
+- **Add disk** — needs the `HotplugVolumes` feature gate.
+- **Online expand** — needs a StorageClass with `allowVolumeExpansion: true`.
+- **Snapshots/clone** of persistent-disk VMs — need a `VolumeSnapshotClass`.
 
 ### 2.1 `create` flags
 
