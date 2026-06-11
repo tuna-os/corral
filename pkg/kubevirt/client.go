@@ -133,6 +133,7 @@ func (c *Client) ListVMs() ([]types.VM, error) {
 	}
 
 	vmis := vmiStatusIndex()
+	vendors := nodeVendors()
 
 	var vms []types.VM
 	for _, vm := range result.Items {
@@ -167,12 +168,14 @@ func (c *Client) ListVMs() ([]types.VM, error) {
 			VNC:       c.proxyStatus(name, ns),
 		}
 		// Overlay live VMI facts (actual node, IP, migratability, agent).
+		// LiveMigratable reflects REAL viability: KubeVirt's condition AND a
+		// same-CPU-vendor target node (live migration can't cross Intel/AMD).
 		if vmi, ok := vmis[ns+"/"+name]; ok {
 			if vmi.Node != "" {
 				v.Node = vmi.Node
 			}
 			v.IP = vmi.IP
-			v.LiveMigratable = vmi.LiveMigratable
+			v.LiveMigratable = vmi.LiveMigratable && hasMigrationTarget(vmi.Node, vendors)
 			v.AgentConnected = vmi.AgentConnected
 		}
 		vms = append(vms, v)

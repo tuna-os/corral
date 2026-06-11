@@ -30,18 +30,9 @@ func handleScale(w http.ResponseWriter, r *http.Request) {
 		errResp(w, http.StatusBadRequest, err)
 		return
 	}
-	c := kubevirt.NewClient(ns)
-	if b.CPU > 0 {
-		if err := c.ScaleCPU(name, b.CPU); err != nil {
-			errResp(w, http.StatusInternalServerError, err)
-			return
-		}
-	}
-	if b.Mem != "" {
-		if err := c.ScaleMemory(name, b.Mem); err != nil {
-			errResp(w, http.StatusInternalServerError, err)
-			return
-		}
+	if err := kubevirt.NewClient(ns).Scale(name, b.CPU, b.Mem); err != nil {
+		errResp(w, http.StatusInternalServerError, err)
+		return
 	}
 	jsonResp(w, http.StatusOK, map[string]string{"status": "ok"})
 }

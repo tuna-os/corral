@@ -118,16 +118,13 @@ Examples:
 		if scaleCPU == 0 && scaleMem == "" {
 			return fmt.Errorf("specify --cpu and/or --mem")
 		}
+		if err := c.Scale(name, scaleCPU, scaleMem); err != nil {
+			return err
+		}
 		if scaleCPU > 0 {
-			if err := c.ScaleCPU(name, scaleCPU); err != nil {
-				return err
-			}
 			fmt.Printf("CPU → %d\n", scaleCPU)
 		}
 		if scaleMem != "" {
-			if err := c.ScaleMemory(name, scaleMem); err != nil {
-				return err
-			}
 			fmt.Printf("Memory → %s\n", scaleMem)
 		}
 		return nil

@@ -37,6 +37,9 @@ func (c *Client) UnpauseVM(name string) error {
 // nodeSelector is pinned to it first (so it lands there); otherwise the
 // scheduler picks. Only works for live-migratable VMs (ephemeral disk or RWX).
 func (c *Client) Migrate(name, targetNode string) error {
+	if targetNode == "" && !c.canLiveMigrate(name) {
+		return fmt.Errorf("%s cannot be live-migrated: it is not migratable, or no other schedulable node shares its CPU vendor (live migration is impossible between e.g. Intel and AMD hosts)", name)
+	}
 	if targetNode != "" {
 		patch := fmt.Sprintf(`{"spec":{"template":{"spec":{"nodeSelector":{"kubernetes.io/hostname":%q}}}}}`, targetNode)
 		if err := c.patchVMMerge(name, patch); err != nil {
@@ -116,45 +119,126 @@ func (c *Client) vmDomain(name string) (vmDomainInfo, error) {
 	}, nil
 }
 
-func (c *Client) migratable(name string) bool {
-	return vmiStatusIndex()[c.Namespace+"/"+name].LiveMigratable
+// canLiveMigrate reports whether the VM can ACTUALLY be live-migrated: KubeVirt
+// must mark it LiveMigratable (masquerade net, migratable storage) AND there
+// must be another schedulable node sharing its CPU vendor. The vendor check
+// matters on heterogeneous clusters — you cannot live-migrate a running VM
+// between an Intel and an AMD host, so without a same-vendor target the
+// migration would hang in Scheduling forever.
+func (c *Client) canLiveMigrate(name string) bool {
+	s, ok := vmiStatusIndex()[c.Namespace+"/"+name]
+	if !ok || !s.LiveMigratable {
+		return false
+	}
+	return hasMigrationTarget(s.Node, nodeVendors())
 }
 
-// ScaleCPU sets the VM's vCPU count. If the VM is running, live-migratable, and
-// has a sockets-based topology with headroom, it hotplugs sockets live;
-// otherwise it normalizes the topology and (if running) restarts to apply.
+// nodeVendors maps each schedulable node to its KubeVirt CPU vendor label.
+func nodeVendors() map[string]string {
+	out, err := exec.Command("kubectl", "get", "nodes", "-o", "json").Output()
+	if err != nil {
+		return nil
+	}
+	var res struct {
+		Items []struct {
+			Metadata struct {
+				Name   string            `json:"name"`
+				Labels map[string]string `json:"labels"`
+			} `json:"metadata"`
+		} `json:"items"`
+	}
+	if json.Unmarshal(out, &res) != nil {
+		return nil
+	}
+	vendors := map[string]string{}
+	for _, n := range res.Items {
+		if n.Metadata.Labels["kubevirt.io/schedulable"] != "true" {
+			continue
+		}
+		for k := range n.Metadata.Labels {
+			if v, ok := strings.CutPrefix(k, "cpu-vendor.node.kubevirt.io/"); ok {
+				vendors[n.Metadata.Name] = v
+				break
+			}
+		}
+	}
+	return vendors
+}
+
+// hasMigrationTarget reports whether a node other than `node` shares its vendor.
+func hasMigrationTarget(node string, vendors map[string]string) bool {
+	want, ok := vendors[node]
+	if !ok || want == "" {
+		return false
+	}
+	for n, v := range vendors {
+		if n != node && v == want {
+			return true
+		}
+	}
+	return false
+}
+
+// ScaleCPU sets the VM's vCPU count (live when possible, else offline).
 func (c *Client) ScaleCPU(name string, vcpus int) error {
 	if vcpus < 1 {
 		return fmt.Errorf("cpu must be >= 1")
 	}
-	d, err := c.vmDomain(name)
-	if err != nil {
-		return err
-	}
-	socketsBased := d.cores <= 1 && d.threads <= 1
-	if d.running && socketsBased && d.maxSockets >= vcpus && c.migratable(name) {
-		return c.patchVMMerge(name,
-			fmt.Sprintf(`{"spec":{"template":{"spec":{"domain":{"cpu":{"sockets":%d}}}}}}`, vcpus))
-	}
-	return c.offlinePatch(name, d.running, map[string]any{"cpu": cpuSpec(vcpus)})
+	return c.Scale(name, vcpus, "")
 }
 
-// ScaleMemory sets the VM's guest memory (e.g. "8G"). Live-hotplugs when
-// possible, else restarts to apply.
+// ScaleMemory sets the VM's guest memory, e.g. "8G" (live when possible, else offline).
 func (c *Client) ScaleMemory(name, mem string) error {
-	mib := quantityToMib(mem)
-	if mib < 1 {
-		return fmt.Errorf("invalid memory %q", mem)
+	return c.Scale(name, 0, mem)
+}
+
+// Scale changes CPU and/or memory in one operation. When the VM is running and
+// genuinely live-migratable (same-vendor target node, masquerade net) and the
+// new values fit the maxSockets/maxGuest headroom, both are hotplugged live
+// with no downtime. Otherwise both are applied in a single stop→patch→start
+// cycle (one reboot, not two). vcpus==0 / mem=="" mean "leave unchanged".
+func (c *Client) Scale(name string, vcpus int, mem string) error {
+	if vcpus == 0 && mem == "" {
+		return fmt.Errorf("nothing to change")
 	}
 	d, err := c.vmDomain(name)
 	if err != nil {
 		return err
 	}
-	if d.running && d.maxGuestMib >= mib && c.migratable(name) {
-		return c.patchVMMerge(name,
-			fmt.Sprintf(`{"spec":{"template":{"spec":{"domain":{"memory":{"guest":"%dMi"}}}}}}`, mib))
+	mib := 0
+	if mem != "" {
+		if mib = quantityToMib(mem); mib < 1 {
+			return fmt.Errorf("invalid memory %q", mem)
+		}
 	}
-	return c.offlinePatch(name, d.running, map[string]any{"memory": memSpec(mib)})
+	socketsBased := d.cores <= 1 && d.threads <= 1
+	cpuFits := vcpus == 0 || (socketsBased && d.maxSockets >= vcpus)
+	memFits := mem == "" || mib <= d.maxGuestMib
+
+	if d.running && cpuFits && memFits && c.canLiveMigrate(name) {
+		if vcpus > 0 {
+			if err := c.patchVMMerge(name,
+				fmt.Sprintf(`{"spec":{"template":{"spec":{"domain":{"cpu":{"sockets":%d}}}}}}`, vcpus)); err != nil {
+				return err
+			}
+		}
+		if mem != "" {
+			if err := c.patchVMMerge(name,
+				fmt.Sprintf(`{"spec":{"template":{"spec":{"domain":{"memory":{"guest":"%dMi"}}}}}}`, mib)); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	domain := map[string]any{}
+	if vcpus > 0 {
+		domain["cpu"] = cpuSpec(vcpus)
+	}
+	if mem != "" {
+		domain["memory"] = memSpec(mib)
+	}
+	return c.offlinePatch(name, d.running, domain)
 }
 
 // offlinePatch applies a domain-level merge patch, stopping/starting the VM if
