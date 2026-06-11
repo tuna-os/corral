@@ -138,6 +138,10 @@ kubectl apply -f deploy/corral-web.yaml
 # → https://corral.<tailnet>.ts.net
 ```
 
+> **Setting up from scratch?** [**Build your own KubeVirt "Proxmox"**](docs/kubevirt-proxmox-setup.md)
+> walks through the whole stack — KubeVirt + CDI, the feature gates,
+> Longhorn + snapshots, Multus, and deploying Corral.
+
 No auth is built in — tailnet membership *is* the auth. Never bind a public
 interface. Feature roadmap: [`WEBUI-PLAN.md`](WEBUI-PLAN.md).
 
