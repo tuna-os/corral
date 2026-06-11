@@ -12,11 +12,13 @@ import (
 // migrate, scale (CPU/RAM), snapshot, and disk hotplug.
 
 var (
-	migrateNode string
-	scaleCPU    int
-	scaleMem    string
-	addDiskSize string
-	rmDiskVol   string
+	migrateNode  string
+	scaleCPU     int
+	scaleMem     string
+	addDiskSize  string
+	rmDiskVol    string
+	exportVolume string
+	exportOutput string
 )
 
 // kubevirtOnly resolves the VM and errors if it is not a KubeVirt VM.
@@ -165,6 +167,32 @@ var rmDiskCmd = &cobra.Command{
 	},
 }
 
+var exportCmd = &cobra.Command{
+	Use:   "export [name]",
+	Short: "Back up a VM's disk to a compressed image (KubeVirt)",
+	Long: `Export (back up) a VM's persistent disk to a gzip image via the
+KubeVirt export API. The VM should be stopped first — its disk can't be read
+while a running VM holds it.
+
+Examples:
+  corral export web                       # → web.img.gz
+  corral export web -o /backups/web.gz
+  corral export web --volume web-disk`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		c, name, err := kubevirtOnly(args, "export")
+		if err != nil {
+			return err
+		}
+		out, err := c.Export(name, exportVolume, exportOutput)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Exported %s → %s\n", name, out)
+		return nil
+	},
+}
+
 // ── snapshot subcommands ──────────────────────────────────────────
 
 var snapshotCmd = &cobra.Command{
@@ -251,13 +279,15 @@ var snapshotDeleteCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.AddCommand(restartCmd, pauseCmd, unpauseCmd, migrateCmd, scaleCmd, addDiskCmd, rmDiskCmd, snapshotCmd)
+	rootCmd.AddCommand(restartCmd, pauseCmd, unpauseCmd, migrateCmd, scaleCmd, addDiskCmd, rmDiskCmd, exportCmd, snapshotCmd)
 
 	migrateCmd.Flags().StringVar(&migrateNode, "node", "", "Target node (default: scheduler chooses)")
 	scaleCmd.Flags().IntVar(&scaleCPU, "cpu", 0, "New vCPU count")
 	scaleCmd.Flags().StringVar(&scaleMem, "mem", "", "New memory (e.g. 8G)")
 	addDiskCmd.Flags().StringVar(&addDiskSize, "size", "10Gi", "Disk size")
 	rmDiskCmd.Flags().StringVar(&rmDiskVol, "volume", "", "Volume (PVC) name to detach")
+	exportCmd.Flags().StringVar(&exportVolume, "volume", "", "Volume/PVC to export (default: primary disk)")
+	exportCmd.Flags().StringVarP(&exportOutput, "output", "o", "", "Output file (default: <name>.img.gz)")
 
 	snapshotCmd.AddCommand(snapshotCreateCmd, snapshotListCmd, snapshotRestoreCmd, snapshotDeleteCmd)
 }
