@@ -8,6 +8,7 @@ const $ = (sel) => document.querySelector(sel);
 let vms = [];
 let nodes = [];
 let caps = { storageClass: '', canExpand: false, canSnapshot: false };
+let availableNADs = [];
 let selected = { type: 'dc' }; // {type:'dc'} | {type:'node',name} | {type:'vm',key}
 let tab = 'summary';
 let rfb = null;        // noVNC connection
@@ -59,6 +60,7 @@ async function loadCaps() {
   if (!caps.bootc) {
     document.querySelector('[name=sourceType] option[value=bootc]')?.remove();
   }
+  try { availableNADs = await api('/api/nads'); } catch { availableNADs = []; }
 }
 
 async function loadInstanceTypes() {
@@ -487,7 +489,9 @@ async function renderHardware(vm, body) {
       }).join('')}
     </tbody></table>
 
-    <h2 class="section">${icon('server')} Network</h2>
+    <h2 class="section">${icon('server')} Network
+      ${availableNADs.length ? `<button class="btn" id="hw-addnic">${icon('plus')} Add NIC</button>` : ''}
+    </h2>
     ${networkTable(spec, vm)}
 
     <h2 class="section">${icon('info')} Firmware</h2>
@@ -533,6 +537,14 @@ async function renderHardware(vm, body) {
       setTimeout(() => renderHardware(vm, body), 800);
     };
   });
+  const addNic = $('#hw-addnic');
+  if (addNic) addNic.onclick = async () => {
+    const nad = prompt(`Attach a NIC on which network?\nAvailable: ${availableNADs.join(', ')}`, availableNADs[0] || '');
+    if (!nad) return;
+    try { await post(vm, '/nics', { nad: nad.trim() }); toast('NIC added'); }
+    catch (e) { toast(e.message); }
+    setTimeout(() => renderHardware(vm, body), 800);
+  };
 }
 
 function networkTable(spec, vm) {

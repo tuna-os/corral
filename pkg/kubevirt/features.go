@@ -543,6 +543,45 @@ func (c *Client) GuestInfo(name string) (map[string]any, error) {
 	return res, nil
 }
 
+// ── Secondary networks (Multus) ───────────────────────────────────
+
+// ListNADs returns Multus NetworkAttachmentDefinitions ("ns/name"). Empty when
+// Multus isn't installed.
+func ListNADs() []string {
+	out, err := exec.Command("kubectl", "get", "net-attach-def", "-A",
+		"-o", "jsonpath={range .items[*]}{.metadata.namespace}/{.metadata.name}{\"\\n\"}{end}").Output()
+	if err != nil {
+		return []string{}
+	}
+	nads := []string{}
+	for _, n := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if n = strings.TrimSpace(n); n != "" {
+			nads = append(nads, n)
+		}
+	}
+	return nads
+}
+
+// AddNIC attaches a secondary interface backed by a Multus NAD to the VM
+// (bridge binding). Applied to the VM spec; KubeVirt hotplugs it on a running
+// VM where supported, else it takes effect on next boot.
+func (c *Client) AddNIC(name, nad, iface string) error {
+	if iface == "" {
+		iface = "net1"
+	}
+	// JSON-patch: append an interface + a matching multus network.
+	patch := fmt.Sprintf(`[
+      {"op":"add","path":"/spec/template/spec/domain/devices/interfaces/-","value":{"name":%q,"bridge":{}}},
+      {"op":"add","path":"/spec/template/spec/networks/-","value":{"name":%q,"multus":{"networkName":%q}}}
+    ]`, iface, iface, nad)
+	out, err := exec.Command("kubectl", "patch", "vm", name, "-n", c.Namespace,
+		"--type", "json", "-p", patch).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("add NIC: %s", strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 // ── Templates ─────────────────────────────────────────────────────
 
 // MarkTemplate labels (or unlabels) a VM as a golden template. Templates are

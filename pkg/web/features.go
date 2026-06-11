@@ -194,6 +194,29 @@ func handleMarkTemplate(w http.ResponseWriter, r *http.Request) {
 	jsonResp(w, http.StatusOK, map[string]bool{"isTemplate": b.On})
 }
 
+// GET /api/nads — Multus NetworkAttachmentDefinitions for secondary NICs
+func handleNADs(w http.ResponseWriter, r *http.Request) {
+	jsonResp(w, http.StatusOK, kubevirt.ListNADs())
+}
+
+// POST /api/vms/{ns}/{name}/nics  body: {nad, iface}
+func handleAddNIC(w http.ResponseWriter, r *http.Request) {
+	ns, name := r.PathValue("ns"), r.PathValue("name")
+	var b struct {
+		NAD   string `json:"nad"`
+		Iface string `json:"iface"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&b); err != nil || b.NAD == "" {
+		errResp(w, http.StatusBadRequest, fmt.Errorf("nad is required"))
+		return
+	}
+	if err := kubevirt.NewClient(ns).AddNIC(name, b.NAD, b.Iface); err != nil {
+		errResp(w, http.StatusInternalServerError, err)
+		return
+	}
+	jsonResp(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
 // GET /api/instancetypes — cluster instancetypes + preferences for the create wizard
 func handleInstanceTypes(w http.ResponseWriter, r *http.Request) {
 	jsonResp(w, http.StatusOK, map[string][]string{

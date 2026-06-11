@@ -51,6 +51,8 @@ func Serve(addr string) error {
 	mux.HandleFunc("GET /api/nodes", handleNodes)
 	mux.HandleFunc("GET /api/capabilities", handleCapabilities)
 	mux.HandleFunc("GET /api/instancetypes", handleInstanceTypes)
+	mux.HandleFunc("GET /api/nads", handleNADs)
+	mux.HandleFunc("POST /api/vms/{ns}/{name}/nics", handleAddNIC)
 	mux.HandleFunc("GET /api/datavolumes", handleListDataVolumes)
 	mux.HandleFunc("POST /api/datavolumes", handleImportDataVolume)
 	mux.HandleFunc("DELETE /api/datavolumes/{ns}/{name}", handleDeleteDataVolume)
