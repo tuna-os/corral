@@ -541,6 +541,33 @@ func (c *Client) GuestInfo(name string) (map[string]any, error) {
 	return res, nil
 }
 
+// ── Instancetypes / preferences ───────────────────────────────────
+
+// ListInstanceTypes returns cluster-wide KubeVirt instancetype names (sizing).
+func ListInstanceTypes() []string {
+	return kubectlNames("virtualmachineclusterinstancetypes")
+}
+
+// ListPreferences returns cluster-wide KubeVirt preference names (guest defaults).
+func ListPreferences() []string {
+	return kubectlNames("virtualmachineclusterpreferences")
+}
+
+func kubectlNames(resource string) []string {
+	out, err := exec.Command("kubectl", "get", resource,
+		"-o", "jsonpath={range .items[*]}{.metadata.name}{\"\\n\"}{end}").Output()
+	if err != nil {
+		return []string{}
+	}
+	names := []string{}
+	for _, n := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if n = strings.TrimSpace(n); n != "" {
+			names = append(names, n)
+		}
+	}
+	return names
+}
+
 // ── ISO / image library (CDI DataVolumes) ─────────────────────────
 
 // DataVolumeInfo is a row in the image library.

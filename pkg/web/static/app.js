@@ -57,6 +57,19 @@ async function loadCaps() {
   try { caps = await api('/api/capabilities'); } catch { /* keep defaults */ }
 }
 
+async function loadInstanceTypes() {
+  let d;
+  try { d = await api('/api/instancetypes'); } catch { return; }
+  const fill = (sel, items, head) => {
+    const el = document.querySelector(sel);
+    if (!el) return;
+    el.innerHTML = `<option value="">${head}</option>` +
+      (items || []).map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+  };
+  fill('[name=instancetype]', d.instancetypes, '— manual CPU/mem —');
+  fill('[name=preference]', d.preferences, '(none)');
+}
+
 // ── Tree (sidebar) ────────────────────────────────────────────────
 
 function treeRow({ lvl, icon, label, sub, sel, onclick, dot }) {
@@ -462,6 +475,9 @@ async function renderHardware(vm, body) {
       }).join('')}
     </tbody></table>
 
+    <h2 class="section">${icon('server')} Network</h2>
+    ${networkTable(spec, vm)}
+
     <h2 class="section">${icon('info')} Firmware</h2>
     <dl class="props">
       <dt>Boot</dt><dd>${spec.domain?.firmware?.kernelBoot ? 'kernel boot (bootc)' : 'BIOS'}</dd>
@@ -505,6 +521,25 @@ async function renderHardware(vm, body) {
       setTimeout(() => renderHardware(vm, body), 800);
     };
   });
+}
+
+function networkTable(spec, vm) {
+  const ifaces = spec.domain?.devices?.interfaces ?? [];
+  const nets = Object.fromEntries((spec.networks ?? []).map((n) => [n.name, n]));
+  const binding = (i) => ['masquerade', 'bridge', 'sriov', 'macvtap', 'slirp'].find((b) => i[b]) || '?';
+  const netOf = (name) => {
+    const n = nets[name] || {};
+    if (n.pod) return 'pod network';
+    if (n.multus) return `multus: ${n.multus.networkName}`;
+    return Object.keys(n).filter((k) => k !== 'name')[0] || '—';
+  };
+  if (!ifaces.length) return `<p class="muted">No interfaces.</p>`;
+  return `<table><thead><tr><th>Name</th><th>Binding</th><th>Network</th><th>IP</th></tr></thead><tbody>
+    ${ifaces.map((i) => `<tr>
+      <td>${esc(i.name)}</td><td>${esc(binding(i))}</td><td>${esc(netOf(i.name))}</td>
+      <td>${esc(i.name === 'default' ? (vm.ip || '—') : '—')}</td></tr>`).join('')}
+    </tbody></table>
+    <p class="muted" style="font-size:.78rem;margin-top:6px">Secondary NIC hotplug needs Multus (not installed on this cluster).</p>`;
 }
 
 async function renderSnapshots(vm, body) {
@@ -653,6 +688,8 @@ $('#create-form').onsubmit = async (e) => {
     mem: f.get('mem'),
     disk: f.get('disk'),
     cloudInit: f.get('cloudInit') || '',
+    instancetype: f.get('instancetype') || '',
+    preference: f.get('preference') || '',
   };
   const src = f.get('source');
   const type = f.get('sourceType');
@@ -714,5 +751,6 @@ $('#btn-menu').innerHTML = icon('menu');
 $('#btn-create').innerHTML = `${icon('plus')} Create VM`;
 
 loadCaps();
+loadInstanceTypes();
 refresh();
 setInterval(refresh, 5000);

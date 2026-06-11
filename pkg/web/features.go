@@ -174,6 +174,14 @@ func handleMetrics(w http.ResponseWriter, r *http.Request) {
 	jsonResp(w, http.StatusOK, kubevirt.NewClient(ns).Metrics(name))
 }
 
+// GET /api/instancetypes — cluster instancetypes + preferences for the create wizard
+func handleInstanceTypes(w http.ResponseWriter, r *http.Request) {
+	jsonResp(w, http.StatusOK, map[string][]string{
+		"instancetypes": kubevirt.ListInstanceTypes(),
+		"preferences":   kubevirt.ListPreferences(),
+	})
+}
+
 // GET /api/datavolumes — image/ISO library
 func handleListDataVolumes(w http.ResponseWriter, r *http.Request) {
 	dvs, err := kubevirt.ListDataVolumes()

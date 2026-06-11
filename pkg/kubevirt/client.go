@@ -552,6 +552,23 @@ func GenerateVM(opts types.CreateOpts) map[string]any {
 
 	memMib := parseMem(mem)
 
+	domain := map[string]any{
+		"devices": map[string]any{
+			"disks": disks,
+			// masquerade (NAT) binding is required for live migration;
+			// the default bridge binding pins the VM to its node.
+			"interfaces": []map[string]any{
+				{"name": "default", "masquerade": map[string]any{}},
+			},
+		},
+	}
+	// An instancetype supplies CPU/memory (and hotplug headroom); only set the
+	// domain cpu/memory when not using one.
+	if opts.InstanceType == "" {
+		domain["cpu"] = cpuSpec(cpu)
+		domain["memory"] = memSpec(memMib)
+	}
+
 	spec := map[string]any{
 		"running": false,
 		"template": map[string]any{
@@ -559,24 +576,26 @@ func GenerateVM(opts types.CreateOpts) map[string]any {
 				"labels": map[string]any{"kubevirt.io/vm": name},
 			},
 			"spec": map[string]any{
-				"domain": map[string]any{
-					"cpu":    cpuSpec(cpu),
-					"memory": memSpec(memMib),
-					"devices": map[string]any{
-						"disks": disks,
-						// masquerade (NAT) binding is required for live migration;
-						// the default bridge binding pins the VM to its node.
-						"interfaces": []map[string]any{
-							{"name": "default", "masquerade": map[string]any{}},
-						},
-					},
-				},
+				"domain": domain,
 				"networks": []map[string]any{
 					{"name": "default", "pod": map[string]any{}},
 				},
 				"volumes": volumes,
 			},
 		},
+	}
+
+	if opts.InstanceType != "" {
+		spec["instancetype"] = map[string]any{
+			"kind": "VirtualMachineClusterInstancetype",
+			"name": opts.InstanceType,
+		}
+	}
+	if opts.Preference != "" {
+		spec["preference"] = map[string]any{
+			"kind": "VirtualMachineClusterPreference",
+			"name": opts.Preference,
+		}
 	}
 
 	if opts.Node != "" {

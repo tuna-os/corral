@@ -27,6 +27,8 @@ var (
 	createCloudInit         string
 	createBootc             string
 	createTSAuthKey         string
+	createInstanceType      string
+	createPreference        string
 )
 
 var createCmd = &cobra.Command{
@@ -84,6 +86,8 @@ func init() {
 	createCmd.Flags().StringVar(&createCloudInit, "cloud-init", "", "[kubevirt] Extra cloud-init user-data YAML")
 	createCmd.Flags().StringVar(&createBootc, "bootc", "", "Bootc container image URI (builds disk on-cluster)")
 	createCmd.Flags().StringVar(&createTSAuthKey, "ts-authkey", "", "[kubevirt] Tailscale auth key for the VM (default: config/TS_AUTHKEY)")
+	createCmd.Flags().StringVar(&createInstanceType, "instancetype", "", "[kubevirt] Cluster instancetype for sizing (overrides --cpu/--mem)")
+	createCmd.Flags().StringVar(&createPreference, "preference", "", "[kubevirt] Cluster preference (guest device/firmware defaults)")
 }
 
 // tsAuthKey resolves the Tailscale auth key: flag > env/config file.
@@ -112,6 +116,8 @@ func runKubevirtCreate(name string) error {
 		Node:              createNode,
 		CloudInitPassword: createCloudInitPassword,
 		CloudInitExtra:    createCloudInit,
+		InstanceType:      createInstanceType,
+		Preference:        createPreference,
 		SSHPublicKey:      kubevirt.LoadSSHPublicKey(),
 		TailscaleAuthKey:  tsAuthKey(),
 	}
