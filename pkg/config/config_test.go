@@ -1,0 +1,179 @@
+package config
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+
+	"gopkg.in/yaml.v3"
+)
+
+func TestAuthKey_FromEnv(t *testing.T) {
+	t.Setenv("TS_AUTHKEY", "tskey-auth-abc123")
+	// Ensure no config file interferes
+	t.Setenv("HOME", t.TempDir())
+
+	key := AuthKey()
+	if key != "tskey-auth-abc123" {
+		t.Errorf("AuthKey() = %q, expected %q", key, "tskey-auth-abc123")
+	}
+}
+
+func TestAuthKey_FromFile(t *testing.T) {
+	// Clear env var so we fall through to file
+	t.Setenv("TS_AUTHKEY", "")
+
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "test-config.yaml")
+	cfg := Config{Tailscale: TailscaleConfig{AuthKey: "tskey-file-xyz789"}}
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if loaded.Tailscale.AuthKey != "tskey-file-xyz789" {
+		t.Errorf("Tailscale.AuthKey = %q, expected %q", loaded.Tailscale.AuthKey, "tskey-file-xyz789")
+	}
+}
+
+func TestAuthKey_EnvOverFile(t *testing.T) {
+	// AuthKey checks env FIRST, then file. Env should win.
+	t.Setenv("TS_AUTHKEY", "tskey-from-env")
+
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "test-config.yaml")
+	cfg := Config{Tailscale: TailscaleConfig{AuthKey: "tskey-from-file"}}
+	data, _ := yaml.Marshal(cfg)
+	os.WriteFile(configPath, data, 0644)
+
+	// Load directly to confirm file has its own value
+	loaded, err := Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Tailscale.AuthKey != "tskey-from-file" {
+		t.Fatal("file value not loaded correctly")
+	}
+
+	// AuthKey() checks env first — env should win
+	key := AuthKey()
+	if key != "tskey-from-env" {
+		t.Errorf("AuthKey() = %q, expected env value %q", key, "tskey-from-env")
+	}
+}
+
+func TestAuthKey_None(t *testing.T) {
+	t.Setenv("TS_AUTHKEY", "")
+	// Point HOME to an empty temp dir so DefaultPath finds nothing
+	t.Setenv("HOME", t.TempDir())
+
+	key := AuthKey()
+	if key != "" {
+		t.Errorf("AuthKey() = %q, expected empty string", key)
+	}
+}
+
+func TestLoad_Empty(t *testing.T) {
+	tmp := t.TempDir()
+	missingPath := filepath.Join(tmp, "does-not-exist.yaml")
+
+	cfg, err := Load(missingPath)
+	if err != nil {
+		t.Errorf("Load of nonexistent file returned error: %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("Load returned nil config")
+	}
+	if cfg.Tailscale.AuthKey != "" {
+		t.Errorf("expected empty auth key, got %q", cfg.Tailscale.AuthKey)
+	}
+}
+
+func TestLoad_InvalidYAML(t *testing.T) {
+	tmp := t.TempDir()
+	badPath := filepath.Join(tmp, "bad.yaml")
+	os.WriteFile(badPath, []byte("{{{ not yaml"), 0644)
+
+	_, err := Load(badPath)
+	if err == nil {
+		t.Error("expected error for invalid YAML, got nil")
+	}
+}
+
+func TestDefaultPath(t *testing.T) {
+	t.Setenv("HOME", "/home/testuser")
+	path := DefaultPath()
+	expected := "/home/testuser/.config/tailvm/config.yaml"
+	if path != expected {
+		t.Errorf("DefaultPath() = %q, expected %q", path, expected)
+	}
+}
+
+func TestLoad_DirectoryNotFile(t *testing.T) {
+	// A directory path passed to Load should return an error (not IsNotExist)
+	tmp := t.TempDir()
+	_, err := Load(tmp) // tmp is a directory, not a file
+	if err == nil {
+		t.Error("expected error when loading a directory as config file")
+	}
+}
+
+func TestAuthKey_LoadError(t *testing.T) {
+	// AuthKey calls Load("") when TS_AUTHKEY is empty.
+	// When Load returns an error (not IsNotExist), AuthKey returns "".
+	t.Setenv("TS_AUTHKEY", "")
+
+	// Point HOME to a path where DefaultPath can't be read
+	tmp := t.TempDir()
+	confDir := filepath.Join(tmp, ".config", "tailvm")
+	os.MkdirAll(confDir, 0755)
+	// Create the config path as a directory so ReadFile fails
+	configPath := filepath.Join(confDir, "config.yaml")
+	os.Mkdir(configPath, 0755)
+	t.Setenv("HOME", tmp)
+
+	key := AuthKey()
+	if key != "" {
+		t.Errorf("AuthKey() = %q, expected empty on Load error", key)
+	}
+}
+
+func TestAuthKey_FileWithoutKey(t *testing.T) {
+	// AuthKey loads file successfully but the file has no tailscale.auth_key
+	t.Setenv("TS_AUTHKEY", "")
+
+	tmp := t.TempDir()
+	confDir := filepath.Join(tmp, ".config", "tailvm")
+	os.MkdirAll(confDir, 0755)
+	configPath := filepath.Join(confDir, "config.yaml")
+	// Write a valid YAML config without tailscale section
+	os.WriteFile(configPath, []byte("other: value\n"), 0644)
+	t.Setenv("HOME", tmp)
+
+	key := AuthKey()
+	if key != "" {
+		t.Errorf("AuthKey() = %q, expected empty when config has no tailscale key", key)
+	}
+}
+
+func TestAuthKey_FromDefaultPath(t *testing.T) {
+	t.Setenv("TS_AUTHKEY", "")
+	tmp := t.TempDir()
+	confDir := filepath.Join(tmp, ".config", "tailvm")
+	os.MkdirAll(confDir, 0755)
+	cfgData, _ := yaml.Marshal(Config{Tailscale: TailscaleConfig{AuthKey: "tskey-default-123"}})
+	os.WriteFile(filepath.Join(confDir, "config.yaml"), cfgData, 0644)
+	t.Setenv("HOME", tmp)
+
+	key := AuthKey()
+	if key != "tskey-default-123" {
+		t.Errorf("AuthKey() = %q, expected 'tskey-default-123'", key)
+	}
+}

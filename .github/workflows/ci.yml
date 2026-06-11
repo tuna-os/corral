@@ -30,13 +30,36 @@ jobs:
           fi
 
       - name: go vet
-        run: go vet ./...
+        run: |
+          go vet ./...
+          go vet -tags bootc ./...
 
       - name: go build
-        run: go build ./...
+        run: |
+          go build ./...
+          go build -tags bootc ./...
 
-      - name: go test
-        run: go test ./...
+      - name: go test (race)
+        run: go test -race -count=1 -timeout 120s ./...
+
+      - name: go test (bootc tag)
+        run: go test -tags bootc -race -count=1 -timeout 120s ./...
+
+      - name: coverage
+        run: |
+          go test -count=1 -timeout 120s -coverprofile=cover.out ./...
+          go tool cover -func=cover.out | tail -1
+          {
+            echo '### Test coverage'
+            echo '```'
+            go tool cover -func=cover.out | tail -20
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: cover.out
 
   publish-image:
     # corral-web image: the web UI served on the cluster (deploy/corral-web.yaml)

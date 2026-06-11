@@ -321,3 +321,437 @@ func TestRandomPassword(t *testing.T) {
 		t.Errorf("expected 12-char password, got %d", len(p1))
 	}
 }
+
+func TestParseMem_BigValues(t *testing.T) {
+	tests := []struct {
+		input string
+		want  int
+	}{
+		{"16G", 16384},
+		{"128M", 128},
+		{"0G", 0},
+		{"0M", 0},
+		{"1G", 1024},
+		{"4096M", 4096},
+		{"2G", 2048},
+	}
+	for _, tt := range tests {
+		got := parseMem(tt.input)
+		if got != tt.want {
+			t.Errorf("parseMem(%q) = %d, want %d", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestParseMem_Invalid(t *testing.T) {
+	tests := []string{"", "abc"}
+	for _, in := range tests {
+		got := parseMem(in)
+		if got != 0 {
+			t.Errorf("parseMem(%q) = %d, want 0 for invalid input", in, got)
+		}
+	}
+	// "4Gigs" — Sscanf reads 4, HasSuffix fails, returns raw 4 (MiB)
+	if got := parseMem("4Gigs"); got != 4 {
+		t.Errorf("parseMem(4Gigs) = %d, want 4 (raw number)", got)
+	}
+}
+
+func TestParseMem_RawNumber(t *testing.T) {
+	got := parseMem("2048")
+	if got != 2048 {
+		t.Errorf("parseMem(%q) = %d, want 2048", "2048", got)
+	}
+}
+
+func TestCpuSpec_Normal(t *testing.T) {
+	cpu := cpuSpec(4)
+	if cpu["sockets"] != 4 {
+		t.Errorf("sockets = %v, want 4", cpu["sockets"])
+	}
+	if cpu["cores"] != 1 {
+		t.Errorf("cores = %v, want 1", cpu["cores"])
+	}
+	if cpu["threads"] != 1 {
+		t.Errorf("threads = %v, want 1", cpu["threads"])
+	}
+	if cpu["maxSockets"] != 16 {
+		t.Errorf("maxSockets = %v, want 16 (4×)", cpu["maxSockets"])
+	}
+}
+
+func TestCpuSpec_Minimum(t *testing.T) {
+	cpu := cpuSpec(0)
+	if cpu["sockets"] != 1 {
+		t.Errorf("sockets = %v, want 1 (minimum)", cpu["sockets"])
+	}
+	if cpu["maxSockets"] != 4 {
+		t.Errorf("maxSockets = %v, want 4 (minimum max)", cpu["maxSockets"])
+	}
+}
+
+func TestCpuSpec_Small(t *testing.T) {
+	cpu := cpuSpec(1)
+	if cpu["sockets"] != 1 {
+		t.Errorf("sockets = %v, want 1", cpu["sockets"])
+	}
+	if cpu["maxSockets"] != 4 {
+		t.Errorf("maxSockets = %v, want 4 (minimum max)", cpu["maxSockets"])
+	}
+}
+
+func TestCpuSpec_Large(t *testing.T) {
+	cpu := cpuSpec(16)
+	if cpu["sockets"] != 16 {
+		t.Errorf("sockets = %v, want 16", cpu["sockets"])
+	}
+	if cpu["maxSockets"] != 64 {
+		t.Errorf("maxSockets = %v, want 64", cpu["maxSockets"])
+	}
+}
+
+func TestMemSpec(t *testing.T) {
+	mem := memSpec(4096)
+	if mem["guest"] != "4096Mi" {
+		t.Errorf("guest = %v, want 4096Mi", mem["guest"])
+	}
+	if mem["maxGuest"] != "16384Mi" {
+		t.Errorf("maxGuest = %v, want 16384Mi (4×)", mem["maxGuest"])
+	}
+}
+
+func TestMemSpec_Minimum(t *testing.T) {
+	mem := memSpec(0)
+	if mem["guest"] != "1Mi" {
+		t.Errorf("guest = %v, want 1Mi (minimum)", mem["guest"])
+	}
+}
+
+func TestRandomPassword_Length(t *testing.T) {
+	for i := 0; i < 10; i++ {
+		pw := randomPassword()
+		if len(pw) != 12 {
+			t.Errorf("password length = %d, want 12", len(pw))
+		}
+	}
+}
+
+func TestRandomPassword_Charset(t *testing.T) {
+	pw := randomPassword()
+	for _, c := range pw {
+		if !((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+			t.Errorf("password contains invalid char: %c", c)
+		}
+	}
+}
+
+func TestRandomPassword_Uniqueness(t *testing.T) {
+	seen := map[string]bool{}
+	for i := 0; i < 100; i++ {
+		pw := randomPassword()
+		if seen[pw] {
+			t.Fatal("duplicate random password after 100 iterations")
+		}
+		seen[pw] = true
+	}
+}
+
+func TestLoadSSHPublicKey_NoKeys(t *testing.T) {
+	// Point HOME to an empty directory — no .ssh folder exists
+	t.Setenv("HOME", t.TempDir())
+	key := LoadSSHPublicKey()
+	if key != "" {
+		t.Errorf("expected empty key when no .ssh dir, got %q", key)
+	}
+}
+
+func TestDefaultNamespace(t *testing.T) {
+	if DefaultNamespace != "tailvm" {
+		t.Errorf("DefaultNamespace = %q, want tailvm", DefaultNamespace)
+	}
+}
+
+func TestGenerateBootDataVolume(t *testing.T) {
+	dv := GenerateBootDataVolume("imported-disk", "tailvm", "https://example.com/image.qcow2", "30G", "longhorn")
+
+	if dv["kind"] != "DataVolume" {
+		t.Error("expected DataVolume")
+	}
+	spec := dv["spec"].(map[string]any)
+
+	// Check source URL
+	source := spec["source"].(map[string]any)
+	httpSrc := source["http"].(map[string]any)
+	if httpSrc["url"] != "https://example.com/image.qcow2" {
+		t.Errorf("wrong URL: %s", httpSrc["url"])
+	}
+
+	// Check PVC sizing
+	pvc := spec["pvc"].(map[string]any)
+	requests := pvc["resources"].(map[string]any)["requests"].(map[string]any)
+	if requests["storage"] != "30G" {
+		t.Errorf("storage = %v, want 30G", requests["storage"])
+	}
+
+	// Check storage class
+	if pvc["storageClassName"] != "longhorn" {
+		t.Errorf("storageClassName = %v, want longhorn", pvc["storageClassName"])
+	}
+}
+
+func TestGenerateBootDataVolume_DefaultSize(t *testing.T) {
+	dv := GenerateBootDataVolume("imported-disk", "tailvm", "https://example.com/image.qcow2", "", "")
+
+	spec := dv["spec"].(map[string]any)
+	pvc := spec["pvc"].(map[string]any)
+	requests := pvc["resources"].(map[string]any)["requests"].(map[string]any)
+	if requests["storage"] != "20G" {
+		t.Errorf("default storage = %v, want 20G", requests["storage"])
+	}
+}
+
+func TestGenerateBootDataVolume_NoStorageClass(t *testing.T) {
+	dv := GenerateBootDataVolume("imported-disk", "tailvm", "https://example.com/image.qcow2", "10G", "")
+
+	spec := dv["spec"].(map[string]any)
+	pvc := spec["pvc"].(map[string]any)
+	if _, ok := pvc["storageClassName"]; ok {
+		t.Error("storageClassName should not be set when empty")
+	}
+}
+
+func TestGeneratePVCWithClass(t *testing.T) {
+	pvc := GeneratePVCWithClass("test-disk", "tailvm", "20G", "longhorn")
+
+	if pvc["kind"] != "PersistentVolumeClaim" {
+		t.Error("expected PersistentVolumeClaim")
+	}
+	spec := pvc["spec"].(map[string]any)
+	if spec["storageClassName"] != "longhorn" {
+		t.Errorf("storageClassName = %v, want longhorn", spec["storageClassName"])
+	}
+}
+
+func TestGeneratePVCWithClass_Empty(t *testing.T) {
+	pvc := GeneratePVCWithClass("test-disk", "tailvm", "20G", "")
+
+	spec := pvc["spec"].(map[string]any)
+	if _, ok := spec["storageClassName"]; ok {
+		t.Error("storageClassName should not be set when empty")
+	}
+}
+
+func TestGenerateVM_PVC(t *testing.T) {
+	opts := types.CreateOpts{
+		Name: "pvcvm", Namespace: "default",
+		PVC: "existing-pvc",
+	}
+	vm := GenerateVM(opts)
+
+	tmpl := vm["spec"].(map[string]any)["template"].(map[string]any)
+	vmSpec := tmpl["spec"].(map[string]any)
+	volumes := vmSpec["volumes"].([]map[string]any)
+
+	found := false
+	for _, v := range volumes {
+		if v["name"] == "rootdisk" {
+			found = true
+			pvc := v["persistentVolumeClaim"].(map[string]any)
+			if pvc["claimName"] != "existing-pvc" {
+				t.Errorf("PVC claimName = %v, want existing-pvc", pvc["claimName"])
+			}
+		}
+	}
+	if !found {
+		t.Error("rootdisk volume not found")
+	}
+}
+
+func TestGenerateVM_Defaults(t *testing.T) {
+	opts := types.CreateOpts{Name: "defaultvm"}
+	vm := GenerateVM(opts)
+
+	tmpl := vm["spec"].(map[string]any)["template"].(map[string]any)
+	vmSpec := tmpl["spec"].(map[string]any)
+	domain := vmSpec["domain"].(map[string]any)
+
+	// Default CPU spec should exist
+	cpu := domain["cpu"].(map[string]any)
+	if cpu["sockets"] != 2 {
+		t.Errorf("default CPU sockets = %v, want 2", cpu["sockets"])
+	}
+
+	// Default memory should be 4G = 4096Mi
+	mem := domain["memory"].(map[string]any)
+	if mem["guest"] != "4096Mi" {
+		t.Errorf("default memory = %v, want 4096Mi", mem["guest"])
+	}
+
+	// Should have cloud-init volume
+	volumes := vmSpec["volumes"].([]map[string]any)
+	var hasCloudInit bool
+	for _, v := range volumes {
+		if _, ok := v["cloudInitNoCloud"]; ok {
+			hasCloudInit = true
+		}
+	}
+	if !hasCloudInit {
+		t.Error("cloud-init volume missing")
+	}
+}
+
+func TestGenerateVM_InstanceType(t *testing.T) {
+	opts := types.CreateOpts{
+		Name: "instypevm", InstanceType: "u1.medium", Preference: "fedora",
+	}
+	vm := GenerateVM(opts)
+
+	spec := vm["spec"].(map[string]any)
+
+	// Instance type and preference should be set
+	it := spec["instancetype"].(map[string]any)
+	if it["name"] != "u1.medium" {
+		t.Errorf("instancetype name = %v, want u1.medium", it["name"])
+	}
+	if it["kind"] != "VirtualMachineClusterInstancetype" {
+		t.Errorf("instancetype kind = %v", it["kind"])
+	}
+
+	pref := spec["preference"].(map[string]any)
+	if pref["name"] != "fedora" {
+		t.Errorf("preference name = %v, want fedora", pref["name"])
+	}
+
+	// CPU and memory should NOT be in the domain when instancetype is used
+	tmpl := spec["template"].(map[string]any)
+	vmSpec := tmpl["spec"].(map[string]any)
+	domain := vmSpec["domain"].(map[string]any)
+	if _, ok := domain["cpu"]; ok {
+		t.Error("cpu should not be set when instancetype is used")
+	}
+	if _, ok := domain["memory"]; ok {
+		t.Error("memory should not be set when instancetype is used")
+	}
+}
+
+func TestGenerateVM_CloudInitPassword(t *testing.T) {
+	opts := types.CreateOpts{
+		Name:              "pwvm",
+		CloudInitPassword: "mypassword",
+	}
+	vm := GenerateVM(opts)
+
+	tmpl := vm["spec"].(map[string]any)["template"].(map[string]any)
+	vmSpec := tmpl["spec"].(map[string]any)
+	volumes := vmSpec["volumes"].([]map[string]any)
+
+	for _, v := range volumes {
+		if ci, ok := v["cloudInitNoCloud"]; ok {
+			userData := ci.(map[string]any)["userData"].(string)
+			if userData == "" {
+				t.Error("empty userData")
+			}
+			if userData != "" && userData[:50] == "" {
+				t.Error("unexpected empty userData start")
+			}
+		}
+	}
+}
+
+func TestGenerateVM_TailscaleAuthKey(t *testing.T) {
+	opts := types.CreateOpts{
+		Name:             "tsvm",
+		TailscaleAuthKey: "tskey-auth-abc123",
+	}
+	vm := GenerateVM(opts)
+
+	tmpl := vm["spec"].(map[string]any)["template"].(map[string]any)
+	vmSpec := tmpl["spec"].(map[string]any)
+	volumes := vmSpec["volumes"].([]map[string]any)
+
+	for _, v := range volumes {
+		if ci, ok := v["cloudInitNoCloud"]; ok {
+			userData := ci.(map[string]any)["userData"].(string)
+			if userData == "" {
+				t.Error("empty cloud-init")
+			}
+		}
+	}
+}
+
+func TestGenerateVM_SSHPublicKey(t *testing.T) {
+	opts := types.CreateOpts{
+		Name:         "sshvm",
+		SSHPublicKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA test",
+	}
+	vm := GenerateVM(opts)
+
+	tmpl := vm["spec"].(map[string]any)["template"].(map[string]any)
+	vmSpec := tmpl["spec"].(map[string]any)
+	volumes := vmSpec["volumes"].([]map[string]any)
+
+	for _, v := range volumes {
+		if ci, ok := v["cloudInitNoCloud"]; ok {
+			userData := ci.(map[string]any)["userData"].(string)
+			if userData == "" {
+				t.Error("empty cloud-init")
+			}
+		}
+	}
+}
+
+func TestGeneratePVCSpec(t *testing.T) {
+	pvc := GeneratePVC("test-disk", "tailvm", "10G")
+
+	meta := pvc["metadata"].(map[string]any)
+	if meta["namespace"] != "tailvm" {
+		t.Errorf("namespace = %v, want tailvm", meta["namespace"])
+	}
+
+	spec := pvc["spec"].(map[string]any)
+	accessModes := spec["accessModes"].([]string)
+	if len(accessModes) == 0 || accessModes[0] != "ReadWriteOnce" {
+		t.Error("missing ReadWriteOnce access mode")
+	}
+
+	resources := spec["resources"].(map[string]any)
+	requests := resources["requests"].(map[string]any)
+	if requests["storage"] != "10G" {
+		t.Errorf("storage = %v, want 10G", requests["storage"])
+	}
+}
+
+func TestGenerateDataVolume_Metadata(t *testing.T) {
+	dv := GenerateDataVolume("test-iso", "tailvm", "https://example.com/ubuntu.iso")
+
+	meta := dv["metadata"].(map[string]any)
+	if meta["name"] != "test-iso" {
+		t.Errorf("name = %v, want test-iso", meta["name"])
+	}
+	if meta["namespace"] != "tailvm" {
+		t.Errorf("namespace = %v, want tailvm", meta["namespace"])
+	}
+}
+
+func TestGenerateVM_ContainerDiskWithoutDatadisk(t *testing.T) {
+	opts := types.CreateOpts{
+		Name:          "containernodata",
+		ContainerDisk: "quay.io/containerdisks/fedora:42",
+		Disk:          "", // No explicit disk
+	}
+	vm := GenerateVM(opts)
+
+	tmpl := vm["spec"].(map[string]any)["template"].(map[string]any)
+	vmSpec := tmpl["spec"].(map[string]any)
+	volumes := vmSpec["volumes"].([]map[string]any)
+
+	hasDatadisk := false
+	for _, v := range volumes {
+		if v["name"] == "datadisk" {
+			hasDatadisk = true
+		}
+	}
+	if hasDatadisk {
+		t.Error("datadisk should not exist when disk is empty")
+	}
+}

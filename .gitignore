@@ -5,3 +5,7 @@
 /corral
 build/
 dist/
+
+# Playwright e2e artifacts
+test/e2e/node_modules/
+test/e2e/test-results/

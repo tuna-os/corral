@@ -56,20 +56,14 @@ func (c *Client) virtctlRun(args ...string) error {
 	if err != nil {
 		return err
 	}
-	out, err := exec.Command(virtctl, args...).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("virtctl %s: %s", strings.Join(args, " "), strings.TrimSpace(string(out)))
-	}
-	return nil
+	_, err = c.runner().Run(virtctl, args...)
+	return err
 }
 
 func (c *Client) patchVMMerge(name, patch string) error {
-	out, err := exec.Command("kubectl", "patch", "vm", name, "-n", c.Namespace,
-		"--type", "merge", "-p", patch).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("patch vm %s: %s", name, strings.TrimSpace(string(out)))
-	}
-	return nil
+	_, err := c.runner().Run("kubectl", "patch", "vm", name, "-n", c.Namespace,
+		"--type", "merge", "-p", patch)
+	return err
 }
 
 // ── CPU / memory scaling ──────────────────────────────────────────
@@ -81,7 +75,7 @@ type vmDomainInfo struct {
 }
 
 func (c *Client) vmDomain(name string) (vmDomainInfo, error) {
-	out, err := exec.Command("kubectl", "get", "vm", name, "-n", c.Namespace, "-o", "json").Output()
+	out, err := c.runner().Run("kubectl", "get", "vm", name, "-n", c.Namespace, "-o", "json")
 	if err != nil {
 		return vmDomainInfo{}, fmt.Errorf("reading VM %s: %w", name, err)
 	}
@@ -137,7 +131,7 @@ func (c *Client) canLiveMigrate(name string) bool {
 
 // nodeVendors maps each schedulable node to its KubeVirt CPU vendor label.
 func nodeVendors() map[string]string {
-	out, err := exec.Command("kubectl", "get", "nodes", "-o", "json").Output()
+	out, err := runPkg("kubectl", "get", "nodes", "-o", "json")
 	if err != nil {
 		return nil
 	}
@@ -269,7 +263,7 @@ func (c *Client) offlinePatch(name string, running bool, domain map[string]any) 
 
 func (c *Client) waitStopped(name string) {
 	for i := 0; i < 60; i++ {
-		if exec.Command("kubectl", "get", "vmi", name, "-n", c.Namespace).Run() != nil {
+		if _, err := c.runner().Run("kubectl", "get", "vmi", name, "-n", c.Namespace); err != nil {
 			return // VMI gone
 		}
 		time.Sleep(time.Second)
@@ -294,9 +288,9 @@ func (c *Client) AddVolume(name, size string) (string, error) {
 	if err := Apply(pvc); err != nil {
 		return "", fmt.Errorf("creating disk PVC: %w", err)
 	}
-	out, err := exec.Command(virtctl, "addvolume", name, "--volume-name="+pvcName, "-n", c.Namespace).CombinedOutput()
+	_, err = c.runner().Run(virtctl, "addvolume", name, "--volume-name="+pvcName, "-n", c.Namespace)
 	if err != nil {
-		return "", fmt.Errorf("addvolume: %s", strings.TrimSpace(string(out)))
+		return "", fmt.Errorf("addvolume: %w", err)
 	}
 	return pvcName, nil
 }
@@ -307,22 +301,16 @@ func (c *Client) RemoveVolume(name, vol string) error {
 	if err != nil {
 		return err
 	}
-	out, err := exec.Command(virtctl, "removevolume", name, "--volume-name="+vol, "-n", c.Namespace).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("removevolume: %s", strings.TrimSpace(string(out)))
-	}
-	return nil
+	_, err = c.runner().Run(virtctl, "removevolume", name, "--volume-name="+vol, "-n", c.Namespace)
+	return err
 }
 
 // ExpandDisk grows a PVC to the given size (requires an expandable StorageClass).
 func (c *Client) ExpandDisk(pvc, size string) error {
 	patch := fmt.Sprintf(`{"spec":{"resources":{"requests":{"storage":%q}}}}`, size)
-	out, err := exec.Command("kubectl", "patch", "pvc", pvc, "-n", c.Namespace,
-		"--type", "merge", "-p", patch).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("expand pvc %s: %s", pvc, strings.TrimSpace(string(out)))
-	}
-	return nil
+	_, err := c.runner().Run("kubectl", "patch", "pvc", pvc, "-n", c.Namespace,
+		"--type", "merge", "-p", patch)
+	return err
 }
 
 // ── Snapshots / clone ─────────────────────────────────────────────
@@ -359,7 +347,7 @@ func (c *Client) Snapshot(vm, snap string) (string, error) {
 
 // ListSnapshots returns snapshots, optionally filtered to a single VM.
 func (c *Client) ListSnapshots(vm string) ([]SnapshotInfo, error) {
-	out, err := exec.Command("kubectl", "get", "vmsnapshot", "-n", c.Namespace, "-o", "json").Output()
+	out, err := c.runner().Run("kubectl", "get", "vmsnapshot", "-n", c.Namespace, "-o", "json")
 	if err != nil {
 		return nil, err
 	}
@@ -416,11 +404,8 @@ func (c *Client) RestoreSnapshot(vm, snap string) error {
 
 // DeleteSnapshot removes a VirtualMachineSnapshot.
 func (c *Client) DeleteSnapshot(snap string) error {
-	out, err := exec.Command("kubectl", "delete", "vmsnapshot", snap, "-n", c.Namespace, "--ignore-not-found").CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("delete snapshot %s: %s", snap, strings.TrimSpace(string(out)))
-	}
-	return nil
+	_, err := c.runner().Run("kubectl", "delete", "vmsnapshot", snap, "-n", c.Namespace, "--ignore-not-found")
+	return err
 }
 
 // Clone creates a VirtualMachineClone from src into a new VM named dst.
@@ -447,7 +432,7 @@ func (c *Client) Clone(src, dst string) error {
 // primaryPVC returns the claim name of the VM's first persistent (PVC-backed)
 // volume — the disk worth backing up. Empty for fully ephemeral VMs.
 func (c *Client) primaryPVC(name string) (string, error) {
-	out, err := exec.Command("kubectl", "get", "vm", name, "-n", c.Namespace, "-o", "json").Output()
+	out, err := c.runner().Run("kubectl", "get", "vm", name, "-n", c.Namespace, "-o", "json")
 	if err != nil {
 		return "", fmt.Errorf("reading VM %s: %w", name, err)
 	}
@@ -523,19 +508,19 @@ func (c *Client) GuestInfo(name string) (map[string]any, error) {
 		return nil, err
 	}
 	res := map[string]any{}
-	out, err := exec.Command(virtctl, "guestosinfo", name, "-n", c.Namespace).Output()
+	out, err := c.runner().Run(virtctl, "guestosinfo", name, "-n", c.Namespace)
 	if err != nil {
 		return nil, fmt.Errorf("guest agent not available (is qemu-guest-agent installed and running?)")
 	}
 	var os any
 	json.Unmarshal(out, &os)
 	res["os"] = os
-	if out, err := exec.Command(virtctl, "fslist", name, "-n", c.Namespace).Output(); err == nil {
+	if out, err := c.runner().Run(virtctl, "fslist", name, "-n", c.Namespace); err == nil {
 		var fs any
 		json.Unmarshal(out, &fs)
 		res["filesystems"] = fs
 	}
-	if out, err := exec.Command(virtctl, "userlist", name, "-n", c.Namespace).Output(); err == nil {
+	if out, err := c.runner().Run(virtctl, "userlist", name, "-n", c.Namespace); err == nil {
 		var users any
 		json.Unmarshal(out, &users)
 		res["users"] = users
@@ -548,8 +533,8 @@ func (c *Client) GuestInfo(name string) (map[string]any, error) {
 // ListNADs returns Multus NetworkAttachmentDefinitions ("ns/name"). Empty when
 // Multus isn't installed.
 func ListNADs() []string {
-	out, err := exec.Command("kubectl", "get", "net-attach-def", "-A",
-		"-o", "jsonpath={range .items[*]}{.metadata.namespace}/{.metadata.name}{\"\\n\"}{end}").Output()
+	out, err := runPkg("kubectl", "get", "net-attach-def", "-A",
+		"-o", "jsonpath={range .items[*]}{.metadata.namespace}/{.metadata.name}{\"\\n\"}{end}")
 	if err != nil {
 		return []string{}
 	}
@@ -574,12 +559,9 @@ func (c *Client) AddNIC(name, nad, iface string) error {
       {"op":"add","path":"/spec/template/spec/domain/devices/interfaces/-","value":{"name":%q,"bridge":{}}},
       {"op":"add","path":"/spec/template/spec/networks/-","value":{"name":%q,"multus":{"networkName":%q}}}
     ]`, iface, iface, nad)
-	out, err := exec.Command("kubectl", "patch", "vm", name, "-n", c.Namespace,
-		"--type", "json", "-p", patch).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("add NIC: %s", strings.TrimSpace(string(out)))
-	}
-	return nil
+	_, err := c.runner().Run("kubectl", "patch", "vm", name, "-n", c.Namespace,
+		"--type", "json", "-p", patch)
+	return err
 }
 
 // ── Templates ─────────────────────────────────────────────────────
@@ -591,11 +573,8 @@ func (c *Client) MarkTemplate(name string, on bool) error {
 	if !on {
 		val = "corral.dev/template-" // trailing - removes the label
 	}
-	out, err := exec.Command("kubectl", "label", "vm", name, "-n", c.Namespace, val, "--overwrite").CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("label vm: %s", strings.TrimSpace(string(out)))
-	}
-	return nil
+	_, err := c.runner().Run("kubectl", "label", "vm", name, "-n", c.Namespace, val, "--overwrite")
+	return err
 }
 
 // CreateFromTemplate clones a template VM into a new VM (via VirtualMachineClone,
@@ -620,8 +599,8 @@ func ListPreferences() []string {
 }
 
 func kubectlNames(resource string) []string {
-	out, err := exec.Command("kubectl", "get", resource,
-		"-o", "jsonpath={range .items[*]}{.metadata.name}{\"\\n\"}{end}").Output()
+	out, err := runPkg("kubectl", "get", resource,
+		"-o", "jsonpath={range .items[*]}{.metadata.name}{\"\\n\"}{end}")
 	if err != nil {
 		return []string{}
 	}
@@ -648,7 +627,7 @@ type DataVolumeInfo struct {
 
 // ListDataVolumes returns all CDI DataVolumes (imported ISOs/images).
 func ListDataVolumes() ([]DataVolumeInfo, error) {
-	out, err := exec.Command("kubectl", "get", "datavolumes", "-A", "-o", "json").Output()
+	out, err := runPkg("kubectl", "get", "datavolumes", "-A", "-o", "json")
 	if err != nil {
 		return nil, err
 	}
@@ -732,11 +711,8 @@ func ImportDataVolume(name, namespace, url, size string) error {
 
 // DeleteDataVolume removes a DataVolume (and its PVC).
 func DeleteDataVolume(namespace, name string) error {
-	out, err := exec.Command("kubectl", "delete", "datavolume", name, "-n", namespace, "--ignore-not-found").CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("delete datavolume: %s", strings.TrimSpace(string(out)))
-	}
-	return nil
+	_, err := runPkg("kubectl", "delete", "datavolume", name, "-n", namespace, "--ignore-not-found")
+	return err
 }
 
 // ── Observability: events + metrics ───────────────────────────────
@@ -753,7 +729,7 @@ type EventInfo struct {
 // Events returns recent Kubernetes events for a VM (its VM/VMI objects and its
 // virt-launcher pod), newest first.
 func (c *Client) Events(name string) ([]EventInfo, error) {
-	out, err := exec.Command("kubectl", "get", "events", "-n", c.Namespace, "-o", "json").Output()
+	out, err := c.runner().Run("kubectl", "get", "events", "-n", c.Namespace, "-o", "json")
 	if err != nil {
 		return nil, err
 	}
@@ -802,8 +778,8 @@ func (c *Client) Events(name string) ([]EventInfo, error) {
 // Metrics returns the VM's live CPU and memory usage (its virt-launcher pod),
 // via metrics-server. Empty strings if metrics aren't available yet.
 func (c *Client) Metrics(name string) map[string]string {
-	out, err := exec.Command("kubectl", "top", "pod", "-n", c.Namespace,
-		"-l", "kubevirt.io/vm="+name, "--no-headers").Output()
+	out, err := c.runner().Run("kubectl", "top", "pod", "-n", c.Namespace,
+		"-l", "kubevirt.io/vm="+name, "--no-headers")
 	res := map[string]string{"cpu": "", "mem": ""}
 	if err != nil {
 		return res
@@ -835,7 +811,7 @@ func PreferredStorageClass() string {
 // ClusterCapabilities reports which optional storage operations are available,
 // so callers can enable/disable UI controls rather than fail on click.
 func ClusterCapabilities() types.Capabilities {
-	out, err := exec.Command("kubectl", "get", "sc", "-o", "json").Output()
+	out, err := runPkg("kubectl", "get", "sc", "-o", "json")
 	if err != nil {
 		return types.Capabilities{}
 	}
@@ -874,7 +850,7 @@ func ClusterCapabilities() types.Capabilities {
 }
 
 func hasSnapshotClass() bool {
-	out, err := exec.Command("kubectl", "get", "volumesnapshotclass", "-o", "name").Output()
+	out, err := runPkg("kubectl", "get", "volumesnapshotclass", "-o", "name")
 	return err == nil && len(strings.TrimSpace(string(out))) > 0
 }
 

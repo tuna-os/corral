@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/hanthor/corral/pkg/doctor"
 	"github.com/hanthor/corral/pkg/kubevirt"
 	"github.com/hanthor/corral/pkg/qemu"
 	"github.com/hanthor/corral/pkg/types"
@@ -88,10 +89,11 @@ type tuiModel struct {
 	list        list.Model
 	actionsList list.Model
 	quitting    bool
-	state       string // "list", "actions", "edit", "hwedit", "confirmDelete"
+	state       string // "list", "actions", "edit", "hwedit", "confirmDelete", "doctor"
 	selected    types.VM
 	edit        editModel
 	hwEdit      hwEditModel
+	doctorRows  []doctor.Check
 	width       int
 	height      int
 }
@@ -113,7 +115,7 @@ func newTUIModel() tuiModel {
 	}
 
 	l := list.New(items, vmItemDelegate{}, 0, 0)
-	l.Title = "Corral"
+	l.Title = "Corral  ·  d: cluster health"
 	l.SetShowStatusBar(false)
 	l.SetFilteringEnabled(false)
 	l.Styles.Title = tuiTitle
@@ -238,11 +240,29 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 
+		if m.state == "doctor" {
+			switch msg.String() {
+			case "f":
+				doctor.Fix()
+				m.doctorRows = doctor.Run()
+			case "esc", "q", "enter":
+				m.state = "list"
+			case "ctrl+c":
+				m.quitting = true
+				return m, tea.Quit
+			}
+			return m, nil
+		}
+
 		// VM list state
 		switch msg.String() {
 		case "ctrl+c", "q":
 			m.quitting = true
 			return m, tea.Quit
+		case "d":
+			m.doctorRows = doctor.Run()
+			m.state = "doctor"
+			return m, nil
 		case "enter":
 			if item, ok := m.list.SelectedItem().(vmItem); ok {
 				m.selected = item.vm
@@ -372,6 +392,31 @@ func (m tuiModel) View() string {
 
 	if m.state == "hwedit" {
 		return m.hwEdit.View()
+	}
+
+	if m.state == "doctor" {
+		var sb strings.Builder
+		sb.WriteString(tuiTitle.Render(" Cluster health "))
+		sb.WriteString("\n\n")
+		fixable := false
+		for _, c := range m.doctorRows {
+			mark := tuiRunning.Render("●")
+			if !c.OK {
+				mark = tuiStopped.Render("○")
+			}
+			tag := ""
+			if !c.OK && c.Fixable {
+				tag = tuiRunning.Render("  (fixable)")
+				fixable = true
+			}
+			sb.WriteString(fmt.Sprintf("  %s %-30s %s%s\n", mark, c.Name, tuiHelp.Render(c.Detail), tag))
+		}
+		help := "  esc back"
+		if fixable {
+			help = "  f reconcile fixable   esc back"
+		}
+		sb.WriteString("\n" + tuiHelp.Render(help))
+		return sb.String()
 	}
 
 	if m.state == "confirmDelete" {

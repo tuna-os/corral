@@ -333,3 +333,11 @@ tandem. Roadmap: `WEBUI-PLAN.md`.
 - **Roadmap**: Bubble Tea spinner/progress for bootc builds; `corral create`
   from the TUI; QEMU ISO download cache (`vms/cache/`); ignition support for
   bootc VMs; `virtctl`-less mode using the K8s API directly.
+
+## 13. Related docs
+
+- [docs/api.md](docs/api.md) — REST API reference
+- [docs/architecture.md](docs/architecture.md) — package map & design decisions
+- [docs/kubevirt-proxmox-setup.md](docs/kubevirt-proxmox-setup.md) — setup guide
+- [WEBUI-PLAN.md](WEBUI-PLAN.md) — web UI architecture
+- [HANDOFF.md](HANDOFF.md) — current state for developers

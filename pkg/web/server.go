@@ -21,11 +21,17 @@ import (
 
 	"golang.org/x/net/websocket"
 
+	"github.com/hanthor/corral/pkg/catalog"
 	"github.com/hanthor/corral/pkg/config"
 	"github.com/hanthor/corral/pkg/kubevirt"
 	"github.com/hanthor/corral/pkg/registry"
+	"github.com/hanthor/corral/pkg/shell"
 	"github.com/hanthor/corral/pkg/types"
 )
+
+// defaultRunner is the command runner used by handlers that shell out
+// (vmiIndex, handleNodes, handleExport). Defaults to shell.Real; set in tests.
+var defaultRunner shell.Runner = shell.Real{}
 
 //go:embed static
 var staticFS embed.FS
@@ -60,8 +66,11 @@ func newMux() (*http.ServeMux, error) {
 	mux.HandleFunc("POST /api/vms", handleCreateVM)
 	mux.HandleFunc("GET /api/nodes", handleNodes)
 	mux.HandleFunc("GET /api/capabilities", handleCapabilities)
+	mux.HandleFunc("GET /api/images", handleImages)
 	mux.HandleFunc("GET /api/instancetypes", handleInstanceTypes)
 	mux.HandleFunc("GET /api/nads", handleNADs)
+	mux.HandleFunc("GET /api/doctor", handleDoctor)
+	mux.HandleFunc("POST /api/doctor/fix", handleDoctorFix)
 	mux.HandleFunc("GET /api/plugins", handlePlugins)
 	mux.HandleFunc("POST /api/plugins/{name}/install", handleInstallPlugin)
 	mux.HandleFunc("DELETE /api/plugins/{name}", handleRemovePlugin)
@@ -147,7 +156,7 @@ type vmiInfo struct {
 }
 
 func vmiIndex() map[string]vmiInfo {
-	out, err := exec.Command("kubectl", "get", "vmis", "-A", "-o", "json").Output()
+	out, err := defaultRunner.Run("kubectl", "get", "vmis", "-A", "-o", "json")
 	if err != nil {
 		return nil
 	}
@@ -188,6 +197,8 @@ type createRequest struct {
 	Mem           string `json:"mem"`
 	Disk          string `json:"disk"`
 	ContainerDisk string `json:"containerDisk"`
+	Image         string `json:"image"`  // catalog name
+	Import        string `json:"import"` // qcow2/raw URL
 	ISO           string `json:"iso"`
 	PVC           string `json:"pvc"`
 	Bootc         string `json:"bootc"`
@@ -296,13 +307,24 @@ func handleCreateVM(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	containerDisk := req.ContainerDisk
+	if req.Image != "" {
+		img := catalog.Find(req.Image)
+		if img == nil {
+			errResp(w, http.StatusBadRequest, fmt.Errorf("unknown image %q", req.Image))
+			return
+		}
+		containerDisk = img.ContainerDisk
+	}
+
 	opts := types.CreateOpts{
 		Name:             req.Name,
 		Namespace:        ns,
 		CPU:              req.CPU,
 		Mem:              req.Mem,
 		Disk:             req.Disk,
-		ContainerDisk:    req.ContainerDisk,
+		ContainerDisk:    containerDisk,
+		ImportURL:        req.Import,
 		ISO:              req.ISO,
 		PVC:              req.PVC,
 		Node:             req.Node,
@@ -365,7 +387,7 @@ func handleVMAction(w http.ResponseWriter, r *http.Request) {
 // pod-local temp file via virtctl, then streamed and removed.
 func handleExport(w http.ResponseWriter, r *http.Request) {
 	ns, name := r.PathValue("ns"), r.PathValue("name")
-	if exec.Command("kubectl", "get", "vmi", name, "-n", ns).Run() == nil {
+	if _, err := defaultRunner.Run("kubectl", "get", "vmi", name, "-n", ns); err == nil {
 		errResp(w, http.StatusConflict, fmt.Errorf("stop %s before exporting (its disk is in use while running)", name))
 		return
 	}
@@ -430,7 +452,7 @@ type nodeResp struct {
 }
 
 func handleNodes(w http.ResponseWriter, r *http.Request) {
-	out, err := exec.Command("kubectl", "get", "nodes", "-o", "json").Output()
+	out, err := defaultRunner.Run("kubectl", "get", "nodes", "-o", "json")
 	if err != nil {
 		errResp(w, http.StatusBadGateway, fmt.Errorf("listing nodes: %w", err))
 		return

@@ -41,13 +41,18 @@
     </div>
     <label>Boot source
       <select name="sourceType">
+        <option value="catalog">OS image (catalog)</option>
         <option value="containerDisk">Container disk image</option>
+        <option value="import">Import qcow2/raw (URL, via CDI)</option>
         <option value="iso">Installer ISO (URL, via CDI)</option>
         <option value="bootc">Bootc image (OS disk built on-cluster)</option>
         <option value="pvc">Existing PVC</option>
       </select>
     </label>
-    <label>Source <input name="source" placeholder="quay.io/containerdisks/fedora:42" required></label>
+    <label id="catalog-field">Image
+      <select name="catalogImage"></select>
+    </label>
+    <label id="source-field" hidden>Source <input name="source" placeholder="quay.io/containerdisks/fedora:42"></label>
     <label id="sshkey-field" hidden>SSH public key (baked into the bootc disk)
       <textarea name="sshKey" rows="3" placeholder="ssh-ed25519 AAAA…"></textarea>
     </label>
