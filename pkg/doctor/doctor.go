@@ -41,14 +41,19 @@ func Run() []Check {
 
 	kvInstalled := ok("kubectl", "get", "kubevirt", "-n", "kubevirt")
 	checks = append(checks, Check{
-		Name:   "KubeVirt installed",
-		OK:     kvInstalled,
-		Detail: detailIf(kvInstalled, "operator + CR present", "install the KubeVirt operator + CR (see the setup guide)"),
+		Name:    "KubeVirt installed",
+		OK:      kvInstalled,
+		Detail:  detailIf(kvInstalled, "operator + CR present", "missing — fix installs the KubeVirt "+KubeVirtVersion+" operator + CR"),
+		Fixable: !kvInstalled,
+		fix:     installKubeVirt,
 	})
+	cdiInstalled := ok("kubectl", "get", "cdi")
 	checks = append(checks, Check{
-		Name:   "CDI installed",
-		OK:     ok("kubectl", "get", "cdi"),
-		Detail: "containerized-data-importer — needed for ISO/image imports",
+		Name:    "CDI installed",
+		OK:      cdiInstalled,
+		Detail:  detailIf(cdiInstalled, "containerized-data-importer present", "missing — fix installs CDI "+CDIVersion+" (ISO/image imports)"),
+		Fixable: !cdiInstalled,
+		fix:     installCDI,
 	})
 
 	cfg := kubevirtConfig()
@@ -140,6 +145,46 @@ func Fix() ([]string, error) {
 		fixed = append(fixed, c.Name)
 	}
 	return fixed, nil
+}
+
+// ── Installation ──────────────────────────────────────────────────
+
+// Pinned upstream versions the installer applies on a bare cluster.
+const (
+	KubeVirtVersion = "v1.8.3"
+	CDIVersion      = "v1.65.0"
+)
+
+func applyURL(url string) error {
+	out, err := run("kubectl", "apply", "-f", url)
+	if err != nil {
+		return fmt.Errorf("kubectl apply -f %s: %s", url, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// installKubeVirt applies the upstream operator + CR, then best-effort
+// reconciles Corral's feature gates (the CR may not be admitted yet — a
+// follow-up `doctor fix` finishes the job once virt-operator is up).
+func installKubeVirt() error {
+	base := "https://github.com/kubevirt/kubevirt/releases/download/" + KubeVirtVersion
+	if err := applyURL(base + "/kubevirt-operator.yaml"); err != nil {
+		return err
+	}
+	if err := applyURL(base + "/kubevirt-cr.yaml"); err != nil {
+		return err
+	}
+	reconcileKubeVirt() // best-effort; needs the admission webhook to be up
+	return nil
+}
+
+// installCDI applies the upstream containerized-data-importer operator + CR.
+func installCDI() error {
+	base := "https://github.com/kubevirt/containerized-data-importer/releases/download/" + CDIVersion
+	if err := applyURL(base + "/cdi-operator.yaml"); err != nil {
+		return err
+	}
+	return applyURL(base + "/cdi-cr.yaml")
 }
 
 // ── KubeVirt config ───────────────────────────────────────────────

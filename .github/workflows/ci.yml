@@ -151,13 +151,17 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Build corral-bootc plugin (linux amd64 + arm64)
+      - name: Build marketplace plugins (linux amd64 + arm64)
         run: |
           mkdir -p plugins-dist
-          for arch in amd64 arm64; do
-            CGO_ENABLED=0 GOOS=linux GOARCH=$arch \
-              go build -tags bootc -ldflags="-s -w" \
-              -o "plugins-dist/corral-bootc-linux-$arch" ./cmd/corral-bootc
+          for plugin in bootc snapsched schedule gpu windows; do
+            tags=""
+            [ "$plugin" = bootc ] && tags="-tags bootc"
+            for arch in amd64 arm64; do
+              CGO_ENABLED=0 GOOS=linux GOARCH=$arch \
+                go build $tags -ldflags="-s -w" \
+                -o "plugins-dist/corral-$plugin-linux-$arch" "./cmd/corral-$plugin"
+            done
           done
           ls -lh plugins-dist/
 

@@ -42,8 +42,11 @@ KubeVirt, CDI, namespaces, storage, feature gates. Auto-fix for fixable
 issues.
 
 **Plugin system** — krew-style extensions (marketplace at
-`marketplace/index.json`), web UI Extensions tab. Bootc is the flagship
-plugin (build a container image into a VM disk on-cluster).
+`marketplace/index.json`), web UI Extensions tab. Five plugins ship from CI:
+**bootc** (build a container image into a VM disk on-cluster), **snapsched**
+(CronJob snapshots with retention), **schedule** (autostart/shutdown windows),
+**gpu** (PCI/vGPU passthrough discovery + attach), **windows** (UEFI/TPM/
+virtio-tuned Windows VMs with the virtio-win driver ISO).
 
 ### Architecture decisions
 

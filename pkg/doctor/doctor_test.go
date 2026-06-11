@@ -112,23 +112,71 @@ func TestRun_ExpectedCheckNames(t *testing.T) {
 	}
 }
 
-func TestRun_EmptyCluster_NothingOK_NothingFixable(t *testing.T) {
+func TestRun_EmptyCluster_OnlyInstallsFixable(t *testing.T) {
 	// No responses registered: every kubectl call fails, as on a machine
-	// with no cluster. Everything must report not-OK and — because KubeVirt
-	// itself is missing — nothing should claim to be fixable.
+	// with no cluster. Everything must report not-OK; only the KubeVirt/CDI
+	// install checks may claim to be fixable (the gate/strategy checks need
+	// KubeVirt present first).
 	withFake(t)
 
 	checks := Run()
 	if len(checks) == 0 {
 		t.Fatal("Run() returned no checks")
 	}
+	installable := map[string]bool{"KubeVirt installed": true, "CDI installed": true}
 	for _, c := range checks {
 		if c.OK {
 			t.Errorf("check %q OK without a cluster", c.Name)
 		}
-		if c.Fixable {
-			t.Errorf("check %q fixable although KubeVirt is not installed", c.Name)
+		if c.Fixable != installable[c.Name] {
+			t.Errorf("check %q fixable=%v, want %v", c.Name, c.Fixable, installable[c.Name])
 		}
+	}
+}
+
+func TestFix_InstallsKubeVirtAndCDI(t *testing.T) {
+	fake := withFake(t)
+	// Bare cluster, but kubectl apply works.
+	fake.AddPrefixResponse("kubectl apply -f", "applied", nil)
+	// reconcileKubeVirt's follow-up read fails (webhook not up) — tolerated.
+	fake.AddPrefixResponse("kubectl patch kubevirt", "patched", nil)
+
+	fixed, err := Fix()
+	if err != nil {
+		t.Fatalf("Fix() error: %v", err)
+	}
+	if len(fixed) != 2 {
+		t.Errorf("Fix() fixed %v, want the KubeVirt + CDI installs", fixed)
+	}
+	var urls []string
+	for _, call := range fake.Calls() {
+		if len(call.Args) > 2 && call.Args[0] == "apply" {
+			urls = append(urls, call.Args[2])
+		}
+	}
+	for _, want := range []string{
+		"kubevirt/releases/download/" + KubeVirtVersion + "/kubevirt-operator.yaml",
+		"kubevirt/releases/download/" + KubeVirtVersion + "/kubevirt-cr.yaml",
+		"containerized-data-importer/releases/download/" + CDIVersion + "/cdi-operator.yaml",
+		"containerized-data-importer/releases/download/" + CDIVersion + "/cdi-cr.yaml",
+	} {
+		found := false
+		for _, u := range urls {
+			if strings.Contains(u, want) {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("no kubectl apply for %s (applied: %v)", want, urls)
+		}
+	}
+}
+
+func TestFix_InstallFails_ReturnsError(t *testing.T) {
+	withFake(t) // apply not registered → install fails
+
+	if _, err := Fix(); err == nil {
+		t.Fatal("Fix() should propagate the install failure")
 	}
 }
 
