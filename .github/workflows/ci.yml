@@ -98,9 +98,14 @@ jobs:
           docker push "$IMAGE:${GITHUB_SHA::7}"
 
   release-binaries:
+    # Publishes static binaries to a rolling "binaries" release so consumers
+    # (e.g. the dotfiles ansible role) can fetch a stable URL:
+    # https://github.com/hanthor/corral/releases/download/binaries/corral-linux-<arch>
     needs: test
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -121,6 +126,15 @@ jobs:
         with:
           name: corral-binaries
           path: dist/
+
+      - name: Publish to the rolling "binaries" release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view binaries >/dev/null 2>&1 \
+            || gh release create binaries --title "Corral binaries" \
+                 --notes "Rolling release of corral binaries built from main (auto-updated by CI)." --latest=false
+          gh release upload binaries dist/* --clobber
 
   publish-plugins:
     # Builds marketplace plugin binaries and publishes them to a rolling
