@@ -4,6 +4,7 @@ import (
 	"net/http/httptest"
 	"os"
 
+	"github.com/hanthor/corral/pkg/doctor"
 	"github.com/hanthor/corral/pkg/kubevirt"
 	"github.com/hanthor/corral/pkg/registry"
 	"github.com/hanthor/corral/pkg/shell"
@@ -36,6 +37,10 @@ func NewTestFixture() *TestFixture {
 
 	// Wire into the web package's default runner (for vmiIndex, handleNodes, handleExport)
 	defaultRunner = runner
+
+	// Wire into the doctor package (for /api/doctor and /api/doctor/fix) —
+	// without this, doctor handlers would shell out to the real kubectl.
+	doctor.SetRunner(runner)
 
 	// Create a temp registry store so create/delete handlers don't panic
 	tmpDir, _ := os.MkdirTemp("", "corral-test-*")
@@ -71,4 +76,5 @@ func (f *TestFixture) Reset() {
 	kubevirt.SetDefaultRunner(f.Runner)
 	kubevirt.SetPackageRunner(f.Runner)
 	defaultRunner = f.Runner
+	doctor.SetRunner(f.Runner)
 }

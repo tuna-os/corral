@@ -370,16 +370,10 @@ func TestHandleDoctorFix(t *testing.T) {
 	fx := NewTestFixture()
 	defer fx.Server.Close()
 
-	fx.Runner.AddResponseKV("kubectl", []string{
-		"get", "kubevirt.kubevirt.io", "-A", "-o", "name",
-	}, "kubevirt.kubevirt.io/kubevirt", nil)
-	fx.Runner.AddResponseKV("kubectl", []string{
-		"get", "cdi", "-A", "-o", "name",
-	}, "cdi.cdi.kubevirt.io/cdi", nil)
-	fx.Runner.AddResponseKV("kubectl", []string{
-		"patch", "kubevirt", "kubevirt", "-n", "kubevirt", "--type", "merge", "-p",
-		`{"spec":{"configuration":{"vmRolloutStrategy":"LiveUpdate","developerConfiguration":{"featureGates":["Snapshot","HotplugVolumes","VMExport"]}},"workloadUpdateStrategy":{"workloadUpdateMethods":["LiveMigrate"]}}}`,
-	}, "", nil)
+	// Bare cluster: every doctor check fails, so Fix installs KubeVirt + CDI
+	// (kubectl apply of the upstream manifests) and best-effort reconfigures.
+	fx.Runner.AddPrefixResponse("kubectl apply -f", "applied", nil)
+	fx.Runner.AddPrefixResponse("kubectl patch kubevirt", "patched", nil)
 
 	resp, err := http.Post(fx.Server.URL+"/api/doctor/fix", "application/json", nil)
 	if err != nil {
@@ -1117,26 +1111,15 @@ func TestHandleDoctorFix_Error(t *testing.T) {
 	fx := NewTestFixture()
 	defer fx.Close()
 
-	// Doctor check succeeds but patch fails
-	fx.Runner.AddResponseKV("kubectl", []string{
-		"get", "kubevirt.kubevirt.io", "-A", "-o", "name",
-	}, "kubevirt.kubevirt.io/kubevirt", nil)
-	fx.Runner.AddResponseKV("kubectl", []string{
-		"get", "cdi", "-A", "-o", "name",
-	}, "cdi.cdi.kubevirt.io/cdi", nil)
-	fx.Runner.AddResponseKV("kubectl", []string{
-		"patch", "kubevirt", "kubevirt", "-n", "kubevirt", "--type", "merge", "-p",
-		`{"spec":{"configuration":{"vmRolloutStrategy":"LiveUpdate","developerConfiguration":{"featureGates":["Snapshot","HotplugVolumes","VMExport"]}},"workloadUpdateStrategy":{"workloadUpdateMethods":["LiveMigrate"]}}}`,
-	}, "", errSimulated)
-
+	// Bare cluster and the install applies fail (no response registered for
+	// kubectl apply) → doctor.Fix() errors → the handler must return 500.
 	resp, err := http.Post(fx.Server.URL+"/api/doctor/fix", "application/json", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
 
-	// doctor.Fix() handles partial failures gracefully — expect 200
-	if resp.StatusCode != 200 {
-		t.Errorf("expected 200, got %d", resp.StatusCode)
+	if resp.StatusCode != 500 {
+		t.Errorf("expected 500 when the fix fails, got %d", resp.StatusCode)
 	}
 }
