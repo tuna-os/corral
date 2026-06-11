@@ -82,6 +82,17 @@ rules:
   - apiGroups: [""]
     resources: ["nodes"]
     verbs: ["get", "list"]
+  # Events tab (Proxmox-style task log) + live metrics on the summary
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list"]
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["pods", "nodes"]
+    verbs: ["get", "list"]
+  # Instancetype/preference pickers in the create wizard
+  - apiGroups: ["instancetype.kubevirt.io"]
+    resources: ["virtualmachineclusterinstancetypes", "virtualmachineclusterpreferences"]
+    verbs: ["get", "list"]
   # VM deletion also cleans up per-VM proxy resources (tailvm CLI feature)
   - apiGroups: ["apps"]
     resources: ["deployments"]
