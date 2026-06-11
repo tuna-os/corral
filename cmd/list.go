@@ -74,9 +74,9 @@ func printVMList(vms []types.VM) {
 		case "kubevirt":
 			proxyIcon := "○"
 			if vm.VNC == "on" {
-				proxyIcon = "🔵"
+				proxyIcon = "●"
 			} else if vm.VNC == "pending" {
-				proxyIcon = "⏳"
+				proxyIcon = "◐"
 			}
 			extra = "ports:" + proxyIcon
 		case "qemu":

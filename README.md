@@ -148,12 +148,41 @@ corral create <name>    --kubevirt | --bootc IMG | (default: local qemu)
                         --mem 4G --cpu 2 --disk 20G --iso … --container-disk …
                         --pvc … --node … --cloud-init … --ts-authkey …
 corral start|stop <name>
+corral restart <name>   restart a VM
+corral pause|unpause    [kubevirt] freeze / resume a running VM
+corral scale <name>     [kubevirt] --cpu N --mem 8G (live hotplug when possible)
+corral migrate <name>   [kubevirt] --node X  live-migrate to another node
+corral adddisk <name>   [kubevirt] --size 10Gi  hotplug a new disk
+corral rmdisk <name>    [kubevirt] --volume PVC  detach a hotplugged disk
+corral snapshot …       [kubevirt] create | ls | restore | rm
 corral ssh <name>       [-u user] [-i key] [-c cmd] [-p port] [--password …]
 corral viewer <name>    VNC via xdg-open
 corral logs <name>      journald (local) / virt-launcher (cluster)
 corral info <name>      raw JSON
 corral delete <name>    [-f] removes VM, disks, proxy, registry entry
 ```
+
+### KubeVirt feature support & cluster requirements
+
+Corral exposes the Proxmox-style operations above through both the CLI/TUI and
+the web UI (editable Hardware tab, Snapshots tab, in-browser consoles). What
+actually works depends on the cluster:
+
+- **Change CPU / RAM** — always works. On a genuinely live-migratable VM it is
+  hotplugged with no downtime; otherwise Corral applies it in a single
+  stop→patch→start. New VMs are created sockets-based with `maxSockets` /
+  `maxGuest` headroom so they *can* hotplug.
+- **Live migration / live hotplug** — needs `vmRolloutStrategy: LiveUpdate`,
+  masquerade networking (Corral sets this), migratable storage (RWX), **and a
+  target node with the same CPU vendor**. You cannot live-migrate a running VM
+  between an Intel and an AMD host, so on a mixed-vendor cluster Corral detects
+  this and falls back to the offline path instead of hanging.
+- **Add disk (hotplug)** — needs the `HotplugVolumes` feature gate.
+- **Online disk expansion** — needs a StorageClass with
+  `allowVolumeExpansion: true`.
+- **Snapshots / clone / restore** — need a `VolumeSnapshotClass` for VMs with
+  persistent disks (ephemeral container-disk VMs can snapshot their definition
+  without one). The web UI greys out controls the cluster can't support.
 
 Full design document: [SPEC.md](SPEC.md).
 
