@@ -138,8 +138,60 @@ function renderDatacenter(main) {
       <div class="card"><div class="num">${running}</div><div class="label">running</div></div>
       <div class="card"><div class="num">${ready}/${nodes.length}</div><div class="label">nodes ready</div></div>
     </div>
-    ${vmTable(vms)}`;
+    ${vmTable(vms)}
+    <h2 class="section">${icon('disk')} Image library
+      <button class="btn" id="dc-import">${icon('download')} Import image</button>
+    </h2>
+    <div id="dc-images"><p class="muted">loading…</p></div>`;
   bindVMTable(main);
+  $('#dc-import').onclick = importImage;
+  loadImages();
+}
+
+async function loadImages() {
+  const el = $('#dc-images');
+  if (!el) return;
+  let dvs;
+  try { dvs = await api('/api/datavolumes'); }
+  catch (e) { el.innerHTML = `<p class="muted">${esc(e.message)}</p>`; return; }
+  if (!dvs.length) { el.innerHTML = `<p class="muted">No imported images. Use “Import image” for an ISO/qcow2 URL.</p>`; return; }
+  el.innerHTML = `<table><thead><tr>
+      <th>Name</th><th>Namespace</th><th>Size</th><th>Status</th><th>Source</th><th></th>
+    </tr></thead><tbody>
+    ${dvs.map((d) => `<tr>
+      <td>${esc(d.name)}</td><td>${esc(d.namespace)}</td><td>${esc(d.size || '—')}</td>
+      <td>${esc(d.phase || '—')}${d.progress && d.phase !== 'Succeeded' ? ` (${esc(d.progress)})` : ''}</td>
+      <td class="muted" style="max-width:280px;overflow:hidden;text-overflow:ellipsis">${esc(d.source || '')}</td>
+      <td><button class="btn sm danger" data-deldv="${esc(d.namespace)}/${esc(d.name)}">${icon('trash')}</button></td>
+    </tr>`).join('')}
+    </tbody></table>`;
+  el.querySelectorAll('[data-deldv]').forEach((b) => {
+    b.onclick = async () => {
+      const [ns, name] = b.dataset.deldv.split('/');
+      if (!confirm(`Delete image ${name}?`)) return;
+      try { await api(`/api/datavolumes/${ns}/${name}`, { method: 'DELETE' }); toast('Deleted'); }
+      catch (e) { toast(e.message); }
+      setTimeout(loadImages, 500);
+    };
+  });
+}
+
+async function importImage() {
+  const url = prompt('Image URL (ISO / qcow2 / raw, http[s]):', '');
+  if (!url) return;
+  const guess = (url.split('/').pop() || 'image').replace(/[^a-z0-9-]/gi, '-').toLowerCase().slice(0, 40);
+  const name = prompt('Name for this image:', guess);
+  if (!name) return;
+  const size = prompt('Disk size for the import (e.g. 10Gi):', '10Gi') || '10Gi';
+  try {
+    await api('/api/datavolumes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, namespace: 'tailvm', url, size }),
+    });
+    toast('Import started');
+    setTimeout(loadImages, 800);
+  } catch (e) { toast(e.message); }
 }
 
 function renderNode(main, name) {
@@ -600,6 +652,7 @@ $('#create-form').onsubmit = async (e) => {
     cpu: parseInt(f.get('cpu'), 10) || 2,
     mem: f.get('mem'),
     disk: f.get('disk'),
+    cloudInit: f.get('cloudInit') || '',
   };
   const src = f.get('source');
   const type = f.get('sourceType');

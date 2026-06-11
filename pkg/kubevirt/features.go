@@ -541,6 +541,111 @@ func (c *Client) GuestInfo(name string) (map[string]any, error) {
 	return res, nil
 }
 
+// ── ISO / image library (CDI DataVolumes) ─────────────────────────
+
+// DataVolumeInfo is a row in the image library.
+type DataVolumeInfo struct {
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+	Size      string `json:"size"`
+	Phase     string `json:"phase"`
+	Progress  string `json:"progress"`
+	Source    string `json:"source"`
+}
+
+// ListDataVolumes returns all CDI DataVolumes (imported ISOs/images).
+func ListDataVolumes() ([]DataVolumeInfo, error) {
+	out, err := exec.Command("kubectl", "get", "datavolumes", "-A", "-o", "json").Output()
+	if err != nil {
+		return nil, err
+	}
+	var res struct {
+		Items []struct {
+			Metadata struct {
+				Name      string `json:"name"`
+				Namespace string `json:"namespace"`
+			} `json:"metadata"`
+			Spec struct {
+				Source struct {
+					HTTP *struct {
+						URL string `json:"url"`
+					} `json:"http"`
+					Registry *struct {
+						URL string `json:"url"`
+					} `json:"registry"`
+				} `json:"source"`
+				PVC     *pvcResources `json:"pvc"`
+				Storage *pvcResources `json:"storage"`
+			} `json:"spec"`
+			Status struct {
+				Phase    string `json:"phase"`
+				Progress string `json:"progress"`
+			} `json:"status"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(out, &res); err != nil {
+		return nil, err
+	}
+	dvs := []DataVolumeInfo{}
+	for _, it := range res.Items {
+		size := ""
+		if it.Spec.PVC != nil {
+			size = it.Spec.PVC.Resources.Requests.Storage
+		} else if it.Spec.Storage != nil {
+			size = it.Spec.Storage.Resources.Requests.Storage
+		}
+		src := ""
+		if it.Spec.Source.HTTP != nil {
+			src = it.Spec.Source.HTTP.URL
+		} else if it.Spec.Source.Registry != nil {
+			src = it.Spec.Source.Registry.URL
+		}
+		dvs = append(dvs, DataVolumeInfo{
+			Name:      it.Metadata.Name,
+			Namespace: it.Metadata.Namespace,
+			Size:      size,
+			Phase:     it.Status.Phase,
+			Progress:  it.Status.Progress,
+			Source:    src,
+		})
+	}
+	return dvs, nil
+}
+
+type pvcResources struct {
+	Resources struct {
+		Requests struct {
+			Storage string `json:"storage"`
+		} `json:"requests"`
+	} `json:"resources"`
+}
+
+// ImportDataVolume creates a CDI DataVolume importing an image from a URL.
+func ImportDataVolume(name, namespace, url, size string) error {
+	if namespace == "" {
+		namespace = DefaultNamespace
+	}
+	if size == "" {
+		size = "10Gi"
+	}
+	EnsureNamespace(namespace)
+	dv := GenerateDataVolume(name, namespace, url)
+	dv["spec"].(map[string]any)["pvc"].(map[string]any)["resources"].(map[string]any)["requests"].(map[string]any)["storage"] = size
+	if sc := PreferredStorageClass(); sc != "" {
+		dv["spec"].(map[string]any)["pvc"].(map[string]any)["storageClassName"] = sc
+	}
+	return Apply(dv)
+}
+
+// DeleteDataVolume removes a DataVolume (and its PVC).
+func DeleteDataVolume(namespace, name string) error {
+	out, err := exec.Command("kubectl", "delete", "datavolume", name, "-n", namespace, "--ignore-not-found").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("delete datavolume: %s", strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 // ── Observability: events + metrics ───────────────────────────────
 
 // EventInfo is one row in the Proxmox-style task/event log.

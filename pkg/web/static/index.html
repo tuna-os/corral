@@ -47,6 +47,10 @@
     <label id="sshkey-field" hidden>SSH public key (baked into the bootc disk)
       <textarea name="sshKey" rows="3" placeholder="ssh-ed25519 AAAA…"></textarea>
     </label>
+    <details>
+      <summary>Cloud-init user-data (advanced)</summary>
+      <textarea name="cloudInit" rows="4" placeholder="#cloud-config&#10;packages:&#10;  - htop&#10;runcmd:&#10;  - [systemctl, enable, --now, qemu-guest-agent]"></textarea>
+    </details>
     <p class="hint">Cloud-init VMs get your SSH key and Tailscale auth key (if configured) automatically.
       Bootc builds take a few minutes — a live build log opens after submit.</p>
     <div class="dialog-actions">

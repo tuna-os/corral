@@ -50,6 +50,9 @@ func Serve(addr string) error {
 	mux.HandleFunc("POST /api/vms", handleCreateVM)
 	mux.HandleFunc("GET /api/nodes", handleNodes)
 	mux.HandleFunc("GET /api/capabilities", handleCapabilities)
+	mux.HandleFunc("GET /api/datavolumes", handleListDataVolumes)
+	mux.HandleFunc("POST /api/datavolumes", handleImportDataVolume)
+	mux.HandleFunc("DELETE /api/datavolumes/{ns}/{name}", handleDeleteDataVolume)
 	mux.HandleFunc("GET /api/tasks/{id}", handleTaskStatus)
 	mux.HandleFunc("GET /api/vms/{ns}/{name}", handleVMInfo)
 	mux.HandleFunc("POST /api/vms/{ns}/{name}/{action}", handleVMAction)
@@ -174,6 +177,7 @@ type createRequest struct {
 	Bootc         string `json:"bootc"`
 	SSHKey        string `json:"sshKey"`
 	Node          string `json:"node"`
+	CloudInit     string `json:"cloudInit"`
 }
 
 // buildTask tracks a long-running bootc build kicked off from the UI.
@@ -279,6 +283,7 @@ func handleCreateVM(w http.ResponseWriter, r *http.Request) {
 		ISO:              req.ISO,
 		PVC:              req.PVC,
 		Node:             req.Node,
+		CloudInitExtra:   req.CloudInit,
 		SSHPublicKey:     kubevirt.LoadSSHPublicKey(),
 		TailscaleAuthKey: config.AuthKey(),
 	}

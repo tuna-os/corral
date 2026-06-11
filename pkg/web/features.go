@@ -173,3 +173,39 @@ func handleMetrics(w http.ResponseWriter, r *http.Request) {
 	ns, name := r.PathValue("ns"), r.PathValue("name")
 	jsonResp(w, http.StatusOK, kubevirt.NewClient(ns).Metrics(name))
 }
+
+// GET /api/datavolumes — image/ISO library
+func handleListDataVolumes(w http.ResponseWriter, r *http.Request) {
+	dvs, err := kubevirt.ListDataVolumes()
+	if err != nil {
+		errResp(w, http.StatusBadGateway, err)
+		return
+	}
+	jsonResp(w, http.StatusOK, dvs)
+}
+
+// POST /api/datavolumes  body: {name, namespace, url, size}
+func handleImportDataVolume(w http.ResponseWriter, r *http.Request) {
+	var b struct {
+		Name, Namespace, URL, Size string
+	}
+	if err := json.NewDecoder(r.Body).Decode(&b); err != nil || b.Name == "" || b.URL == "" {
+		errResp(w, http.StatusBadRequest, fmt.Errorf("name and url are required"))
+		return
+	}
+	if err := kubevirt.ImportDataVolume(b.Name, b.Namespace, b.URL, b.Size); err != nil {
+		errResp(w, http.StatusInternalServerError, err)
+		return
+	}
+	jsonResp(w, http.StatusOK, map[string]string{"name": b.Name})
+}
+
+// DELETE /api/datavolumes/{ns}/{name}
+func handleDeleteDataVolume(w http.ResponseWriter, r *http.Request) {
+	ns, name := r.PathValue("ns"), r.PathValue("name")
+	if err := kubevirt.DeleteDataVolume(ns, name); err != nil {
+		errResp(w, http.StatusInternalServerError, err)
+		return
+	}
+	jsonResp(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
