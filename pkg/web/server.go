@@ -244,6 +244,11 @@ func handleCreateVM(w http.ResponseWriter, r *http.Request) {
 
 	// Bootc builds run as background tasks — the disk build takes minutes.
 	if req.Bootc != "" {
+		if !kubevirt.BootcAvailable() {
+			errResp(w, http.StatusBadRequest,
+				fmt.Errorf("bootc support is not enabled on this server (optional plugin — run the corral:bootc image)"))
+			return
+		}
 		sshKey := strings.TrimSpace(req.SSHKey)
 		if sshKey == "" {
 			sshKey = kubevirt.LoadSSHPublicKey()

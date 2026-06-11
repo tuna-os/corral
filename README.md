@@ -29,10 +29,10 @@ VMs are cattle. Stop treating each one like a networking project.
   `~/.config/tailvm/config.yaml` (or `TS_AUTHKEY`) and every cloud-init VM
   runs `tailscale up` on first boot — it shows up as a real machine on your
   tailnet, MagicDNS name and all.
-- **Boot any bootable container.** `corral create dev --bootc ghcr.io/...`
-  builds the OS disk *on the cluster* from a bootc image — no local disk
-  tooling, no image downloads — and boots it as a VM. Your OS is now a
-  container you `podman push`.
+- **Boot any bootable container** *(optional `bootc` plugin)*. `corral create
+  dev --bootc ghcr.io/...` builds the OS disk *on the cluster* from a bootc
+  image and boots it as a VM. bootc is niche, so it's an opt-in build
+  (`-tags bootc` / the `corral:bootc` image), not in the default binary.
 - **Point-and-shoot TUI.** Run `corral` bare for a Bubble Tea interface:
   pick a VM, hit Start / Stop / SSH / VNC / Delete, or toggle which ports
   (SSH, VNC, RDP, HTTP, …) are published to the tailnet as
@@ -95,10 +95,13 @@ corral list
 Nothing is ever bound to `0.0.0.0` — local VM ports attach to the host's
 Tailscale IP only.
 
-## The bootc pipeline
+## The bootc pipeline (optional plugin)
 
-`--bootc` turns a bootable container image into a running VM without any
-local tooling:
+bootc is an **opt-in plugin** — it's compiled in only with `go build -tags
+bootc` (CLI) or by running the `ghcr.io/hanthor/corral:bootc` image for the web
+UI. The default binary/image omits it, and the web UI hides the bootc create
+option unless the server has it. `--bootc` turns a bootable container image
+into a running VM without any local tooling:
 
 1. Corral creates a PVC and runs a privileged Job **using your image as the
    builder** — `bootc install to-filesystem` onto an XFS loopback disk, your

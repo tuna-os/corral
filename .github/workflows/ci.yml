@@ -53,10 +53,11 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Build binary and fetch kubectl/virtctl
+      - name: Build binaries (lean + bootc plugin) and fetch kubectl/virtctl
         run: |
           mkdir -p build
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o build/corral .
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags bootc -ldflags="-s -w" -o build/corral-bootc .
           curl -fsSLo build/kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
           curl -fsSLo build/virtctl "https://github.com/kubevirt/kubevirt/releases/download/${VIRTCTL_VERSION}/virtctl-${VIRTCTL_VERSION}-linux-amd64"
 
@@ -67,12 +68,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push image
+      - name: Build and push images (default lean + :bootc variant)
         run: |
           docker build -f Containerfile \
             -t "$IMAGE:latest" -t "$IMAGE:${GITHUB_SHA::7}" .
+          docker build -f Containerfile --build-arg BIN=corral-bootc \
+            -t "$IMAGE:bootc" .
           docker push "$IMAGE:latest"
           docker push "$IMAGE:${GITHUB_SHA::7}"
+          docker push "$IMAGE:bootc"
 
   release-binaries:
     needs: test

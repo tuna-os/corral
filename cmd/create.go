@@ -145,6 +145,9 @@ func runKubevirtCreate(name string) error {
 }
 
 func runBootcCreate(name string) error {
+	if !kubevirt.BootcAvailable() {
+		return fmt.Errorf("--bootc needs the optional bootc plugin (build with `-tags bootc`)")
+	}
 	ns := createNamespace
 	if ns == "" {
 		ns = kubevirt.DefaultNamespace

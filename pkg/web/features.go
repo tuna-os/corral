@@ -16,7 +16,13 @@ import (
 // handleCapabilities reports cluster storage capabilities so the UI can
 // enable/disable expand and snapshot controls.
 func handleCapabilities(w http.ResponseWriter, r *http.Request) {
-	jsonResp(w, http.StatusOK, kubevirt.ClusterCapabilities())
+	c := kubevirt.ClusterCapabilities()
+	jsonResp(w, http.StatusOK, map[string]any{
+		"storageClass": c.StorageClass,
+		"canExpand":    c.CanExpand,
+		"canSnapshot":  c.CanSnapshot,
+		"bootc":        kubevirt.BootcAvailable(), // optional plugin
+	})
 }
 
 // POST /api/vms/{ns}/{name}/scale  body: {cpu, mem}

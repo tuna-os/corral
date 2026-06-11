@@ -1,3 +1,8 @@
+//go:build bootc
+
+// Package-local bootc plugin. Compiled only with `-tags bootc`; registers its
+// implementations into the always-present seam in bootc_core.go. See that file
+// for why bootc is opt-in.
 package kubevirt
 
 import (
@@ -11,17 +16,15 @@ import (
 	"time"
 )
 
-// BootcBuildResult describes a finished on-cluster bootc disk build.
-type BootcBuildResult struct {
-	PVCName       string
-	RootUUID      string // root filesystem UUID, for the root= kernel arg
-	KernelVersion string // kernel version shipped in the image, for kernelBoot paths
+func init() {
+	bootcBuildFunc = bootcBuildDisk
+	bootcVMFunc = generateBootcVM
 }
 
-// BootcBuildDisk orchestrates the on-cluster bootc disk build pipeline.
+// bootcBuildDisk orchestrates the on-cluster bootc disk build pipeline.
 // Progress and builder logs are written to progress (defaults to stderr),
 // so callers like the web UI can capture them per-task.
-func BootcBuildDisk(name, namespace, imageURI, sshPublicKey, diskSize string, progress io.Writer) (*BootcBuildResult, error) {
+func bootcBuildDisk(name, namespace, imageURI, sshPublicKey, diskSize string, progress io.Writer) (*BootcBuildResult, error) {
 	if progress == nil {
 		progress = os.Stderr
 	}
@@ -248,11 +251,11 @@ func parseBuildVars(podName, namespace string) (map[string]string, error) {
 	return vars, nil
 }
 
-// GenerateBootcVM creates a KubeVirt VirtualMachine manifest for a bootc-built disk.
+// generateBootcVM creates a KubeVirt VirtualMachine manifest for a bootc-built disk.
 // Uses kernel boot (vmlinuz+initrd pulled from the bootc image at the detected
 // kernel version) since GRUB can't install on loopback devices with this
 // cluster's kernel.
-func GenerateBootcVM(name, namespace, pvcName, imageURI, rootUUID, kernelVersion, mem string, cpu int, node string) map[string]any {
+func generateBootcVM(name, namespace, pvcName, imageURI, rootUUID, kernelVersion, mem string, cpu int, node string) map[string]any {
 	if mem == "" {
 		mem = "4G"
 	}

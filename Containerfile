@@ -7,9 +7,12 @@
 #   podman build --arch amd64 -t ghcr.io/hanthor/corral:latest -f Containerfile .
 FROM docker.io/library/alpine:3.21
 
-COPY --chmod=755 build/corral  /usr/local/bin/corral
-COPY --chmod=755 build/kubectl /usr/local/bin/kubectl
-COPY --chmod=755 build/virtctl /usr/local/bin/virtctl
+# BIN selects the corral binary to ship: "corral" (default, lean) or
+# "corral-bootc" (built with -tags bootc) for the optional bootc plugin.
+ARG BIN=corral
+COPY --chmod=755 build/${BIN}   /usr/local/bin/corral
+COPY --chmod=755 build/kubectl  /usr/local/bin/kubectl
+COPY --chmod=755 build/virtctl  /usr/local/bin/virtctl
 
 ENV HOME=/tmp
 EXPOSE 8006

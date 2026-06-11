@@ -55,6 +55,10 @@ async function refresh() {
 
 async function loadCaps() {
   try { caps = await api('/api/capabilities'); } catch { /* keep defaults */ }
+  // bootc is an optional plugin — hide its source option when not enabled.
+  if (!caps.bootc) {
+    document.querySelector('[name=sourceType] option[value=bootc]')?.remove();
+  }
 }
 
 async function loadInstanceTypes() {
