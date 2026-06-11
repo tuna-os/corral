@@ -100,7 +100,14 @@ func (c *Client) ListVMs() ([]types.VM, error) {
 	if err != nil {
 		return nil, err
 	}
+	return parseVMList(out, vmiStatusIndex(), nodeVendors(), c.proxyStatus, DataVolumeStatus)
+}
 
+// parseVMList turns `kubectl get vms -o json` output into []types.VM. Pure
+// except for the two injected helpers (proxy status, ISO import status), so the
+// state-derivation logic is unit-testable. Keep it free of exec/IO.
+func parseVMList(out []byte, vmis map[string]vmiStatus, vendors map[string]string,
+	proxyStatusFn, isoStatusFn func(name, ns string) string) ([]types.VM, error) {
 	var result struct {
 		Items []struct {
 			Metadata struct {
@@ -134,9 +141,6 @@ func (c *Client) ListVMs() ([]types.VM, error) {
 		return nil, err
 	}
 
-	vmis := vmiStatusIndex()
-	vendors := nodeVendors()
-
 	var vms []types.VM
 	for _, vm := range result.Items {
 		name := vm.Metadata.Name
@@ -152,7 +156,7 @@ func (c *Client) ListVMs() ([]types.VM, error) {
 
 		status := statusLabel(ps)
 		if !running && !vm.Status.Ready {
-			if iso := DataVolumeStatus(name, ns); iso != "" && iso != "✓ ready" {
+			if iso := isoStatusFn(name, ns); iso != "" && iso != "✓ ready" {
 				status = iso
 			}
 		}
@@ -168,7 +172,7 @@ func (c *Client) ListVMs() ([]types.VM, error) {
 			CPU:        totalVCPU(cpu.Sockets, cpu.Cores, cpu.Threads),
 			Mem:        vm.Spec.Template.Spec.Domain.Memory.Guest,
 			Node:       node,
-			VNC:        c.proxyStatus(name, ns),
+			VNC:        proxyStatusFn(name, ns),
 			IsTemplate: vm.Metadata.Labels["corral.dev/template"] == "true",
 		}
 		// Overlay live VMI facts (actual node, IP, migratability, agent).

@@ -37,10 +37,20 @@ func Serve(addr string) error {
 	if s, err := registry.NewStore(); err == nil {
 		store = s
 	}
-
-	sub, err := fs.Sub(staticFS, "static")
+	mux, err := newMux()
 	if err != nil {
 		return err
+	}
+	fmt.Fprintf(os.Stderr, "Corral web UI listening on http://%s\n", addr)
+	return http.ListenAndServe(addr, mux)
+}
+
+// newMux builds the HTTP router. Split out from Serve so tests can exercise the
+// full route table with httptest.
+func newMux() (*http.ServeMux, error) {
+	sub, err := fs.Sub(staticFS, "static")
+	if err != nil {
+		return nil, err
 	}
 
 	mux := http.NewServeMux()
@@ -87,8 +97,7 @@ func Serve(addr string) error {
 	mux.Handle("GET /api/vnc/{ns}/{name}", wsServer(vncBridge))
 	mux.Handle("GET /api/tty/{ns}/{name}", wsServer(ttyBridge))
 
-	fmt.Fprintf(os.Stderr, "Corral web UI listening on http://%s\n", addr)
-	return http.ListenAndServe(addr, mux)
+	return mux, nil
 }
 
 func jsonResp(w http.ResponseWriter, code int, v any) {

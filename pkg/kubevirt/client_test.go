@@ -210,6 +210,88 @@ func TestGenerateProxyDeployment(t *testing.T) {
 	_ = data
 }
 
+func TestParseVMList(t *testing.T) {
+	// Includes the regression case: a VM using spec.runStrategy (not spec.running)
+	// must still report running=true when its printableStatus is Running.
+	const sample = `{"items":[
+      {"metadata":{"name":"runstrat","namespace":"default","labels":{"corral.dev/template":"true"}},
+       "spec":{"runStrategy":"Always","template":{"spec":{"domain":{"cpu":{"sockets":2,"cores":1,"threads":1},"memory":{"guest":"4Gi"}}}}},
+       "status":{"ready":true,"printableStatus":"Running"}},
+      {"metadata":{"name":"stopped","namespace":"default"},
+       "spec":{"running":false,"template":{"spec":{"domain":{"cpu":{"cores":2},"memory":{"guest":"2Gi"}}}}},
+       "status":{"printableStatus":"Stopped"}}
+    ]}`
+
+	noProxy := func(_, _ string) string { return "off" }
+	noISO := func(_, _ string) string { return "" }
+	vmis := map[string]vmiStatus{
+		"default/runstrat": {Node: "karnataka", IP: "10.0.0.5", LiveMigratable: true, AgentConnected: true},
+	}
+	vendors := map[string]string{"bihar": "AMD", "karnataka": "AMD"} // same vendor → migratable
+
+	vms, err := parseVMList([]byte(sample), vmis, vendors, noProxy, noISO)
+	if err != nil {
+		t.Fatalf("parseVMList: %v", err)
+	}
+	if len(vms) != 2 {
+		t.Fatalf("expected 2 VMs, got %d", len(vms))
+	}
+
+	rs := vms[0]
+	if !rs.Running {
+		t.Error("runStrategy VM should report Running=true (regression: spec.running was empty)")
+	}
+	if rs.Status != "● Running" {
+		t.Errorf("status = %q, want ● Running", rs.Status)
+	}
+	if rs.CPU != 2 {
+		t.Errorf("CPU = %d, want 2 (sockets×cores×threads)", rs.CPU)
+	}
+	if !rs.IsTemplate {
+		t.Error("expected IsTemplate=true from label")
+	}
+	if !rs.LiveMigratable {
+		t.Error("expected LiveMigratable=true (same-vendor target exists)")
+	}
+	if rs.IP != "10.0.0.5" || rs.Node != "karnataka" || !rs.AgentConnected {
+		t.Errorf("VMI overlay wrong: %+v", rs)
+	}
+
+	st := vms[1]
+	if st.Running {
+		t.Error("stopped VM should report Running=false")
+	}
+	if st.Status != "○ Stopped" {
+		t.Errorf("status = %q, want ○ Stopped", st.Status)
+	}
+	if st.CPU != 2 {
+		t.Errorf("legacy cores-based CPU = %d, want 2", st.CPU)
+	}
+}
+
+func TestStatusLabel(t *testing.T) {
+	cases := map[string]string{
+		"Running": "● Running", "Stopped": "○ Stopped", "": "○ Stopped",
+		"Paused": "⏸ Paused", "Migrating": "⇄ Migrating", "Starting": "◐ Starting",
+	}
+	for in, want := range cases {
+		if got := statusLabel(in); got != want {
+			t.Errorf("statusLabel(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestHasMigrationTarget(t *testing.T) {
+	mixed := map[string]string{"bihar": "Intel", "karnataka": "AMD"}
+	if hasMigrationTarget("bihar", mixed) {
+		t.Error("Intel node should have no AMD/same-vendor target in a mixed cluster")
+	}
+	same := map[string]string{"a": "AMD", "b": "AMD"}
+	if !hasMigrationTarget("a", same) {
+		t.Error("same-vendor cluster should have a migration target")
+	}
+}
+
 func TestParseMem(t *testing.T) {
 	tests := []struct {
 		input string
