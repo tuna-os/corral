@@ -36,7 +36,7 @@ func BootcBuildDisk(name, namespace, imageURI, sshPublicKey, diskSize string, pr
 	fmt.Fprintf(progress, "  PVC:    %s (%s)\n", pvcName, diskSize)
 
 	// Step 1: Create PVC
-	pvc := GeneratePVC(pvcName, namespace, diskSize)
+	pvc := GeneratePVCWithClass(pvcName, namespace, diskSize, PreferredStorageClass())
 	data, err := json.Marshal(pvc)
 	if err != nil {
 		return nil, fmt.Errorf("marshaling PVC: %w", err)
@@ -271,8 +271,8 @@ func GenerateBootcVM(name, namespace, pvcName, imageURI, rootUUID, kernelVersion
 			},
 			"spec": map[string]any{
 				"domain": map[string]any{
-					"cpu":    map[string]any{"cores": cpu},
-					"memory": map[string]any{"guest": fmt.Sprintf("%dMi", memMib)},
+					"cpu":    cpuSpec(cpu),
+					"memory": memSpec(memMib),
 					"firmware": map[string]any{
 						"kernelBoot": map[string]any{
 							"container": map[string]any{
@@ -290,7 +290,13 @@ func GenerateBootcVM(name, namespace, pvcName, imageURI, rootUUID, kernelVersion
 								"disk": map[string]any{"bus": "virtio"},
 							},
 						},
+						"interfaces": []map[string]any{
+							{"name": "default", "masquerade": map[string]any{}},
+						},
 					},
+				},
+				"networks": []map[string]any{
+					{"name": "default", "pod": map[string]any{}},
 				},
 				"volumes": []map[string]any{
 					{

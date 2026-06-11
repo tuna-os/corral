@@ -17,7 +17,17 @@ type VM struct {
 	ISO  string `json:"iso,omitempty"` // ISO download progress
 
 	// KubeVirt-specific
-	Namespace string `json:"namespace,omitempty"`
+	Namespace      string `json:"namespace,omitempty"`
+	LiveMigratable bool   `json:"liveMigratable"` // VMI LiveMigratable condition
+	AgentConnected bool   `json:"agentConnected"` // qemu-guest-agent reachable
+}
+
+// Capabilities reports what optional operations the cluster supports, so the
+// UI can enable/disable controls instead of failing on click.
+type Capabilities struct {
+	StorageClass string `json:"storageClass"` // preferred SC for new disks ("" = cluster default)
+	CanExpand    bool   `json:"canExpand"`    // default SC has allowVolumeExpansion
+	CanSnapshot  bool   `json:"canSnapshot"`  // a VolumeSnapshotClass exists
 }
 
 // RegistryEntry persists backend choice per VM.

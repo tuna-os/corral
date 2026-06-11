@@ -88,7 +88,13 @@ main {
   gap: 10px;
   margin-bottom: 14px;
 }
-.page-head h1 { font-size: 1.25rem; margin: 0; }
+.page-head h1 { font-size: 1.25rem; margin: 0; display: flex; align-items: center; gap: 8px; }
+
+/* Inline SVG icons (Heroicons) inherit text color. */
+.icon { width: 16px; height: 16px; flex-shrink: 0; }
+.page-head h1 .icon { width: 20px; height: 20px; }
+.tree-item .icon { width: 17px; height: 17px; }
+.icon-btn .icon { width: 22px; height: 22px; }
 
 .pill {
   padding: 3px 10px;
@@ -103,6 +109,9 @@ main {
 .toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-left: auto; }
 
 .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   background: var(--panel-2);
   color: var(--text);
   border: 1px solid var(--border);
@@ -111,6 +120,8 @@ main {
   font-size: .88rem;
   cursor: pointer;
 }
+.btn.sm { padding: 4px 9px; font-size: .8rem; }
+.btn.sm .icon { width: 14px; height: 14px; }
 .btn:hover { border-color: var(--muted); }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: #14100b; font-weight: 600; }
 .btn.primary:hover { background: var(--accent-2); }
@@ -230,6 +241,45 @@ dialog .hint { color: var(--muted); font-size: .78rem; }
   font-size: .85rem;
   z-index: 50;
 }
+
+/* ── Hardware / sections ────────────────────────────────── */
+.section {
+  font-size: 1rem;
+  margin: 22px 0 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.section .btn { margin-left: auto; }
+.muted { color: var(--muted); }
+
+.hw-edit {
+  display: flex;
+  align-items: flex-end;
+  gap: 14px;
+  flex-wrap: wrap;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+}
+.hw-edit label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: .8rem;
+  color: var(--muted);
+}
+.hw-edit input {
+  width: 130px;
+  padding: 7px 9px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: .9rem;
+}
+td .btn { cursor: pointer; }
 
 /* ── Mobile ─────────────────────────────────────────────── */
 @media (max-width: 760px) {

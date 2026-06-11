@@ -1,0 +1,167 @@
+package web
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+
+	"github.com/hanthor/corral/pkg/kubevirt"
+	"github.com/hanthor/corral/pkg/types"
+)
+
+// This file holds the HTTP handlers for the advanced VM operations
+// (scale, volumes, expand, snapshots, clone, guest info, capabilities).
+// Registered in server.go alongside the basic lifecycle routes.
+
+// handleCapabilities reports cluster storage capabilities so the UI can
+// enable/disable expand and snapshot controls.
+func handleCapabilities(w http.ResponseWriter, r *http.Request) {
+	jsonResp(w, http.StatusOK, kubevirt.ClusterCapabilities())
+}
+
+// POST /api/vms/{ns}/{name}/scale  body: {cpu, mem}
+func handleScale(w http.ResponseWriter, r *http.Request) {
+	ns, name := r.PathValue("ns"), r.PathValue("name")
+	var b struct {
+		CPU int    `json:"cpu"`
+		Mem string `json:"mem"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
+		errResp(w, http.StatusBadRequest, err)
+		return
+	}
+	c := kubevirt.NewClient(ns)
+	if b.CPU > 0 {
+		if err := c.ScaleCPU(name, b.CPU); err != nil {
+			errResp(w, http.StatusInternalServerError, err)
+			return
+		}
+	}
+	if b.Mem != "" {
+		if err := c.ScaleMemory(name, b.Mem); err != nil {
+			errResp(w, http.StatusInternalServerError, err)
+			return
+		}
+	}
+	jsonResp(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// POST /api/vms/{ns}/{name}/volumes  body: {size}
+func handleAddVolume(w http.ResponseWriter, r *http.Request) {
+	ns, name := r.PathValue("ns"), r.PathValue("name")
+	var b struct {
+		Size string `json:"size"`
+	}
+	json.NewDecoder(r.Body).Decode(&b)
+	pvc, err := kubevirt.NewClient(ns).AddVolume(name, b.Size)
+	if err != nil {
+		errResp(w, http.StatusInternalServerError, err)
+		return
+	}
+	jsonResp(w, http.StatusOK, map[string]string{"pvc": pvc})
+}
+
+// DELETE /api/vms/{ns}/{name}/volumes/{vol}
+func handleRemoveVolume(w http.ResponseWriter, r *http.Request) {
+	ns, name, vol := r.PathValue("ns"), r.PathValue("name"), r.PathValue("vol")
+	if err := kubevirt.NewClient(ns).RemoveVolume(name, vol); err != nil {
+		errResp(w, http.StatusInternalServerError, err)
+		return
+	}
+	jsonResp(w, http.StatusOK, map[string]string{"status": "removed"})
+}
+
+// POST /api/vms/{ns}/{name}/expand  body: {pvc, size}
+func handleExpand(w http.ResponseWriter, r *http.Request) {
+	ns := r.PathValue("ns")
+	var b struct {
+		PVC  string `json:"pvc"`
+		Size string `json:"size"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&b); err != nil || b.PVC == "" || b.Size == "" {
+		errResp(w, http.StatusBadRequest, fmt.Errorf("pvc and size are required"))
+		return
+	}
+	if err := kubevirt.NewClient(ns).ExpandDisk(b.PVC, b.Size); err != nil {
+		errResp(w, http.StatusInternalServerError, err)
+		return
+	}
+	jsonResp(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// GET /api/vms/{ns}/{name}/snapshots
+func handleListSnapshots(w http.ResponseWriter, r *http.Request) {
+	ns, name := r.PathValue("ns"), r.PathValue("name")
+	snaps, err := kubevirt.NewClient(ns).ListSnapshots(name)
+	if err != nil {
+		errResp(w, http.StatusBadGateway, err)
+		return
+	}
+	jsonResp(w, http.StatusOK, snaps)
+}
+
+// POST /api/vms/{ns}/{name}/snapshots  body: {name?}
+func handleCreateSnapshot(w http.ResponseWriter, r *http.Request) {
+	ns, name := r.PathValue("ns"), r.PathValue("name")
+	var b struct {
+		Name string `json:"name"`
+	}
+	json.NewDecoder(r.Body).Decode(&b)
+	snap, err := kubevirt.NewClient(ns).Snapshot(name, b.Name)
+	if err != nil {
+		errResp(w, http.StatusInternalServerError, err)
+		return
+	}
+	jsonResp(w, http.StatusOK, map[string]string{"name": snap})
+}
+
+// POST /api/vms/{ns}/{name}/snapshots/{snap}/restore
+func handleRestoreSnapshot(w http.ResponseWriter, r *http.Request) {
+	ns, name, snap := r.PathValue("ns"), r.PathValue("name"), r.PathValue("snap")
+	if err := kubevirt.NewClient(ns).RestoreSnapshot(name, snap); err != nil {
+		errResp(w, http.StatusInternalServerError, err)
+		return
+	}
+	jsonResp(w, http.StatusOK, map[string]string{"status": "restoring"})
+}
+
+// DELETE /api/vms/{ns}/{name}/snapshots/{snap}
+func handleDeleteSnapshot(w http.ResponseWriter, r *http.Request) {
+	ns, snap := r.PathValue("ns"), r.PathValue("snap")
+	if err := kubevirt.NewClient(ns).DeleteSnapshot(snap); err != nil {
+		errResp(w, http.StatusInternalServerError, err)
+		return
+	}
+	jsonResp(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+// POST /api/vms/{ns}/{name}/clone  body: {target}
+func handleClone(w http.ResponseWriter, r *http.Request) {
+	ns, name := r.PathValue("ns"), r.PathValue("name")
+	var b struct {
+		Target string `json:"target"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&b); err != nil || b.Target == "" {
+		errResp(w, http.StatusBadRequest, fmt.Errorf("target name is required"))
+		return
+	}
+	if err := kubevirt.NewClient(ns).Clone(name, b.Target); err != nil {
+		errResp(w, http.StatusInternalServerError, err)
+		return
+	}
+	if store != nil {
+		store.Set(b.Target, types.RegistryEntry{Backend: "kubevirt", Namespace: ns})
+	}
+	jsonResp(w, http.StatusOK, map[string]string{"target": b.Target})
+}
+
+// GET /api/vms/{ns}/{name}/guestinfo
+func handleGuestInfo(w http.ResponseWriter, r *http.Request) {
+	ns, name := r.PathValue("ns"), r.PathValue("name")
+	info, err := kubevirt.NewClient(ns).GuestInfo(name)
+	if err != nil {
+		errResp(w, http.StatusServiceUnavailable, err)
+		return
+	}
+	jsonResp(w, http.StatusOK, info)
+}

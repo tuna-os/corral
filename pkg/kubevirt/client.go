@@ -112,7 +112,11 @@ func (c *Client) ListVMs() ([]types.VM, error) {
 				Template struct {
 					Spec struct {
 						Domain struct {
-							CPU    struct{ Cores int }    `json:"cpu"`
+							CPU struct {
+								Cores   int `json:"cores"`
+								Sockets int `json:"sockets"`
+								Threads int `json:"threads"`
+							} `json:"cpu"`
 							Memory struct{ Guest string } `json:"memory"`
 						} `json:"domain"`
 						NodeSelector map[string]string `json:"nodeSelector"`
@@ -127,6 +131,8 @@ func (c *Client) ListVMs() ([]types.VM, error) {
 	if err := json.Unmarshal(out, &result); err != nil {
 		return nil, err
 	}
+
+	vmis := vmiStatusIndex()
 
 	var vms []types.VM
 	for _, vm := range result.Items {
@@ -147,20 +153,97 @@ func (c *Client) ListVMs() ([]types.VM, error) {
 			status = iso
 		}
 
-		vms = append(vms, types.VM{
+		cpu := vm.Spec.Template.Spec.Domain.CPU
+		v := types.VM{
 			Name:      name,
 			Backend:   "kubevirt",
 			Namespace: ns,
 			Status:    status,
 			Ready:     vm.Status.Ready,
 			Running:   running,
-			CPU:       vm.Spec.Template.Spec.Domain.CPU.Cores,
+			CPU:       totalVCPU(cpu.Sockets, cpu.Cores, cpu.Threads),
 			Mem:       vm.Spec.Template.Spec.Domain.Memory.Guest,
 			Node:      node,
 			VNC:       c.proxyStatus(name, ns),
-		})
+		}
+		// Overlay live VMI facts (actual node, IP, migratability, agent).
+		if vmi, ok := vmis[ns+"/"+name]; ok {
+			if vmi.Node != "" {
+				v.Node = vmi.Node
+			}
+			v.IP = vmi.IP
+			v.LiveMigratable = vmi.LiveMigratable
+			v.AgentConnected = vmi.AgentConnected
+		}
+		vms = append(vms, v)
 	}
 	return vms, nil
+}
+
+func totalVCPU(sockets, cores, threads int) int {
+	if sockets == 0 {
+		sockets = 1
+	}
+	if cores == 0 {
+		cores = 1
+	}
+	if threads == 0 {
+		threads = 1
+	}
+	return sockets * cores * threads
+}
+
+type vmiStatus struct {
+	Node           string
+	IP             string
+	LiveMigratable bool
+	AgentConnected bool
+}
+
+// vmiStatusIndex returns live per-VMI facts keyed by "namespace/name".
+func vmiStatusIndex() map[string]vmiStatus {
+	out, err := exec.Command("kubectl", "get", "vmis", "-A", "-o", "json").Output()
+	if err != nil {
+		return nil
+	}
+	var res struct {
+		Items []struct {
+			Metadata struct {
+				Name      string `json:"name"`
+				Namespace string `json:"namespace"`
+			} `json:"metadata"`
+			Status struct {
+				NodeName   string `json:"nodeName"`
+				Interfaces []struct {
+					IPAddress string `json:"ipAddress"`
+				} `json:"interfaces"`
+				Conditions []struct {
+					Type   string `json:"type"`
+					Status string `json:"status"`
+				} `json:"conditions"`
+			} `json:"status"`
+		} `json:"items"`
+	}
+	if json.Unmarshal(out, &res) != nil {
+		return nil
+	}
+	idx := make(map[string]vmiStatus, len(res.Items))
+	for _, it := range res.Items {
+		s := vmiStatus{Node: it.Status.NodeName}
+		if len(it.Status.Interfaces) > 0 {
+			s.IP = it.Status.Interfaces[0].IPAddress
+		}
+		for _, c := range it.Status.Conditions {
+			switch c.Type {
+			case "LiveMigratable":
+				s.LiveMigratable = c.Status == "True"
+			case "AgentConnected":
+				s.AgentConnected = c.Status == "True"
+			}
+		}
+		idx[it.Metadata.Namespace+"/"+it.Metadata.Name] = s
+	}
+	return idx
 }
 
 func (c *Client) proxyStatus(name, ns string) string {
@@ -216,6 +299,12 @@ func (c *Client) DeleteVM(name string) error {
 		exec.Command("kubectl", "delete", "pvc", pvc, "-n", c.Namespace, "--ignore-not-found").Run()
 		exec.Command("kubectl", "delete", "datavolume", pvc, "-n", c.Namespace, "--ignore-not-found").Run()
 	}
+
+	// Delete hotplug disks and snapshots labeled for this VM
+	exec.Command("kubectl", "delete", "pvc", "-n", c.Namespace,
+		"-l", "corral.dev/vm="+name, "--ignore-not-found").Run()
+	exec.Command("kubectl", "delete", "vmsnapshot", "-n", c.Namespace,
+		"-l", "corral.dev/vm="+name, "--ignore-not-found").Run()
 
 	// Delete proxy resources if any
 	DeleteProxy(name, c.Namespace)
@@ -393,7 +482,9 @@ func GenerateVM(opts types.CreateOpts) map[string]any {
 			"name": "containerdisk",
 			"disk": map[string]any{"bus": "virtio"},
 		})
-		if diskSize != "" {
+		// Extra persistent data disk only when --disk is explicitly requested;
+		// CreateVM creates the matching PVC under the same condition.
+		if opts.Disk != "" {
 			volumes = append(volumes, map[string]any{
 				"name":                  "datadisk",
 				"persistentVolumeClaim": map[string]any{"claimName": name + "-data"},
@@ -466,11 +557,19 @@ func GenerateVM(opts types.CreateOpts) map[string]any {
 			},
 			"spec": map[string]any{
 				"domain": map[string]any{
-					"cpu":    map[string]any{"cores": cpu},
-					"memory": map[string]any{"guest": fmt.Sprintf("%dMi", memMib)},
+					"cpu":    cpuSpec(cpu),
+					"memory": memSpec(memMib),
 					"devices": map[string]any{
 						"disks": disks,
+						// masquerade (NAT) binding is required for live migration;
+						// the default bridge binding pins the VM to its node.
+						"interfaces": []map[string]any{
+							{"name": "default", "masquerade": map[string]any{}},
+						},
 					},
+				},
+				"networks": []map[string]any{
+					{"name": "default", "pod": map[string]any{}},
 				},
 				"volumes": volumes,
 			},
@@ -810,22 +909,23 @@ func CreateVM(opts types.CreateOpts) error {
 	if diskSize == "" {
 		diskSize = "20G"
 	}
+	sc := PreferredStorageClass()
 
 	if hasISO {
 		if err := Apply(GenerateDataVolume(name+"-iso", ns, opts.ISO)); err != nil {
 			return fmt.Errorf("creating ISO DataVolume: %w", err)
 		}
 		fmt.Fprintf(os.Stderr, "ISO DataVolume: %s-iso (importing from %s)\n", name, opts.ISO)
-		if err := Apply(GeneratePVC(name+"-disk", ns, diskSize)); err != nil {
+		if err := Apply(GeneratePVCWithClass(name+"-disk", ns, diskSize, sc)); err != nil {
 			return fmt.Errorf("creating boot PVC: %w", err)
 		}
 		fmt.Fprintf(os.Stderr, "Boot PVC: %s-disk (%s)\n", name, diskSize)
 	} else if hasContainer && opts.Disk != "" {
-		if err := Apply(GeneratePVC(name+"-data", ns, opts.Disk)); err != nil {
+		if err := Apply(GeneratePVCWithClass(name+"-data", ns, opts.Disk, sc)); err != nil {
 			return fmt.Errorf("creating data PVC: %w", err)
 		}
 	} else if !hasPVC && !hasContainer {
-		if err := Apply(GeneratePVC(name+"-disk", ns, diskSize)); err != nil {
+		if err := Apply(GeneratePVCWithClass(name+"-disk", ns, diskSize, sc)); err != nil {
 			return fmt.Errorf("creating boot PVC: %w", err)
 		}
 	}
@@ -842,6 +942,37 @@ func applyManifest(yaml string) error {
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+// cpuSpec builds a hotplug-ready CPU topology: one core/thread per socket so
+// that live CPU updates (which scale `sockets`) map 1:1 to vCPUs, with
+// maxSockets headroom for hotplug. Harmless without LiveUpdate enabled.
+func cpuSpec(cpu int) map[string]any {
+	if cpu < 1 {
+		cpu = 1
+	}
+	max := cpu * 4
+	if max < 4 {
+		max = 4
+	}
+	return map[string]any{
+		"sockets":    cpu,
+		"cores":      1,
+		"threads":    1,
+		"maxSockets": max,
+	}
+}
+
+// memSpec sets guest memory plus maxGuest headroom so memory can be hotplugged
+// live (up to 4× the initial size). Harmless without LiveUpdate enabled.
+func memSpec(memMib int) map[string]any {
+	if memMib < 1 {
+		memMib = 1
+	}
+	return map[string]any{
+		"guest":    fmt.Sprintf("%dMi", memMib),
+		"maxGuest": fmt.Sprintf("%dMi", memMib*4),
+	}
 }
 
 func parseMem(s string) int {

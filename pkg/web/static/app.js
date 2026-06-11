@@ -1,10 +1,13 @@
 // Corral web UI — Proxmox-style dashboard for KubeVirt.
 // Vanilla JS; noVNC + xterm.js loaded from CDN for the consoles.
 
+import { icon } from './icons.js';
+
 const $ = (sel) => document.querySelector(sel);
 
 let vms = [];
 let nodes = [];
+let caps = { storageClass: '', canExpand: false, canSnapshot: false };
 let selected = { type: 'dc' }; // {type:'dc'} | {type:'node',name} | {type:'vm',key}
 let tab = 'summary';
 let rfb = null;        // noVNC connection
@@ -50,6 +53,10 @@ async function refresh() {
   if (tab !== 'console' && tab !== 'terminal') renderContent();
 }
 
+async function loadCaps() {
+  try { caps = await api('/api/capabilities'); } catch { /* keep defaults */ }
+}
+
 // ── Tree (sidebar) ────────────────────────────────────────────────
 
 function treeRow({ lvl, icon, label, sub, sel, onclick, dot }) {
@@ -66,7 +73,7 @@ function renderTree() {
   tree.replaceChildren();
 
   tree.appendChild(treeRow({
-    lvl: 0, icon: '🏠', label: 'Datacenter',
+    lvl: 0, icon: icon('datacenter'), label: 'Datacenter',
     sel: selected.type === 'dc',
     onclick: () => select({ type: 'dc' }),
   }));
@@ -76,7 +83,7 @@ function renderTree() {
 
   for (const n of nodes) {
     tree.appendChild(treeRow({
-      lvl: 1, icon: '🖥', label: n.name, sub: n.roles,
+      lvl: 1, icon: icon('server'), label: n.name, sub: n.roles,
       dot: n.ready ? 'on' : 'off',
       sel: selected.type === 'node' && selected.name === n.name,
       onclick: () => select({ type: 'node', name: n.name }),
@@ -93,7 +100,7 @@ function renderTree() {
 
 function vmRow(vm, lvl) {
   return treeRow({
-    lvl, icon: '⬛', label: vm.name, sub: vm.namespace,
+    lvl, icon: icon('cube'), label: vm.name, sub: vm.namespace,
     dot: vm.ready ? 'on' : (vm.running ? 'mid' : 'off'),
     sel: selected.type === 'vm' && selected.key === vmKey(vm),
     onclick: () => select({ type: 'vm', key: vmKey(vm) }),
@@ -140,7 +147,7 @@ function renderNode(main, name) {
   const nodeVMs = vms.filter((v) => v.node === name);
   main.innerHTML = `
     <div class="page-head">
-      <h1>🖥 ${esc(name)}</h1>
+      <h1>${icon('server')} ${esc(name)}</h1>
       <span class="pill ${n?.ready ? 'on' : 'off'}">${n?.ready ? 'ready' : 'not ready'}</span>
     </div>
     <dl class="props">
@@ -181,22 +188,25 @@ const TABS = [
   ['console', 'Console'],
   ['terminal', 'Terminal'],
   ['hardware', 'Hardware'],
+  ['snapshots', 'Snapshots'],
   ['yaml', 'YAML'],
 ];
 
 function renderVM(main, vm) {
   main.innerHTML = `
     <div class="page-head">
-      <h1>⬛ ${esc(vm.name)}</h1>
+      <h1>${icon('cube')} ${esc(vm.name)}</h1>
       <span class="pill ${vm.ready ? 'on' : 'off'}">${esc(vm.status)}</span>
       <div class="toolbar">
-        <button class="btn" data-act="start" ${vm.running ? 'disabled' : ''}>▶ Start</button>
-        <button class="btn" data-act="stop" ${vm.running ? '' : 'disabled'}>■ Stop</button>
-        <button class="btn" data-act="restart" ${vm.running ? '' : 'disabled'}>↻ Restart</button>
-        <button class="btn" data-act="pause" ${vm.ready ? '' : 'disabled'}>⏸ Pause</button>
-        <button class="btn" data-act="unpause">⏵ Resume</button>
-        <button class="btn" data-act="migrate" ${vm.ready ? '' : 'disabled'}>⇄ Migrate</button>
-        <button class="btn danger" data-act="delete">✕ Delete</button>
+        <button class="btn" data-act="start" ${vm.running ? 'disabled' : ''}>${icon('play')} Start</button>
+        <button class="btn" data-act="stop" ${vm.running ? '' : 'disabled'}>${icon('stop')} Stop</button>
+        <button class="btn" data-act="restart" ${vm.running ? '' : 'disabled'}>${icon('restart')} Restart</button>
+        <button class="btn" data-act="pause" ${vm.ready ? '' : 'disabled'}>${icon('pause')} Pause</button>
+        <button class="btn" data-act="unpause">${icon('play')} Resume</button>
+        <button class="btn" data-act="migrate" ${vm.ready && vm.liveMigratable ? '' : 'disabled'}
+          title="${vm.liveMigratable ? 'Live-migrate to another node' : 'Not live-migratable (persistent RWO disk)'}">${icon('migrate')} Migrate</button>
+        <button class="btn" data-act="clone">${icon('clone')} Clone</button>
+        <button class="btn danger" data-act="delete">${icon('trash')} Delete</button>
       </div>
     </div>
     <div class="tabs">
@@ -223,16 +233,21 @@ function renderTab(vm) {
         <dt>Status</dt><dd>${esc(vm.status)}</dd>
         <dt>Namespace</dt><dd>${esc(vm.namespace)}</dd>
         <dt>Node</dt><dd>${esc(vm.node || '—')}</dd>
-        <dt>CPU</dt><dd>${vm.cpu} cores</dd>
+        <dt>vCPUs</dt><dd>${vm.cpu}</dd>
         <dt>Memory</dt><dd>${esc(vm.mem)}</dd>
         <dt>Pod IP</dt><dd>${esc(vm.ip || '—')}</dd>
+        <dt>Live-migratable</dt><dd>${vm.liveMigratable ? 'yes' : 'no'}</dd>
+        <dt>Guest agent</dt><dd>${vm.agentConnected ? 'connected' : 'not connected'}</dd>
         <dt>Tailnet proxy</dt><dd>${esc(vm.vnc || 'off')}</dd>
         <dt>SSH</dt><dd><code>corral ssh ${esc(vm.name)}</code></dd>
-      </dl>`;
+      </dl>
+      <div id="guest-info"></div>`;
+      if (vm.agentConnected) loadGuestInfo(vm);
       break;
     case 'console': connectVNC(vm, body); break;
     case 'terminal': connectTTY(vm, body); break;
     case 'hardware': renderHardware(vm, body); break;
+    case 'snapshots': renderSnapshots(vm, body); break;
     case 'yaml':
       body.innerHTML = `<pre class="yaml">loading…</pre>`;
       api(`/api/vms/${vm.namespace}/${vm.name}`)
@@ -251,37 +266,211 @@ async function vmAction(vm, act) {
     } catch (e) { toast(e.message); }
     return refresh();
   }
+  if (act === 'migrate') return migrateVM(vm);
+  if (act === 'clone') return cloneVM(vm);
   try {
     await api(`/api/vms/${vm.namespace}/${vm.name}/${act}`, { method: 'POST' });
   } catch (e) { toast(e.message); }
   setTimeout(refresh, 800);
 }
 
+async function post(vm, path, body) {
+  return api(`/api/vms/${vm.namespace}/${vm.name}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {}),
+  });
+}
+
+async function migrateVM(vm) {
+  const others = nodes.filter((n) => n.ready && n.name !== vm.node).map((n) => n.name);
+  const target = others.length
+    ? prompt(`Migrate ${vm.name} to which node?\nAvailable: ${others.join(', ')}\n(leave blank to let the scheduler choose)`, others[0] ?? '')
+    : '';
+  if (target === null) return; // cancelled
+  try {
+    await post(vm, '/migrate', { targetNode: target.trim() });
+    toast(`Migrating ${vm.name}…`);
+  } catch (e) { toast(e.message); }
+  setTimeout(refresh, 800);
+}
+
+async function cloneVM(vm) {
+  const target = prompt(`Clone ${vm.name} to a new VM named:`, `${vm.name}-clone`);
+  if (!target) return;
+  try {
+    await post(vm, '/clone', { target: target.trim() });
+    toast(`Cloning ${vm.name} → ${target}…`);
+  } catch (e) { toast(e.message); }
+  setTimeout(refresh, 1500);
+}
+
+async function loadGuestInfo(vm) {
+  let info;
+  try { info = await api(`/api/vms/${vm.namespace}/${vm.name}/guestinfo`); }
+  catch { return; /* agent dropped */ }
+  const os = info.os || {};
+  const fss = Array.isArray(info.filesystems) ? info.filesystems : (info.filesystems?.items || []);
+  const el = $('#guest-info');
+  if (!el) return;
+  el.innerHTML = `<h2 class="section">Guest agent</h2>
+    <dl class="props">
+      <dt>OS</dt><dd>${esc(os.prettyName || os.name || '—')}</dd>
+      <dt>Kernel</dt><dd>${esc(os.kernelRelease || '—')}</dd>
+      <dt>Hostname</dt><dd>${esc(os.hostname || '—')}</dd>
+      ${fss.map((f) => `<dt>FS ${esc(f.mountPoint || f.name || '?')}</dt>
+        <dd>${esc(f.fileSystemType || '')} ${f.usedBytes != null ? `· ${gib(f.usedBytes)}/${gib(f.totalBytes)} GiB` : ''}</dd>`).join('')}
+    </dl>`;
+}
+
+const gib = (b) => (Number(b || 0) / 1073741824).toFixed(1);
+
 async function renderHardware(vm, body) {
   body.innerHTML = `<pre class="yaml">loading…</pre>`;
-  try {
-    const j = await api(`/api/vms/${vm.namespace}/${vm.name}`);
-    const spec = j.spec?.template?.spec ?? {};
-    const disks = spec.domain?.devices?.disks ?? [];
-    const volumes = Object.fromEntries((spec.volumes ?? []).map((v) => [v.name, v]));
-    const volDesc = (name) => {
-      const v = volumes[name] || {};
-      if (v.persistentVolumeClaim) return `PVC ${v.persistentVolumeClaim.claimName}`;
-      if (v.containerDisk) return `containerDisk ${v.containerDisk.image}`;
-      if (v.cloudInitNoCloud) return 'cloud-init';
-      return Object.keys(v).filter((k) => k !== 'name').join(',') || '?';
-    };
-    body.innerHTML = `<dl class="props">
-      <dt>CPU</dt><dd>${spec.domain?.cpu?.cores ?? '—'} cores</dd>
-      <dt>Memory</dt><dd>${esc(spec.domain?.memory?.guest ?? '—')}</dd>
-      <dt>Firmware</dt><dd>${spec.domain?.firmware?.kernelBoot ? 'kernel boot (bootc)' : 'BIOS'}</dd>
-      ${disks.map((d) => `<dt>Disk: ${esc(d.name)}</dt>
-        <dd>${esc(d.cdrom ? 'cdrom' : 'disk')} (${esc(d.disk?.bus || d.cdrom?.bus || '—')}) — ${esc(volDesc(d.name))}</dd>`).join('')}
-      <dt>Node selector</dt><dd>${esc(JSON.stringify(spec.nodeSelector ?? {}) )}</dd>
+  let j;
+  try { j = await api(`/api/vms/${vm.namespace}/${vm.name}`); }
+  catch (e) { body.innerHTML = `<p class="console-msg">${esc(e.message)}</p>`; return; }
+
+  const spec = j.spec?.template?.spec ?? {};
+  const cpu = spec.domain?.cpu ?? {};
+  const vcpus = (cpu.sockets || 1) * (cpu.cores || 1) * (cpu.threads || 1);
+  const mem = spec.domain?.memory?.guest ?? '';
+  const disks = spec.domain?.devices?.disks ?? [];
+  const volumes = Object.fromEntries((spec.volumes ?? []).map((v) => [v.name, v]));
+  const pvcOf = (name) => volumes[name]?.persistentVolumeClaim?.claimName;
+  const volDesc = (name) => {
+    const v = volumes[name] || {};
+    if (v.persistentVolumeClaim) return `PVC ${v.persistentVolumeClaim.claimName}`;
+    if (v.containerDisk) return `containerDisk ${v.containerDisk.image}`;
+    if (v.cloudInitNoCloud) return 'cloud-init';
+    return Object.keys(v).filter((k) => k !== 'name').join(',') || '?';
+  };
+  const liveNote = vm.liveMigratable
+    ? 'applies live (hotplug)'
+    : 'VM will restart to apply';
+
+  body.innerHTML = `
+    <h2 class="section">${icon('cpu')} Processor &amp; memory</h2>
+    <div class="hw-edit">
+      <label>vCPUs <input id="hw-cpu" type="number" min="1" max="64" value="${vcpus}"></label>
+      <label>Memory <input id="hw-mem" value="${esc(mem)}"></label>
+      <button class="btn primary" id="hw-apply">Apply</button>
+      <span class="muted">${esc(liveNote)}</span>
+    </div>
+
+    <h2 class="section">${icon('disk')} Storage
+      <button class="btn" id="hw-adddisk">${icon('plus')} Add disk</button>
+    </h2>
+    <table><thead><tr><th>Disk</th><th>Type</th><th>Backing</th><th></th></tr></thead><tbody>
+      ${disks.map((d) => {
+        const pvc = pvcOf(d.name);
+        return `<tr>
+          <td>${esc(d.name)}</td>
+          <td>${esc(d.cdrom ? 'cdrom' : 'disk')} (${esc(d.disk?.bus || d.cdrom?.bus || '—')})</td>
+          <td>${esc(volDesc(d.name))}</td>
+          <td>${pvc ? `<button class="btn sm" data-expand="${esc(pvc)}" ${caps.canExpand ? '' : 'disabled'}
+              title="${caps.canExpand ? 'Grow this disk' : 'Storage class does not support expansion'}">${icon('expand')} Expand</button>` : ''}
+            ${pvc && d.name.includes('-hp-') ? `<button class="btn sm danger" data-rmvol="${esc(d.name)}">Detach</button>` : ''}
+          </td>
+        </tr>`;
+      }).join('')}
+    </tbody></table>
+
+    <h2 class="section">${icon('info')} Firmware</h2>
+    <dl class="props">
+      <dt>Boot</dt><dd>${spec.domain?.firmware?.kernelBoot ? 'kernel boot (bootc)' : 'BIOS'}</dd>
+      <dt>Node selector</dt><dd><code>${esc(JSON.stringify(spec.nodeSelector ?? {}))}</code></dd>
     </dl>`;
-  } catch (e) {
-    body.innerHTML = `<p class="console-msg">${esc(e.message)}</p>`;
+
+  $('#hw-apply').onclick = async () => {
+    const newCpu = parseInt($('#hw-cpu').value, 10);
+    const newMem = $('#hw-mem').value.trim();
+    const payload = {};
+    if (newCpu && newCpu !== vcpus) payload.cpu = newCpu;
+    if (newMem && newMem !== mem) payload.mem = newMem;
+    if (!payload.cpu && !payload.mem) { toast('No changes'); return; }
+    $('#hw-apply').disabled = true;
+    try { await post(vm, '/scale', payload); toast('Applied'); }
+    catch (e) { toast(e.message); }
+    setTimeout(refresh, 800);
+  };
+  $('#hw-adddisk').onclick = async () => {
+    const size = prompt('New disk size (e.g. 10Gi):', '10Gi');
+    if (!size) return;
+    try { await post(vm, '/volumes', { size: size.trim() }); toast('Disk added'); }
+    catch (e) { toast(e.message); }
+    setTimeout(() => renderHardware(vm, body), 800);
+  };
+  body.querySelectorAll('[data-expand]').forEach((b) => {
+    b.onclick = async () => {
+      const size = prompt(`Grow ${b.dataset.expand} to:`, '');
+      if (!size) return;
+      try { await post(vm, '/expand', { pvc: b.dataset.expand, size: size.trim() }); toast('Expanding…'); }
+      catch (e) { toast(e.message); }
+    };
+  });
+  body.querySelectorAll('[data-rmvol]').forEach((b) => {
+    b.onclick = async () => {
+      if (!confirm(`Detach ${b.dataset.rmvol}?`)) return;
+      try {
+        await api(`/api/vms/${vm.namespace}/${vm.name}/volumes/${b.dataset.rmvol}`, { method: 'DELETE' });
+        toast('Detached');
+      } catch (e) { toast(e.message); }
+      setTimeout(() => renderHardware(vm, body), 800);
+    };
+  });
+}
+
+async function renderSnapshots(vm, body) {
+  if (!caps.canSnapshot) {
+    body.innerHTML = `<p class="console-msg">Snapshots need a snapshot-capable StorageClass
+      (no VolumeSnapshotClass found in this cluster).</p>`;
+    return;
   }
+  body.innerHTML = `
+    <div class="toolbar" style="margin-bottom:12px">
+      <button class="btn primary" id="snap-new">${icon('camera')} Take snapshot</button>
+    </div>
+    <table><thead><tr><th>Name</th><th>Ready</th><th>Created</th><th></th></tr></thead>
+    <tbody id="snap-rows"><tr><td colspan="4" class="muted">loading…</td></tr></tbody></table>`;
+
+  $('#snap-new').onclick = async () => {
+    try { await post(vm, '/snapshots', {}); toast('Snapshot started'); }
+    catch (e) { toast(e.message); }
+    setTimeout(() => renderSnapshots(vm, body), 800);
+  };
+
+  let snaps = [];
+  try { snaps = await api(`/api/vms/${vm.namespace}/${vm.name}/snapshots`); }
+  catch (e) { $('#snap-rows').innerHTML = `<tr><td colspan="4">${esc(e.message)}</td></tr>`; return; }
+
+  $('#snap-rows').innerHTML = snaps.length
+    ? snaps.map((s) => `<tr>
+        <td>${esc(s.name)}</td>
+        <td>${s.ready ? '✓' : '…'}</td>
+        <td>${esc(s.created || '')}</td>
+        <td>
+          <button class="btn sm" data-restore="${esc(s.name)}" title="VM must be stopped">Restore</button>
+          <button class="btn sm danger" data-delsnap="${esc(s.name)}">Delete</button>
+        </td></tr>`).join('')
+    : `<tr><td colspan="4" class="muted">No snapshots yet.</td></tr>`;
+
+  body.querySelectorAll('[data-restore]').forEach((b) => {
+    b.onclick = async () => {
+      if (!confirm(`Restore ${vm.name} from ${b.dataset.restore}? The VM must be stopped first.`)) return;
+      try { await post(vm, `/snapshots/${b.dataset.restore}/restore`, {}); toast('Restoring…'); }
+      catch (e) { toast(e.message); }
+    };
+  });
+  body.querySelectorAll('[data-delsnap]').forEach((b) => {
+    b.onclick = async () => {
+      try {
+        await api(`/api/vms/${vm.namespace}/${vm.name}/snapshots/${b.dataset.delsnap}`, { method: 'DELETE' });
+        toast('Deleted');
+      } catch (e) { toast(e.message); }
+      setTimeout(() => renderSnapshots(vm, body), 500);
+    };
+  });
 }
 
 // ── Consoles ──────────────────────────────────────────────────────
@@ -434,5 +623,9 @@ function closeDrawer() { $('#tree').classList.remove('open'); }
 
 // ── Boot ──────────────────────────────────────────────────────────
 
+$('#btn-menu').innerHTML = icon('menu');
+$('#btn-create').innerHTML = `${icon('plus')} Create VM`;
+
+loadCaps();
 refresh();
 setInterval(refresh, 5000);

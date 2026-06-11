@@ -21,7 +21,7 @@ var (
 	tuiTitle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("212")).Padding(0, 1)
 	tuiRunning  = lipgloss.NewStyle().Foreground(lipgloss.Color("212"))
 	tuiStopped  = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	tuiProxyOn  = "🔵"
+	tuiProxyOn  = "●"
 	tuiProxyOff = "○"
 	tuiHelp     = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 
@@ -46,7 +46,7 @@ func vmToItem(vm types.VM) vmItem {
 	if vm.VNC == "on" {
 		proxy = tuiProxyOn
 	} else if vm.VNC == "pending" {
-		proxy = "⏳"
+		proxy = "◐"
 	}
 	return vmItem{
 		vm: vm,
@@ -67,12 +67,18 @@ func (a actionItem) Description() string { return "" }
 func (a actionItem) FilterValue() string { return a.label }
 
 var actionsListItems = []actionItem{
-	{id: "start", label: "▶  Start"},
-	{id: "stop", label: "■  Stop"},
-	{id: "ssh", label: "🔑 SSH"},
-	{id: "viewer", label: "🖵  Viewer (VNC)"},
-	{id: "ports", label: "✎  Edit ports"},
-	{id: "delete", label: "✕  Delete"},
+	{id: "start", label: "Start"},
+	{id: "stop", label: "Stop"},
+	{id: "restart", label: "Restart"},
+	{id: "pause", label: "Pause"},
+	{id: "unpause", label: "Resume"},
+	{id: "migrate", label: "Migrate"},
+	{id: "hardware", label: "Edit CPU / RAM"},
+	{id: "snapshot", label: "Snapshot"},
+	{id: "ssh", label: "SSH"},
+	{id: "viewer", label: "Viewer (VNC)"},
+	{id: "ports", label: "Edit ports"},
+	{id: "delete", label: "Delete"},
 }
 
 // ── Main model ────────────────────────────────────────────────────
@@ -81,9 +87,10 @@ type tuiModel struct {
 	list        list.Model
 	actionsList list.Model
 	quitting    bool
-	state       string // "list", "actions", "edit", "confirmDelete"
+	state       string // "list", "actions", "edit", "hwedit", "confirmDelete"
 	selected    types.VM
 	edit        editModel
+	hwEdit      hwEditModel
 	width       int
 	height      int
 }
@@ -164,6 +171,17 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 
+		if m.state == "hwedit" {
+			hm, cmd := m.hwEdit.Update(msg)
+			m.hwEdit = hm.(hwEditModel)
+			if m.hwEdit.done {
+				m.state = "list"
+				m.refreshList()
+				return m, nil
+			}
+			return m, cmd
+		}
+
 		if m.state == "confirmDelete" {
 			switch msg.String() {
 			case "y", "Y":
@@ -194,7 +212,11 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.state = "edit"
 						m.edit = newEditModel(m.selected)
 						return m, m.edit.Init()
-					case "start", "stop":
+					case "hardware":
+						m.state = "hwedit"
+						m.hwEdit = newHWEditModel(m.selected)
+						return m, m.hwEdit.Init()
+					case "start", "stop", "restart", "pause", "unpause", "migrate", "snapshot":
 						m.performAction(item.id)
 						m.refreshList()
 						m.state = "list"
@@ -259,6 +281,29 @@ func (m *tuiModel) performAction(action string) {
 		} else {
 			qemu.Stop(name)
 		}
+	case "restart":
+		if backend == "kubevirt" {
+			kubevirt.NewClient(ns).RestartVM(name)
+		} else {
+			qemu.Stop(name)
+			qemu.Start(name)
+		}
+	case "pause":
+		if backend == "kubevirt" {
+			kubevirt.NewClient(ns).PauseVM(name)
+		}
+	case "unpause":
+		if backend == "kubevirt" {
+			kubevirt.NewClient(ns).UnpauseVM(name)
+		}
+	case "migrate":
+		if backend == "kubevirt" {
+			kubevirt.NewClient(ns).Migrate(name, "")
+		}
+	case "snapshot":
+		if backend == "kubevirt" {
+			kubevirt.NewClient(ns).Snapshot(name, "")
+		}
 	case "delete":
 		if backend == "kubevirt" {
 			kubevirt.NewClient(ns).DeleteVM(name)
@@ -313,6 +358,10 @@ func (m tuiModel) View() string {
 
 	if m.state == "edit" {
 		return m.edit.View()
+	}
+
+	if m.state == "hwedit" {
+		return m.hwEdit.View()
 	}
 
 	if m.state == "confirmDelete" {
@@ -530,6 +579,101 @@ func (m editModel) View() string {
 	}
 
 	sb.WriteString("\n" + tuiHelp.Render("  space toggle  ↑↓ nav  backspace remove  esc back"))
+	return sb.String()
+}
+
+// ── Hardware edit (CPU / RAM) ─────────────────────────────────────
+
+type hwEditModel struct {
+	vm     types.VM
+	cpu    textinput.Model
+	mem    textinput.Model
+	focus  int // 0 = cpu, 1 = mem
+	status string
+	done   bool
+}
+
+func newHWEditModel(vm types.VM) hwEditModel {
+	cpu := textinput.New()
+	cpu.SetValue(strconv.Itoa(vm.CPU))
+	cpu.CharLimit = 3
+	cpu.Width = 6
+	cpu.Focus()
+
+	mem := textinput.New()
+	mem.SetValue(vm.Mem)
+	mem.CharLimit = 8
+	mem.Width = 8
+
+	return hwEditModel{vm: vm, cpu: cpu, mem: mem}
+}
+
+func (m hwEditModel) Init() tea.Cmd { return textinput.Blink }
+
+func (m hwEditModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "esc", "q":
+			m.done = true
+			return m, nil
+		case "tab", "up", "down", "shift+tab":
+			m.focus = (m.focus + 1) % 2
+			if m.focus == 0 {
+				m.cpu.Focus()
+				m.mem.Blur()
+			} else {
+				m.mem.Focus()
+				m.cpu.Blur()
+			}
+			return m, textinput.Blink
+		case "enter":
+			m.apply()
+			m.done = true
+			return m, nil
+		}
+	}
+	var cmd tea.Cmd
+	if m.focus == 0 {
+		m.cpu, cmd = m.cpu.Update(msg)
+	} else {
+		m.mem, cmd = m.mem.Update(msg)
+	}
+	return m, cmd
+}
+
+func (m *hwEditModel) apply() {
+	ns := m.vm.Namespace
+	if ns == "" {
+		ns = "default"
+	}
+	c := kubevirt.NewClient(ns)
+	if v, err := strconv.Atoi(strings.TrimSpace(m.cpu.Value())); err == nil && v > 0 && v != m.vm.CPU {
+		c.ScaleCPU(m.vm.Name, v)
+	}
+	if mem := strings.TrimSpace(m.mem.Value()); mem != "" && mem != m.vm.Mem {
+		c.ScaleMemory(m.vm.Name, mem)
+	}
+}
+
+func (m hwEditModel) View() string {
+	var sb strings.Builder
+	sb.WriteString(tuiTitle.Render(fmt.Sprintf(" Edit hardware: %s ", m.vm.Name)))
+	sb.WriteString("\n\n")
+	cpuMark, memMark := "  ", "  "
+	if m.focus == 0 {
+		cpuMark = tuiRunning.Render("▶ ")
+	} else {
+		memMark = tuiRunning.Render("▶ ")
+	}
+	sb.WriteString(fmt.Sprintf("%svCPUs   %s\n", cpuMark, m.cpu.View()))
+	sb.WriteString(fmt.Sprintf("%sMemory  %s\n", memMark, m.mem.View()))
+	note := "applies live (hotplug)"
+	if !m.vm.LiveMigratable {
+		note = "VM will restart to apply"
+	}
+	sb.WriteString("\n" + tuiHelp.Render("  "+note))
+	sb.WriteString("\n" + tuiHelp.Render("  tab switch  enter apply  esc cancel"))
 	return sb.String()
 }
 

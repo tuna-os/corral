@@ -49,10 +49,23 @@ func Serve(addr string) error {
 	mux.HandleFunc("GET /api/vms", handleListVMs)
 	mux.HandleFunc("POST /api/vms", handleCreateVM)
 	mux.HandleFunc("GET /api/nodes", handleNodes)
+	mux.HandleFunc("GET /api/capabilities", handleCapabilities)
 	mux.HandleFunc("GET /api/tasks/{id}", handleTaskStatus)
 	mux.HandleFunc("GET /api/vms/{ns}/{name}", handleVMInfo)
 	mux.HandleFunc("POST /api/vms/{ns}/{name}/{action}", handleVMAction)
 	mux.HandleFunc("DELETE /api/vms/{ns}/{name}", handleDeleteVM)
+
+	// Advanced operations — more specific patterns win over {action} above.
+	mux.HandleFunc("POST /api/vms/{ns}/{name}/scale", handleScale)
+	mux.HandleFunc("POST /api/vms/{ns}/{name}/expand", handleExpand)
+	mux.HandleFunc("POST /api/vms/{ns}/{name}/clone", handleClone)
+	mux.HandleFunc("GET /api/vms/{ns}/{name}/guestinfo", handleGuestInfo)
+	mux.HandleFunc("POST /api/vms/{ns}/{name}/volumes", handleAddVolume)
+	mux.HandleFunc("DELETE /api/vms/{ns}/{name}/volumes/{vol}", handleRemoveVolume)
+	mux.HandleFunc("GET /api/vms/{ns}/{name}/snapshots", handleListSnapshots)
+	mux.HandleFunc("POST /api/vms/{ns}/{name}/snapshots", handleCreateSnapshot)
+	mux.HandleFunc("DELETE /api/vms/{ns}/{name}/snapshots/{snap}", handleDeleteSnapshot)
+	mux.HandleFunc("POST /api/vms/{ns}/{name}/snapshots/{snap}/restore", handleRestoreSnapshot)
 
 	wsServer := func(h websocket.Handler) http.Handler {
 		return websocket.Server{
@@ -284,16 +297,25 @@ func handleVMAction(w http.ResponseWriter, r *http.Request) {
 	ns, name := r.PathValue("ns"), r.PathValue("name")
 	action := r.PathValue("action")
 
+	c := kubevirt.NewClient(ns)
 	var err error
 	switch action {
 	case "start":
-		err = kubevirt.NewClient(ns).StartVM(name)
+		err = c.StartVM(name)
 	case "stop":
-		err = kubevirt.NewClient(ns).StopVM(name)
-	case "restart", "migrate":
-		err = runVirtctl(action, name, "-n", ns)
-	case "pause", "unpause":
-		err = runVirtctl(action, "vm", name, "-n", ns)
+		err = c.StopVM(name)
+	case "restart":
+		err = c.RestartVM(name)
+	case "pause":
+		err = c.PauseVM(name)
+	case "unpause":
+		err = c.UnpauseVM(name)
+	case "migrate":
+		var b struct {
+			TargetNode string `json:"targetNode"`
+		}
+		json.NewDecoder(r.Body).Decode(&b) // empty body is fine
+		err = c.Migrate(name, b.TargetNode)
 	default:
 		errResp(w, http.StatusBadRequest, fmt.Errorf("unknown action %q", action))
 		return
@@ -303,14 +325,6 @@ func handleVMAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResp(w, http.StatusOK, map[string]string{"status": "ok"})
-}
-
-func runVirtctl(args ...string) error {
-	out, err := exec.Command("virtctl", args...).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("virtctl %s: %s", strings.Join(args, " "), strings.TrimSpace(string(out)))
-	}
-	return nil
 }
 
 func handleDeleteVM(w http.ResponseWriter, r *http.Request) {
