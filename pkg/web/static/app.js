@@ -745,11 +745,16 @@ async function renderHardware(vm, body) {
     </h2>
     ${networkTable(spec, vm)}
 
+    <h2 class="section">${icon('cpu')} GPU / PCI passthrough</h2>
+    <div id="hw-gpus"><p class="muted">loading…</p></div>
+
     <h2 class="section">${icon('info')} Firmware</h2>
     <dl class="props">
       <dt>Boot</dt><dd>${spec.domain?.firmware?.kernelBoot ? 'kernel boot (bootc)' : 'BIOS'}</dd>
       <dt>Node selector</dt><dd><code>${esc(JSON.stringify(spec.nodeSelector ?? {}))}</code></dd>
     </dl>`;
+
+  renderGPUs(vm);
 
   $('#hw-apply').onclick = async () => {
     const newCpu = parseInt($('#hw-cpu').value, 10);
@@ -815,6 +820,52 @@ function networkTable(spec, vm) {
       <td>${esc(i.name === 'default' ? (vm.ip || '—') : '—')}</td></tr>`).join('')}
     </tbody></table>
     <p class="muted" style="font-size:.78rem;margin-top:6px">Secondary NIC hotplug needs Multus (not installed on this cluster).</p>`;
+}
+
+// GPU/PCI passthrough section of the Hardware tab (gpu plugin): list attached
+// devices with detach, and attach from the cluster's permitted devices.
+async function renderGPUs(vm) {
+  const box = $('#hw-gpus');
+  if (!box) return;
+  let permitted = [], attached = [];
+  try { permitted = await api('/api/gpus'); } catch { /* none */ }
+  try { attached = await api(`/api/vms/${vm.namespace}/${vm.name}/gpus`); } catch { /* none */ }
+
+  const rows = attached.length
+    ? `<table><thead><tr><th>Name</th><th>Device</th><th></th></tr></thead><tbody>
+        ${attached.map((g) => `<tr><td>${esc(g.name)}</td><td><code>${esc(g.deviceName)}</code></td>
+          <td><button class="btn sm danger" data-rmgpu="${esc(g.name)}">Detach</button></td></tr>`).join('')}
+       </tbody></table>`
+    : `<p class="muted">No GPUs attached.</p>`;
+
+  const picker = permitted.length
+    ? `<div class="hw-edit" style="margin-top:8px">
+        <label>Device <select id="gpu-dev">${permitted.map((d) =>
+          `<option value="${esc(d.resourceName)}">${esc(d.resourceName)} (${esc(d.type)})</option>`).join('')}</select></label>
+        <button class="btn" id="gpu-attach">${icon('plus')} Attach</button>
+        <span class="muted">applies on next boot</span>
+      </div>`
+    : `<p class="muted" style="font-size:.78rem">No passthrough devices permitted yet. An admin enables them once with
+       <code>corral gpu enable --vendor &lt;vid:did&gt; --resource &lt;vendor/name&gt;</code>.</p>`;
+  box.innerHTML = rows + picker;
+
+  const attach = $('#gpu-attach');
+  if (attach) attach.onclick = async () => {
+    try {
+      await post(vm, '/gpus', { device: $('#gpu-dev').value });
+      toast('GPU attached (next boot)');
+    } catch (e) { toast(e.message); }
+    renderGPUs(vm);
+  };
+  box.querySelectorAll('[data-rmgpu]').forEach((b) => {
+    b.onclick = async () => {
+      try {
+        await api(`/api/vms/${vm.namespace}/${vm.name}/gpus/${b.dataset.rmgpu}`, { method: 'DELETE' });
+        toast('GPU detached');
+      } catch (e) { toast(e.message); }
+      renderGPUs(vm);
+    };
+  });
 }
 
 async function renderSnapshots(vm, body) {

@@ -138,7 +138,10 @@ installed plugins; the UI lights up their features:
 - **schedule** → Autostart/shutdown windows panel on the Summary tab
   (start/stop cron → CronJobs flipping runStrategy via `pkg/cronops`,
   `pkg/web/schedule.go`).
-- Still TODO: GPU picker (gpu plugin) panel.
+- **gpu** → GPU/PCI passthrough section in the Hardware tab
+  (`pkg/web/gpu.go`): lists the KubeVirt CR's permitted devices, attach/
+  detach to the VM (patches `spec.domain.devices.gpus`). Permitting a device
+  cluster-wide stays a CLI admin op (`corral gpu enable`).
 
 **Doctor UI (2026-06-12)** — failed checks render red with a per-item Fix
 button (`POST /api/doctor/fix {"check": "<name>"}` → `doctor.FixOne`)
