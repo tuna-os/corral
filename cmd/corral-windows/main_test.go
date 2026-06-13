@@ -83,6 +83,40 @@ func TestCreateWindowsVM_AppliesAllManifests(t *testing.T) {
 	}
 }
 
+func TestCreateWindowsVM_WithRDP(t *testing.T) {
+	fake := shell.NewFake()
+	fake.AddResponseKV("kubectl", []string{"apply", "-f", "-"}, "applied", nil)
+	fake.AddResponseKV("kubectl", []string{"get", "sc", "-o", "json"}, `{"items":[]}`, nil)
+	kubevirt.SetApplyRunner(fake)
+	kubevirt.SetPackageRunner(fake)
+	t.Cleanup(func() {
+		kubevirt.SetApplyRunner(shell.Real{})
+		kubevirt.SetPackageRunner(shell.Real{})
+	})
+	t.Setenv("HOME", t.TempDir())
+
+	if err := createWindowsVM("win11", "tailvm", "https://example.com/win11.iso",
+		"64Gi", "8Gi", 4, true); err != nil {
+		t.Fatalf("createWindowsVM --rdp: %v", err)
+	}
+	// ISO DV + boot PVC + VM + proxy RBAC + proxy Service + proxy Deployment
+	applies, sawRDPPort := 0, false
+	for _, c := range fake.Calls() {
+		if len(c.Args) > 0 && c.Args[0] == "apply" {
+			applies++
+			if strings.Contains(c.Stdin, "3389") {
+				sawRDPPort = true
+			}
+		}
+	}
+	if applies < 6 {
+		t.Errorf("applied %d manifests, want >= 6 (VM trio + proxy trio)", applies)
+	}
+	if !sawRDPPort {
+		t.Error("no applied manifest exposes port 3389")
+	}
+}
+
 func TestAttachDrivers(t *testing.T) {
 	fake := shell.NewFake()
 	fake.AddPrefixResponse("kubectl patch vm win11 -n tailvm --type json -p", "patched", nil)

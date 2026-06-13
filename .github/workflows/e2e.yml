@@ -1,0 +1,102 @@
+name: E2E
+
+# Browser e2e against a real (emulated) KubeVirt: kind + KubeVirt with
+# useEmulation (no KVM on GitHub runners) + CDI. Runs every Playwright test
+# not tagged @live-only — wizard flows, catalog content, every create source
+# type, scale, and one full boot lifecycle (cirros under TCG).
+# The @live-only tier (consoles, SSH, RDP probe, snapshots, bootc, boot-from-
+# import) needs the production cluster: see e2e/README in corral.spec.js.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  KUBEVIRT_VERSION: v1.8.2
+  CDI_VERSION: v1.62.0
+  KIND_VERSION: v0.30.0
+
+jobs:
+  e2e-kind:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Create kind cluster
+        run: |
+          curl -fsSLo ./kind "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
+          chmod +x ./kind && sudo mv ./kind /usr/local/bin/kind
+          kind create cluster --wait 120s
+
+      - name: Install KubeVirt (software emulation)
+        run: |
+          kubectl create -f "https://github.com/kubevirt/kubevirt/releases/download/${KUBEVIRT_VERSION}/kubevirt-operator.yaml"
+          kubectl create -f "https://github.com/kubevirt/kubevirt/releases/download/${KUBEVIRT_VERSION}/kubevirt-cr.yaml"
+          kubectl -n kubevirt patch kubevirt kubevirt --type merge \
+            -p '{"spec":{"configuration":{"developerConfiguration":{"useEmulation":true}}}}'
+          kubectl -n kubevirt wait kv/kubevirt --for condition=Available --timeout=10m
+
+      - name: Install CDI
+        run: |
+          kubectl create -f "https://github.com/kubevirt/containerized-data-importer/releases/download/${CDI_VERSION}/cdi-operator.yaml"
+          kubectl create -f "https://github.com/kubevirt/containerized-data-importer/releases/download/${CDI_VERSION}/cdi-cr.yaml"
+          kubectl wait cdi cdi --for=condition=Available --timeout=10m
+
+      - name: Install virtctl
+        run: |
+          curl -fsSLo virtctl "https://github.com/kubevirt/kubevirt/releases/download/${KUBEVIRT_VERSION}/virtctl-${KUBEVIRT_VERSION}-linux-amd64"
+          chmod +x virtctl && sudo mv virtctl /usr/local/bin/virtctl
+
+      - name: Build and start corral web
+        run: |
+          go build -tags bootc -o corral .
+          kubectl create namespace corral-vms
+          ./corral web --addr 127.0.0.1:8006 > corral-web.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:8006/api/capabilities && break
+            sleep 1
+          done
+
+      - name: Install Playwright
+        working-directory: e2e
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Run e2e (CI tier)
+        working-directory: e2e
+        env:
+          # cirros boots fast enough under TCG; fedora would not
+          E2E_CONTAINERDISK: quay.io/kubevirt/cirros-container-disk-demo:latest
+          CORRAL_NS: corral-vms
+        run: npx playwright test --grep-invert "@live-only" --reporter=line
+
+      - name: Verify cleanup left nothing behind
+        if: always()
+        run: |
+          leftovers=$(kubectl get vm,dv -n corral-vms -o name 2>/dev/null || true)
+          if [ -n "$leftovers" ]; then
+            echo "e2e left resources behind:"; echo "$leftovers"; exit 1
+          fi
+
+      - name: Server log
+        if: failure()
+        run: tail -100 corral-web.log
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-results
+          path: e2e/test-results/

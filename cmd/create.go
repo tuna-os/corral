@@ -80,7 +80,7 @@ func init() {
 	createCmd.Flags().StringVar(&createImage, "image", "", "[kubevirt] OS image from the catalog (see `corral images`)")
 	createCmd.Flags().StringVar(&createImport, "import", "", "[kubevirt] Import a qcow2/raw disk image URL via CDI")
 	createCmd.Flags().StringVar(&createPVC, "pvc", "", "[kubevirt] Existing PVC to use")
-	createCmd.Flags().StringVarP(&createNamespace, "namespace", "n", "tailvm", "[kubevirt] Namespace")
+	createCmd.Flags().StringVarP(&createNamespace, "namespace", "n", kubevirt.DefaultNamespace, "[kubevirt] Namespace")
 	createCmd.Flags().StringVar(&createNode, "node", "", "[kubevirt] Schedule on specific node")
 	createCmd.Flags().StringVar(&createCloudInitPassword, "cloud-init-password", "", "[kubevirt] Cloud-init password")
 	createCmd.Flags().StringVar(&createCloudInit, "cloud-init", "", "[kubevirt] Extra cloud-init user-data YAML")
@@ -104,12 +104,23 @@ func runKubevirtCreate(name string) error {
 	}
 
 	containerDisk := createContainerDisk
+	importURL := createImport
+	iso := createISO
 	if createImage != "" {
 		img := catalog.Find(createImage)
 		if img == nil {
 			return fmt.Errorf("unknown image %q — see `corral images`", createImage)
 		}
-		containerDisk = img.ContainerDisk
+		// Catalog entries boot three ways: containerdisks directly, official
+		// cloud images via CDI import, installer ISOs via the ISO path.
+		switch img.Kind() {
+		case "containerDisk":
+			containerDisk = img.ContainerDisk
+		case "import":
+			importURL = img.URL
+		case "iso":
+			iso = img.ISO
+		}
 	}
 
 	opts := types.CreateOpts{
@@ -118,9 +129,9 @@ func runKubevirtCreate(name string) error {
 		Mem:               createMem,
 		CPU:               createCPU,
 		Disk:              createDisk,
-		ISO:               createISO,
+		ISO:               iso,
 		ContainerDisk:     containerDisk,
-		ImportURL:         createImport,
+		ImportURL:         importURL,
 		PVC:               createPVC,
 		Node:              createNode,
 		CloudInitPassword: createCloudInitPassword,

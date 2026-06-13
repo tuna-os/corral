@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -19,6 +20,66 @@ import (
 func init() {
 	bootcBuildFunc = bootcBuildDisk
 	bootcVMFunc = generateBootcVM
+	bootcRebuildFunc = bootcRebuild
+}
+
+// bootcRebuild rebuilds name's bootc disk from imageURI and re-points its
+// kernel boot at the result. Used by `corral bootc rebuild/switch/upgrade` and
+// the web Upgrade button. Steps: stop the VM (frees the RWO disk) → delete the
+// old disk PVC → build a fresh one from the image → patch the VM's kernelBoot
+// (image + kernel paths + root UUID) → start it. Everything else on the VM
+// (sizing, networks, node) is preserved.
+func bootcRebuild(name, namespace, imageURI, sshPublicKey, diskSize string, progress io.Writer) error {
+	if progress == nil {
+		progress = os.Stderr
+	}
+	c := NewClient(namespace)
+	pvc := name + "-bootc-disk"
+
+	// Reuse the existing disk size unless the caller overrides it.
+	if diskSize == "" {
+		if out, err := runPkg("kubectl", "get", "pvc", pvc, "-n", namespace,
+			"-o", "jsonpath={.spec.resources.requests.storage}"); err == nil {
+			diskSize = strings.TrimSpace(string(out))
+		}
+	}
+
+	fmt.Fprintf(progress, "Rebuilding %s from %s\n", name, imageURI)
+	fmt.Fprintf(progress, "  Stopping VM to free the disk...\n")
+	c.StopVM(name) // ignore: may already be stopped
+	c.waitStopped(name)
+
+	fmt.Fprintf(progress, "  Removing the old disk (%s)...\n", pvc)
+	runPkg("kubectl", "delete", "pvc", pvc, "-n", namespace, "--ignore-not-found")
+	runPkg("kubectl", "delete", "datavolume", pvc, "-n", namespace, "--ignore-not-found")
+	// Wait for the PVC to actually disappear so the rebuild's fresh PVC isn't a
+	// no-op against a terminating one.
+	for i := 0; i < 60; i++ {
+		if _, err := runPkg("kubectl", "get", "pvc", pvc, "-n", namespace); err != nil {
+			break
+		}
+		time.Sleep(2 * time.Second)
+	}
+
+	build, err := bootcBuildDisk(name, namespace, imageURI, sshPublicKey, diskSize, progress)
+	if err != nil {
+		return fmt.Errorf("rebuild: %w", err)
+	}
+
+	// Re-point the kernel boot at the freshly built image/kernel/root. A merge
+	// patch keeps the rest of the VM (sizing, NICs, node) intact.
+	patch := fmt.Sprintf(
+		`{"spec":{"template":{"spec":{"domain":{"firmware":{"kernelBoot":{"container":{"image":%q,"kernelPath":%q,"initrdPath":%q},"kernelArgs":%q}}}}}}}`,
+		imageURI,
+		fmt.Sprintf("/usr/lib/modules/%s/vmlinuz", build.KernelVersion),
+		fmt.Sprintf("/usr/lib/modules/%s/initramfs.img", build.KernelVersion),
+		fmt.Sprintf("root=UUID=%s ro console=ttyS0", build.RootUUID))
+	if err := c.patchVMMerge(name, patch); err != nil {
+		return fmt.Errorf("updating kernel boot: %w", err)
+	}
+
+	fmt.Fprintf(progress, "  Starting %s on the new disk...\n", name)
+	return c.StartVM(name)
 }
 
 // bootcBuildDisk orchestrates the on-cluster bootc disk build pipeline.
@@ -84,6 +145,13 @@ func bootcBuildDisk(name, namespace, imageURI, sshPublicKey, diskSize string, pr
 
 // generateBootcJob creates a Kubernetes Job that builds a bootc disk image
 // using bootc install to-filesystem on a raw XFS loopback device.
+//
+// The image file MUST be named disk.img: that's KubeVirt's convention for
+// filesystem-mode PVC disks — any other name and virt-handler ignores the
+// built system and tries to create a blank disk.img instead (which also
+// fails for space). And it must be sized below the PVC's usable capacity
+// (requested size minus filesystem overhead), or that blank-disk fallback
+// hits "not enough space".
 func generateBootcJob(name, namespace, imageURI, pvcName, sshKeyB64, diskSize string) string {
 	sizeVal := strings.TrimSuffix(strings.TrimSuffix(diskSize, "Gi"), "G")
 	if sizeVal == diskSize {
@@ -91,6 +159,15 @@ func generateBootcJob(name, namespace, imageURI, pvcName, sshKeyB64, diskSize st
 	}
 	if sizeVal == diskSize {
 		sizeVal = "50"
+	}
+	sizeGB, err := strconv.Atoi(sizeVal)
+	if err != nil || sizeGB < 1 {
+		sizeGB = 50
+	}
+	// 85% of the PVC leaves room for filesystem overhead on the PVC itself.
+	imgGB := sizeGB * 85 / 100
+	if imgGB < 1 {
+		imgGB = 1
 	}
 
 	return fmt.Sprintf(`apiVersion: batch/v1
@@ -112,7 +189,7 @@ spec:
       initContainers:
         - name: create-disk
           image: alpine:latest
-          command: ["sh", "-c", "rm -f /output/disk.raw && truncate -s %sG /output/disk.raw"]
+          command: ["sh", "-c", "rm -f /output/disk.img /output/disk.raw && truncate -s %dG /output/disk.img"]
           volumeMounts:
             - name: output
               mountPath: /output
@@ -130,7 +207,18 @@ spec:
               KERNEL_VERSION=$(ls /usr/lib/modules | sort -V | tail -n1)
               echo "KERNEL_VERSION=$KERNEL_VERSION"
 
-              LOOP=$(losetup -f --show /output/disk.raw)
+              # Loop allocation can fail transiently — the loop module/device
+              # nodes may not be present yet on a fresh node. Nudge them into
+              # existence and retry generously before failing to the Job backoff.
+              modprobe loop 2>/dev/null || true
+              [ -e /dev/loop-control ] || mknod /dev/loop-control c 10 237 2>/dev/null || true
+              LOOP=""
+              for i in $(seq 1 20); do
+                LOOP=$(losetup -f --show /output/disk.img 2>/dev/null) && break
+                echo "losetup attempt $i failed; retrying in 3s"
+                sleep 3
+              done
+              [ -n "$LOOP" ] || { echo "ERROR: no loop device available after 20 attempts"; exit 1; }
               echo "Loop device: $LOOP"
 
               mkfs.xfs -f "$LOOP"
@@ -169,40 +257,65 @@ spec:
         - name: output
           persistentVolumeClaim:
             claimName: %s
-`, name, namespace, sizeVal, imageURI, name, imageURI, sshKeyB64, pvcName)
+`, name, namespace, imgGB, imageURI, name, imageURI, sshKeyB64, pvcName)
 }
 
 // waitForBootcJob waits for a Job to complete, streaming builder logs to
 // stderr, and returns the KEY=VALUE variables echoed by the build script.
 func waitForBootcJob(name, namespace string, progress io.Writer) (map[string]string, error) {
-	var podName string
-	for i := 0; i < 60; i++ {
+	// The Job retries on failure with a *fresh* pod, so never latch onto one
+	// pod name — always resolve the newest pod for this job.
+	newestPod := func() string {
 		out, err := exec.Command("kubectl", "get", "pod", "-n", namespace,
 			"-l", "job-name="+name,
-			"-o", "jsonpath={.items[0].metadata.name}").Output()
-		if err == nil && len(out) > 0 {
-			podName = strings.TrimSpace(string(out))
-			break
+			"--sort-by=.metadata.creationTimestamp",
+			"-o", "jsonpath={.items[-1:].metadata.name}").Output()
+		if err != nil {
+			return ""
 		}
-		time.Sleep(2 * time.Second)
+		return strings.TrimSpace(string(out))
+	}
+
+	var podName string
+	for i := 0; i < 60 && podName == ""; i++ {
+		podName = newestPod()
+		if podName == "" {
+			time.Sleep(2 * time.Second)
+		}
 	}
 	if podName == "" {
 		return nil, fmt.Errorf("builder pod not found after 2 minutes")
 	}
 
-	// Wait for builder container to start (it pulls the bootc image, which can be large)
-	for i := 0; i < 150; i++ {
+	// Wait for the builder container to start. The bootc image pull dominates
+	// this phase and can take 10+ minutes for multi-GB images on home links,
+	// so wait generously and report state changes (not a spam line per poll).
+	lastReason, started := "", false
+	for i := 0; i < 450 && !started; i++ {
+		if p := newestPod(); p != "" && p != podName {
+			fmt.Fprintf(progress, "  Builder pod retried: %s → %s\n", podName, p)
+			podName = p
+			lastReason = ""
+		}
 		ready, _ := exec.Command("kubectl", "get", "pod", podName, "-n", namespace,
 			"-o", "jsonpath={.status.containerStatuses[?(@.name==\"builder\")].started}").Output()
-		if strings.TrimSpace(string(ready)) == "true" {
+		started = strings.TrimSpace(string(ready)) == "true"
+		if started {
 			break
 		}
 		reason, _ := exec.Command("kubectl", "get", "pod", podName, "-n", namespace,
 			"-o", "jsonpath={.status.containerStatuses[?(@.name==\"builder\")].state.waiting.reason}").Output()
-		if reason := strings.TrimSpace(string(reason)); reason != "" {
-			fmt.Fprintf(progress, "  Pod initializing: builder (%s)\n", reason)
+		if r := strings.TrimSpace(string(reason)); r != "" && r != lastReason {
+			fmt.Fprintf(progress, "  Pod initializing: builder (%s)\n", r)
+			lastReason = r
+		} else if i > 0 && i%30 == 0 {
+			fmt.Fprintf(progress, "  Still waiting for the builder container (%s, %dm — large bootc images take a while to pull)\n",
+				lastReason, i/30)
 		}
 		time.Sleep(2 * time.Second)
+	}
+	if !started {
+		return nil, fmt.Errorf("builder container did not start within 15 minutes (image pull too slow or stuck) — check: kubectl describe pod %s -n %s", podName, namespace)
 	}
 
 	fmt.Fprintf(progress, "  Builder running — streaming logs...\n")
@@ -222,6 +335,10 @@ func waitForBootcJob(name, namespace string, progress io.Writer) (map[string]str
 		cond, _ := exec.Command("kubectl", "get", "job", name, "-n", namespace,
 			"-o", "jsonpath={.status.conditions[?(@.type==\"Complete\")].status}").Output()
 		if strings.TrimSpace(string(cond)) == "True" {
+			// A retry mid-build means the vars live in the newest pod's logs.
+			if p := newestPod(); p != "" {
+				podName = p
+			}
 			return parseBuildVars(podName, namespace)
 		}
 		failed, _ := exec.Command("kubectl", "get", "job", name, "-n", namespace,

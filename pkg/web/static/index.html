@@ -22,47 +22,101 @@
   <main id="content"></main>
 </div>
 
+<!-- Proxmox-style task panel: recent/running server operations -->
+<div id="task-panel" class="collapsed">
+  <div id="task-panel-head">
+    <span id="task-panel-title">Tasks</span>
+    <span id="task-panel-summary" class="muted"></span>
+    <span class="spacer"></span>
+    <span id="task-panel-chevron">▴</span>
+  </div>
+  <div id="task-panel-body">
+    <table>
+      <thead><tr><th>Started</th><th>Action</th><th>Target</th><th>Duration</th><th>Status</th></tr></thead>
+      <tbody id="task-rows"><tr><td colspan="5" class="muted">No tasks yet.</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
 <dialog id="create-dialog">
-  <form id="create-form">
+  <!-- Simple wizard: pick an OS card, answer two questions, go. -->
+  <div id="wizard-simple">
+    <h2>Create virtual machine</h2>
+    <div id="wiz-step-1">
+      <div id="wiz-filters" class="toolbar" style="margin:0 0 10px 0">
+        <button class="btn sm wiz-chip active" data-filter="all">All</button>
+        <button class="btn sm wiz-chip" data-filter="server">Servers</button>
+        <button class="btn sm wiz-chip" data-filter="appliance">Appliances</button>
+        <button class="btn sm wiz-chip" data-filter="bootc" hidden>Bootc</button>
+      </div>
+      <div id="wiz-cards" class="wiz-grid"></div>
+    </div>
+    <div id="wiz-step-2" hidden>
+      <div id="wiz-selected" class="wiz-selected"></div>
+      <label>Name <input id="wiz-name" pattern="[a-z0-9][a-z0-9-]*" placeholder="myvm"></label>
+      <div id="wiz-sizes" class="wiz-grid wiz-sizes">
+        <div class="wiz-card wiz-size" data-size="s"><strong>Small</strong><span class="muted">1 vCPU · 2G · 15G disk</span></div>
+        <div class="wiz-card wiz-size selected" data-size="m"><strong>Medium</strong><span class="muted">2 vCPU · 4G · 20G disk</span></div>
+        <div class="wiz-card wiz-size" data-size="l"><strong>Large</strong><span class="muted">4 vCPU · 8G · 40G disk</span></div>
+      </div>
+      <label>SSH access — public key or GitHub username
+        <input id="wiz-sshkey" placeholder="ssh-ed25519 AAAA… or gh:your-github-name"></label>
+    </div>
+    <div class="dialog-actions">
+      <button type="button" class="btn" id="wiz-back" hidden>← Back</button>
+      <button type="button" class="btn" id="wiz-advanced">Advanced…</button>
+      <span class="spacer" style="flex:1"></span>
+      <button type="button" class="btn" id="wiz-cancel">Cancel</button>
+      <button type="button" class="btn primary" id="wiz-create" hidden>Create</button>
+    </div>
+  </div>
+
+  <form id="create-form" hidden>
     <h2>Create virtual machine</h2>
     <label>Name <input name="name" required pattern="[a-z0-9][a-z0-9-]*" placeholder="myvm"></label>
-    <div class="row">
-      <label>Namespace <input name="namespace" value="tailvm"></label>
-      <label>Node <input name="node" placeholder="(any)"></label>
-    </div>
+    <label>Boot source
+      <select name="sourceType">
+        <option value="catalog" selected>OS image (catalog)</option>
+        <option value="containerDisk">Container disk image</option>
+        <option value="import">Import qcow2/raw (URL, via CDI)</option>
+        <option value="iso">Installer ISO (URL, via CDI)</option>
+        <option value="bootc">Bootc image (OS disk built on-cluster)</option>
+        <option value="windows">Windows (UEFI/TPM, installer ISO)</option>
+        <option value="pvc">Existing PVC</option>
+      </select>
+    </label>
+    <label id="rdp-field" hidden><input type="checkbox" name="rdp"> Expose RDP (3389) on the tailnet</label>
+    <label id="catalog-field">Image
+      <select name="catalogImage"></select>
+    </label>
+    <label id="source-field" hidden>Source <input name="source" placeholder="quay.io/containerdisks/fedora:42"></label>
+    <datalist id="bootc-catalog"></datalist>
     <div class="row">
       <label>CPU <input name="cpu" type="number" value="2" min="1"></label>
       <label>Memory <input name="mem" value="4G"></label>
       <label>Disk <input name="disk" value="20G"></label>
     </div>
-    <div class="row">
-      <label>Instance type <select name="instancetype"><option value="">— manual CPU/mem —</option></select></label>
-      <label>Preference <select name="preference"><option value="">(none)</option></select></label>
-    </div>
-    <label>Boot source
-      <select name="sourceType">
-        <option value="catalog">OS image (catalog)</option>
-        <option value="containerDisk">Container disk image</option>
-        <option value="import">Import qcow2/raw (URL, via CDI)</option>
-        <option value="iso">Installer ISO (URL, via CDI)</option>
-        <option value="bootc">Bootc image (OS disk built on-cluster)</option>
-        <option value="pvc">Existing PVC</option>
-      </select>
-    </label>
-    <label id="catalog-field">Image
-      <select name="catalogImage"></select>
-    </label>
-    <label id="source-field" hidden>Source <input name="source" placeholder="quay.io/containerdisks/fedora:42"></label>
-    <label id="sshkey-field" hidden>SSH public key (baked into the bootc disk)
-      <textarea name="sshKey" rows="3" placeholder="ssh-ed25519 AAAA…"></textarea>
+    <label id="sshkey-field">SSH access — public key or GitHub username
+      <input name="sshKey" placeholder="ssh-ed25519 AAAA… or gh:your-github-name">
     </label>
     <details>
-      <summary>Cloud-init user-data (advanced)</summary>
-      <textarea name="cloudInit" rows="4" placeholder="#cloud-config&#10;packages:&#10;  - htop&#10;runcmd:&#10;  - [systemctl, enable, --now, qemu-guest-agent]"></textarea>
+      <summary>Advanced</summary>
+      <div class="row">
+        <label>Namespace <input name="namespace" placeholder="corral-vms"></label>
+        <label>Node <input name="node" placeholder="(any)"></label>
+      </div>
+      <div class="row">
+        <label>Instance type <select name="instancetype"><option value="">— manual CPU/mem —</option></select></label>
+        <label>Preference <select name="preference"><option value="">(none)</option></select></label>
+      </div>
+      <label>Cloud-init user-data
+        <textarea name="cloudInit" rows="4" placeholder="#cloud-config&#10;packages:&#10;  - htop&#10;runcmd:&#10;  - [systemctl, enable, --now, qemu-guest-agent]"></textarea>
+      </label>
     </details>
-    <p class="hint">Cloud-init VMs get your SSH key and Tailscale auth key (if configured) automatically.
-      Bootc builds take a few minutes — a live build log opens after submit.</p>
+    <p class="hint" id="create-hint">Cloud-init VMs get your SSH key and Tailscale auth key (if configured) automatically.</p>
     <div class="dialog-actions">
+      <button type="button" class="btn" id="btn-simple">← Simple</button>
+      <span class="spacer" style="flex:1"></span>
       <button type="button" class="btn" id="btn-cancel">Cancel</button>
       <button type="submit" class="btn primary">Create</button>
     </div>

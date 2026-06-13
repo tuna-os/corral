@@ -127,6 +127,23 @@ func Run() []Check {
 	return checks
 }
 
+// FixOne reconciles a single named fixable check.
+func FixOne(name string) error {
+	for _, c := range Run() {
+		if c.Name != name {
+			continue
+		}
+		if c.OK {
+			return nil
+		}
+		if !c.Fixable || c.fix == nil {
+			return fmt.Errorf("%q is not auto-fixable", name)
+		}
+		return c.fix()
+	}
+	return fmt.Errorf("no check named %q", name)
+}
+
 // Fix reconciles every fixable check that isn't OK. Returns the names fixed.
 func Fix() ([]string, error) {
 	var fixed []string

@@ -24,6 +24,7 @@ import (
 	"github.com/hanthor/corral/pkg/catalog"
 	"github.com/hanthor/corral/pkg/config"
 	"github.com/hanthor/corral/pkg/kubevirt"
+	"github.com/hanthor/corral/pkg/proxmox"
 	"github.com/hanthor/corral/pkg/registry"
 	"github.com/hanthor/corral/pkg/shell"
 	"github.com/hanthor/corral/pkg/types"
@@ -43,6 +44,7 @@ func Serve(addr string) error {
 	if s, err := registry.NewStore(); err == nil {
 		store = s
 	}
+	kubevirt.ProxyTags = config.TailnetTags()
 	mux, err := newMux()
 	if err != nil {
 		return err
@@ -62,6 +64,11 @@ func newMux() (*http.ServeMux, error) {
 	mux := http.NewServeMux()
 	mux.Handle("/", http.FileServer(http.FS(sub)))
 
+	// Proxmox API compatibility — expose /api2/json/… alongside the
+	// corral REST API so ecosystem tools can manage VMs through the
+	// same corral web deployment.
+	mux.Handle("/api2/json/", proxmox.NewHandler(kubevirt.DefaultNamespace))
+
 	mux.HandleFunc("GET /api/vms", handleListVMs)
 	mux.HandleFunc("POST /api/vms", handleCreateVM)
 	mux.HandleFunc("GET /api/nodes", handleNodes)
@@ -79,6 +86,7 @@ func newMux() (*http.ServeMux, error) {
 	mux.HandleFunc("POST /api/datavolumes", handleImportDataVolume)
 	mux.HandleFunc("DELETE /api/datavolumes/{ns}/{name}", handleDeleteDataVolume)
 	mux.HandleFunc("GET /api/tasks/{id}", handleTaskStatus)
+	mux.HandleFunc("GET /api/tasklog", handleTaskLog)
 	mux.HandleFunc("GET /api/vms/{ns}/{name}", handleVMInfo)
 	mux.HandleFunc("POST /api/vms/{ns}/{name}/{action}", handleVMAction)
 	mux.HandleFunc("DELETE /api/vms/{ns}/{name}", handleDeleteVM)
@@ -89,11 +97,19 @@ func newMux() (*http.ServeMux, error) {
 	mux.HandleFunc("POST /api/vms/{ns}/{name}/clone", handleClone)
 	mux.HandleFunc("POST /api/vms/{ns}/{name}/template", handleMarkTemplate)
 	mux.HandleFunc("GET /api/vms/{ns}/{name}/guestinfo", handleGuestInfo)
+	mux.HandleFunc("GET /api/vms/{ns}/{name}/rdp", handleRDPCheck)
+	mux.HandleFunc("POST /api/vms/{ns}/{name}/bootc/rebuild", handleBootcRebuild)
 	mux.HandleFunc("GET /api/vms/{ns}/{name}/events", handleEvents)
 	mux.HandleFunc("GET /api/vms/{ns}/{name}/metrics", handleMetrics)
 	mux.HandleFunc("GET /api/vms/{ns}/{name}/export", handleExport)
 	mux.HandleFunc("POST /api/vms/{ns}/{name}/volumes", handleAddVolume)
 	mux.HandleFunc("DELETE /api/vms/{ns}/{name}/volumes/{vol}", handleRemoveVolume)
+	mux.HandleFunc("GET /api/vms/{ns}/{name}/snapschedule", handleGetSnapSchedule)
+	mux.HandleFunc("POST /api/vms/{ns}/{name}/snapschedule", handleSetSnapSchedule)
+	mux.HandleFunc("DELETE /api/vms/{ns}/{name}/snapschedule", handleDeleteSnapSchedule)
+	mux.HandleFunc("GET /api/vms/{ns}/{name}/powerschedule", handleGetPowerSchedule)
+	mux.HandleFunc("POST /api/vms/{ns}/{name}/powerschedule", handleSetPowerSchedule)
+	mux.HandleFunc("DELETE /api/vms/{ns}/{name}/powerschedule", handleDeletePowerSchedule)
 	mux.HandleFunc("GET /api/vms/{ns}/{name}/snapshots", handleListSnapshots)
 	mux.HandleFunc("POST /api/vms/{ns}/{name}/snapshots", handleCreateSnapshot)
 	mux.HandleFunc("DELETE /api/vms/{ns}/{name}/snapshots/{snap}", handleDeleteSnapshot)
@@ -108,6 +124,7 @@ func newMux() (*http.ServeMux, error) {
 	}
 	mux.Handle("GET /api/vnc/{ns}/{name}", wsServer(vncBridge))
 	mux.Handle("GET /api/tty/{ns}/{name}", wsServer(ttyBridge))
+	mux.Handle("GET /api/rdp/{ns}/{name}", wsServer(rdpBridge))
 
 	return mux, nil
 }
@@ -207,6 +224,8 @@ type createRequest struct {
 	CloudInit     string `json:"cloudInit"`
 	InstanceType  string `json:"instancetype"`
 	Preference    string `json:"preference"`
+	Windows       bool   `json:"windows"` // Windows installer flow (windows plugin)
+	RDP           bool   `json:"rdp"`     // expose RDP via the tailnet proxy
 }
 
 // buildTask tracks a long-running bootc build kicked off from the UI.
@@ -269,12 +288,17 @@ func handleCreateVM(w http.ResponseWriter, r *http.Request) {
 
 	// Bootc builds run as background tasks — the disk build takes minutes.
 	if req.Bootc != "" {
+		req.Bootc = catalog.ResolveBootc(req.Bootc)
 		if !kubevirt.BootcAvailable() {
 			errResp(w, http.StatusBadRequest,
 				fmt.Errorf("bootc support is not enabled on this server (optional plugin — run the corral:bootc image)"))
 			return
 		}
-		sshKey := strings.TrimSpace(req.SSHKey)
+		sshKey, err := resolveSSHKey(req.SSHKey)
+		if err != nil {
+			errResp(w, http.StatusBadRequest, err)
+			return
+		}
 		if sshKey == "" {
 			sshKey = kubevirt.LoadSSHPublicKey()
 		}
@@ -286,6 +310,7 @@ func handleCreateVM(w http.ResponseWriter, r *http.Request) {
 		id := fmt.Sprintf("bootc-%s-%d", req.Name, time.Now().UnixNano())
 		task := &buildTask{status: "running"}
 		tasks.Store(id, task)
+		done := taskBegin("bootc build", ns+"/"+req.Name)
 
 		go func() {
 			build, err := kubevirt.BootcBuildDisk(req.Name, ns, req.Bootc, sshKey, req.Disk, task)
@@ -302,8 +327,33 @@ func handleCreateVM(w http.ResponseWriter, r *http.Request) {
 				})
 			}
 			task.finish(err)
+			done(err)
 		}()
 		jsonResp(w, http.StatusAccepted, map[string]string{"task": id})
+		return
+	}
+
+	// Windows guided flow (windows plugin): UEFI+TPM+Hyper-V tuned VM with the
+	// installer ISO + virtio-win drivers. Needs an installer ISO URL.
+	if req.Windows {
+		if req.ISO == "" {
+			errResp(w, http.StatusBadRequest, fmt.Errorf("a Windows installer ISO URL is required"))
+			return
+		}
+		done := taskBegin("create windows", ns+"/"+req.Name)
+		if err := kubevirt.CreateWindowsVM(req.Name, ns, req.ISO, req.Disk, req.Mem, req.CPU, req.RDP); err != nil {
+			done(err)
+			errResp(w, http.StatusInternalServerError, err)
+			return
+		}
+		done(nil)
+		if store != nil {
+			store.Set(req.Name, types.RegistryEntry{
+				Backend: "kubevirt", Namespace: ns,
+				Extra: map[string]string{"os": "windows"},
+			})
+		}
+		jsonResp(w, http.StatusCreated, map[string]string{"name": req.Name, "namespace": ns})
 		return
 	}
 
@@ -314,7 +364,27 @@ func handleCreateVM(w http.ResponseWriter, r *http.Request) {
 			errResp(w, http.StatusBadRequest, fmt.Errorf("unknown image %q", req.Image))
 			return
 		}
-		containerDisk = img.ContainerDisk
+		// Catalog entries boot three ways: containerdisks directly, official
+		// cloud images via CDI import, installer ISOs via the ISO path.
+		switch img.Kind() {
+		case "containerDisk":
+			containerDisk = img.ContainerDisk
+		case "import":
+			req.Import = img.URL
+		case "iso":
+			req.ISO = img.ISO
+		}
+	}
+
+	// The wizard's SSH key box takes a literal key or a GitHub username;
+	// it overrides the server's own key when set.
+	sshKey, err := resolveSSHKey(req.SSHKey)
+	if err != nil {
+		errResp(w, http.StatusBadRequest, err)
+		return
+	}
+	if sshKey == "" {
+		sshKey = kubevirt.LoadSSHPublicKey()
 	}
 
 	opts := types.CreateOpts{
@@ -331,12 +401,21 @@ func handleCreateVM(w http.ResponseWriter, r *http.Request) {
 		CloudInitExtra:   req.CloudInit,
 		InstanceType:     req.InstanceType,
 		Preference:       req.Preference,
-		SSHPublicKey:     kubevirt.LoadSSHPublicKey(),
+		SSHPublicKey:     sshKey,
 		TailscaleAuthKey: config.AuthKey(),
 	}
+	done := taskBegin("create", ns+"/"+req.Name)
 	if err := kubevirt.CreateVM(opts); err != nil {
+		done(err)
 		errResp(w, http.StatusInternalServerError, err)
 		return
+	}
+	done(nil)
+	// Tailnet-by-default: expose SSH/VNC/RDP as a tailscale device via the
+	// operator, so fresh VMs are reachable with zero in-guest setup.
+	if config.TailnetExpose() {
+		dp := taskBegin("tailnet expose", ns+"/"+req.Name)
+		dp(kubevirt.ApplyProxy(req.Name, ns, []int{22, 5900, 3389}))
 	}
 	if store != nil {
 		store.Set(req.Name, types.RegistryEntry{
@@ -354,6 +433,7 @@ func handleVMAction(w http.ResponseWriter, r *http.Request) {
 
 	c := kubevirt.NewClient(ns)
 	var err error
+	done := taskBegin(action, ns+"/"+name)
 	switch action {
 	case "start":
 		err = c.StartVM(name)
@@ -372,9 +452,11 @@ func handleVMAction(w http.ResponseWriter, r *http.Request) {
 		json.NewDecoder(r.Body).Decode(&b) // empty body is fine
 		err = c.Migrate(name, b.TargetNode)
 	default:
+		done(fmt.Errorf("unknown action"))
 		errResp(w, http.StatusBadRequest, fmt.Errorf("unknown action %q", action))
 		return
 	}
+	done(err)
 	if err != nil {
 		errResp(w, http.StatusInternalServerError, err)
 		return
@@ -420,10 +502,13 @@ func handleExport(w http.ResponseWriter, r *http.Request) {
 
 func handleDeleteVM(w http.ResponseWriter, r *http.Request) {
 	ns, name := r.PathValue("ns"), r.PathValue("name")
+	done := taskBegin("delete", ns+"/"+name)
 	if err := kubevirt.NewClient(ns).DeleteVM(name); err != nil {
+		done(err)
 		errResp(w, http.StatusInternalServerError, err)
 		return
 	}
+	done(nil)
 	if store != nil {
 		store.Remove(name)
 	}
