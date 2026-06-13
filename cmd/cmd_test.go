@@ -238,8 +238,8 @@ func TestCreateCommand_DefaultValues(t *testing.T) {
 	}
 
 	ns, _ := cmd.Flags().GetString("namespace")
-	if ns != "tailvm" {
-		t.Errorf("expected default namespace=tailvm, got %s", ns)
+	if ns != "corral-vms" {
+		t.Errorf("expected default namespace=corral-vms, got %s", ns)
 	}
 }
 

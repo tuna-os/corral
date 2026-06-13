@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/hanthor/corral/pkg/kubevirt"
 )
 
 // TestStaticServed verifies the embedded SPA (index.html + assets) is served.
@@ -225,6 +227,31 @@ func TestHandleCreateVM_CatalogImage(t *testing.T) {
 	}
 }
 
+// Catalog entries sourced from the distros' own mirrors (URL kind) must route
+// through the CDI import path, and installer-ISO entries through the ISO path.
+func TestHandleCreateVM_CatalogOfficialSource(t *testing.T) {
+	fx := NewTestFixture()
+	defer fx.Close()
+
+	tmpHome := t.TempDir()
+	sshDir := filepath.Join(tmpHome, ".ssh")
+	os.MkdirAll(sshDir, 0700)
+	os.WriteFile(filepath.Join(sshDir, "id_ed25519.pub"), []byte("ssh-ed25519 AAAAtest"), 0600)
+	t.Setenv("HOME", tmpHome)
+
+	for _, image := range []string{"debian-12-official", "turnkey-core"} {
+		fx.Runner.AddResponseKV("kubectl", []string{"apply", "-f", "-"}, "", nil)
+		resp := mustPost(t, fx.Server.URL+"/api/vms",
+			fmt.Sprintf(`{"name":"myvm-%s","image":%q,"cpu":1,"mem":"2G","disk":"15G"}`, image, image))
+		code := resp.StatusCode
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if code != http.StatusCreated {
+			t.Fatalf("%s: got %d, want 201 — body: %s", image, code, string(body))
+		}
+	}
+}
+
 func TestHandleCreateVM_ContainerDisk(t *testing.T) {
 	fx := NewTestFixture()
 	defer fx.Close()
@@ -270,6 +297,9 @@ func TestHandleCreateVM_ImportURL(t *testing.T) {
 }
 
 func TestHandleCreateVM_BootcUnavailable(t *testing.T) {
+	if kubevirt.BootcAvailable() {
+		t.Skip("bootc pipeline compiled in (-tags bootc) — the 400 guard can't trigger")
+	}
 	fx := NewTestFixture()
 	defer fx.Close()
 

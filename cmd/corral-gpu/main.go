@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/hanthor/corral/pkg/kubevirt"
 	"github.com/hanthor/corral/pkg/shell"
 	"github.com/spf13/cobra"
 )
@@ -300,7 +301,7 @@ func main() {
 		Use:   "corral-gpu",
 		Short: "Corral plugin — discover and attach PCI/vGPU passthrough devices",
 	}
-	root.PersistentFlags().StringVarP(&namespace, "namespace", "n", "tailvm", "Namespace")
+	root.PersistentFlags().StringVarP(&namespace, "namespace", "n", kubevirt.DefaultNamespace, "Namespace")
 	root.AddCommand(list, enable, attach, detach)
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)

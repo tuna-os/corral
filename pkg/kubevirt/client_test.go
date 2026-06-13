@@ -2,7 +2,10 @@ package kubevirt
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/hanthor/corral/pkg/types"
 )
@@ -229,7 +232,8 @@ func TestParseVMList(t *testing.T) {
 	}
 	vendors := map[string]string{"bihar": "AMD", "karnataka": "AMD"} // same vendor → migratable
 
-	vms, err := parseVMList([]byte(sample), vmis, vendors, noProxy, noISO)
+	noLauncher := func(_, _ string) bool { return false }
+	vms, err := parseVMList([]byte(sample), vmis, vendors, noProxy, noISO, noLauncher)
 	if err != nil {
 		t.Fatalf("parseVMList: %v", err)
 	}
@@ -266,6 +270,59 @@ func TestParseVMList(t *testing.T) {
 	}
 	if st.CPU != 2 {
 		t.Errorf("legacy cores-based CPU = %d, want 2", st.CPU)
+	}
+}
+
+func TestParseVMList_KernelBootRescue(t *testing.T) {
+	// A bootc VM whose VMI status froze: printableStatus stuck at "Starting"
+	// but the launcher pod is Running. Corral must report it as Running.
+	const sample = `{"items":[
+      {"metadata":{"name":"bootcvm","namespace":"tailvm"},
+       "spec":{"running":true,"template":{"spec":{"domain":{
+         "cpu":{"sockets":2,"cores":1,"threads":1},"memory":{"guest":"4Gi"},
+         "firmware":{"kernelBoot":{"container":{"image":"quay.io/x"}}}}}}},
+       "status":{"printableStatus":"Starting"}},
+      {"metadata":{"name":"reallystarting","namespace":"tailvm"},
+       "spec":{"running":true,"template":{"spec":{"domain":{
+         "cpu":{"cores":1},"memory":{"guest":"2Gi"},
+         "firmware":{"kernelBoot":{"container":{"image":"quay.io/x"}}}}}}},
+       "status":{"printableStatus":"Starting"}}
+    ]}`
+
+	noProxy := func(_, _ string) string { return "off" }
+	noISO := func(_, _ string) string { return "" }
+	// Only bootcvm's launcher is up; reallystarting's isn't yet.
+	launcher := func(name, _ string) bool { return name == "bootcvm" }
+
+	vms, err := parseVMList([]byte(sample), nil, nil, noProxy, noISO, launcher)
+	if err != nil {
+		t.Fatalf("parseVMList: %v", err)
+	}
+	if !vms[0].Running || vms[0].Status != "● Running" {
+		t.Errorf("bootc VM with running launcher should be Running, got %q (running=%v)", vms[0].Status, vms[0].Running)
+	}
+	if vms[1].Running {
+		t.Error("bootc VM whose launcher isn't up yet must NOT be rescued to Running")
+	}
+}
+
+func TestParseVMList_NonKernelBootNotRescued(t *testing.T) {
+	// A normal VM stuck "Starting" with a running launcher is NOT overridden —
+	// the rescue is scoped to kernel-boot VMs (no firmware.kernelBoot here).
+	const sample = `{"items":[
+      {"metadata":{"name":"normal","namespace":"tailvm"},
+       "spec":{"running":true,"template":{"spec":{"domain":{
+         "cpu":{"cores":1},"memory":{"guest":"2Gi"}}}}},
+       "status":{"printableStatus":"Starting"}}
+    ]}`
+	noStr := func(_, _ string) string { return "" }
+	always := func(_, _ string) bool { return true }
+	vms, err := parseVMList([]byte(sample), nil, nil, noStr, noStr, always)
+	if err != nil {
+		t.Fatalf("parseVMList: %v", err)
+	}
+	if vms[0].Running {
+		t.Error("non-kernel-boot VM must not be rescued by the launcher fallback")
 	}
 }
 
@@ -466,8 +523,13 @@ func TestLoadSSHPublicKey_NoKeys(t *testing.T) {
 }
 
 func TestDefaultNamespace(t *testing.T) {
-	if DefaultNamespace != "tailvm" {
-		t.Errorf("DefaultNamespace = %q, want tailvm", DefaultNamespace)
+	// corral-vms unless CORRAL_NAMESPACE overrides (legacy deployments use tailvm).
+	if DefaultNamespace != "corral-vms" {
+		t.Errorf("DefaultNamespace = %q, want corral-vms", DefaultNamespace)
+	}
+	t.Setenv("CORRAL_NAMESPACE", "tailvm")
+	if got := defaultNamespace(); got != "tailvm" {
+		t.Errorf("defaultNamespace() with CORRAL_NAMESPACE=tailvm = %q", got)
 	}
 }
 
@@ -753,5 +815,51 @@ func TestGenerateVM_ContainerDiskWithoutDatadisk(t *testing.T) {
 	}
 	if hasDatadisk {
 		t.Error("datadisk should not exist when disk is empty")
+	}
+}
+
+func TestMergeCloudInit_DuplicateListKeys(t *testing.T) {
+	base := "#cloud-config\npassword: x\nssh_authorized_keys:\n  - server-key\n"
+	extra := "#cloud-config\nssh_authorized_keys:\n  - test-key\n"
+	out := mergeCloudInit(base, extra)
+
+	var m map[string]any
+	if err := yaml.Unmarshal([]byte(out), &m); err != nil {
+		t.Fatalf("merged user-data is not valid YAML: %v\n%s", err, out)
+	}
+	keys, _ := m["ssh_authorized_keys"].([]any)
+	if len(keys) != 2 || keys[0] != "server-key" || keys[1] != "test-key" {
+		t.Errorf("ssh_authorized_keys = %v, want both keys (server first)", keys)
+	}
+	if m["password"] != "x" {
+		t.Errorf("password lost in merge: %v", m["password"])
+	}
+	if !strings.HasPrefix(out, "#cloud-config\n") {
+		t.Errorf("merged user-data lost the #cloud-config header:\n%s", out)
+	}
+}
+
+func TestMergeCloudInit_NewKeysAndScalarOverride(t *testing.T) {
+	base := "#cloud-config\nssh_pwauth: true\n"
+	extra := "packages:\n  - htop\nssh_pwauth: false\n"
+	out := mergeCloudInit(base, extra)
+
+	var m map[string]any
+	if err := yaml.Unmarshal([]byte(out), &m); err != nil {
+		t.Fatalf("invalid YAML: %v", err)
+	}
+	if m["ssh_pwauth"] != false {
+		t.Errorf("scalar not overridden by extra: %v", m["ssh_pwauth"])
+	}
+	if pkgs, _ := m["packages"].([]any); len(pkgs) != 1 || pkgs[0] != "htop" {
+		t.Errorf("packages = %v", m["packages"])
+	}
+}
+
+func TestMergeCloudInit_NonYAMLExtraFallsBack(t *testing.T) {
+	base := "#cloud-config\npassword: x\n"
+	extra := ":\n:::not yaml{{"
+	if out := mergeCloudInit(base, extra); out != base+extra {
+		t.Errorf("non-YAML extra should fall back to append, got:\n%s", out)
 	}
 }

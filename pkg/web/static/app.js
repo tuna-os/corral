@@ -42,24 +42,42 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g,
 const vmKey = (vm) => `${vm.namespace}/${vm.name}`;
 const findVM = (key) => vms.find((v) => vmKey(v) === key);
 
-async function refresh() {
+// Fingerprint of the last-rendered state. The 5s poll only re-renders when
+// the data (or what's selected) actually changed — otherwise innerHTML
+// replacement would reset scroll position and text selection on every tick.
+let lastRenderFp = '';
+
+async function refresh(force = false) {
   try {
     [vms, nodes] = await Promise.all([api('/api/vms'), api('/api/nodes')]);
   } catch (e) {
     toast(`Refresh failed: ${e.message}`);
     return;
   }
+  const fp = JSON.stringify([vms, nodes, selected, tab]);
+  if (!force && fp === lastRenderFp) return; // nothing changed — keep the DOM
+  lastRenderFp = fp;
+
+  // Re-render, preserving scroll positions across the DOM swap.
+  const treeEl = $('#tree');
+  const contentEl = $('#content');
+  const treeScroll = treeEl ? treeEl.scrollTop : 0;
+  const contentScroll = contentEl ? contentEl.scrollTop : 0;
   renderTree();
-  // Don't clobber live consoles on poll.
-  if (tab !== 'console' && tab !== 'terminal') renderContent();
+  // Don't clobber live consoles (or the multiview grid) on poll.
+  if (tab !== 'console' && tab !== 'terminal' && selected.type !== 'multiview') renderContent();
+  if (treeEl) treeEl.scrollTop = treeScroll;
+  if (contentEl) contentEl.scrollTop = contentScroll;
 }
 
 async function loadCaps() {
   try { caps = await api('/api/capabilities'); } catch { /* keep defaults */ }
-  // bootc is an optional plugin — hide its source option when not enabled.
+  // bootc/windows are optional plugins — hide their source options when absent.
   if (!caps.bootc) {
     document.querySelector('[name=sourceType] option[value=bootc]')?.remove();
   }
+  // The Windows create flow is compiled into the web server (manifest gen in
+  // pkg/kubevirt), so it's always available — no plugin install needed.
   try { availableNADs = await api('/api/nads'); } catch { availableNADs = []; }
 }
 
@@ -109,6 +127,13 @@ function renderTree() {
     onclick: () => select({ type: 'extensions' }),
   }));
 
+  tree.appendChild(treeRow({
+    lvl: 0, icon: icon('cube'), label: 'Multiview',
+    sub: 'live consoles',
+    sel: selected.type === 'multiview',
+    onclick: () => select({ type: 'multiview' }),
+  }));
+
   const byNode = (nodeName) => vms.filter((v) => v.node === nodeName);
   const placed = new Set();
 
@@ -139,12 +164,20 @@ function vmRow(vm, lvl) {
   });
 }
 
+// markRendered records the just-rendered state so the next poll tick doesn't
+// re-render (and reset scroll) for a change the user already saw.
+function markRendered() {
+  lastRenderFp = JSON.stringify([vms, nodes, selected, tab]);
+}
+
 function select(sel) {
   disconnectConsoles();
+  if (selected.type === 'multiview' && sel.type !== 'multiview') disconnectMultiview();
   selected = sel;
   tab = 'summary';
   renderTree();
   renderContent();
+  markRendered();
 }
 
 // ── Content panel ─────────────────────────────────────────────────
@@ -159,7 +192,65 @@ function renderContent() {
   if (selected.type === 'node') return renderNode(main, selected.name);
   if (selected.type === 'extensions') return renderExtensions(main);
   if (selected.type === 'doctor') return renderDoctor(main);
+  if (selected.type === 'multiview') return renderMultiview(main);
   return renderDatacenter(main);
+}
+
+// ── Multiview: a grid of live view-only consoles ──────────────────
+// Watch 4–6 VMs at once — built for monitoring automated GUI testing.
+
+let multiviewRFBs = [];
+
+function disconnectMultiview() {
+  for (const r of multiviewRFBs) { try { r.disconnect(); } catch { /* gone */ } }
+  multiviewRFBs = [];
+}
+
+async function renderMultiview(main) {
+  disconnectMultiview();
+  const running = vms.filter((v) => v.running);
+  const shown = running.slice(0, 6);
+  main.innerHTML = `
+    <div class="page-head"><h1>${icon('cube')} Multiview</h1>
+      <span class="muted">${running.length} running VM${running.length === 1 ? '' : 's'}${running.length > 6 ? ' — showing first 6' : ''}</span>
+    </div>
+    ${shown.length ? `<div id="mv-grid" class="mv-grid"></div>`
+      : `<p class="console-msg">No running VMs. Start some and they appear here, live.</p>`}`;
+  if (!shown.length) return;
+
+  let RFB;
+  try {
+    ({ default: RFB } = await import(
+      'https://cdn.jsdelivr.net/npm/@novnc/novnc@1.4.0/core/rfb.js'));
+  } catch (e) {
+    $('#mv-grid').innerHTML = `<p class="console-msg">noVNC failed to load: ${esc(e.message)}</p>`;
+    return;
+  }
+  const grid = $('#mv-grid');
+  for (const vm of shown) {
+    const tile = document.createElement('div');
+    tile.className = 'mv-tile';
+    tile.innerHTML = `<div class="mv-title">${esc(vm.name)} <span class="muted">${esc(vm.namespace)}</span></div>
+      <div class="mv-screen"></div>`;
+    tile.querySelector('.mv-title').onclick = () => {
+      disconnectMultiview();
+      select({ type: 'vm', key: vmKey(vm) });
+      tab = 'console';
+      renderContent();
+    };
+    grid.appendChild(tile);
+    try {
+      const rfb = new RFB(tile.querySelector('.mv-screen'), wsURL('vnc', vm));
+      rfb.viewOnly = true; // watch, don't type — click the title to take over
+      rfb.scaleViewport = true;
+      rfb.addEventListener('disconnect', () => {
+        tile.querySelector('.mv-screen').innerHTML = `<p class="console-msg">disconnected</p>`;
+      });
+      multiviewRFBs.push(rfb);
+    } catch {
+      tile.querySelector('.mv-screen').innerHTML = `<p class="console-msg">connect failed</p>`;
+    }
+  }
 }
 
 async function renderDoctor(main) {
@@ -182,11 +273,26 @@ async function renderDoctor(main) {
   $('#doc-list').innerHTML = `<table><tbody>
     ${checks.map((c) => `<tr>
       <td style="width:1.5rem">${c.ok ? '<span class="dot on"></span>' : '<span class="dot off"></span>'}</td>
-      <td><strong>${esc(c.name)}</strong></td>
-      <td class="muted">${esc(c.detail)}</td>
-      <td>${!c.ok && c.fixable ? '<span class="pill" style="color:var(--yellow);border-color:var(--yellow)">fixable</span>' : ''}</td>
+      <td><strong ${c.ok ? '' : 'class="doc-broken"'}>${esc(c.name)}</strong></td>
+      <td class="${c.ok ? 'muted' : 'doc-broken'}">${esc(c.detail)}</td>
+      <td>${!c.ok && c.fixable ? `<button class="btn sm" data-fix="${esc(c.name)}">Fix</button>` : ''}</td>
     </tr>`).join('')}
   </tbody></table>`;
+  // Per-check fix buttons — scoped reconcile of just that item.
+  $('#doc-list').querySelectorAll('[data-fix]').forEach((b) => {
+    b.onclick = async () => {
+      b.disabled = true; b.textContent = 'Fixing…';
+      try {
+        await api('/api/doctor/fix', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ check: b.dataset.fix }),
+        });
+        toast(`Fixed: ${b.dataset.fix}`);
+      } catch (e) { toast(e.message); }
+      renderDoctor(main);
+    };
+  });
 }
 
 async function renderExtensions(main) {
@@ -363,6 +469,8 @@ function renderVM(main, vm) {
           ${icon('template')} ${vm.isTemplate ? 'Unmark template' : 'Make template'}</button>
         <button class="btn" data-act="export" ${vm.running ? 'disabled' : ''}
           title="${vm.running ? 'Stop the VM to export its disk' : 'Download a disk backup'}">${icon('download')} Export</button>
+        ${vm.bootc && caps.bootc ? `<button class="btn" data-act="upgrade"
+          title="Rebuild this bootc VM's disk from the latest image and restart">${icon('restart')} Upgrade</button>` : ''}
         <button class="btn danger" data-act="delete">${icon('trash')} Delete</button>
       </div>
     </div>
@@ -376,7 +484,7 @@ function renderVM(main, vm) {
     b.onclick = () => vmAction(vm, b.dataset.act);
   });
   main.querySelectorAll('[data-tab]').forEach((t) => {
-    t.onclick = () => { disconnectConsoles(); tab = t.dataset.tab; renderVM(main, vm); };
+    t.onclick = () => { disconnectConsoles(); tab = t.dataset.tab; renderVM(main, vm); markRendered(); };
   });
 
   renderTab(vm);
@@ -398,10 +506,14 @@ function renderTab(vm) {
         <dt>Guest agent</dt><dd>${vm.agentConnected ? 'connected' : 'not connected'}</dd>
         <dt>Tailnet proxy</dt><dd>${esc(vm.vnc || 'off')}</dd>
         <dt>SSH</dt><dd><code>corral ssh ${esc(vm.name)}</code></dd>
+        <dt>RDP</dt><dd id="vm-rdp">${vm.running ? 'checking…' : '—'}</dd>
       </dl>
-      <div id="guest-info"></div>`;
+      <div id="guest-info"></div>
+      <div id="powersched-box" class="panel-section"><p class="muted">loading schedule…</p></div>`;
       if (vm.running) loadMetrics(vm);
+      if (vm.running) checkRDP(vm);
       if (vm.agentConnected) loadGuestInfo(vm);
+      renderPowerSchedule(vm);
       break;
     case 'console': connectVNC(vm, body); break;
     case 'terminal': connectTTY(vm, body); break;
@@ -436,6 +548,18 @@ async function vmAction(vm, act) {
   if (act === 'export') {
     toast('Preparing backup… the download will start when ready.');
     window.location.href = `/api/vms/${vm.namespace}/${vm.name}/export`;
+    return;
+  }
+  if (act === 'upgrade') {
+    const ref = prompt('Rebuild from which bootc image?\nLeave blank to pull the latest of the current image, or enter a new image to switch.', '');
+    if (ref === null) return; // cancelled
+    try {
+      const res = await api(`/api/vms/${vm.namespace}/${vm.name}/bootc/rebuild`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: ref.trim() }),
+      });
+      if (res.task) watchBuild(res.task, vm.name);
+    } catch (e) { toast(e.message); }
     return;
   }
   try {
@@ -495,12 +619,59 @@ async function loadGuestInfo(vm) {
 
 const gib = (b) => (Number(b || 0) / 1073741824).toFixed(1);
 
+// Probe the VM for an open RDP port (Windows native, or Linux via
+// gnome-remote-desktop/xrdp) and surface how to connect.
+async function checkRDP(vm) {
+  let r;
+  try { r = await api(`/api/vms/${vm.namespace}/${vm.name}/rdp`); } catch { r = { open: false }; }
+  const el = $('#vm-rdp');
+  if (!el) return; // user navigated away
+  el.innerHTML = r.open
+    ? `available — <code>virtctl port-forward vm/${esc(vm.name)} 3389:3389 -n ${esc(vm.namespace)}</code> then point your RDP client at localhost:3389`
+    : '—';
+}
+
 async function loadMetrics(vm) {
   try {
     const m = await api(`/api/vms/${vm.namespace}/${vm.name}/metrics`);
     const el = $('#vm-usage');
     if (el) el.textContent = (m.cpu || m.mem) ? `${m.cpu || '?'} CPU · ${m.mem || '?'} mem` : 'no metrics yet';
   } catch { /* metrics-server may be absent */ }
+}
+
+// Autostart/shutdown windows (schedule plugin): two cron boundaries that flip
+// the VM on/off. Built into the web server (pkg/cronops) — no plugin needed.
+async function renderPowerSchedule(vm) {
+  const box = $('#powersched-box');
+  if (!box) return;
+  let s = {};
+  try { s = await api(`/api/vms/${vm.namespace}/${vm.name}/powerschedule`); } catch { /* form */ }
+  const has = s && (s.start || s.stop);
+  box.innerHTML = `
+    <h2 class="section">${icon('play')} Autostart / shutdown windows</h2>
+    <div class="hw-edit">
+      <label>Start (cron) <input id="pwr-start" placeholder="0 9 * * 1-5" value="${esc((s && s.start) || '')}" style="width:9rem"></label>
+      <label>Stop (cron) <input id="pwr-stop" placeholder="0 18 * * 1-5" value="${esc((s && s.stop) || '')}" style="width:9rem"></label>
+      <button class="btn primary" id="pwr-save">Save</button>
+      ${has ? '<button class="btn sm danger" id="pwr-clear">Clear</button>' : ''}
+    </div>
+    <p class="muted">5-field cron in the cluster's timezone. e.g. start <code>0 9 * * 1-5</code>, stop <code>0 18 * * 1-5</code> = weekdays 9–6. Leave a field blank to skip that boundary.</p>`;
+  $('#pwr-save').onclick = async () => {
+    try {
+      await api(`/api/vms/${vm.namespace}/${vm.name}/powerschedule`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ start: $('#pwr-start').value.trim(), stop: $('#pwr-stop').value.trim() }),
+      });
+      toast('Schedule saved');
+    } catch (e) { toast(e.message); }
+    renderPowerSchedule(vm);
+  };
+  const clr = $('#pwr-clear');
+  if (clr) clr.onclick = async () => {
+    try { await api(`/api/vms/${vm.namespace}/${vm.name}/powerschedule`, { method: 'DELETE' }); toast('Schedule cleared'); }
+    catch (e) { toast(e.message); }
+    renderPowerSchedule(vm);
+  };
 }
 
 async function renderEvents(vm, body) {
@@ -652,10 +823,14 @@ async function renderSnapshots(vm, body) {
       (no VolumeSnapshotClass found in this cluster).</p>`;
     return;
   }
+  // Scheduling is built into the web server (pkg/cronops); it needs the same
+  // snapshot-capable storage as one-off snapshots, which canSnapshot gates.
+  const hasSnapsched = caps.canSnapshot;
   body.innerHTML = `
     <div class="toolbar" style="margin-bottom:12px">
       <button class="btn primary" id="snap-new">${icon('camera')} Take snapshot</button>
     </div>
+    ${hasSnapsched ? `<div id="snapsched-box" class="panel-section"><p class="muted">loading schedule…</p></div>` : ''}
     <table><thead><tr><th>Name</th><th>Ready</th><th>Created</th><th></th></tr></thead>
     <tbody id="snap-rows"><tr><td colspan="4" class="muted">loading…</td></tr></tbody></table>`;
 
@@ -664,6 +839,8 @@ async function renderSnapshots(vm, body) {
     catch (e) { toast(e.message); }
     setTimeout(() => renderSnapshots(vm, body), 800);
   };
+
+  if (hasSnapsched) renderSnapSchedule(vm);
 
   let snaps = [];
   try { snaps = await api(`/api/vms/${vm.namespace}/${vm.name}/snapshots`); }
@@ -698,25 +875,108 @@ async function renderSnapshots(vm, body) {
   });
 }
 
+// Scheduled snapshots (snapsched plugin) — list/add/remove the CronJob.
+async function renderSnapSchedule(vm) {
+  const box = $('#snapsched-box');
+  if (!box) return;
+  let sched = {};
+  try { sched = await api(`/api/vms/${vm.namespace}/${vm.name}/snapschedule`); }
+  catch { /* show the add form */ }
+
+  if (sched && sched.schedule) {
+    box.innerHTML = `
+      <h2 class="section">${icon('camera')} Snapshot schedule</h2>
+      <dl class="props">
+        <dt>Cron</dt><dd><code>${esc(sched.schedule)}</code></dd>
+        <dt>Last run</dt><dd>${esc(sched.lastRun || '— (not yet)')}</dd>
+      </dl>
+      <button class="btn sm danger" id="snapsched-rm">Remove schedule</button>
+      <span class="muted">Existing snapshots are kept.</span>`;
+    $('#snapsched-rm').onclick = async () => {
+      try { await api(`/api/vms/${vm.namespace}/${vm.name}/snapschedule`, { method: 'DELETE' }); toast('Schedule removed'); }
+      catch (e) { toast(e.message); }
+      renderSnapSchedule(vm);
+    };
+    return;
+  }
+
+  box.innerHTML = `
+    <h2 class="section">${icon('camera')} Snapshot schedule</h2>
+    <div class="hw-edit">
+      <label>Every
+        <select id="snapsched-every">
+          <option value="6h">6 hours</option>
+          <option value="30m">30 minutes</option>
+          <option value="1h">1 hour</option>
+          <option value="12h">12 hours</option>
+          <option value="24h">daily</option>
+        </select>
+      </label>
+      <label>Keep <input id="snapsched-keep" type="number" min="1" value="12" style="width:5rem"></label>
+      <button class="btn primary" id="snapsched-add">Schedule</button>
+    </div>
+    <p class="muted">A CronJob snapshots the VM each tick and prunes beyond “keep”.</p>`;
+  $('#snapsched-add').onclick = async () => {
+    const every = $('#snapsched-every').value;
+    const keep = parseInt($('#snapsched-keep').value, 10) || 12;
+    try {
+      await api(`/api/vms/${vm.namespace}/${vm.name}/snapschedule`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ every, keep }),
+      });
+      toast('Schedule created');
+    } catch (e) { toast(e.message); }
+    renderSnapSchedule(vm);
+  };
+}
+
 // ── Consoles ──────────────────────────────────────────────────────
 
 const wsURL = (kind, vm) =>
   `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/${kind}/${vm.namespace}/${vm.name}`;
+
+// toggleFullscreen puts el into (or out of) browser fullscreen.
+function toggleFullscreen(el) {
+  if (document.fullscreenElement) document.exitFullscreen();
+  else el.requestFullscreen?.();
+}
+// Element fullscreen fires no window resize, but noVNC's scaling and xterm's
+// fit addon both key off it — give them one.
+document.addEventListener('fullscreenchange', () => window.dispatchEvent(new Event('resize')));
 
 async function connectVNC(vm, body) {
   if (!vm.running) {
     body.innerHTML = `<p class="console-msg">VM is not running — start it to open the console.</p>`;
     return;
   }
-  body.innerHTML = `<div id="vnc-screen"><p class="console-msg">Connecting…</p></div>`;
+  body.innerHTML = `
+    <div class="toolbar console-bar">
+      <button class="btn sm" id="vnc-fullscreen" title="Fullscreen (Esc to leave)">${icon('expand')} Fullscreen</button>
+      <label class="console-opt"><input type="checkbox" id="vnc-scale" checked> Scale to fit (local)</label>
+      <label class="console-opt" title="Ask the guest to change its resolution to match the window (needs guest support)">
+        <input type="checkbox" id="vnc-resize"> Remote resize</label>
+    </div>
+    <div id="vnc-screen"><p class="console-msg">Connecting…</p></div>`;
   try {
     const { default: RFB } = await import(
       'https://cdn.jsdelivr.net/npm/@novnc/novnc@1.4.0/core/rfb.js');
     const screen = $('#vnc-screen');
     screen.replaceChildren();
     rfb = new RFB(screen, wsURL('vnc', vm));
-    rfb.scaleViewport = true;
-    rfb.resizeSession = false;
+    rfb.scaleViewport = true;  // noVNC local scaling — fits any window size
+    rfb.resizeSession = false; // remote resize is opt-in (guest must support it)
+
+    $('#vnc-fullscreen').onclick = () => toggleFullscreen(screen);
+    $('#vnc-scale').onchange = (e) => { if (rfb) rfb.scaleViewport = e.target.checked; };
+    $('#vnc-resize').onchange = (e) => {
+      if (!rfb) return;
+      rfb.resizeSession = e.target.checked;
+      if (e.target.checked) {
+        // The two modes fight each other; remote resize wins when enabled.
+        $('#vnc-scale').checked = false;
+        rfb.scaleViewport = false;
+      }
+    };
     rfb.addEventListener('disconnect', () => {
       if (tab === 'console') {
         screen.innerHTML = `<p class="console-msg">Disconnected. Switch tabs to reconnect.</p>`;
@@ -732,8 +992,13 @@ function connectTTY(vm, body) {
     body.innerHTML = `<p class="console-msg">VM is not running — start it to open the serial console.</p>`;
     return;
   }
-  body.innerHTML = `<div id="tty-screen"></div>
+  body.innerHTML = `
+    <div class="toolbar console-bar">
+      <button class="btn sm" id="tty-fullscreen" title="Fullscreen (Esc to leave)">${icon('expand')} Fullscreen</button>
+    </div>
+    <div id="tty-screen"></div>
     <p class="hint" style="color:var(--muted);font-size:.78rem">Serial console via virtctl — hit Enter if blank.</p>`;
+  $('#tty-fullscreen').onclick = () => toggleFullscreen($('#tty-screen'));
 
   term = new Terminal({ fontSize: 14, theme: { background: '#000000' }, cursorBlink: true });
   const fit = new FitAddon.FitAddon();
@@ -767,13 +1032,154 @@ function disconnectConsoles() {
 
 $('#btn-create').onclick = () => {
   loadCatalog();
-  // Reset to default source type and update field visibility
+  // Reset to the catalog (the simple path) and update field visibility
   const srcType = document.querySelector('[name=sourceType]');
-  if (srcType) srcType.value = 'containerDisk';
+  if (srcType) srcType.value = 'catalog';
+  const nsInput = document.querySelector('#create-form [name=namespace]');
+  if (nsInput && !nsInput.value) nsInput.value = caps.defaultNamespace || '';
   updateSourceFields();
+  wizardReset();
   $('#create-dialog').showModal();
 };
 $('#btn-cancel').onclick = () => $('#create-dialog').close();
+
+// ── Simple wizard: OS cards → name + size → create ────────────────
+
+const WIZ_SIZES = {
+  s: { cpu: 1, mem: '2G', disk: '15G' },
+  m: { cpu: 2, mem: '4G', disk: '20G' },
+  l: { cpu: 4, mem: '8G', disk: '40G' },
+};
+let wizImages = [];   // catalog entries + bootc entries (kind: 'bootc')
+let wizSelected = null;
+let wizFilter = 'all';
+
+// A distro logo from simple-icons, falling back to a letter badge.
+// (The badge swap is wired up post-render — see wizBindLogoFallbacks.)
+function wizLogo(entry) {
+  const letter = esc((entry.name || '?')[0].toUpperCase());
+  if (!entry.logo) return `<span class="wiz-badge">${letter}</span>`;
+  return `<img class="wiz-logo" data-letter="${letter}" src="https://cdn.simpleicons.org/${esc(entry.logo)}" alt="">`;
+}
+
+function wizBindLogoFallbacks(root) {
+  root.querySelectorAll('img.wiz-logo').forEach((img) => {
+    img.onerror = () => {
+      const span = document.createElement('span');
+      span.className = 'wiz-badge';
+      span.textContent = img.dataset.letter || '?';
+      img.replaceWith(span);
+    };
+  });
+}
+
+async function wizardLoad() {
+  let imgs = [];
+  try { imgs = await api('/api/images'); } catch { /* cards stay empty */ }
+  wizImages = imgs.map((i) => ({ ...i, kind: i.url ? 'import' : i.iso ? 'iso' : 'server' }));
+  if (caps.bootc) {
+    $('#wiz-filters [data-filter="bootc"]').hidden = false;
+    let bimgs = [];
+    try { bimgs = await api('/api/images?type=bootc'); } catch { /* none */ }
+    wizImages = wizImages.concat(bimgs.map((b) => ({ ...b, variant: 'bootc', kind: 'bootc' })));
+  }
+  wizardRenderCards();
+}
+
+function wizardRenderCards() {
+  const grid = $('#wiz-cards');
+  const shown = wizImages.filter((i) =>
+    wizFilter === 'all' || i.variant === wizFilter);
+  grid.innerHTML = shown.map((i, n) => `
+    <div class="wiz-card" data-wiz="${n}">
+      ${wizLogo(i)}
+      <strong>${esc(i.name)}</strong>
+      <span class="muted">${esc(i.description)}</span>
+      ${i.variant === 'bootc' ? '<span class="pill mid">bootc</span>'
+        : i.iso ? '<span class="pill">installer</span>' : ''}
+    </div>`).join('') || '<p class="muted">No images for this filter.</p>';
+  wizBindLogoFallbacks(grid);
+  grid.querySelectorAll('[data-wiz]').forEach((card) => {
+    card.onclick = () => {
+      wizSelected = shown[parseInt(card.dataset.wiz, 10)];
+      $('#wiz-selected').innerHTML = `${wizLogo(wizSelected)} <strong>${esc(wizSelected.name)}</strong>
+        <span class="muted">${esc(wizSelected.description)}</span>`;
+      wizBindLogoFallbacks($('#wiz-selected'));
+      $('#wiz-step-1').hidden = true;
+      $('#wiz-step-2').hidden = false;
+      $('#wiz-back').hidden = false;
+      $('#wiz-create').hidden = false;
+      $('#wiz-name').focus();
+    };
+  });
+}
+
+function wizardReset() {
+  wizSelected = null;
+  $('#wizard-simple').hidden = false;
+  $('#create-form').hidden = true;
+  $('#wiz-step-1').hidden = false;
+  $('#wiz-step-2').hidden = true;
+  $('#wiz-back').hidden = true;
+  $('#wiz-create').hidden = true;
+  wizardLoad();
+}
+
+$('#wiz-filters').querySelectorAll('.wiz-chip').forEach((chip) => {
+  chip.onclick = () => {
+    wizFilter = chip.dataset.filter;
+    $('#wiz-filters').querySelectorAll('.wiz-chip').forEach((c) => c.classList.toggle('active', c === chip));
+    wizardRenderCards();
+  };
+});
+$('#wiz-sizes').querySelectorAll('.wiz-size').forEach((sz) => {
+  sz.onclick = () => $('#wiz-sizes').querySelectorAll('.wiz-size')
+    .forEach((c) => c.classList.toggle('selected', c === sz));
+});
+$('#wiz-back').onclick = () => {
+  $('#wiz-step-1').hidden = false;
+  $('#wiz-step-2').hidden = true;
+  $('#wiz-back').hidden = true;
+  $('#wiz-create').hidden = true;
+};
+$('#wiz-cancel').onclick = () => $('#create-dialog').close();
+$('#wiz-advanced').onclick = () => {
+  $('#wizard-simple').hidden = true;
+  $('#create-form').hidden = false;
+};
+$('#btn-simple').onclick = () => {
+  $('#create-form').hidden = true;
+  $('#wizard-simple').hidden = false;
+};
+
+$('#wiz-create').onclick = async () => {
+  const name = $('#wiz-name').value.trim();
+  if (!name || !wizSelected) { toast('Pick a name'); return; }
+  const size = WIZ_SIZES[$('#wiz-sizes .selected')?.dataset.size || 'm'];
+  const body = {
+    name,
+    namespace: caps.defaultNamespace || '',
+    cpu: size.cpu, mem: size.mem, disk: size.disk,
+    sshKey: $('#wiz-sshkey').value.trim(),
+  };
+  if (wizSelected.kind === 'bootc') body.bootc = wizSelected.image;
+  else body.image = wizSelected.name;
+  $('#wiz-create').disabled = true;
+  try {
+    const res = await api('/api/vms', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    $('#create-dialog').close();
+    $('#wiz-name').value = '';
+    if (res.task) watchBuild(res.task, name);
+    refresh();
+  } catch (err) {
+    toast(`Create failed: ${err.message}`);
+  }
+  $('#wiz-create').disabled = false;
+};
 $('#btn-build-close').onclick = () => $('#build-dialog').close();
 
 const SOURCE_HINTS = {
@@ -781,6 +1187,7 @@ const SOURCE_HINTS = {
   import: 'https://cloud-images.example/jammy.qcow2',
   iso: 'https://example.com/installer.iso',
   bootc: 'quay.io/centos-bootc/centos-bootc:stream9',
+  windows: 'https://example.com/Win11_x64.iso',
   pvc: 'existing-pvc-name',
 };
 
@@ -788,16 +1195,41 @@ async function loadCatalog() {
   let imgs;
   try { imgs = await api('/api/images'); } catch { imgs = []; }
   const sel = document.querySelector('[name=catalogImage]');
-  if (sel) sel.innerHTML = imgs.map((i) => `<option value="${esc(i.name)}">${esc(i.name)} — ${esc(i.description)}</option>`).join('');
+  // Catalog entries boot three ways; flag the slower ones so there are no surprises.
+  const kindTag = (i) => (i.url ? ' [imports via CDI]' : i.iso ? ' [installer ISO]' : '');
+  if (sel) sel.innerHTML = imgs.map((i) => `<option value="${esc(i.name)}">${esc(i.name)} — ${esc(i.description)}${kindTag(i)}</option>`).join('');
+
+  // Bootc image suggestions (datalist on the source field) when the plugin is on.
+  if (caps.bootc) {
+    let bimgs;
+    try { bimgs = await api('/api/images?type=bootc'); } catch { bimgs = []; }
+    const dl = $('#bootc-catalog');
+    if (dl) dl.innerHTML = bimgs.map((b) => `<option value="${esc(b.image)}">${esc(b.name)} — ${esc(b.description)}</option>`).join('');
+  }
 }
+
+const CREATE_HINTS = {
+  iso: 'The installer ISO boots with a blank disk — finish the install in the Console tab.',
+  bootc: 'The SSH key is baked into the built disk. Bootc builds take a few minutes — a live build log opens after submit.',
+  windows: 'UEFI + TPM + Hyper-V tuned, with the virtio-win driver CD-ROM attached. After boot, in Setup click “Load driver” → the virtio CD-ROM. Provide a Windows installer ISO URL.',
+  pvc: 'Boots an existing disk as-is; cloud-init does not run again.',
+};
+const DEFAULT_HINT = 'Cloud-init VMs get your SSH key and Tailscale auth key (if configured) automatically.';
 
 function updateSourceFields() {
   const type = document.querySelector('[name=sourceType]').value;
   $('#catalog-field').hidden = type !== 'catalog';
   $('#source-field').hidden = type === 'catalog';
-  $('#sshkey-field').hidden = type !== 'bootc';
+  $('#create-hint').textContent = CREATE_HINTS[type] || DEFAULT_HINT;
+  const rdp = $('#rdp-field');
+  if (rdp) rdp.hidden = type !== 'windows'; // RDP toggle is Windows-only here
   const src = document.querySelector('[name=source]');
-  if (src) src.placeholder = SOURCE_HINTS[type] || '';
+  if (src) {
+    src.placeholder = SOURCE_HINTS[type] || '';
+    // Bootc gets catalog suggestions; other types are free-form.
+    if (type === 'bootc') src.setAttribute('list', 'bootc-catalog');
+    else src.removeAttribute('list');
+  }
 }
 
 document.querySelector('[name=sourceType]').onchange = updateSourceFields;
@@ -818,11 +1250,13 @@ $('#create-form').onsubmit = async (e) => {
   };
   const src = f.get('source');
   const type = f.get('sourceType');
+  body.sshKey = f.get('sshKey') || ''; // key or GitHub username, any source type
   if (type === 'catalog') body.image = f.get('catalogImage');
   else if (type === 'containerDisk') body.containerDisk = src;
   else if (type === 'import') body.import = src;
   else if (type === 'iso') body.iso = src;
-  else if (type === 'bootc') { body.bootc = src; body.sshKey = f.get('sshKey'); }
+  else if (type === 'bootc') body.bootc = src;
+  else if (type === 'windows') { body.windows = true; body.iso = src; body.rdp = !!f.get('rdp'); }
   else body.pvc = src;
 
   try {
@@ -833,7 +1267,6 @@ $('#create-form').onsubmit = async (e) => {
     });
     $('#create-dialog').close();
     e.target.reset();
-    $('#sshkey-field').hidden = true;
     if (res.task) watchBuild(res.task, body.name);
     refresh();
   } catch (err) {
@@ -867,6 +1300,44 @@ function watchBuild(taskID, vmName) {
   }, 2000);
 }
 
+// ── Task panel (Proxmox-style activity log) ───────────────────────
+
+let taskLog = [];
+let lastTaskLogFp = '';
+
+async function refreshTaskLog() {
+  try { taskLog = await api('/api/tasklog'); } catch { return; }
+  const fp = JSON.stringify(taskLog);
+  if (fp === lastTaskLogFp) return; // unchanged — don't reset panel scroll
+  lastTaskLogFp = fp;
+  const rows = $('#task-rows');
+  const summary = $('#task-panel-summary');
+  if (!rows) return;
+  const running = taskLog.filter((t) => t.status === 'running').length;
+  const errors = taskLog.filter((t) => t.status === 'error').length;
+  summary.textContent = taskLog.length
+    ? `${running ? `${running} running · ` : ''}${errors ? `${errors} failed · ` : ''}${taskLog.length} total`
+    : '';
+  const statusPill = (t) => t.status === 'running' ? '<span class="pill mid">running</span>'
+    : t.status === 'error' ? `<span class="pill off" title="${esc(t.error || '')}">error</span>`
+    : '<span class="pill on">OK</span>';
+  rows.innerHTML = taskLog.length
+    ? taskLog.slice(0, 50).map((t) => `<tr${t.status === 'error' ? ` title="${esc(t.error || '')}"` : ''}>
+        <td>${esc(new Date(t.started).toLocaleTimeString())}</td>
+        <td>${esc(t.action)}</td>
+        <td>${esc(t.target)}</td>
+        <td>${esc(t.duration || '…')}</td>
+        <td>${statusPill(t)}</td>
+      </tr>`).join('')
+    : `<tr><td colspan="5" class="muted">No tasks yet.</td></tr>`;
+}
+
+$('#task-panel-head').onclick = () => {
+  const panel = $('#task-panel');
+  panel.classList.toggle('collapsed');
+  $('#task-panel-chevron').textContent = panel.classList.contains('collapsed') ? '▴' : '▾';
+};
+
 // ── Mobile drawer ─────────────────────────────────────────────────
 
 $('#btn-menu').onclick = () => $('#tree').classList.toggle('open');
@@ -880,4 +1351,6 @@ $('#btn-create').innerHTML = `${icon('plus')} Create VM`;
 loadCaps();
 loadInstanceTypes();
 refresh();
+refreshTaskLog();
 setInterval(refresh, 5000);
+setInterval(refreshTaskLog, 5000);

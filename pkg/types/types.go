@@ -21,6 +21,7 @@ type VM struct {
 	LiveMigratable bool   `json:"liveMigratable"` // VMI LiveMigratable condition
 	AgentConnected bool   `json:"agentConnected"` // qemu-guest-agent reachable
 	IsTemplate     bool   `json:"isTemplate"`     // labeled corral.dev/template=true
+	Bootc          bool   `json:"bootc"`          // kernel-boot VM (built by the bootc plugin)
 }
 
 // Capabilities reports what optional operations the cluster supports, so the

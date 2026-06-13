@@ -15,6 +15,12 @@ type Config struct {
 // TailscaleConfig holds Tailscale-specific settings.
 type TailscaleConfig struct {
 	AuthKey string `yaml:"auth_key"`
+	// Expose makes every new VM a tailnet device automatically: corral
+	// deploys the proxy Service (tailscale operator annotations) for
+	// SSH/VNC/RDP on create — no agent needed inside the guest.
+	Expose bool `yaml:"expose"`
+	// Tags applied to exposed VM devices, e.g. "tag:corral-vm".
+	Tags string `yaml:"tags"`
 }
 
 // DefaultPath returns the default config file path.
@@ -52,6 +58,28 @@ func AuthKey() string {
 	cfg, err := Load("")
 	if err == nil && cfg.Tailscale.AuthKey != "" {
 		return cfg.Tailscale.AuthKey
+	}
+	return ""
+}
+
+// TailnetExpose reports whether new VMs should be exposed on the tailnet by
+// default (CORRAL_TAILNET_EXPOSE=true/1 or tailscale.expose in config.yaml).
+func TailnetExpose() bool {
+	if v := os.Getenv("CORRAL_TAILNET_EXPOSE"); v != "" {
+		return v == "1" || v == "true" || v == "yes"
+	}
+	cfg, err := Load("")
+	return err == nil && cfg.Tailscale.Expose
+}
+
+// TailnetTags returns the device tags for exposed VMs
+// (CORRAL_TAILNET_TAGS or tailscale.tags in config.yaml).
+func TailnetTags() string {
+	if v := os.Getenv("CORRAL_TAILNET_TAGS"); v != "" {
+		return v
+	}
+	if cfg, err := Load(""); err == nil {
+		return cfg.Tailscale.Tags
 	}
 	return ""
 }

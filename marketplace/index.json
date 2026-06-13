@@ -2,8 +2,8 @@
   "plugins": [
     {
       "name": "bootc",
-      "description": "Boot a bootable container image as a VM — bootc install runs on-cluster, then the VM kernel-boots from the image. Run `corral bootc create <name> --image ...`.",
-      "version": "0.1.0",
+      "description": "Boot a bootable container image as a VM — bootc install runs on-cluster, then the VM kernel-boots from the image. create / images / rebuild / upgrade / switch / status. Run `corral bootc create <name> --image ...`.",
+      "version": "0.2.0",
       "homepage": "https://github.com/hanthor/corral/tree/main/cmd/corral-bootc",
       "platforms": {
         "linux/amd64": { "url": "https://github.com/hanthor/corral/releases/download/plugins/corral-bootc-linux-amd64" },
@@ -48,6 +48,16 @@
       "platforms": {
         "linux/amd64": { "url": "https://github.com/hanthor/corral/releases/download/plugins/corral-windows-linux-amd64" },
         "linux/arm64": { "url": "https://github.com/hanthor/corral/releases/download/plugins/corral-windows-linux-arm64" }
+      }
+    },
+    {
+      "name": "proxmox",
+      "description": "Proxmox VE API compatibility layer — serve a /api2/json subset backed by KubeVirt, so Terraform providers and other Proxmox ecosystem tools can manage your VMs. Run `corral proxmox serve [--addr :8006]`.",
+      "version": "0.1.0",
+      "homepage": "https://github.com/hanthor/corral/tree/main/cmd/corral-proxmox",
+      "platforms": {
+        "linux/amd64": { "url": "https://github.com/hanthor/corral/releases/download/plugins/corral-proxmox-linux-amd64" },
+        "linux/arm64": { "url": "https://github.com/hanthor/corral/releases/download/plugins/corral-proxmox-linux-arm64" }
       }
     }
   ]
