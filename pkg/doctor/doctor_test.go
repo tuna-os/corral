@@ -48,7 +48,7 @@ const healthySCJSON = `{
 // scriptHealthyCluster registers responses describing a fully configured cluster.
 func scriptHealthyCluster(fake *shell.Fake) {
 	fake.AddResponse("kubectl get kubevirt -n kubevirt", "kubevirt", nil)
-	fake.AddResponse("kubectl get cdi", "cdi", nil)
+	fake.AddResponse("kubectl get deploy cdi-operator -n cdi", "cdi-operator", nil)
 	fake.AddResponse("kubectl get kubevirt kubevirt -n kubevirt -o json", healthyKubeVirtJSON, nil)
 	fake.AddResponse("kubectl get sc -o json", healthySCJSON, nil)
 	fake.AddResponse("kubectl get volumesnapshotclass -o name",
