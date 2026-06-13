@@ -65,20 +65,21 @@ template. New VMs clone from it (disks included):
 }
 
 func printCatalog(images []catalog.Image) {
-	fmt.Printf("%-16s %-9s %s\n", "NAME", "USER", "DESCRIPTION")
+	fmt.Printf("%-26s %-10s %-14s %-24s %s\n", "NAME", "USER", "TYPE", "SOURCE", "DESCRIPTION")
 	for _, img := range images {
-		fmt.Printf("%-16s %-9s %s\n", img.Name, img.DefaultUser, img.Description)
+		fmt.Printf("%-26s %-10s %-14s %-24s %s\n", img.Name, img.DefaultUser, img.Kind(), img.Source, img.Description)
 	}
 }
 
-// searchCatalog filters by substring over name + description ("" = all).
+// searchCatalog filters by substring over name + description + source ("" = all).
 func searchCatalog(term string) []catalog.Image {
 	term = strings.ToLower(term)
 	var out []catalog.Image
 	for _, img := range catalog.Images {
 		if term == "" ||
 			strings.Contains(strings.ToLower(img.Name), term) ||
-			strings.Contains(strings.ToLower(img.Description), term) {
+			strings.Contains(strings.ToLower(img.Description), term) ||
+			strings.Contains(strings.ToLower(img.Source), term) {
 			out = append(out, img)
 		}
 	}
@@ -95,6 +96,9 @@ func pullTemplate(image, ns string) error {
 	if img == nil {
 		return fmt.Errorf("unknown image %q — see `corral images`", image)
 	}
+	if img.ISO != "" {
+		return fmt.Errorf("%q is an installer ISO — it needs a manual install, so it can't be pulled as a template; create a VM with it instead: corral create myvm --image %s", image, image)
+	}
 	if ns == "" {
 		ns = kubevirt.DefaultNamespace
 	}
@@ -103,6 +107,7 @@ func pullTemplate(image, ns string) error {
 		Name:          name,
 		Namespace:     ns,
 		ContainerDisk: img.ContainerDisk,
+		ImportURL:     img.URL,
 		SSHPublicKey:  kubevirt.LoadSSHPublicKey(),
 	}
 	if err := kubevirt.CreateVM(opts); err != nil {

@@ -20,122 +20,24 @@ import (
 
 var runner shell.Runner = shell.Real{}
 
-// VirtioWinImage is KubeVirt's containerdisk build of the virtio-win driver ISO.
-const VirtioWinImage = "quay.io/kubevirt/virtio-container-disk:latest"
+// VirtioWinImage is re-exported for tests; the manifest logic lives in
+// pkg/kubevirt so the web GUI shares it.
+const VirtioWinImage = kubevirt.VirtioWinImage
 
-// generateWindowsVM builds the VirtualMachine manifest. The boot order is
-// disk(1) → installer ISO(2): the empty disk falls through to the ISO on
-// first boot, and Windows boots from disk directly once installed.
+// generateWindowsVM delegates to the shared package.
 func generateWindowsVM(name, ns, mem string, cpu int) map[string]any {
-	disks := []map[string]any{
-		{"name": "rootdisk", "bootOrder": 1, "disk": map[string]any{"bus": "virtio"}},
-		{"name": "windows-iso", "bootOrder": 2, "cdrom": map[string]any{"bus": "sata"}},
-		{"name": "virtio-drivers", "cdrom": map[string]any{"bus": "sata"}},
-	}
-	volumes := []map[string]any{
-		{"name": "rootdisk", "persistentVolumeClaim": map[string]any{"claimName": name + "-disk"}},
-		{"name": "windows-iso", "persistentVolumeClaim": map[string]any{"claimName": name + "-iso"}},
-		{"name": "virtio-drivers", "containerDisk": map[string]any{"image": VirtioWinImage}},
-	}
-	return map[string]any{
-		"apiVersion": "kubevirt.io/v1",
-		"kind":       "VirtualMachine",
-		"metadata": map[string]any{
-			"name":      name,
-			"namespace": ns,
-			"labels":    map[string]any{"corral.dev/os": "windows"},
-		},
-		"spec": map[string]any{
-			"running": false,
-			"template": map[string]any{
-				"metadata": map[string]any{
-					"labels": map[string]any{"kubevirt.io/vm": name},
-				},
-				"spec": map[string]any{
-					"domain": map[string]any{
-						"machine": map[string]any{"type": "q35"},
-						"firmware": map[string]any{
-							"bootloader": map[string]any{
-								// secureBoot needs SMM; off keeps it simple and
-								// boots every Windows version.
-								"efi": map[string]any{"secureBoot": false},
-							},
-						},
-						"features": map[string]any{
-							"acpi": map[string]any{},
-							"apic": map[string]any{},
-							"smm":  map[string]any{"enabled": false},
-							// Hyper-V enlightenments: Windows runs poorly without them.
-							"hyperv": map[string]any{
-								"relaxed": map[string]any{},
-								"vapic":   map[string]any{},
-								"vpindex": map[string]any{},
-								"synic":   map[string]any{},
-								"synictimer": map[string]any{
-									"direct": map[string]any{},
-								},
-								"spinlocks":   map[string]any{"spinlocks": 8191},
-								"frequencies": map[string]any{},
-								"ipi":         map[string]any{},
-							},
-						},
-						"clock": map[string]any{
-							"utc": map[string]any{},
-							"timer": map[string]any{
-								"hpet":   map[string]any{"present": false},
-								"pit":    map[string]any{"tickPolicy": "delay"},
-								"rtc":    map[string]any{"tickPolicy": "catchup"},
-								"hyperv": map[string]any{},
-							},
-						},
-						"cpu": map[string]any{"cores": cpu},
-						"devices": map[string]any{
-							"tpm":   map[string]any{},
-							"disks": disks,
-							"interfaces": []map[string]any{
-								// e1000e works during Setup before virtio NIC
-								// drivers are installed.
-								{"name": "default", "masquerade": map[string]any{}, "model": "e1000e"},
-							},
-							"inputs": []map[string]any{
-								{"type": "tablet", "bus": "usb", "name": "tablet"},
-							},
-						},
-						"resources": map[string]any{
-							"requests": map[string]any{"memory": mem},
-						},
-					},
-					"networks": []map[string]any{
-						{"name": "default", "pod": map[string]any{}},
-					},
-					"volumes": volumes,
-				},
-			},
-		},
-	}
+	return kubevirt.GenerateWindowsVM(name, ns, mem, cpu)
 }
 
 // createWindowsVM imports the installer ISO, provisions the boot disk, and
-// applies the Windows-tuned VM. rdpPorts non-empty also exposes RDP through
-// the corral proxy.
+// applies the Windows-tuned VM (optionally exposing RDP), then records it in
+// the local registry and prints next steps.
 func createWindowsVM(name, ns, iso, disk, mem string, cpu int, rdp bool) error {
-	kubevirt.EnsureNamespace(ns)
-	sc := kubevirt.PreferredStorageClass()
-
-	if err := kubevirt.Apply(kubevirt.GenerateDataVolume(name+"-iso", ns, iso)); err != nil {
-		return fmt.Errorf("creating ISO DataVolume: %w", err)
-	}
 	fmt.Fprintf(os.Stderr, "installer ISO importing: %s-iso ← %s\n", name, iso)
-	if err := kubevirt.Apply(kubevirt.GeneratePVCWithClass(name+"-disk", ns, disk, sc)); err != nil {
-		return fmt.Errorf("creating boot disk PVC: %w", err)
-	}
-	if err := kubevirt.Apply(generateWindowsVM(name, ns, mem, cpu)); err != nil {
-		return fmt.Errorf("creating VM: %w", err)
+	if err := kubevirt.CreateWindowsVM(name, ns, iso, disk, mem, cpu, rdp); err != nil {
+		return err
 	}
 	if rdp {
-		if err := kubevirt.ApplyProxy(name, ns, []int{3389}); err != nil {
-			return fmt.Errorf("exposing RDP: %w", err)
-		}
 		fmt.Fprintf(os.Stderr, "RDP exposed via proxy service %s-proxy (port 3389)\n", name)
 	}
 	if store, err := registry.NewStore(); err == nil {

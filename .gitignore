@@ -3,9 +3,20 @@
 /tailvm
 /bin/
 /corral
+/corral-bootc
+/corral-proxmox
+/corral-windows
+/corral-snapsched
+/corral-schedule
+/corral-gpu
 build/
 dist/
 
 # Playwright e2e artifacts
 test/e2e/node_modules/
 test/e2e/test-results/
+e2e/node_modules/
+e2e/test-results/
+
+# Local Claude Code settings
+.claude/settings.local.json

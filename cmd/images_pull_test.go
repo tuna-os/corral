@@ -32,7 +32,7 @@ func TestPullTemplate(t *testing.T) {
 	fake := shell.NewFake()
 	fake.AddResponseKV("kubectl", []string{"apply", "-f", "-"}, "applied", nil)
 	fake.AddResponseKV("kubectl", []string{"get", "sc", "-o", "json"}, `{"items":[]}`, nil)
-	fake.AddPrefixResponse("kubectl label vm tmpl-fedora -n tailvm corral.dev/template=true", "labeled", nil)
+	fake.AddPrefixResponse("kubectl label vm tmpl-fedora -n corral-vms corral.dev/template=true", "labeled", nil)
 	kubevirt.SetApplyRunner(fake)
 	kubevirt.SetPackageRunner(fake)
 	kubevirt.SetDefaultRunner(fake)
