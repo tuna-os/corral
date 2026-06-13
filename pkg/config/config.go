@@ -26,7 +26,7 @@ type TailscaleConfig struct {
 // DefaultPath returns the default config file path.
 func DefaultPath() string {
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".config", "tailvm", "config.yaml")
+	return filepath.Join(home, ".config", "corral", "config.yaml")
 }
 
 // Load reads the config file from path. Returns empty config if file doesn't exist.

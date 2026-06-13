@@ -112,7 +112,7 @@ func checkImportFormat(source string) error {
 
 func init() {
 	importCmd.Flags().StringVar(&importSource, "source", "", "Disk image URL or local qcow2/raw file")
-	importCmd.Flags().StringVarP(&importNamespace, "namespace", "n", "", "Namespace (default tailvm)")
+	importCmd.Flags().StringVarP(&importNamespace, "namespace", "n", "", "Namespace (default corral)")
 	importCmd.Flags().StringVar(&importDisk, "disk", "20G", "Boot disk size")
 	importCmd.Flags().StringVar(&importMem, "mem", "4G", "Memory")
 	importCmd.Flags().IntVar(&importCPU, "cpu", 2, "vCPUs")

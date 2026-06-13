@@ -9,7 +9,7 @@ const os = require('os');
 const path = require('path');
 
 const CORRAL_URL = process.env.CORRAL_URL || 'http://localhost:8006';
-const NS = process.env.CORRAL_NS || 'tailvm';
+const NS = process.env.CORRAL_NS || 'corral';
 
 // Small, fast-importing disk images for CDI flows.
 const CIRROS_QCOW = 'https://download.cirros-cloud.net/0.6.2/cirros-0.6.2-x86_64-disk.img';

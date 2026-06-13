@@ -96,7 +96,7 @@ var defaultClientRunner shell.Runner
 func SetDefaultRunner(r shell.Runner) { defaultClientRunner = r }
 
 // DefaultNamespace is the default namespace for KubeVirt VMs. Override with
-// CORRAL_NAMESPACE (e.g. existing deployments that grew up in "tailvm").
+// CORRAL_NAMESPACE (fallback for existing deployments that predate the rename).
 var DefaultNamespace = defaultNamespace()
 
 func defaultNamespace() string {
@@ -782,7 +782,7 @@ func GenerateVM(opts types.CreateOpts) map[string]any {
 		"metadata": map[string]any{
 			"name":      name,
 			"namespace": ns,
-			"labels":    map[string]any{"tailvm": name},
+			"labels":    map[string]any{"corral": name},
 		},
 		"spec": spec,
 	}
@@ -882,7 +882,7 @@ func GenerateProxyService(name, namespace string, ports []int) map[string]any {
 		"spec": map[string]any{
 			"type": "ClusterIP",
 			"selector": map[string]string{
-				"app": "tailvm-proxy",
+				"app": "corral-proxy",
 				"vm":  name,
 			},
 			"ports": svcPorts,
@@ -957,7 +957,7 @@ func GenerateProxyDeployment(name, namespace string, ports []int) map[string]any
 			"name":      name + "-proxy",
 			"namespace": namespace,
 			"labels": map[string]string{
-				"app": "tailvm-proxy",
+				"app": "corral-proxy",
 				"vm":  name,
 			},
 		},
@@ -965,19 +965,19 @@ func GenerateProxyDeployment(name, namespace string, ports []int) map[string]any
 			"replicas": 1,
 			"selector": map[string]any{
 				"matchLabels": map[string]string{
-					"app": "tailvm-proxy",
+					"app": "corral-proxy",
 					"vm":  name,
 				},
 			},
 			"template": map[string]any{
 				"metadata": map[string]any{
 					"labels": map[string]string{
-						"app": "tailvm-proxy",
+						"app": "corral-proxy",
 						"vm":  name,
 					},
 				},
 				"spec": map[string]any{
-					"serviceAccountName": "tailvm-" + name + "-proxy",
+					"serviceAccountName": "corral-" + name + "-proxy",
 					"securityContext": map[string]any{
 						"seccompProfile": map[string]any{"type": "RuntimeDefault"},
 					},
@@ -1057,7 +1057,7 @@ func DeleteProxy(name, ns string) error {
 	for _, kind := range []string{"deploy", "svc", "sa", "role", "rolebinding"} {
 		rname := name + "-proxy"
 		if kind != "deploy" && kind != "svc" {
-			rname = "tailvm-" + name + "-proxy"
+			rname = "corral-" + name + "-proxy"
 		}
 		exec.Command("kubectl", "delete", kind, rname, "-n", ns, "--ignore-not-found").Run()
 	}
@@ -1069,13 +1069,13 @@ func GenerateProxyRBAC(name, ns string) string {
 	return fmt.Sprintf(`apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: tailvm-%s-proxy
+  name: corral-%s-proxy
   namespace: %s
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: tailvm-%s-proxy
+  name: corral-%s-proxy
   namespace: %s
 rules:
   - apiGroups: ["subresources.kubevirt.io"]
@@ -1091,15 +1091,15 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: tailvm-%s-proxy
+  name: corral-%s-proxy
   namespace: %s
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: tailvm-%s-proxy
+  name: corral-%s-proxy
 subjects:
   - kind: ServiceAccount
-    name: tailvm-%s-proxy
+    name: corral-%s-proxy
 `, name, ns, name, ns, name, ns, name, name)
 }
 

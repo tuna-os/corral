@@ -14,7 +14,7 @@ import (
 // VMHome returns the QEMU VM directory.
 func VMHome() string {
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".local", "share", "tailvm", "vms")
+	return filepath.Join(home, ".local", "share", "corral", "vms")
 }
 
 // systemdUserDir returns the systemd user unit directory.
@@ -53,7 +53,7 @@ func List() ([]types.VM, error) {
 			continue
 		}
 
-		svc := "tailvm-" + e.Name()
+		svc := "corral-" + e.Name()
 		out, _ := exec.Command("systemctl", "--user", "is-active", svc).Output()
 		running := strings.TrimSpace(string(out)) == "active"
 
@@ -155,7 +155,7 @@ func Create(opts types.CreateOpts) error {
 		VncDisplay:  vncDisplay,
 		SSHPort:     sshPort,
 	})
-	unitPath := filepath.Join(systemdUserDir(), "tailvm-"+name+".service")
+	unitPath := filepath.Join(systemdUserDir(), "corral-"+name+".service")
 	if err := os.MkdirAll(systemdUserDir(), 0755); err != nil {
 		return err
 	}
@@ -191,7 +191,7 @@ func Create(opts types.CreateOpts) error {
 
 // Start starts a QEMU VM via systemd.
 func Start(name string) error {
-	svc := "tailvm-" + name
+	svc := "corral-" + name
 	unitPath := filepath.Join(systemdUserDir(), svc+".service")
 	if _, err := os.Stat(unitPath); err != nil {
 		return fmt.Errorf("VM %q does not exist", name)
@@ -221,7 +221,7 @@ func Start(name string) error {
 
 // Stop stops a QEMU VM.
 func Stop(name string) error {
-	svc := "tailvm-" + name
+	svc := "corral-" + name
 	cmd := exec.Command("systemctl", "--user", "stop", svc)
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
@@ -234,7 +234,7 @@ func Stop(name string) error {
 
 // Delete removes a QEMU VM and its files.
 func Delete(name string) error {
-	svc := "tailvm-" + name
+	svc := "corral-" + name
 	exec.Command("systemctl", "--user", "stop", svc).Run()
 	exec.Command("systemctl", "--user", "disable", svc).Run()
 
@@ -373,7 +373,7 @@ func Viewer(name string) error {
 
 // Logs tails the systemd journal for a VM.
 func Logs(name string) error {
-	svc := "tailvm-" + name
+	svc := "corral-" + name
 	cmd := exec.Command("journalctl", "--user", "-u", svc, "-n", "50", "-f")
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout

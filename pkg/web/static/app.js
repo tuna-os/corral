@@ -393,7 +393,7 @@ async function importImage() {
     await api('/api/datavolumes', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, namespace: 'tailvm', url, size }),
+      body: JSON.stringify({ name, namespace: '', url, size }),
     });
     toast('Import started');
     setTimeout(loadImages, 800);

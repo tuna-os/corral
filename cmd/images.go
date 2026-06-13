@@ -121,7 +121,7 @@ func pullTemplate(image, ns string) error {
 }
 
 func init() {
-	imagesPullCmd.Flags().StringVarP(&imagesPullNamespace, "namespace", "n", "", "Namespace (default tailvm)")
+	imagesPullCmd.Flags().StringVarP(&imagesPullNamespace, "namespace", "n", "", "Namespace (default corral)")
 	imagesCmd.AddCommand(imagesSearchCmd, imagesPullCmd)
 	rootCmd.AddCommand(imagesCmd)
 }

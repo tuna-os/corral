@@ -110,7 +110,7 @@ func TestLoad_InvalidYAML(t *testing.T) {
 func TestDefaultPath(t *testing.T) {
 	t.Setenv("HOME", "/home/testuser")
 	path := DefaultPath()
-	expected := "/home/testuser/.config/tailvm/config.yaml"
+	expected := "/home/testuser/.config/corral/config.yaml"
 	if path != expected {
 		t.Errorf("DefaultPath() = %q, expected %q", path, expected)
 	}
@@ -132,7 +132,7 @@ func TestAuthKey_LoadError(t *testing.T) {
 
 	// Point HOME to a path where DefaultPath can't be read
 	tmp := t.TempDir()
-	confDir := filepath.Join(tmp, ".config", "tailvm")
+	confDir := filepath.Join(tmp, ".config", "corral")
 	os.MkdirAll(confDir, 0755)
 	// Create the config path as a directory so ReadFile fails
 	configPath := filepath.Join(confDir, "config.yaml")
@@ -150,7 +150,7 @@ func TestAuthKey_FileWithoutKey(t *testing.T) {
 	t.Setenv("TS_AUTHKEY", "")
 
 	tmp := t.TempDir()
-	confDir := filepath.Join(tmp, ".config", "tailvm")
+	confDir := filepath.Join(tmp, ".config", "corral")
 	os.MkdirAll(confDir, 0755)
 	configPath := filepath.Join(confDir, "config.yaml")
 	// Write a valid YAML config without tailscale section
@@ -166,7 +166,7 @@ func TestAuthKey_FileWithoutKey(t *testing.T) {
 func TestAuthKey_FromDefaultPath(t *testing.T) {
 	t.Setenv("TS_AUTHKEY", "")
 	tmp := t.TempDir()
-	confDir := filepath.Join(tmp, ".config", "tailvm")
+	confDir := filepath.Join(tmp, ".config", "corral")
 	os.MkdirAll(confDir, 0755)
 	cfgData, _ := yaml.Marshal(Config{Tailscale: TailscaleConfig{AuthKey: "tskey-default-123"}})
 	os.WriteFile(filepath.Join(confDir, "config.yaml"), cfgData, 0644)
