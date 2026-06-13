@@ -8,16 +8,16 @@ import (
 )
 
 func TestGenerateBootcVM_CloudInitTailscale(t *testing.T) {
-	vm := generateBootcVM("testvm", "myns", "test-pvc",
+	vm := GenerateBootcVM("testvm", "myns", "test-pvc",
 		"quay.io/centos-bootc/centos-bootc:stream9",
 		"abc123", "6.1.0-test", "4G", 2, "",
 		"tskey-auth-kTest123CNTRL")
 
 	if vm == nil {
-		t.Fatal("generateBootcVM returned nil")
+		t.Fatal("GenerateBootcVM returned nil (bootc plugin not compiled in?)")
 	}
 
-	// Navigate to volumes
+	// Navigate to volumes through the public manifest structure.
 	spec := vm["spec"].(map[string]any)
 	tmpl := spec["template"].(map[string]any)
 	vmiSpec := tmpl["spec"].(map[string]any)
@@ -49,13 +49,13 @@ func TestGenerateBootcVM_CloudInitTailscale(t *testing.T) {
 }
 
 func TestGenerateBootcVM_NoCloudInitWhenNoKey(t *testing.T) {
-	vm := generateBootcVM("testvm", "myns", "test-pvc",
+	vm := GenerateBootcVM("testvm", "myns", "test-pvc",
 		"quay.io/centos-bootc/centos-bootc:stream9",
 		"abc123", "6.1.0-test", "4G", 2, "",
 		"") // no tailscale key
 
 	if vm == nil {
-		t.Fatal("generateBootcVM returned nil")
+		t.Fatal("GenerateBootcVM returned nil (bootc plugin not compiled in?)")
 	}
 
 	vmiSpec := vm["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)
