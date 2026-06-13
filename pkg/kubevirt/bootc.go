@@ -372,7 +372,7 @@ func parseBuildVars(podName, namespace string) (map[string]string, error) {
 // Uses kernel boot (vmlinuz+initrd pulled from the bootc image at the detected
 // kernel version) since GRUB can't install on loopback devices with this
 // cluster's kernel.
-func generateBootcVM(name, namespace, pvcName, imageURI, rootUUID, kernelVersion, mem string, cpu int, node string) map[string]any {
+func generateBootcVM(name, namespace, pvcName, imageURI, rootUUID, kernelVersion, mem string, cpu int, node, tailscaleAuthKey string) map[string]any {
 	if mem == "" {
 		mem = "4G"
 	}
@@ -382,6 +382,29 @@ func generateBootcVM(name, namespace, pvcName, imageURI, rootUUID, kernelVersion
 
 	memMib := parseMem(mem)
 	kernelArgs := fmt.Sprintf("root=UUID=%s ro console=ttyS0", rootUUID)
+
+	volumes := []map[string]any{
+		{
+			"name":                  "rootdisk",
+			"persistentVolumeClaim": map[string]any{"claimName": pvcName},
+		},
+	}
+
+	// Bootc VMs don't have cloud-init by default (SSH key is baked into the
+	// disk during bootc install). Add a cloudinitdisk only when Tailscale is
+	// configured so the VM auto-joins the tailnet on first boot.
+	if tailscaleAuthKey != "" {
+		runcmd := fmt.Sprintf(`runcmd:
+  - ['sh', '-c', 'command -v tailscale >/dev/null 2>&1 || curl -fsSL https://tailscale.com/install.sh | sh']
+  - ['tailscale', 'up', '--auth-key=%s', '--hostname=%s', '--ssh']
+`, tailscaleAuthKey, name)
+		volumes = append(volumes, map[string]any{
+			"name": "cloudinitdisk",
+			"cloudInitNoCloud": map[string]any{
+				"userData": runcmd,
+			},
+		})
+	}
 
 	spec := map[string]any{
 		"running": false,
@@ -418,12 +441,7 @@ func generateBootcVM(name, namespace, pvcName, imageURI, rootUUID, kernelVersion
 				"networks": []map[string]any{
 					{"name": "default", "pod": map[string]any{}},
 				},
-				"volumes": []map[string]any{
-					{
-						"name":                  "rootdisk",
-						"persistentVolumeClaim": map[string]any{"claimName": pvcName},
-					},
-				},
+				"volumes": volumes,
 			},
 		},
 	}
