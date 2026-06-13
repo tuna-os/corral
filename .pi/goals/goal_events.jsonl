@@ -1,0 +1,7 @@
+{"type":"goal_created","goalId":"mqclizky-5tsl82","objective":"Add Fedora Workstation, Ubuntu Desktop, and Windows 11 as desktop catalog entries with a \"Desktop\" filter chip in the create wizard.","sisyphus":true,"autoContinue":true,"at":"2026-06-13T16:55:02.818Z"}
+{"type":"task_list_set","goalId":"mqclizky-5tsl82","taskCount":5,"blockCompletion":false,"at":"2026-06-13T16:55:02.830Z"}
+{"type":"task_complete","goalId":"mqclizky-5tsl82","taskId":"fedora-desktop","evidence":"Added Fedora 42 Workstation Live ISO catalog entry with Variant: desktop","at":"2026-06-13T16:55:42.193Z"}
+{"type":"task_complete","goalId":"mqclizky-5tsl82","taskId":"ubuntu-desktop","evidence":"Added Ubuntu 24.04 Desktop Live ISO catalog entry (Variant: desktop)","at":"2026-06-13T16:56:30.064Z"}
+{"type":"task_complete","goalId":"mqclizky-5tsl82","taskId":"windows-desktop","evidence":"Added Windows 11 installer ISO catalog entry (Variant: desktop)","at":"2026-06-13T16:56:30.071Z"}
+{"type":"task_complete","goalId":"mqclizky-5tsl82","taskId":"desktop-chip","evidence":"Added Desktops filter chip to wizard HTML","at":"2026-06-13T16:56:30.075Z"}
+{"type":"task_complete","goalId":"mqclizky-5tsl82","taskId":"run-tests","evidence":"All 19 packages pass including catalog tests","at":"2026-06-13T16:56:30.078Z"}

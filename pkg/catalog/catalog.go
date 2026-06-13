@@ -82,6 +82,14 @@ var Images = []Image{
 		ISO: "http://mirror.turnkeylinux.org/turnkeylinux/images/iso/turnkey-gitlab-18.1-bookworm-amd64.iso", DefaultUser: "root", Source: "turnkeylinux.org", Logo: "gitlab", Variant: "appliance"},
 	{Name: "turnkey-fileserver", Description: "TurnKey File Server 18.1 — Samba/WebDAV NAS (installer ISO)",
 		ISO: "http://mirror.turnkeylinux.org/turnkeylinux/images/iso/turnkey-fileserver-18.1-bookworm-amd64.iso", DefaultUser: "root", Source: "turnkeylinux.org", Logo: "", Variant: "appliance"},
+
+	// Desktop images — installer ISOs for GUI-focused virtual machines.
+	{Name: "fedora-workstation", Description: "Fedora 42 Workstation (GNOME) — live installer ISO",
+		ISO: "https://download.fedoraproject.org/pub/fedora/linux/releases/42/Workstation/x86_64/iso/Fedora-Workstation-Live-x86_64-42-1.6.iso", DefaultUser: "fedora", Source: "fedoraproject.org", Logo: "fedora", Variant: "desktop"},
+	{Name: "ubuntu-desktop", Description: "Ubuntu 24.04 LTS Desktop — live installer ISO",
+		ISO: "https://releases.ubuntu.com/24.04.2/ubuntu-24.04.2-desktop-amd64.iso", DefaultUser: "ubuntu", Source: "ubuntu.com", Logo: "ubuntu", Variant: "desktop"},
+	{Name: "windows-11", Description: "Windows 11 — installer ISO (UEFI/TPM, virtio-win drivers)",
+		ISO: "https://software.download.prss.microsoft.com/dbazure/Win11_24H2_English_x64.iso", DefaultUser: "administrator", Source: "microsoft.com", Logo: "", Variant: "desktop"},
 }
 
 // Find returns the catalog image with the given name, or nil.
