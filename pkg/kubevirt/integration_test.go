@@ -87,9 +87,11 @@ func TestIntegration_CreateCatalogVM(t *testing.T) {
 	}
 
 	// Wait for Running state
-	t.Logf("Waiting for %q to reach Running state (up to 3 min)...", name)
+	t.Logf("Waiting for %q to reach Running state...", name)
 	var ready bool
-	for i := 0; i < 36; i++ {
+	start := time.Now()
+	deadline := start.Add(timeout)
+	for time.Now().Before(deadline) {
 		vms, err := client.ListVMs()
 		if err != nil {
 			t.Fatalf("ListVMs: %v", err)
@@ -97,7 +99,7 @@ func TestIntegration_CreateCatalogVM(t *testing.T) {
 		for _, v := range vms {
 			if v.Name == name && v.Ready {
 				ready = true
-				t.Logf("VM %q is Ready after %ds", name, i*5)
+				t.Logf("VM %q is Ready after %s", name, time.Since(start).Round(time.Second))
 				break
 			}
 		}
@@ -109,7 +111,7 @@ func TestIntegration_CreateCatalogVM(t *testing.T) {
 	if !ready {
 		// Clean up and fail
 		client.StopVM(name)
-		t.Fatalf("VM %q did not become Ready within 3 minutes", name)
+		t.Fatalf("VM %q did not become Ready within %v", name, timeout)
 	}
 
 	// Verify IP is assigned
