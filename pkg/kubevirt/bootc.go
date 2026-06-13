@@ -329,8 +329,13 @@ func waitForBootcJob(name, namespace string, progress io.Writer) (map[string]str
 		cond, _ := exec.Command("kubectl", "get", "job", name, "-n", namespace,
 			"-o", "jsonpath={.status.conditions[?(@.type==\"Complete\")].status}").Output()
 		if strings.TrimSpace(string(cond)) == "True" {
-			// Give the log stream a moment to flush the final lines.
-			time.Sleep(2 * time.Second)
+			// The builder container has exited; wait for the log stream
+			// to drain completely before parsing.
+			if stream.Process != nil {
+				stream.Process.Kill()
+				stream.Wait()
+			}
+			time.Sleep(1 * time.Second)
 			return parseBuildVarsFromLog(logBuf.String())
 		}
 		failed, _ := exec.Command("kubectl", "get", "job", name, "-n", namespace,
@@ -355,7 +360,12 @@ func parseBuildVarsFromLog(log string) (map[string]string, error) {
 		}
 	}
 	if vars["ROOT_UUID"] == "" || vars["KERNEL_VERSION"] == "" {
-		return nil, fmt.Errorf("ROOT_UUID or KERNEL_VERSION not found in build output")
+		// Include the last 500 chars of captured output for diagnostics.
+		tail := log
+		if len(tail) > 500 {
+			tail = "..." + tail[len(tail)-500:]
+		}
+		return nil, fmt.Errorf("ROOT_UUID or KERNEL_VERSION not found in build output (captured %d bytes, tail: %s)", len(log), tail)
 	}
 	return vars, nil
 }
