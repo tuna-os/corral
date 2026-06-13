@@ -843,6 +843,48 @@ test.describe('Corral web UI', () => {
       const sshOk = await waitFor(tryLogin, 180_000, 10_000, 'bootc SSH login');
       if (!sshOk) console.log(`bootc ssh diagnostics — last error: ${lastErr}`);
       expect(sshOk, `bootc SSH login with the injected key (last: ${lastErr})`).toBe(true);
+
+      // The bootc VM should also be on the tailnet — the TS_AUTHKEY on the
+      // server bakes Tailscale into the cloud-init. Wait for it and SSH.
+      const tsOnline = () => {
+        try {
+          const out = execSync('tailscale status', { timeout: 5000, encoding: 'utf8' });
+          return new RegExp(`^\\S+\\s+${vm}\\s`, 'm').test(out);
+        } catch { return false; }
+      };
+      const onTailnet = await waitFor(tsOnline, 300_000, 10_000, `tailscale ${vm}`);
+      if (!onTailnet) {
+        try { console.log('tailscale status:', execSync('tailscale status', { timeout: 5000, encoding: 'utf8' })); }
+        catch (e) { console.log('tailscale status failed:', e.message); }
+      }
+      expect(onTailnet, `${vm} appears on the tailnet`).toBe(true);
+
+      let vmIP = '';
+      try {
+        const status = execSync('tailscale status', { timeout: 5000, encoding: 'utf8' });
+        const m = status.match(new RegExp(`^(\\S+)\\s+${vm}\\s`, 'm'));
+        if (m) vmIP = m[1];
+      } catch {}
+      expect(vmIP, `tailscale IP for ${vm}`).toBeTruthy();
+
+      // SSH over Tailscale (root user — bootc images bake the key for root).
+      let tsLastErr = '';
+      const tryTsSSH = () => {
+        try {
+          const out = execSync(
+            `ssh -i ${key} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ` +
+            `-o ConnectTimeout=10 -o BatchMode=yes root@${vmIP} echo BOOTC_TS_SSH_OK 2>&1`,
+            { timeout: 15000, encoding: 'utf8' });
+          if (out.includes('BOOTC_TS_SSH_OK')) return true;
+          tsLastErr = out.trim().split('\n').pop();
+        } catch (e) {
+          tsLastErr = String(e.stderr || e.stdout || e.message).trim().split('\n').pop();
+        }
+        return false;
+      };
+      const tsSshOk = await waitFor(tryTsSSH, 120_000, 10_000, `ssh root@${vmIP}`);
+      if (!tsSshOk) console.log(`bootc tailscale ssh diagnostics — last error: ${tsLastErr}`);
+      expect(tsSshOk, `bootc SSH over Tailscale to ${vm} (${vmIP}) (last: ${tsLastErr})`).toBe(true);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
