@@ -791,7 +791,7 @@ func TestHandleCreateDelete_RegistryRoundtrip(t *testing.T) {
 		`{"items":[{"metadata":{"name":"longhorn"}}]}`, nil)
 	fx.Runner.AddResponseKV("kubectl", []string{"apply", "-f", "-"}, "created", nil)
 
-	body := strings.NewReader(`{"name":"web","containerDisk":"quay.io/containerdisks/fedora:44"}`)
+	body := strings.NewReader(`{"name":"web","containerDisk":"quay.io/containerdisks/fedora:42"}`)
 	resp, err := http.Post(fx.Server.URL+"/api/vms", "application/json", body)
 	if err != nil {
 		t.Fatal(err)

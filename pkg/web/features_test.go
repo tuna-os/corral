@@ -434,7 +434,7 @@ func TestHandleGuestInfo(t *testing.T) {
 	fx := NewTestFixture()
 	defer fx.Server.Close()
 
-	fx.Runner.AddResponseKV("/fake/bin/virtctl", []string{"guestosinfo", "testvm", "-n", "tailvm"}, `{"name":"fedora","version":"44"}`, nil)
+	fx.Runner.AddResponseKV("/fake/bin/virtctl", []string{"guestosinfo", "testvm", "-n", "tailvm"}, `{"name":"fedora","version":"42"}`, nil)
 	fx.Runner.AddResponseKV("/fake/bin/virtctl", []string{"fslist", "testvm", "-n", "tailvm"}, `{"items":[]}`, nil)
 	fx.Runner.AddResponseKV("/fake/bin/virtctl", []string{"userlist", "testvm", "-n", "tailvm"}, `{"items":[]}`, nil)
 
@@ -1014,7 +1014,7 @@ func TestHandleTwoVMs_SequentialCreate(t *testing.T) {
 	// Create first VM
 	fx.Runner.AddResponseKV("kubectl", []string{"get", "vm", "vm1", "-n", "tailvm", "-o", "name"},
 		"", errSimulated)
-	body := strings.NewReader(`{"name":"vm1","containerDisk":"quay.io/containerdisks/fedora:44"}`)
+	body := strings.NewReader(`{"name":"vm1","containerDisk":"quay.io/containerdisks/fedora:42"}`)
 	resp, err := http.Post(fx.Server.URL+"/api/vms", "application/json", body)
 	if err != nil {
 		t.Fatal(err)
@@ -1027,7 +1027,7 @@ func TestHandleTwoVMs_SequentialCreate(t *testing.T) {
 	// Create second VM
 	fx.Runner.AddResponseKV("kubectl", []string{"get", "vm", "vm2", "-n", "tailvm", "-o", "name"},
 		"", errSimulated)
-	body = strings.NewReader(`{"name":"vm2","containerDisk":"quay.io/containerdisks/fedora:44"}`)
+	body = strings.NewReader(`{"name":"vm2","containerDisk":"quay.io/containerdisks/fedora:42"}`)
 	resp, err = http.Post(fx.Server.URL+"/api/vms", "application/json", body)
 	if err != nil {
 		t.Fatal(err)

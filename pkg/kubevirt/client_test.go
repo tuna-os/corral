@@ -798,7 +798,7 @@ func TestGenerateDataVolume_Metadata(t *testing.T) {
 func TestGenerateVM_ContainerDiskWithoutDatadisk(t *testing.T) {
 	opts := types.CreateOpts{
 		Name:          "containernodata",
-		ContainerDisk: "quay.io/containerdisks/fedora:44",
+		ContainerDisk: "quay.io/containerdisks/fedora:42",
 		Disk:          "", // No explicit disk
 	}
 	vm := GenerateVM(opts)
