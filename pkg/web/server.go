@@ -320,7 +320,7 @@ func handleCreateVM(w http.ResponseWriter, r *http.Request) {
 			build, err := kubevirt.BootcBuildDisk(req.Name, ns, req.Bootc, sshKey, req.Disk, task)
 			if err == nil {
 				vm := kubevirt.GenerateBootcVM(req.Name, ns, build.PVCName, req.Bootc,
-					build.RootUUID, build.KernelVersion, req.Mem, req.CPU, req.Node)
+					build.RootUUID, build.KernelVersion, req.Mem, req.CPU, req.Node, config.AuthKey())
 				err = kubevirt.Apply(vm)
 			}
 			if err == nil && store != nil {
