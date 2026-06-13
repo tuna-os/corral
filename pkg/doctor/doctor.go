@@ -47,10 +47,8 @@ func Run() []Check {
 		Fixable: !kvInstalled,
 		fix:     installKubeVirt,
 	})
-	// Use namespace-scoped check (cdi-operator deployment) rather than
-	// cluster-scoped `kubectl get cdi` so limited-RBAC service accounts
-	// (like corral-web) get an honest answer.
-	cdiInstalled := ok("kubectl", "get", "deploy", "cdi-operator", "-n", "cdi")
+	// Label selector (not hardcoded namespace) — CDI may be installed anywhere.
+	cdiInstalled := ok("kubectl", "get", "deploy", "-A", "-l", "cdi.kubevirt.io=cdi-operator")
 	checks = append(checks, Check{
 		Name:    "CDI installed",
 		OK:      cdiInstalled,
@@ -114,7 +112,7 @@ func Run() []Check {
 		Detail: detailIf(hasSnap, "persistent-VM snapshots available", "needs a CSI driver + external-snapshotter (setup guide)"),
 	})
 
-	expProxy := ok("kubectl", "get", "deploy", "virt-exportproxy", "-n", "kubevirt")
+	expProxy := ok("kubectl", "get", "deploy", "-A", "-l", "kubevirt.io=virt-exportproxy")
 	checks = append(checks, Check{
 		Name:   "Export proxy",
 		OK:     expProxy,
