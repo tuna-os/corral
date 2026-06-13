@@ -140,10 +140,10 @@ spec:
           image: ghcr.io/hanthor/corral:latest
           imagePullPolicy: Always
           env:
-            # Default VM namespace. The cluster was deployed into the
-            # corral namespace; new installs can omit this.
+            # Default VM namespace (code default is corral-vms).
+            # Override with CORRAL_NAMESPACE=custom-ns if needed.
             - name: CORRAL_NAMESPACE
-              value: corral
+              value: corral-vms
           ports:
             - containerPort: 8006
               name: http
