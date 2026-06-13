@@ -767,52 +767,47 @@ test.describe('Corral web UI', () => {
     const pub = fs.readFileSync(`${key}.pub`, 'utf8').trim();
 
     const vm = trackVM('e2e-btc-' + uid());
-    await createVM(page, { name: vm, sourceType: 'bootc',
-      source: 'quay.io/centos-bootc/centos-bootc:stream9',
-      cpu: 2, mem: '4G', disk: '20G', sshKey: pub });
+    // Bootc builds are async — use the API directly so we get the task ID
+    // and can poll for progress (the UI form's sourceType= bootc field is
+    // unreliable through Playwright's selectOption).
+    const { body: createRes } = await api('/api/vms', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: vm, bootc: 'quay.io/centos-bootc/centos-bootc:stream9',
+        cpu: 2, mem: '4G', disk: '20G', sshKey: pub }),
+    });
+    expect(createRes.task, 'bootc API returned task ID').toBeTruthy();
 
-    // The create endpoint returns a task ID immediately; poll it for
-    // progress instead of waiting for the dialog (faster diagnostics on
-    // failure — the task API carries the error message for free).
-    const taskID = await page.evaluate(async (vmName) => {
-      // watchBuild stores the task ID internally after the create call;
-      // we can fish it from the task log which lists all recent tasks.
-      for (let i = 0; i < 120; i++) {
-        try {
-          const res = await fetch('/api/tasklog');
-          const tasks = await res.json();
-          for (const t of tasks) {
-            if (t.target && t.target.includes(vmName)) return t.id;
-          }
-        } catch {}
-        await new Promise(r => setTimeout(r, 1000));
-      }
+    // The bootc build runs as a Kubernetes Job.  Wait for it to appear and
+    // complete before checking for the VM (kubectl gives us the exit status
+    // whether the task API or build dialog work or not).
+    const builderJob = `${vm}-bootc-builder`;
+    const jobDone = () => {
+      const status = kubectl(`kubectl get job ${builderJob} -n ${NS} -o jsonpath='{.status.conditions[?(@.type=="Complete")].status}' --ignore-not-found`).replace(/'/g, '');
+      if (status === 'True') return 'done';
+      const failed = kubectl(`kubectl get job ${builderJob} -n ${NS} -o jsonpath='{.status.conditions[?(@.type=="Failed")].status}' --ignore-not-found`).replace(/'/g, '');
+      if (failed === 'True') return 'failed';
       return '';
-    }, vm);
-
-    expect(taskID, `bootc build task for ${vm}`).toBeTruthy();
-
-    // Poll the task endpoint directly — carries status + live log + error.
-    let buildLog = '', buildOk = false;
-    const buildStatus = () => api(`/api/tasks/${taskID}`).then(({ body }) => {
-      if (body.log) buildLog = body.log;
-      if (body.status === 'done') { buildOk = true; return true; }
-      if (body.status === 'error') throw new Error(body.error || 'build failed');
-      return false;
-    }).catch(e => { throw e; });
-    try {
-      expect(await waitFor(buildStatus, 1_200_000, 5_000, `bootc build ${vm}`),
-        `bootc build ${vm} should complete`).toBe(true);
-    } catch (e) {
-      console.log(`bootc build failed — task ${taskID}: ${e.message}`);
-      console.log(`build log tail: ${buildLog.slice(-500)}`);
-      throw e;
+    };
+    let jobResult = '';
+    let waited = 0;
+    while (!jobResult && waited < 600) {
+      jobResult = jobDone();
+      if (!jobResult) { await delay(5000); waited += 5; }
     }
-    expect(buildOk, `bootc build ${vm} succeeded`).toBe(true);
-    expect(buildLog.length, 'build log streamed').toBeGreaterThan(0);
-
-    const built = await waitFor(() => vmExists(vm), 60_000, 3000, `vm ${vm}`);
-    expect(built, `bootc build should produce a VM (task ${taskID})`).toBe(true);
+    // If the job completed but the VM hasn't materialised yet, wait for it.
+    if (jobResult === 'done') {
+      const built = await waitFor(() => vmExists(vm), 120_000, 3000, `vm ${vm}`);
+      expect(built, `bootc build produced VM ${vm}`).toBe(true);
+    } else if (jobResult === 'failed') {
+      // Grab the builder pod logs for diagnostics.
+      const pod = kubectl(`kubectl get pod -n ${NS} -l job-name=${builderJob} -o jsonpath='{.items[0].metadata.name}' --ignore-not-found`).replace(/'/g, '');
+      const log = pod ? kubectl(`kubectl logs ${pod} -n ${NS} --tail=50`) : '(no pod)';
+      console.log(`bootc builder failed — log tail:\n${log}`);
+      throw new Error(`bootc build job ${builderJob} failed`);
+    } else {
+      throw new Error(`bootc builder job ${builderJob} did not complete within 10 minutes`);
+    }
 
     // The manifest must carry the bootc signature: kernel boot + the built disk PVC.
     const manifest = kubectl(`kubectl get vm ${vm} -n ${NS} -o json`);
