@@ -705,7 +705,7 @@ func GenerateVM(opts types.CreateOpts) map[string]any {
 	if opts.TailscaleAuthKey != "" && !strings.Contains(opts.CloudInitExtra, "runcmd:") {
 		userData += fmt.Sprintf(`runcmd:
   - ['sh', '-c', 'command -v tailscale >/dev/null 2>&1 || curl -fsSL https://tailscale.com/install.sh | sh']
-  - ['tailscale', 'up', '--auth-key=%s', '--hostname=%s', '--ssh']
+  - ['tailscale', 'up', '--auth-key=%s', '--hostname=%s']
 `, opts.TailscaleAuthKey, name)
 	}
 	if opts.CloudInitExtra != "" {
