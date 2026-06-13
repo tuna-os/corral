@@ -306,10 +306,16 @@ func waitForBootcJob(name, namespace string, progress io.Writer) (map[string]str
 		return nil, fmt.Errorf("builder container did not start within 15 minutes (image pull too slow or stuck) — check: kubectl describe pod %s -n %s", podName, namespace)
 	}
 
+	// Capture build output in a buffer alongside streaming to progress,
+	// so we can parse ROOT_UUID/KERNEL_VERSION without a second kubectl
+	// logs call (which often fails when the pod is being torn down).
+	var logBuf strings.Builder
+	logWriter := io.MultiWriter(progress, &logBuf)
+
 	fmt.Fprintf(progress, "  Builder running — streaming logs...\n")
 	stream := exec.Command("kubectl", "logs", "-f", podName, "-n", namespace, "-c", "builder")
-	stream.Stdout = progress
-	stream.Stderr = progress
+	stream.Stdout = logWriter
+	stream.Stderr = logWriter
 	stream.Start()
 	defer func() {
 		if stream.Process != nil {
@@ -323,11 +329,9 @@ func waitForBootcJob(name, namespace string, progress io.Writer) (map[string]str
 		cond, _ := exec.Command("kubectl", "get", "job", name, "-n", namespace,
 			"-o", "jsonpath={.status.conditions[?(@.type==\"Complete\")].status}").Output()
 		if strings.TrimSpace(string(cond)) == "True" {
-			// A retry mid-build means the vars live in the newest pod's logs.
-			if p := newestPod(); p != "" {
-				podName = p
-			}
-			return parseBuildVars(podName, namespace)
+			// Give the log stream a moment to flush the final lines.
+			time.Sleep(2 * time.Second)
+			return parseBuildVarsFromLog(logBuf.String())
 		}
 		failed, _ := exec.Command("kubectl", "get", "job", name, "-n", namespace,
 			"-o", "jsonpath={.status.conditions[?(@.type==\"Failed\")].status}").Output()
@@ -339,19 +343,19 @@ func waitForBootcJob(name, namespace string, progress io.Writer) (map[string]str
 	return nil, fmt.Errorf("timeout waiting for bootc build (15 minutes)")
 }
 
-// parseBuildVars extracts KEY=VALUE lines (ROOT_UUID, KERNEL_VERSION) from pod logs.
-func parseBuildVars(podName, namespace string) (map[string]string, error) {
-	out, err := exec.Command("kubectl", "logs", podName, "-n", namespace, "-c", "builder").Output()
-	if err != nil {
-		return nil, fmt.Errorf("reading pod logs: %w", err)
-	}
+// parseBuildVarsFromLog extracts KEY=VALUE lines (ROOT_UUID, KERNEL_VERSION) from
+// the captured log output — no second kubectl logs call needed.
+func parseBuildVarsFromLog(log string) (map[string]string, error) {
 	vars := make(map[string]string)
-	for _, line := range strings.Split(string(out), "\n") {
+	for _, line := range strings.Split(log, "\n") {
 		for _, key := range []string{"ROOT_UUID", "KERNEL_VERSION"} {
 			if strings.HasPrefix(line, key+"=") {
 				vars[key] = strings.TrimSpace(strings.TrimPrefix(line, key+"="))
 			}
 		}
+	}
+	if vars["ROOT_UUID"] == "" || vars["KERNEL_VERSION"] == "" {
+		return nil, fmt.Errorf("ROOT_UUID or KERNEL_VERSION not found in build output")
 	}
 	return vars, nil
 }
