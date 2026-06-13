@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/hanthor/corral/pkg/catalog"
+	"github.com/hanthor/corral/pkg/kubevirt"
 )
 
 // errSimulated is a sentinel error used in error-path tests.
@@ -964,11 +965,13 @@ func TestHandleRemovePlugin_Success(t *testing.T) {
 // ── Bootc task lifecycle ─────────────────────────────────────────
 
 func TestHandleBootcCreate_ReturnsTask(t *testing.T) {
+	if kubevirt.BootcAvailable() {
+		t.Skip("bootc compiled — handler spawns goroutine that races with cleanup")
+	}
+
 	fx := NewTestFixture()
 	defer fx.Close()
 
-	// Bootc needs BootcAvailable() — which returns false without the build tag
-	// So this should return 400 (bootc not available)
 	body := strings.NewReader(`{"name":"bootc-vm","bootc":"quay.io/centos-bootc/centos-bootc:stream9","sshKey":"ssh-ed25519 AAA..."}`)
 	resp, err := http.Post(fx.Server.URL+"/api/vms", "application/json", body)
 	if err != nil {
@@ -976,18 +979,19 @@ func TestHandleBootcCreate_ReturnsTask(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 400 {
-		t.Logf("bootc create returned %d (bootc %s available)", resp.StatusCode,
-			map[bool]string{true: "is", false: "is not"}[resp.StatusCode == 202])
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("expected 400 (bootc unavailable), got %d", resp.StatusCode)
 	}
 }
 
 func TestHandleBootcCreate_MissingSSHKey(t *testing.T) {
+	if kubevirt.BootcAvailable() {
+		t.Skip("bootc compiled — LoadSSHPublicKey may resolve an sshKey on the test machine")
+	}
+
 	fx := NewTestFixture()
 	defer fx.Close()
 
-	// Without bootc plugin, sshKey validation won't be reached
-	// but the handler should return a clear error
 	body := strings.NewReader(`{"name":"bootc-vm","bootc":"quay.io/centos-bootc/centos-bootc:stream9"}`)
 	resp, err := http.Post(fx.Server.URL+"/api/vms", "application/json", body)
 	if err != nil {
@@ -995,8 +999,9 @@ func TestHandleBootcCreate_MissingSSHKey(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	// Expect 400 — bootc not available or missing sshKey
-	t.Logf("bootc without sshKey returned %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("bootc without sshKey: expected 400, got %d", resp.StatusCode)
+	}
 }
 
 func TestHandleTwoVMs_SequentialCreate(t *testing.T) {
