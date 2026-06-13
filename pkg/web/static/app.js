@@ -1234,7 +1234,7 @@ $('#wiz-create').onclick = async () => {
 $('#btn-build-close').onclick = () => $('#build-dialog').close();
 
 const SOURCE_HINTS = {
-  containerDisk: 'quay.io/containerdisks/fedora:44',
+  containerDisk: 'quay.io/containerdisks/fedora:42',
   import: 'https://cloud-images.example/jammy.qcow2',
   iso: 'https://example.com/installer.iso',
   bootc: 'quay.io/centos-bootc/centos-bootc:stream9',

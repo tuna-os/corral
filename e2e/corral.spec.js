@@ -16,7 +16,7 @@ const CIRROS_QCOW = 'https://download.cirros-cloud.net/0.6.2/cirros-0.6.2-x86_64
 const ALPINE_ISO = 'https://dl-cdn.alpinelinux.org/alpine/v3.21/releases/x86_64/alpine-standard-3.21.0-x86_64.iso';
 // Boot image for lifecycle tests. CI (KubeVirt software emulation) overrides
 // this with the tiny cirros demo containerdisk; real clusters get fedora.
-const CTR_IMAGE = process.env.E2E_CONTAINERDISK || 'quay.io/containerdisks/fedora:44';
+const CTR_IMAGE = process.env.E2E_CONTAINERDISK || 'quay.io/containerdisks/fedora:42';
 
 // Tests tagged @live-only need a real cluster (KVM boots at speed, longhorn
 // snapshots, virtctl/ssh from the runner, bootc builder). CI runs the rest:
@@ -222,7 +222,7 @@ test.describe('Corral web UI', () => {
 
     // Filter to servers, pick fedora.
     await page.click('#wiz-filters [data-filter="server"]');
-    await page.locator('#wiz-cards .wiz-card').filter({ hasText: 'Fedora 44 cloud' }).first().click();
+    await page.locator('#wiz-cards .wiz-card').filter({ hasText: 'Fedora 42 cloud' }).first().click();
     await expect(page.locator('#wiz-step-2')).toBeVisible();
 
     await page.fill('#wiz-name', vm);
@@ -242,7 +242,7 @@ test.describe('Corral web UI', () => {
     const { status, body: imgs } = await api('/api/images');
     expect(status).toBe(200);
     const names = imgs.map((i) => i.name);
-    for (const want of ['debian-12-official', 'fedora-44-official',
+    for (const want of ['debian-12-official', 'fedora-42-official',
       'centos-stream9-official', 'almalinux-9-official', 'turnkey-core']) {
       expect(names, `catalog should include ${want}`).toContain(want);
     }
@@ -396,7 +396,7 @@ test.describe('Corral web UI', () => {
     const vm = trackVM('e2e-scl-' + uid());
 
     await createVM(page, { name: vm, sourceType: 'containerDisk',
-      source: 'quay.io/containerdisks/fedora:44', cpu: 1, mem: '2G' });
+      source: 'quay.io/containerdisks/fedora:42', cpu: 1, mem: '2G' });
     expect(await waitFor(() => vmExists(vm), 30_000, 2000, `vm ${vm}`)).toBe(true);
 
     await openVM(page, vm);
@@ -469,7 +469,7 @@ test.describe('Corral web UI', () => {
     const vm = trackVM('e2e-con-' + uid());
 
     await createVM(page, { name: vm, sourceType: 'containerDisk',
-      source: 'quay.io/containerdisks/fedora:44', cpu: 1, mem: '2G' });
+      source: 'quay.io/containerdisks/fedora:42', cpu: 1, mem: '2G' });
     expect(await waitFor(() => vmExists(vm), 30_000, 2000, `vm ${vm}`)).toBe(true);
     await api(`/api/vms/${NS}/${vm}/start`, { method: 'POST' });
     expect(await waitFor(() => vmStatus(vm) === 'Running', 240_000, 4000, `${vm} Running`)).toBe(true);
@@ -552,7 +552,7 @@ test.describe('Corral web UI', () => {
     const vm = trackVM('e2e-rdp-' + uid());
 
     await createVM(page, { name: vm, sourceType: 'containerDisk',
-      source: 'quay.io/containerdisks/fedora:44', cpu: 1, mem: '2G' });
+      source: 'quay.io/containerdisks/fedora:42', cpu: 1, mem: '2G' });
     expect(await waitFor(() => vmExists(vm), 30_000, 2000, `vm ${vm}`)).toBe(true);
     await api(`/api/vms/${NS}/${vm}/start`, { method: 'POST' });
     expect(await waitFor(() => vmStatus(vm) === 'Running', 240_000, 4000, `${vm} Running`)).toBe(true);
@@ -619,7 +619,7 @@ test.describe('Corral web UI', () => {
     try {
       // The wizard's universal SSH field (a literal key here; gh:<user> works too).
       await createVM(page, { name: vm, sourceType: 'containerDisk',
-        source: 'quay.io/containerdisks/fedora:44', cpu: 1, mem: '2G',
+        source: 'quay.io/containerdisks/fedora:42', cpu: 1, mem: '2G',
         sshKey: pub });
       expect(await waitFor(() => vmExists(vm), 30_000, 2000, `vm ${vm}`)).toBe(true);
 

@@ -226,7 +226,7 @@ func TestClient_DeleteSnapshot(t *testing.T) {
 
 func TestClient_GuestInfo(t *testing.T) {
 	c, r := newFakeClient()
-	r.AddResponseKV("/fake/bin/virtctl", []string{"guestosinfo", "testvm", "-n", "tailvm"}, `{"name":"fedora","version":"44"}`, nil)
+	r.AddResponseKV("/fake/bin/virtctl", []string{"guestosinfo", "testvm", "-n", "tailvm"}, `{"name":"fedora","version":"42"}`, nil)
 	r.AddResponseKV("/fake/bin/virtctl", []string{"fslist", "testvm", "-n", "tailvm"}, `{"items":[]}`, nil)
 	r.AddResponseKV("/fake/bin/virtctl", []string{"userlist", "testvm", "-n", "tailvm"}, `{"items":[]}`, nil)
 
