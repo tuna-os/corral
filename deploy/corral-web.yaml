@@ -93,6 +93,10 @@ rules:
   - apiGroups: ["instancetype.kubevirt.io"]
     resources: ["virtualmachineclusterinstancetypes", "virtualmachineclusterpreferences"]
     verbs: ["get", "list"]
+  # Bootc builder creates jobs to build VM disks on-cluster.
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "create", "delete"]
   # VM deletion also cleans up per-VM proxy resources
   - apiGroups: ["apps"]
     resources: ["deployments"]
