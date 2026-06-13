@@ -56,7 +56,7 @@ func TestIntegration_CreateCatalogVM(t *testing.T) {
 	opts := types.CreateOpts{
 		Name:          name,
 		Namespace:     testNS,
-		ContainerDisk: "quay.io/containerdisks/fedora:42",
+		ContainerDisk: "quay.io/containerdisks/fedora:44",
 		CPU:           1,
 		Mem:           "2G",
 		Disk:          "5Gi",
@@ -226,7 +226,7 @@ func TestIntegration_SnapshotOps(t *testing.T) {
 	opts := types.CreateOpts{
 		Name:          name,
 		Namespace:     testNS,
-		ContainerDisk: "quay.io/containerdisks/fedora:42",
+		ContainerDisk: "quay.io/containerdisks/fedora:44",
 		CPU:           1,
 		Mem:           "2G",
 		Disk:          "5Gi",
