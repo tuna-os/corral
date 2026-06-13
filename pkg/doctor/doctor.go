@@ -47,7 +47,10 @@ func Run() []Check {
 		Fixable: !kvInstalled,
 		fix:     installKubeVirt,
 	})
-	cdiInstalled := ok("kubectl", "get", "cdi")
+	// Use namespace-scoped check (cdi-operator deployment) rather than
+	// cluster-scoped `kubectl get cdi` so limited-RBAC service accounts
+	// (like corral-web) get an honest answer.
+	cdiInstalled := ok("kubectl", "get", "deploy", "cdi-operator", "-n", "cdi")
 	checks = append(checks, Check{
 		Name:    "CDI installed",
 		OK:      cdiInstalled,
