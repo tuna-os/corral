@@ -13,13 +13,13 @@ type Store struct {
 	path string
 }
 
-// NewStore creates a registry at the default location (~/.local/share/tailvm/registry.json).
+// NewStore creates a registry at the default location (~/.local/share/corral/registry.json).
 func NewStore() (*Store, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil, err
 	}
-	return &Store{path: filepath.Join(home, ".local", "share", "tailvm", "registry.json")}, nil
+	return &Store{path: filepath.Join(home, ".local", "share", "corral", "registry.json")}, nil
 }
 
 // NewStoreAt creates a registry at a custom path (useful for testing).

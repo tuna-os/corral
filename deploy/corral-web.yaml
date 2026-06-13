@@ -7,7 +7,7 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: tailvm
+  name: corral
   labels:
     pod-security.kubernetes.io/enforce: privileged
 ---
@@ -15,7 +15,7 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: corral-web
-  namespace: tailvm
+  namespace: corral
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -93,7 +93,7 @@ rules:
   - apiGroups: ["instancetype.kubevirt.io"]
     resources: ["virtualmachineclusterinstancetypes", "virtualmachineclusterpreferences"]
     verbs: ["get", "list"]
-  # VM deletion also cleans up per-VM proxy resources (tailvm CLI feature)
+  # VM deletion also cleans up per-VM proxy resources
   - apiGroups: ["apps"]
     resources: ["deployments"]
     verbs: ["get", "delete"]
@@ -115,13 +115,13 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: corral-web
-    namespace: tailvm
+    namespace: corral
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: corral-web
-  namespace: tailvm
+  namespace: corral
   labels:
     app: corral-web
 spec:
@@ -140,10 +140,10 @@ spec:
           image: ghcr.io/hanthor/corral:latest
           imagePullPolicy: Always
           env:
-            # This deployment predates the corral-vms default — its VMs
-            # live in tailvm. New installs can drop this.
+            # Default VM namespace. The cluster was deployed into the
+            # corral namespace; new installs can omit this.
             - name: CORRAL_NAMESPACE
-              value: tailvm
+              value: corral
           ports:
             - containerPort: 8006
               name: http
@@ -163,7 +163,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: corral-web
-  namespace: tailvm
+  namespace: corral
 spec:
   selector:
     app: corral-web
@@ -176,7 +176,7 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: corral-web
-  namespace: tailvm
+  namespace: corral
 spec:
   defaultBackend:
     service:

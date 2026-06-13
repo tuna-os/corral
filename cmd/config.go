@@ -12,7 +12,7 @@ var configCmd = &cobra.Command{
 	Short: "Show corral configuration",
 	Long: `Display the current corral configuration.
 
-The config file is at ~/.config/tailvm/config.yaml.
+The config file is at ~/.config/corral/config.yaml.
 Environment variable TS_AUTHKEY overrides the config file.
 
 Example config.yaml:

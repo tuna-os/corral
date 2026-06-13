@@ -115,7 +115,7 @@ func TestNewStore_UsesDefaultPath(t *testing.T) {
 	}
 
 	// Should be able to set and get
-	entry := types.RegistryEntry{Backend: "kubevirt", Namespace: "tailvm"}
+	entry := types.RegistryEntry{Backend: "kubevirt", Namespace: "corral"}
 	if err := s.Set("test", entry); err != nil {
 		t.Fatalf("Set: %v", err)
 	}
@@ -129,7 +129,7 @@ func TestNewStore_UsesDefaultPath(t *testing.T) {
 	}
 
 	// Verify file exists at default path
-	defaultPath := filepath.Join(tmp, ".local", "share", "tailvm", "registry.json")
+	defaultPath := filepath.Join(tmp, ".local", "share", "corral", "registry.json")
 	if _, err := os.Stat(defaultPath); err != nil {
 		t.Errorf("registry file not at expected path %q: %v", defaultPath, err)
 	}
@@ -159,7 +159,7 @@ func TestWriteAll_ParentIsFile(t *testing.T) {
 	// Create a file where the registry directory would go.
 	// MkdirAll should fail → writeAll returns error.
 	tmp := t.TempDir()
-	// Create "tailvm" as a file, not a directory
+	// Create "corral" as a file, not a directory
 	parentDir := filepath.Join(tmp, "blocked")
 	os.WriteFile(parentDir, []byte("block"), 0644)
 	path := filepath.Join(parentDir, "sub", "registry.json")

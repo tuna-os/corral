@@ -176,14 +176,14 @@ metadata:
   name: %s
   namespace: %s
   labels:
-    app: tailvm-bootc-builder
+    app: corral-bootc-builder
 spec:
   backoffLimit: 1
   ttlSecondsAfterFinished: 300
   template:
     metadata:
       labels:
-        app: tailvm-bootc-builder
+        app: corral-bootc-builder
     spec:
       restartPolicy: Never
       initContainers:
@@ -440,7 +440,7 @@ func generateBootcVM(name, namespace, pvcName, imageURI, rootUUID, kernelVersion
 		"metadata": map[string]any{
 			"name":      name,
 			"namespace": namespace,
-			"labels":    map[string]any{"tailvm": name},
+			"labels":    map[string]any{"corral": name},
 		},
 		"spec": spec,
 	}

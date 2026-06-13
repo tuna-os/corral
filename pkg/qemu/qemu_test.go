@@ -11,7 +11,7 @@ import (
 
 func TestVMHome(t *testing.T) {
 	home, _ := os.UserHomeDir()
-	expected := filepath.Join(home, ".local", "share", "tailvm", "vms")
+	expected := filepath.Join(home, ".local", "share", "corral", "vms")
 	if got := VMHome(); got != expected {
 		t.Errorf("VMHome() = %s, want %s", got, expected)
 	}
@@ -406,7 +406,7 @@ func TestVMHome_CustomHome(t *testing.T) {
 	t.Setenv("HOME", tmp)
 
 	dir := VMHome()
-	expected := filepath.Join(tmp, ".local", "share", "tailvm", "vms")
+	expected := filepath.Join(tmp, ".local", "share", "corral", "vms")
 	if dir != expected {
 		t.Errorf("VMHome() = %q, want %q", dir, expected)
 	}
@@ -501,7 +501,7 @@ func TestCreate_WithFakeBinaries(t *testing.T) {
 			t.Error("metadata.json not created")
 		}
 		// Systemd unit should exist
-		unitPath := filepath.Join(systemdUserDir(), "tailvm-fakevm.service")
+		unitPath := filepath.Join(systemdUserDir(), "corral-fakevm.service")
 		if _, err := os.Stat(unitPath); err != nil {
 			t.Error("systemd unit file not created")
 		}
