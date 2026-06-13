@@ -396,7 +396,7 @@ func generateBootcVM(name, namespace, pvcName, imageURI, rootUUID, kernelVersion
 	if tailscaleAuthKey != "" {
 		runcmd := fmt.Sprintf(`runcmd:
   - ['sh', '-c', 'command -v tailscale >/dev/null 2>&1 || curl -fsSL https://tailscale.com/install.sh | sh']
-  - ['tailscale', 'up', '--auth-key=%s', '--hostname=%s', '--ssh']
+  - ['tailscale', 'up', '--auth-key=%s', '--hostname=%s']
 `, tailscaleAuthKey, name)
 		volumes = append(volumes, map[string]any{
 			"name": "cloudinitdisk",
