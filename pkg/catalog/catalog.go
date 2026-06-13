@@ -42,7 +42,7 @@ func (i *Image) Kind() string {
 // Images is the curated catalog.
 var Images = []Image{
 	// KubeVirt containerdisks — boot directly, no import step.
-	{Name: "fedora", Description: "Fedora 42 cloud", ContainerDisk: "quay.io/containerdisks/fedora:42", DefaultUser: "fedora", Source: "quay.io/containerdisks", Logo: "fedora", Variant: "server"},
+	{Name: "fedora", Description: "Fedora 44 cloud", ContainerDisk: "quay.io/containerdisks/fedora:44", DefaultUser: "fedora", Source: "quay.io/containerdisks", Logo: "fedora", Variant: "server"},
 	{Name: "ubuntu", Description: "Ubuntu 24.04 LTS cloud", ContainerDisk: "quay.io/containerdisks/ubuntu:24.04", DefaultUser: "ubuntu", Source: "quay.io/containerdisks", Logo: "ubuntu", Variant: "server"},
 	{Name: "ubuntu-22.04", Description: "Ubuntu 22.04 LTS cloud", ContainerDisk: "quay.io/containerdisks/ubuntu:22.04", DefaultUser: "ubuntu", Source: "quay.io/containerdisks", Logo: "ubuntu", Variant: "server"},
 	{Name: "debian", Description: "Debian 12 (Bookworm) cloud", ContainerDisk: "quay.io/containerdisks/debian:12", DefaultUser: "debian", Source: "quay.io/containerdisks", Logo: "debian", Variant: "server"},
@@ -57,8 +57,8 @@ var Images = []Image{
 		URL: "https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2", DefaultUser: "debian", Source: "debian.org", Logo: "debian", Variant: "server"},
 	{Name: "debian-13-official", Description: "Debian 13 (Trixie) genericcloud, from cloud.debian.org",
 		URL: "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2", DefaultUser: "debian", Source: "debian.org", Logo: "debian", Variant: "server"},
-	{Name: "fedora-42-official", Description: "Fedora 42 Cloud Base, from fedoraproject.org",
-		URL: "https://download.fedoraproject.org/pub/fedora/linux/releases/42/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-42-1.1.x86_64.qcow2", DefaultUser: "fedora", Source: "fedoraproject.org", Logo: "fedora", Variant: "server"},
+	{Name: "fedora-44-official", Description: "Fedora 44 Cloud Base, from fedoraproject.org",
+		URL: "https://download.fedoraproject.org/pub/fedora/linux/releases/44/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-44-1.1.x86_64.qcow2", DefaultUser: "fedora", Source: "fedoraproject.org", Logo: "fedora", Variant: "server"},
 	{Name: "centos-stream9-official", Description: "CentOS Stream 9 GenericCloud, from cloud.centos.org",
 		URL: "https://cloud.centos.org/centos/9-stream/x86_64/images/CentOS-Stream-GenericCloud-9-latest.x86_64.qcow2", DefaultUser: "cloud-user", Source: "centos.org", Logo: "centos", Variant: "server"},
 	{Name: "centos-stream10-official", Description: "CentOS Stream 10 GenericCloud, from cloud.centos.org",

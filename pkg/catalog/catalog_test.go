@@ -102,7 +102,7 @@ func TestKind(t *testing.T) {
 func TestCatalog_OfficialSources(t *testing.T) {
 	// The reputable upstream sources requested for the catalog must be present.
 	for _, name := range []string{
-		"debian-12-official", "fedora-42-official",
+		"debian-12-official", "fedora-44-official",
 		"centos-stream9-official", "almalinux-9-official", "turnkey-core",
 	} {
 		img := Find(name)
@@ -145,7 +145,7 @@ func TestFindBootc_NotFound(t *testing.T) {
 }
 
 func TestResolveBootc(t *testing.T) {
-	if got := ResolveBootc("fedora-bootc"); got != "quay.io/fedora/fedora-bootc:42" {
+	if got := ResolveBootc("fedora-bootc"); got != "quay.io/fedora/fedora-bootc:44" {
 		t.Errorf("ResolveBootc(fedora-bootc) = %q", got)
 	}
 	// Non-catalog refs pass through.
