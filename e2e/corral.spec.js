@@ -771,21 +771,48 @@ test.describe('Corral web UI', () => {
       source: 'quay.io/centos-bootc/centos-bootc:stream9',
       cpu: 2, mem: '4G', disk: '20G', sshKey: pub });
 
-    // The build dialog opens and streams the on-cluster disk build.
-    await page.waitForSelector('#build-dialog[open]', { timeout: 15_000 });
-    try {
-      await page.waitForFunction(
-        () => document.querySelector('#build-title')?.textContent?.match(/ready|failed/i),
-        null, { timeout: 1_200_000 });
-    } catch { /* fall through to the cluster-side check */ }
+    // The create endpoint returns a task ID immediately; poll it for
+    // progress instead of waiting for the dialog (faster diagnostics on
+    // failure — the task API carries the error message for free).
+    const taskID = await page.evaluate(async (vmName) => {
+      // watchBuild stores the task ID internally after the create call;
+      // we can fish it from the task log which lists all recent tasks.
+      for (let i = 0; i < 120; i++) {
+        try {
+          const res = await fetch('/api/tasklog');
+          const tasks = await res.json();
+          for (const t of tasks) {
+            if (t.target && t.target.includes(vmName)) return t.id;
+          }
+        } catch {}
+        await new Promise(r => setTimeout(r, 1000));
+      }
+      return '';
+    }, vm);
 
-    // The dialog must have streamed actual build output to the browser.
-    const buildLog = await page.locator('#build-log').textContent().catch(() => '');
-    expect(buildLog.length, 'build log streamed to the dialog').toBeGreaterThan(0);
+    expect(taskID, `bootc build task for ${vm}`).toBeTruthy();
+
+    // Poll the task endpoint directly — carries status + live log + error.
+    let buildLog = '', buildOk = false;
+    const buildStatus = () => api(`/api/tasks/${taskID}`).then(({ body }) => {
+      if (body.log) buildLog = body.log;
+      if (body.status === 'done') { buildOk = true; return true; }
+      if (body.status === 'error') throw new Error(body.error || 'build failed');
+      return false;
+    }).catch(e => { throw e; });
+    try {
+      expect(await waitFor(buildStatus, 1_200_000, 5_000, `bootc build ${vm}`),
+        `bootc build ${vm} should complete`).toBe(true);
+    } catch (e) {
+      console.log(`bootc build failed — task ${taskID}: ${e.message}`);
+      console.log(`build log tail: ${buildLog.slice(-500)}`);
+      throw e;
+    }
+    expect(buildOk, `bootc build ${vm} succeeded`).toBe(true);
+    expect(buildLog.length, 'build log streamed').toBeGreaterThan(0);
 
     const built = await waitFor(() => vmExists(vm), 60_000, 3000, `vm ${vm}`);
-    const title = await page.locator('#build-title').textContent().catch(() => '');
-    expect(built, `bootc build should produce a VM (build dialog: ${title} — log tail: ${buildLog.slice(-300)})`).toBe(true);
+    expect(built, `bootc build should produce a VM (task ${taskID})`).toBe(true);
 
     // The manifest must carry the bootc signature: kernel boot + the built disk PVC.
     const manifest = kubectl(`kubectl get vm ${vm} -n ${NS} -o json`);
