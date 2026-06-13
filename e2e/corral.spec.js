@@ -696,10 +696,12 @@ test.describe('Corral web UI', () => {
 
       // Wait for the VM to appear on the tailnet (may take a couple of
       // minutes — cloud-init installs Tailscale, then it registers).
+      // `tailscale status` lists hostnames without the MagicDNS suffix.
       const tsOnline = () => {
         try {
           const out = execSync(`tailscale status`, { timeout: 5000, encoding: 'utf8' });
-          return out.includes(tsHost);
+          // Match the hostname as a whole word at the start of a line.
+          return new RegExp(`^\\S+\\s+${vm}\\s`, 'm').test(out);
         } catch { return false; }
       };
       const onTailnet = await waitFor(tsOnline, 300_000, 10_000, `tailscale ${tsHost}`);
@@ -710,13 +712,23 @@ test.describe('Corral web UI', () => {
       }
       expect(onTailnet, `${tsHost} appears on the tailnet`).toBe(true);
 
-      // SSH directly over Tailscale — no port-forward, no proxy.
+      // Resolve the VM's Tailscale IP from the hostname (not FQDN).
+      let vmIP = '';
+      try {
+        const status = execSync('tailscale status', { timeout: 5000, encoding: 'utf8' });
+        const m = status.match(new RegExp(`^(\\S+)\\s+${vm}\\s`, 'm'));
+        if (m) vmIP = m[1];
+      } catch {}
+      expect(vmIP, `tailscale IP for ${vm}`).toBeTruthy();
+
+      // SSH directly over Tailscale — no port-forward, no proxy, using the
+      // Tailscale IP (avoids MagicDNS resolver issues on the runner).
       let lastErr = '';
       const trySSH = () => {
         try {
           const out = execSync(
             `ssh -i ${key} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ` +
-            `-o ConnectTimeout=10 -o BatchMode=yes fedora@${tsHost} echo SSH_OK 2>&1`,
+            `-o ConnectTimeout=10 -o BatchMode=yes fedora@${vmIP} echo SSH_OK 2>&1`,
             { timeout: 15000, encoding: 'utf8' });
           if (out.includes('SSH_OK')) return true;
           lastErr = out.trim().split('\n').pop();
@@ -725,9 +737,9 @@ test.describe('Corral web UI', () => {
         }
         return false;
       };
-      const sshOk = await waitFor(trySSH, 120_000, 10_000, `ssh fedora@${tsHost}`);
+      const sshOk = await waitFor(trySSH, 120_000, 10_000, `ssh fedora@${vmIP}`);
       if (!sshOk) console.log(`tailscale ssh diagnostics — last error: ${lastErr}`);
-      expect(sshOk, `ssh login over Tailscale to ${tsHost} (last: ${lastErr})`).toBe(true);
+      expect(sshOk, `ssh login over Tailscale to ${tsHost} (${vmIP}) (last: ${lastErr})`).toBe(true);
 
       await api(`/api/vms/${NS}/${vm}/stop`, { method: 'POST' });
       await waitFor(() => vmStatus(vm) === 'Stopped', 120_000, 4000, `${vm} Stopped`);
