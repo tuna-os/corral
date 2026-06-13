@@ -14,3 +14,4 @@
 {"type":"task_complete","goalId":"mqclo36w-qyi3j8","taskId":"deploy","evidence":"Verify CI built latest main, restart corral-web deployment","at":"2026-06-13T16:59:07.325Z"}
 {"type":"task_complete","goalId":"mqclo36w-qyi3j8","taskId":"run-test","evidence":"Running bootc e2e test...","at":"2026-06-13T16:59:27.872Z"}
 {"type":"task_complete","goalId":"mqclo36w-qyi3j8","taskId":"fix-issues","evidence":"Fixed e2e test to wait for k8s Job instead of task API; investigating bootc build failure","at":"2026-06-13T17:20:57.587Z"}
+{"type":"goal_resumed","goalId":"mqclo36w-qyi3j8","reason":"user","at":"2026-06-13T20:45:16.047Z"}
