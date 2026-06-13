@@ -668,6 +668,74 @@ test.describe('Corral web UI', () => {
     }
   });
 
+  // ── 12b. Tailscale connectivity ─────────────────────────────────────
+
+  test('Tailscale: VM joins tailnet and is reachable via SSH @live-only', async ({ page }) => {
+    test.setTimeout(600_000);
+    const vm = trackVM('e2e-ts-' + uid());
+
+    // Throwaway keypair for SSH auth.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'corral-e2e-'));
+    const key = path.join(dir, 'id_ed25519');
+    execSync(`ssh-keygen -t ed25519 -N "" -f ${key} -q`);
+    const pub = fs.readFileSync(`${key}.pub`, 'utf8').trim();
+
+    try {
+      // The server's TS_AUTHKEY env var bakes Tailscale into cloud-init.
+      // Create via API so the server-side key resolution kicks in.
+      await createVM(page, { name: vm, sourceType: 'containerDisk',
+        source: CTR_IMAGE, cpu: 1, mem: '2G', sshKey: pub });
+      expect(await waitFor(() => vmExists(vm), 30_000, 2000, `vm ${vm}`)).toBe(true);
+
+      await api(`/api/vms/${NS}/${vm}/start`, { method: 'POST' });
+      expect(await waitFor(() => vmStatus(vm) === 'Running', 300_000, 4000, `${vm} Running`)).toBe(true);
+      assertVMHealthy(expect, vm);
+
+      // Tailscale hostname is the VM name (set by cloud-init --hostname).
+      const tsHost = `${vm}.manatee-basking.ts.net`;
+
+      // Wait for the VM to appear on the tailnet (may take a couple of
+      // minutes — cloud-init installs Tailscale, then it registers).
+      const tsOnline = () => {
+        try {
+          const out = execSync(`tailscale status`, { timeout: 5000, encoding: 'utf8' });
+          return out.includes(tsHost);
+        } catch { return false; }
+      };
+      const onTailnet = await waitFor(tsOnline, 300_000, 10_000, `tailscale ${tsHost}`);
+      if (!onTailnet) {
+        // Diagnostics: dump tailscale status to understand why it didn't appear.
+        try { console.log('tailscale status:', execSync('tailscale status', { timeout: 5000, encoding: 'utf8' })); }
+        catch (e) { console.log('tailscale status failed:', e.message); }
+      }
+      expect(onTailnet, `${tsHost} appears on the tailnet`).toBe(true);
+
+      // SSH directly over Tailscale — no port-forward, no proxy.
+      let lastErr = '';
+      const trySSH = () => {
+        try {
+          const out = execSync(
+            `ssh -i ${key} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ` +
+            `-o ConnectTimeout=10 -o BatchMode=yes fedora@${tsHost} echo SSH_OK 2>&1`,
+            { timeout: 15000, encoding: 'utf8' });
+          if (out.includes('SSH_OK')) return true;
+          lastErr = out.trim().split('\n').pop();
+        } catch (e) {
+          lastErr = String(e.stderr || e.stdout || e.message).trim().split('\n').pop();
+        }
+        return false;
+      };
+      const sshOk = await waitFor(trySSH, 120_000, 10_000, `ssh fedora@${tsHost}`);
+      if (!sshOk) console.log(`tailscale ssh diagnostics — last error: ${lastErr}`);
+      expect(sshOk, `ssh login over Tailscale to ${tsHost} (last: ${lastErr})`).toBe(true);
+
+      await api(`/api/vms/${NS}/${vm}/stop`, { method: 'POST' });
+      await waitFor(() => vmStatus(vm) === 'Stopped', 120_000, 4000, `${vm} Stopped`);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   // ── 13. Bootc: build from the curated bootc catalog ────────────────
 
   test('bootc VM from a catalog image ref @live-only', async ({ page }) => {
