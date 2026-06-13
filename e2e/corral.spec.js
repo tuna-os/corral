@@ -750,7 +750,7 @@ test.describe('Corral web UI', () => {
 
   // ── 13. Bootc: build from the curated bootc catalog ────────────────
 
-  test('bootc VM from a catalog image ref @live-only', async ({ page }) => {
+  test('bootc VM from catalog, boots and accepts SSH @live-only', async ({ page }) => {
     // Budget reality: the builder pod pull + bootc's own in-pod image pull
     // (~1.3 GB via the registry, not the node cache) + install + first boot
     // + the ~10-14 min status-reporting lag (see below).
@@ -759,11 +759,17 @@ test.describe('Corral web UI', () => {
     const { body: caps } = await api('/api/capabilities');
     test.skip(!caps.bootc, 'bootc plugin not enabled on this server');
 
+    // Throwaway keypair — the public half is baked into the disk during
+    // the bootc build so SSH works after first boot (no cloud-init needed).
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'corral-e2e-'));
+    const key = path.join(dir, 'id_ed25519');
+    execSync(`ssh-keygen -t ed25519 -N "" -f ${key} -q`);
+    const pub = fs.readFileSync(`${key}.pub`, 'utf8').trim();
+
     const vm = trackVM('e2e-btc-' + uid());
     await createVM(page, { name: vm, sourceType: 'bootc',
       source: 'quay.io/centos-bootc/centos-bootc:stream9',
-      cpu: 2, mem: '4G', disk: '20G',
-      sshKey: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIxFsoq5BNDhBVWdQNZpDPmlbnXYqxlLpJpc+1z0wTSt e2e@test' });
+      cpu: 2, mem: '4G', disk: '20G', sshKey: pub });
 
     // The build dialog opens and streams the on-cluster disk build.
     await page.waitForSelector('#build-dialog[open]', { timeout: 15_000 });
@@ -807,6 +813,39 @@ test.describe('Corral web UI', () => {
     }), { ns: NS, name: vm });
     expect(await waitFor(ttyCheck, 120_000, 15_000, 'bootc guest serial output'),
       'bootc guest answers on the serial console').toBe(true);
+
+    // SSH into the bootc VM via virtctl port-forward. Bootc images bake the
+    // key into the disk during the build — no cloud-init wait needed.
+    try {
+      let lastErr = '';
+      const tryLogin = () => new Promise((resolve) => {
+        const port = 20000 + Math.floor(Math.random() * 10000);
+        const fwd = spawn('virtctl', ['port-forward', `vm/${vm}`, `${port}:22`, '-n', NS],
+          { stdio: ['ignore', 'pipe', 'pipe'], detached: false });
+        let fwdLog = '';
+        fwd.stdout.on('data', (d) => { fwdLog += d; });
+        fwd.stderr.on('data', (d) => { fwdLog += d; });
+        setTimeout(() => {
+          try {
+            const out = execSync(
+              `ssh -p ${port} -i ${key} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ` +
+              `-o ConnectTimeout=8 -o BatchMode=yes root@127.0.0.1 echo BOOTC_SSH_OK 2>&1`,
+              { timeout: 25000, encoding: 'utf8' });
+            if (out.includes('BOOTC_SSH_OK')) { fwd.kill('SIGKILL'); return resolve(true); }
+            lastErr = `${out.trim().split('\n').pop()} | pf: ${fwdLog.slice(-200)}`;
+          } catch (e) {
+            lastErr = `${String(e.stderr || e.stdout || e.message).trim().split('\n').pop()} | pf: ${fwdLog.slice(-200)}`;
+          }
+          fwd.kill('SIGKILL');
+          resolve(false);
+        }, 4000);
+      });
+      const sshOk = await waitFor(tryLogin, 180_000, 10_000, 'bootc SSH login');
+      if (!sshOk) console.log(`bootc ssh diagnostics — last error: ${lastErr}`);
+      expect(sshOk, `bootc SSH login with the injected key (last: ${lastErr})`).toBe(true);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
 
     await api(`/api/vms/${NS}/${vm}/stop`, { method: 'POST' });
     await waitFor(() => vmStatus(vm) === 'Stopped', 120_000, 4000, `${vm} Stopped`);
