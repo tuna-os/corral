@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/hanthor/corral/pkg/catalog"
 	"github.com/hanthor/corral/pkg/doctor"
@@ -20,8 +21,26 @@ func handleDoctor(w http.ResponseWriter, r *http.Request) {
 }
 
 // POST /api/doctor/fix — reconcile the fixable issues.
+// Body {"check": "<name>"} fixes just that check; empty body fixes all.
 func handleDoctorFix(w http.ResponseWriter, r *http.Request) {
+	var b struct {
+		Check string `json:"check"`
+	}
+	json.NewDecoder(r.Body).Decode(&b) // empty body = fix all
+	if b.Check != "" {
+		done := taskBegin("doctor fix", b.Check)
+		if err := doctor.FixOne(b.Check); err != nil {
+			done(err)
+			errResp(w, http.StatusInternalServerError, err)
+			return
+		}
+		done(nil)
+		jsonResp(w, http.StatusOK, map[string]any{"fixed": []string{b.Check}})
+		return
+	}
+	done := taskBegin("doctor fix", "all fixable")
 	fixed, err := doctor.Fix()
+	done(err)
 	if err != nil {
 		errResp(w, http.StatusInternalServerError, err)
 		return
@@ -75,10 +94,13 @@ func handleInstallPlugin(w http.ResponseWriter, r *http.Request) {
 		errResp(w, http.StatusNotFound, fmt.Errorf("no plugin %q in the marketplace", name))
 		return
 	}
+	done := taskBegin("install plugin", name)
 	if err := e.Install(); err != nil {
+		done(err)
 		errResp(w, http.StatusInternalServerError, err)
 		return
 	}
+	done(nil)
 	jsonResp(w, http.StatusOK, map[string]string{"installed": name})
 }
 
@@ -99,11 +121,19 @@ func handleRemovePlugin(w http.ResponseWriter, r *http.Request) {
 // enable/disable expand and snapshot controls.
 func handleCapabilities(w http.ResponseWriter, r *http.Request) {
 	c := kubevirt.ClusterCapabilities()
+	// Installed plugins, so the UI can light up their features
+	// (the bootc flag stays separate: it's compile-time, not a binary on disk).
+	plugins := []string{}
+	for _, p := range plugin.Installed() {
+		plugins = append(plugins, p.Name)
+	}
 	jsonResp(w, http.StatusOK, map[string]any{
-		"storageClass": c.StorageClass,
-		"canExpand":    c.CanExpand,
-		"canSnapshot":  c.CanSnapshot,
-		"bootc":        kubevirt.BootcAvailable(), // optional plugin
+		"storageClass":     c.StorageClass,
+		"canExpand":        c.CanExpand,
+		"canSnapshot":      c.CanSnapshot,
+		"bootc":            kubevirt.BootcAvailable(), // optional plugin
+		"plugins":          plugins,
+		"defaultNamespace": kubevirt.DefaultNamespace,
 	})
 }
 
@@ -118,10 +148,13 @@ func handleScale(w http.ResponseWriter, r *http.Request) {
 		errResp(w, http.StatusBadRequest, err)
 		return
 	}
+	done := taskBegin("scale", ns+"/"+name)
 	if err := kubevirt.NewClient(ns).Scale(name, b.CPU, b.Mem); err != nil {
+		done(err)
 		errResp(w, http.StatusInternalServerError, err)
 		return
 	}
+	done(nil)
 	jsonResp(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
@@ -132,7 +165,9 @@ func handleAddVolume(w http.ResponseWriter, r *http.Request) {
 		Size string `json:"size"`
 	}
 	json.NewDecoder(r.Body).Decode(&b)
+	done := taskBegin("add disk", ns+"/"+name)
 	pvc, err := kubevirt.NewClient(ns).AddVolume(name, b.Size)
+	done(err)
 	if err != nil {
 		errResp(w, http.StatusInternalServerError, err)
 		return
@@ -143,10 +178,13 @@ func handleAddVolume(w http.ResponseWriter, r *http.Request) {
 // DELETE /api/vms/{ns}/{name}/volumes/{vol}
 func handleRemoveVolume(w http.ResponseWriter, r *http.Request) {
 	ns, name, vol := r.PathValue("ns"), r.PathValue("name"), r.PathValue("vol")
+	done := taskBegin("detach disk", ns+"/"+name)
 	if err := kubevirt.NewClient(ns).RemoveVolume(name, vol); err != nil {
+		done(err)
 		errResp(w, http.StatusInternalServerError, err)
 		return
 	}
+	done(nil)
 	jsonResp(w, http.StatusOK, map[string]string{"status": "removed"})
 }
 
@@ -161,10 +199,13 @@ func handleExpand(w http.ResponseWriter, r *http.Request) {
 		errResp(w, http.StatusBadRequest, fmt.Errorf("pvc and size are required"))
 		return
 	}
+	done := taskBegin("expand disk", ns+"/"+b.PVC)
 	if err := kubevirt.NewClient(ns).ExpandDisk(b.PVC, b.Size); err != nil {
+		done(err)
 		errResp(w, http.StatusInternalServerError, err)
 		return
 	}
+	done(nil)
 	jsonResp(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
@@ -186,7 +227,9 @@ func handleCreateSnapshot(w http.ResponseWriter, r *http.Request) {
 		Name string `json:"name"`
 	}
 	json.NewDecoder(r.Body).Decode(&b)
+	done := taskBegin("snapshot", ns+"/"+name)
 	snap, err := kubevirt.NewClient(ns).Snapshot(name, b.Name)
+	done(err)
 	if err != nil {
 		errResp(w, http.StatusInternalServerError, err)
 		return
@@ -197,20 +240,26 @@ func handleCreateSnapshot(w http.ResponseWriter, r *http.Request) {
 // POST /api/vms/{ns}/{name}/snapshots/{snap}/restore
 func handleRestoreSnapshot(w http.ResponseWriter, r *http.Request) {
 	ns, name, snap := r.PathValue("ns"), r.PathValue("name"), r.PathValue("snap")
+	done := taskBegin("restore snapshot", ns+"/"+name)
 	if err := kubevirt.NewClient(ns).RestoreSnapshot(name, snap); err != nil {
+		done(err)
 		errResp(w, http.StatusInternalServerError, err)
 		return
 	}
+	done(nil)
 	jsonResp(w, http.StatusOK, map[string]string{"status": "restoring"})
 }
 
 // DELETE /api/vms/{ns}/{name}/snapshots/{snap}
 func handleDeleteSnapshot(w http.ResponseWriter, r *http.Request) {
 	ns, snap := r.PathValue("ns"), r.PathValue("snap")
+	done := taskBegin("delete snapshot", ns+"/"+snap)
 	if err := kubevirt.NewClient(ns).DeleteSnapshot(snap); err != nil {
+		done(err)
 		errResp(w, http.StatusInternalServerError, err)
 		return
 	}
+	done(nil)
 	jsonResp(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
@@ -224,10 +273,13 @@ func handleClone(w http.ResponseWriter, r *http.Request) {
 		errResp(w, http.StatusBadRequest, fmt.Errorf("target name is required"))
 		return
 	}
+	done := taskBegin("clone", ns+"/"+name+" → "+b.Target)
 	if err := kubevirt.NewClient(ns).Clone(name, b.Target); err != nil {
+		done(err)
 		errResp(w, http.StatusInternalServerError, err)
 		return
 	}
+	done(nil)
 	if store != nil {
 		store.Set(b.Target, types.RegistryEntry{Backend: "kubevirt", Namespace: ns})
 	}
@@ -299,8 +351,59 @@ func handleAddNIC(w http.ResponseWriter, r *http.Request) {
 	jsonResp(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-// GET /api/images — the built-in OS image catalog
+// POST /api/vms/{ns}/{name}/bootc/rebuild  body: {image?}
+// Rebuilds a bootc VM's disk (from its recorded image, or the given override
+// to switch images) and restarts it. Runs as a background task with a live
+// build log, like the initial bootc create.
+func handleBootcRebuild(w http.ResponseWriter, r *http.Request) {
+	ns, name := r.PathValue("ns"), r.PathValue("name")
+	if !kubevirt.BootcAvailable() {
+		errResp(w, http.StatusBadRequest,
+			fmt.Errorf("bootc support is not enabled on this server (optional plugin)"))
+		return
+	}
+	var b struct {
+		Image string `json:"image"`
+	}
+	json.NewDecoder(r.Body).Decode(&b)
+	image := catalog.ResolveBootc(b.Image)
+	if image == "" && store != nil {
+		if e, ok := store.Get(name); ok {
+			image = e.Extra["bootc_image"]
+		}
+	}
+	if image == "" {
+		errResp(w, http.StatusBadRequest,
+			fmt.Errorf("no recorded bootc image for %q — pass an image to switch to", name))
+		return
+	}
+	sshKey := kubevirt.LoadSSHPublicKey()
+
+	id := fmt.Sprintf("bootc-rebuild-%s-%d", name, time.Now().UnixNano())
+	task := &buildTask{status: "running"}
+	tasks.Store(id, task)
+	done := taskBegin("bootc rebuild", ns+"/"+name)
+	go func() {
+		err := kubevirt.BootcRebuild(name, ns, image, sshKey, "", task)
+		if err == nil && store != nil {
+			store.Set(name, types.RegistryEntry{
+				Backend: "kubevirt", Namespace: ns,
+				Extra: map[string]string{"bootc_image": image},
+			})
+		}
+		task.finish(err)
+		done(err)
+	}()
+	jsonResp(w, http.StatusAccepted, map[string]string{"task": id})
+}
+
+// GET /api/images — the built-in OS image catalog.
+// ?type=bootc returns the curated bootc image catalog instead.
 func handleImages(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Get("type") == "bootc" {
+		jsonResp(w, http.StatusOK, catalog.BootcImages)
+		return
+	}
 	jsonResp(w, http.StatusOK, catalog.Images)
 }
 
@@ -331,19 +434,25 @@ func handleImportDataVolume(w http.ResponseWriter, r *http.Request) {
 		errResp(w, http.StatusBadRequest, fmt.Errorf("name and url are required"))
 		return
 	}
+	done := taskBegin("import image", b.Namespace+"/"+b.Name)
 	if err := kubevirt.ImportDataVolume(b.Name, b.Namespace, b.URL, b.Size); err != nil {
+		done(err)
 		errResp(w, http.StatusInternalServerError, err)
 		return
 	}
+	done(nil)
 	jsonResp(w, http.StatusOK, map[string]string{"name": b.Name})
 }
 
 // DELETE /api/datavolumes/{ns}/{name}
 func handleDeleteDataVolume(w http.ResponseWriter, r *http.Request) {
 	ns, name := r.PathValue("ns"), r.PathValue("name")
+	done := taskBegin("delete image", ns+"/"+name)
 	if err := kubevirt.DeleteDataVolume(ns, name); err != nil {
+		done(err)
 		errResp(w, http.StatusInternalServerError, err)
 		return
 	}
+	done(nil)
 	jsonResp(w, http.StatusOK, map[string]string{"status": "deleted"})
 }

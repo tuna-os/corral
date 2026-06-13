@@ -79,7 +79,9 @@ jobs:
       - name: Build binary and fetch kubectl/virtctl
         run: |
           mkdir -p build
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o build/corral .
+          # bootc tag included: the on-cluster web UI must offer the bootc
+          # create flow (build a container image into a VM disk).
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags bootc -ldflags="-s -w" -o build/corral .
           curl -fsSLo build/kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
           curl -fsSLo build/virtctl "https://github.com/kubevirt/kubevirt/releases/download/${VIRTCTL_VERSION}/virtctl-${VIRTCTL_VERSION}-linux-amd64"
 
@@ -154,7 +156,7 @@ jobs:
       - name: Build marketplace plugins (linux amd64 + arm64)
         run: |
           mkdir -p plugins-dist
-          for plugin in bootc snapsched schedule gpu windows; do
+          for plugin in bootc snapsched schedule gpu windows proxmox; do
             tags=""
             [ "$plugin" = bootc ] && tags="-tags bootc"
             for arch in amd64 arm64; do

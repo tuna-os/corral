@@ -24,8 +24,9 @@ type BootcBuildResult struct {
 
 // Registered by bootc.go when the `bootc` build tag is set; nil otherwise.
 var (
-	bootcBuildFunc func(name, namespace, imageURI, sshPublicKey, diskSize string, progress io.Writer) (*BootcBuildResult, error)
-	bootcVMFunc    func(name, namespace, pvcName, imageURI, rootUUID, kernelVersion, mem string, cpu int, node string) map[string]any
+	bootcBuildFunc   func(name, namespace, imageURI, sshPublicKey, diskSize string, progress io.Writer) (*BootcBuildResult, error)
+	bootcVMFunc      func(name, namespace, pvcName, imageURI, rootUUID, kernelVersion, mem string, cpu int, node string) map[string]any
+	bootcRebuildFunc func(name, namespace, imageURI, sshPublicKey, diskSize string, progress io.Writer) error
 )
 
 // BootcAvailable reports whether the bootc plugin is compiled into this binary.
@@ -47,4 +48,16 @@ func GenerateBootcVM(name, namespace, pvcName, imageURI, rootUUID, kernelVersion
 		return nil
 	}
 	return bootcVMFunc(name, namespace, pvcName, imageURI, rootUUID, kernelVersion, mem, cpu, node)
+}
+
+// BootcRebuild rebuilds an existing bootc VM's disk from imageURI (the same
+// image to pull updates, or a different one to switch), then re-points the
+// VM's kernel boot at the fresh disk and restarts it. It preserves the VM's
+// sizing/networking — only the disk + kernelBoot change. Errors if the plugin
+// isn't compiled in.
+func BootcRebuild(name, namespace, imageURI, sshPublicKey, diskSize string, progress io.Writer) error {
+	if bootcRebuildFunc == nil {
+		return errBootcUnavailable()
+	}
+	return bootcRebuildFunc(name, namespace, imageURI, sshPublicKey, diskSize, progress)
 }

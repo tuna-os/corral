@@ -10,12 +10,52 @@ import (
 	"path/filepath"
 	"strings"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/hanthor/corral/pkg/shell"
 	"github.com/hanthor/corral/pkg/types"
 )
 
 // LastPassword holds the cloud-init password from the most recent GenerateVM call.
 var LastPassword string
+
+// mergeCloudInit combines the generated #cloud-config user-data with the
+// user-supplied extra YAML. A raw string append produces duplicate top-level
+// keys (e.g. two ssh_authorized_keys:) — invalid cloud-config that cloud-init
+// mishandles silently. Lists merge by concatenation (generated entries first),
+// maps merge per key, scalars are replaced by the extra's value. Extra that
+// isn't parseable YAML falls back to the old append.
+func mergeCloudInit(base, extra string) string {
+	var b, e map[string]any
+	if yaml.Unmarshal([]byte(base), &b) != nil || b == nil {
+		return base + extra
+	}
+	if yaml.Unmarshal([]byte(extra), &e) != nil || e == nil {
+		return base + extra
+	}
+	for k, v := range e {
+		if bl, ok := b[k].([]any); ok {
+			if el, ok := v.([]any); ok {
+				b[k] = append(bl, el...)
+				continue
+			}
+		}
+		if bm, ok := b[k].(map[string]any); ok {
+			if em, ok := v.(map[string]any); ok {
+				for mk, mv := range em {
+					bm[mk] = mv
+				}
+				continue
+			}
+		}
+		b[k] = v
+	}
+	out, err := yaml.Marshal(b)
+	if err != nil {
+		return base + extra
+	}
+	return "#cloud-config\n" + string(out)
+}
 
 // LoadSSHPublicKey reads the first available SSH public key from ~/.ssh/.
 func LoadSSHPublicKey() string {
@@ -55,8 +95,16 @@ var defaultClientRunner shell.Runner
 // SetDefaultRunner overrides the runner for all kubevirt clients (for unit tests).
 func SetDefaultRunner(r shell.Runner) { defaultClientRunner = r }
 
-// DefaultNamespace is the default namespace for KubeVirt VMs.
-const DefaultNamespace = "tailvm"
+// DefaultNamespace is the default namespace for KubeVirt VMs. Override with
+// CORRAL_NAMESPACE (e.g. existing deployments that grew up in "tailvm").
+var DefaultNamespace = defaultNamespace()
+
+func defaultNamespace() string {
+	if ns := os.Getenv("CORRAL_NAMESPACE"); ns != "" {
+		return ns
+	}
+	return "corral-vms"
+}
 
 // EnsureNamespace creates the namespace if it doesn't exist and labels it
 // for privileged pods (needed by the bootc builder Job).
@@ -126,14 +174,24 @@ func (c *Client) ListVMs() ([]types.VM, error) {
 	if err != nil {
 		return nil, err
 	}
-	return parseVMList(out, vmiStatusIndex(), nodeVendors(), c.proxyStatus, DataVolumeStatus)
+	li := launcherRunningIndex()
+	launcherRunning := func(name, ns string) bool { return li[ns+"/"+name] }
+	return parseVMList(out, vmiStatusIndex(), nodeVendors(), c.proxyStatus, DataVolumeStatus, launcherRunning)
 }
 
 // parseVMList turns `kubectl get vms -o json` output into []types.VM. Pure
-// except for the two injected helpers (proxy status, ISO import status), so the
-// state-derivation logic is unit-testable. Keep it free of exec/IO.
+// except for the injected helpers (proxy status, ISO import status, launcher
+// running), so the state-derivation logic is unit-testable. Keep it free of
+// exec/IO.
+//
+// launcherRunningFn reports whether a VM's virt-launcher pod is Running. It's
+// the truth source for kernel-boot (bootc) VMs, whose VMI status — phase
+// included — freezes on KubeVirt versions where the kernelBootStatus checksum
+// (a uint32) trips the CRD's int32 validation, so printableStatus is stuck.
+// See docs note in HANDOFF; pass a func returning false to disable.
 func parseVMList(out []byte, vmis map[string]vmiStatus, vendors map[string]string,
-	proxyStatusFn, isoStatusFn func(name, ns string) string) ([]types.VM, error) {
+	proxyStatusFn, isoStatusFn func(name, ns string) string,
+	launcherRunningFn func(name, ns string) bool) ([]types.VM, error) {
 	var result struct {
 		Items []struct {
 			Metadata struct {
@@ -151,7 +209,10 @@ func parseVMList(out []byte, vmis map[string]vmiStatus, vendors map[string]strin
 								Sockets int `json:"sockets"`
 								Threads int `json:"threads"`
 							} `json:"cpu"`
-							Memory struct{ Guest string } `json:"memory"`
+							Memory   struct{ Guest string } `json:"memory"`
+							Firmware struct {
+								KernelBoot *json.RawMessage `json:"kernelBoot"`
+							} `json:"firmware"`
 						} `json:"domain"`
 						NodeSelector map[string]string `json:"nodeSelector"`
 					} `json:"spec"`
@@ -180,6 +241,17 @@ func parseVMList(out []byte, vmis map[string]vmiStatus, vendors map[string]strin
 			node = n
 		}
 
+		// Kernel-boot (bootc) rescue: a frozen VMI status leaves printableStatus
+		// stuck at a transitional value even though the guest is up. Trust the
+		// launcher pod instead. Only overrides transitional states — never a
+		// genuine Stopped (the VM controller cleans up the pod on stop).
+		kernelBoot := vm.Spec.Template.Spec.Domain.Firmware.KernelBoot != nil
+		transitional := ps == "Starting" || ps == "Scheduling" || ps == "Scheduled" || ps == "Provisioning" || ps == ""
+		if !running && kernelBoot && transitional && launcherRunningFn != nil && launcherRunningFn(name, ns) {
+			running = true
+			ps = "Running"
+		}
+
 		status := statusLabel(ps)
 		if !running && !vm.Status.Ready {
 			if iso := isoStatusFn(name, ns); iso != "" && iso != "✓ ready" {
@@ -200,6 +272,7 @@ func parseVMList(out []byte, vmis map[string]vmiStatus, vendors map[string]strin
 			Node:       node,
 			VNC:        proxyStatusFn(name, ns),
 			IsTemplate: vm.Metadata.Labels["corral.dev/template"] == "true",
+			Bootc:      kernelBoot,
 		}
 		// Overlay live VMI facts (actual node, IP, migratability, agent).
 		// LiveMigratable reflects REAL viability: KubeVirt's condition AND a
@@ -258,6 +331,48 @@ type vmiStatus struct {
 }
 
 // vmiStatusIndex returns live per-VMI facts keyed by "namespace/name".
+// launcherRunningIndex maps "ns/vm" → true when the VM's virt-launcher pod is
+// Running with its compute container ready. Used to rescue kernel-boot VMs
+// whose VMI status is frozen (see parseVMList). One list call per refresh.
+func launcherRunningIndex() map[string]bool {
+	out, err := runPkg("kubectl", "get", "pods", "-A",
+		"-l", "kubevirt.io=virt-launcher", "-o", "json")
+	if err != nil {
+		return nil
+	}
+	var res struct {
+		Items []struct {
+			Metadata struct {
+				Namespace string            `json:"namespace"`
+				Labels    map[string]string `json:"labels"`
+			} `json:"metadata"`
+			Status struct {
+				Phase             string `json:"phase"`
+				ContainerStatuses []struct {
+					Name  string `json:"name"`
+					Ready bool   `json:"ready"`
+				} `json:"containerStatuses"`
+			} `json:"status"`
+		} `json:"items"`
+	}
+	if json.Unmarshal(out, &res) != nil {
+		return nil
+	}
+	idx := map[string]bool{}
+	for _, p := range res.Items {
+		vm := p.Metadata.Labels["vm.kubevirt.io/name"]
+		if vm == "" || p.Status.Phase != "Running" {
+			continue
+		}
+		for _, cs := range p.Status.ContainerStatuses {
+			if cs.Name == "compute" && cs.Ready {
+				idx[p.Metadata.Namespace+"/"+vm] = true
+			}
+		}
+	}
+	return idx
+}
+
 func vmiStatusIndex() map[string]vmiStatus {
 	out, err := runPkg("kubectl", "get", "vmis", "-A", "-o", "json")
 	if err != nil {
@@ -576,7 +691,14 @@ func GenerateVM(opts types.CreateOpts) map[string]any {
 
 	userData := fmt.Sprintf("#cloud-config\npassword: %s\nchpasswd:\n  expire: False\nssh_pwauth: true\n", pwd)
 	if opts.SSHPublicKey != "" {
-		userData += fmt.Sprintf("ssh_authorized_keys:\n  - %s\n", opts.SSHPublicKey)
+		// May hold several keys (e.g. resolved from a GitHub account),
+		// newline-separated — each becomes its own list entry.
+		userData += "ssh_authorized_keys:\n"
+		for _, k := range strings.Split(opts.SSHPublicKey, "\n") {
+			if k = strings.TrimSpace(k); k != "" {
+				userData += fmt.Sprintf("  - %s\n", k)
+			}
+		}
 	}
 	// Join the tailnet on first boot. Skipped when the extra cloud-init
 	// already declares runcmd — two runcmd keys would be invalid YAML.
@@ -587,7 +709,7 @@ func GenerateVM(opts types.CreateOpts) map[string]any {
 `, opts.TailscaleAuthKey, name)
 	}
 	if opts.CloudInitExtra != "" {
-		userData += opts.CloudInitExtra
+		userData = mergeCloudInit(userData, opts.CloudInitExtra)
 	}
 	volumes = append(volumes, map[string]any{
 		"name": "cloudinitdisk",
@@ -722,6 +844,21 @@ func GenerateBootDataVolume(name, namespace, url, size, storageClass string) map
 	return dv
 }
 
+// ProxyTags, when set, tags exposed VM devices on the tailnet
+// (tailscale.com/tags annotation), e.g. "tag:corral-vm".
+var ProxyTags string
+
+func proxyAnnotations(name string) map[string]string {
+	a := map[string]string{
+		"tailscale.com/expose":   "true",
+		"tailscale.com/hostname": name + "-vm",
+	}
+	if ProxyTags != "" {
+		a["tailscale.com/tags"] = ProxyTags
+	}
+	return a
+}
+
 // GenerateProxyService creates the unified proxy Service with Tailscale annotation.
 func GenerateProxyService(name, namespace string, ports []int) map[string]any {
 	svcPorts := []map[string]any{}
@@ -738,12 +875,9 @@ func GenerateProxyService(name, namespace string, ports []int) map[string]any {
 		"apiVersion": "v1",
 		"kind":       "Service",
 		"metadata": map[string]any{
-			"name":      name + "-proxy",
-			"namespace": namespace,
-			"annotations": map[string]string{
-				"tailscale.com/expose":   "true",
-				"tailscale.com/hostname": name + "-vm",
-			},
+			"name":        name + "-proxy",
+			"namespace":   namespace,
+			"annotations": proxyAnnotations(name),
 		},
 		"spec": map[string]any{
 			"type": "ClusterIP",

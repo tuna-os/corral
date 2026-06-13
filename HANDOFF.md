@@ -5,8 +5,29 @@
 > Docs: [README.md](README.md), [SPEC.md](SPEC.md), [WEBUI-PLAN.md](WEBUI-PLAN.md),
 > [docs/api.md](docs/api.md), [docs/architecture.md](docs/architecture.md),
 > [docs/kubevirt-proxmox-setup.md](docs/kubevirt-proxmox-setup.md)
+> Domain: [CONTEXT.md](CONTEXT.md), [AGENTS.md](AGENTS.md)
+> ADRs: [docs/adr/](docs/adr/)
 
 ## Status: shipped
+
+### New: Proxmox API compatibility (corral-proxmox plugin)
+
+A marketplace plugin that serves `/api2/json/...` — the Proxmox VE REST API —
+translated onto KubeVirt. Proxmox ecosystem tools (Terraform bpg/proxmox,
+Ansible, proxmoxer) can manage KubeVirt VMs without modification.
+Documented in [docs/proxmox-api.md](docs/proxmox-api.md) (endpoints, vmid
+mapping, auth via `--token`/`CORRAL_PROXMOX_TOKEN`, known gaps). 2026-06-12:
+removed ~1,000 lines of code duplicated between `cmd/corral-proxmox` and
+`pkg/proxmox` (the plugin now just wraps `proxmox.NewHandler`), and wired up
+the previously unreachable shared-secret auth.
+
+**15 endpoints**, verified against `bpg/proxmox` v0.109.0:
+- VM CRUD + lifecycle (create/start/stop/delete via `virtctl`)
+- Node discovery + status (kubectl, live data)
+- Storage (StorageClasses → Proxmox storage types)
+- Access control (K8s RBAC → Proxmox users/roles/groups, see ADR-0001)
+- VNC/TTY proxy stubs
+- Pools/HA/LXC stubs (empty, no errors)
 
 Corral is feature-complete for v1.0. All Proxmox-parity operations work
 through CLI, TUI, and web UI.
@@ -23,8 +44,31 @@ create wizard (catalog / containerDisk / import / ISO / bootc / PVC), image
 library with CDI import, bootc build log streaming, extensions store. Live
 VNC (noVNC) and serial console (xterm.js) in the browser.
 
-**Catalog + import** — curated OS images (8 containerdisks from
-quay.io/containerdisks), CDI import for arbitrary qcow2/raw/ISO URLs.
+**Catalog + import** — curated OS images from reputable publishers only:
+8 containerdisks (quay.io/containerdisks, boot directly), 7 official distro
+cloud images straight from the distros' own mirrors (cloud.debian.org 12/13,
+fedoraproject.org 42, cloud.centos.org stream 9/10, repo.almalinux.org 9/10 —
+CDI import, real PVC disk), and 6 TurnKey Linux appliance installer ISOs
+(core/LAMP/WordPress/Nextcloud/GitLab/fileserver — finish install over VNC).
+`catalog.Image` has three kinds (ContainerDisk/URL/ISO); web + CLI route each
+to the right create path. Plus CDI import for arbitrary qcow2/raw/ISO URLs.
+(linuxserver.io publishes container images, not VM disks — not applicable.)
+
+**Bootc lifecycle (2026-06-13)** — beyond create: `corral bootc rebuild
+<vm> [--image]` (rebuild the disk from the recorded image, or override),
+`upgrade <vm>` (pull the latest of the current image), `switch <vm>
+--image <ref>` (move to a different image), `status` (list bootc VMs + their
+images). Shared rebuild logic in `pkg/kubevirt/bootc.go` (`BootcRebuild`
+seam): stop → delete disk PVC → rebuild → patch kernelBoot → start, preserving
+sizing/networking. Web UI: an **Upgrade** button on bootc VMs (detected via
+the new `types.VM.Bootc` field) runs the rebuild as a background task with
+the live build-log dialog (`POST /api/vms/{ns}/{name}/bootc/rebuild`).
+
+**Bootc catalog** — curated bootc bases (`catalog.BootcImages`): Fedora bootc
+42/43, CentOS bootc stream9/10, Universal Blue uCore/uCore-minimal. Listed by
+`corral bootc images`, accepted as `--image <name>` in the plugin, served at
+`/api/images?type=bootc`, and offered as datalist suggestions in the web
+create wizard's bootc source field (names also resolve server-side).
 
 **Advanced KubeVirt ops** — live/offline CPU/RAM scaling, disk hotplug,
 online PVC expansion, snapshots (create/list/restore/delete), clone,
@@ -37,16 +81,88 @@ KubeVirt ops (`restart`, `pause`, `migrate`, `scale`, `adddisk`, `rmdisk`,
 **TUI** — Bubble Tea app with scrollable actions menu (Start, Stop, SSH,
 VNC, Delete).
 
+**RDP (2026-06-12)** — `GET /api/vms/{ns}/{name}/rdp` probes the guest's
+3389 (Windows native, or Linux gnome-remote-desktop/xrdp) and the VM Summary
+panel shows connection instructions when it answers; `/api/rdp/{ns}/{name}`
+is a websocket↔3389 bridge (via `virtctl port-forward`) ready to carry an
+in-browser IronRDP client later — plan and honest sizing in
+[docs/adr/0002-browser-rdp-via-ironrdp.md](docs/adr/0002-browser-rdp-via-ironrdp.md).
+The windows plugin's `--rdp` proxy path now has unit tests, and `shell.Fake`
+records stdin on `RunStdin` for manifest assertions.
+
+**Task panel (2026-06-12)** — Proxmox-style activity log: every mutating
+server operation (create/start/stop/delete/scale/snapshots/clone/imports/
+plugin installs/bootc builds) is recorded with status + duration in an
+in-memory ring (`pkg/web/tasklog.go`, `GET /api/tasklog`) and shown in a
+collapsible bottom panel in the web UI. Console tabs gained fullscreen
+buttons and noVNC scaling controls (local scale-to-fit toggle + remote
+resize). `/api/capabilities` now also lists installed plugins so the UI can
+light plugin features up (only bootc consumes it so far).
+
+**Create wizard UX (2026-06-12, from live feedback)** — catalog is the
+default boot source with the image list visible on open; the SSH field is
+universal (any source type) and accepts a public key **or a GitHub username**
+(`gh:user` / `github:user` / `@user`, resolved server-side via
+github.com/user.keys, multiple keys supported); instance type, preference,
+namespace, node and cloud-init live behind an Advanced fold; hint text is
+per-source-type. Cloud-init extra YAML is now **structurally merged** into
+the generated user-data (duplicate top-level keys like a second
+ssh_authorized_keys used to silently break SSH — found by e2e, fixed in
+`kubevirt.mergeCloudInit`). Default namespace is **corral-vms**, overridable
+with `CORRAL_NAMESPACE` (the live deployment pins `tailvm` in
+deploy/corral-web.yaml).
+
+**Simple create wizard (2026-06-12)** — the create dialog now opens as a
+card-based wizard: distro cards with logos (simple-icons CDN, letter-badge
+fallback), All/Servers/Appliances/Bootc filter chips (bootc only when the
+plugin is on), then name + S/M/L size presets + SSH key/GitHub username.
+The full form lives behind "Advanced…". Catalog entries carry
+`logo` + `variant` metadata.
+
+**Tailnet-by-default (2026-06-12)** — set `tailscale.expose: true` (+
+optional `tailscale.tags`) in config.yaml or `CORRAL_TAILNET_EXPOSE=1` /
+`CORRAL_TAILNET_TAGS=tag:corral-vm`: every created VM automatically gets
+the proxy Service with tailscale-operator annotations exposing SSH/VNC/RDP
+— fresh VMs are tailnet devices with zero in-guest setup.
+
+**Plugin web-UI integration (2026-06-13)** — `/api/capabilities` lists
+installed plugins; the UI lights up their features:
+- **snapsched** → Snapshot-schedule panel in the Snapshots tab (every +
+  keep → CronJob; list/remove). Web manages the CronJob directly via
+  `pkg/cronops` (`pkg/web/snapsched.go`), no plugin binary needed —
+  works on the deployed pod.
+- **windows** → "Windows (UEFI/TPM, installer ISO)" source type in the
+  Advanced create form, with an RDP-expose toggle. Manifest generation
+  moved to `pkg/kubevirt/windows.go` (`GenerateWindowsVM`/`CreateWindowsVM`),
+  shared by the plugin CLI and the web server so it works on-cluster.
+- **schedule** → Autostart/shutdown windows panel on the Summary tab
+  (start/stop cron → CronJobs flipping runStrategy via `pkg/cronops`,
+  `pkg/web/schedule.go`).
+- **gpu** → GPU/PCI passthrough section in the Hardware tab
+  (`pkg/web/gpu.go`): lists the KubeVirt CR's permitted devices, attach/
+  detach to the VM (patches `spec.domain.devices.gpus`). Permitting a device
+  cluster-wide stays a CLI admin op (`corral gpu enable`).
+
+**Doctor UI (2026-06-12)** — failed checks render red with a per-item Fix
+button (`POST /api/doctor/fix {"check": "<name>"}` → `doctor.FixOne`)
+alongside the reconcile-all button.
+
+**Multiview (2026-06-12)** — tree entry rendering a grid of live view-only
+noVNC tiles for up to 6 running VMs (built for watching automated GUI test
+runs); click a tile's title to jump to that VM's full console.
+
 **Doctor** — cluster diagnostics (`/api/doctor` + `corral doctor`), checks
 KubeVirt, CDI, namespaces, storage, feature gates. Auto-fix for fixable
 issues.
 
 **Plugin system** — krew-style extensions (marketplace at
-`marketplace/index.json`), web UI Extensions tab. Five plugins ship from CI:
+`marketplace/index.json`), web UI Extensions tab. Six plugins ship from CI:
 **bootc** (build a container image into a VM disk on-cluster), **snapsched**
 (CronJob snapshots with retention), **schedule** (autostart/shutdown windows),
 **gpu** (PCI/vGPU passthrough discovery + attach), **windows** (UEFI/TPM/
-virtio-tuned Windows VMs with the virtio-win driver ISO).
+virtio-tuned Windows VMs with the virtio-win driver ISO), **proxmox**
+(Proxmox VE API compatibility — serve /api2/json backed by KubeVirt, so
+Terraform providers and other Proxmox tools can manage VMs).
 
 ### Architecture decisions
 
@@ -69,6 +185,7 @@ virtio-tuned Windows VMs with the virtio-win driver ISO).
 | Storage | longhorn (CSI), RWX, snapshots, expansion |
 | CDI | Running |
 | Tailscale operator | Ingress at `corral.manatee-basking.ts.net` |
+| Multus CNI | v4.2.2 (installed 2026-06-12, `deploy/multus/`), test NAD `corral-test-bridge` in tailvm |
 | Corral web pod | Running, 1 replica, `ghcr.io/hanthor/corral:latest` |
 
 ## File map (key files)
@@ -81,6 +198,10 @@ virtio-tuned Windows VMs with the virtio-win driver ISO).
 | `cmd/web.go` | `corral web` server |
 | `cmd/tui.go` | Bubble Tea TUI |
 | `cmd/corral-bootc/main.go` | Bootc plugin binary |
+| `cmd/corral-proxmox/main.go` | Proxmox API plugin binary |
+| `cmd/corral-proxmox/server.go` | Proxmox → KubeVirt translation (15 endpoints) |
+| `docs/adr/0001-k8s-rbac-to-proxmox-privileges.md` | RBAC mapping ADR |
+| `docs/agents/` | Agent skills configuration |
 | `pkg/catalog/catalog.go` | Curated OS image catalog |
 | `pkg/kubevirt/client.go` | VM CRUD, SSH, cloud-init, registry |
 | `pkg/kubevirt/features.go` | Scale, volumes, snapshots, clone, export, etc. |
@@ -88,10 +209,15 @@ virtio-tuned Windows VMs with the virtio-win driver ISO).
 | `pkg/kubevirt/bootc.go` | Bootc implementation (//go:build bootc) |
 | `pkg/web/server.go` | HTTP server, VM list/create/action/delete, nodes, tasks, WS bridges |
 | `pkg/web/features.go` | All advanced-op handlers |
+| `pkg/web/rdp.go` | RDP port probe + websocket↔3389 bridge |
+| `docs/proxmox-api.md` | Proxmox compat layer docs (endpoints, auth, gaps) |
+| `docs/adr/0002-browser-rdp-via-ironrdp.md` | RDP roadmap (IronRDP/RDCleanPath) |
+| `e2e/corral.spec.js` | Playwright suite (CI tier + @live-only tier) |
+| `.github/workflows/e2e.yml` | CI e2e: kind + KubeVirt emulation + CDI |
 | `pkg/web/static/index.html` | SPA shell, create dialog, build dialog |
 | `pkg/web/static/app.js` | API client, tree, detail panels, create wizard, import, bootc streaming |
 | `deploy/corral-web.yaml` | On-cluster deployment manifest |
-| `marketplace/index.json` | Plugin registry |
+| `marketplace/index.json` | Plugin registry (bootc, snapsched, schedule, gpu, windows, proxmox) |
 
 ## Build & deploy
 
@@ -115,13 +241,56 @@ kubectl -n tailvm rollout restart deploy/corral-web
 - **Metrics require metrics-server.** The UI grays out the resource-usage
   panels if metrics aren't available. Neither bihar nor karnataka currently
   runs metrics-server.
-- **Bootc is separate binary.** Users must install it via marketplace. The
-  on-cluster deployment image doesn't include it (would need `-tags bootc`
-  build).
+- **Bootc CLI is a separate binary** (marketplace). The on-cluster web
+  image now builds with `-tags bootc` (ci.yml, 2026-06-12), so the deployed
+  UI offers the bootc create flow after the next push + rollout.
 - **The `/api/images` endpoint on the deployed pod returns 404.** The
   running image may be stale — needs a rebuild and rollout. `/api/vms` and
   `/api/capabilities` work correctly.
 - **No tests for app.js** (the vanilla-JS SPA has no JS test harness).
+- **Bootc boot path was broken until 2026-06-12** — the builder wrote
+  `disk.raw`, but KubeVirt's filesystem-mode PVC convention is `disk.img`,
+  so on first start virt-handler ignored the built system and tried to
+  create a blank disk.img (failing "not enough space"). Found by the
+  hardened e2e (which actually boots the built VM); fixed by naming the
+  image disk.img and sizing it to 85% of the PVC. Builds before the fix
+  produced VMs that could never boot.
+- **KubeVirt kernel-boot checksum bug — fixed on this cluster
+  (2026-06-12).** On stock KubeVirt v1.8.2 + k8s 1.36, kernel-boot VMs
+  (bootc) run fine but their reported status flaps indefinitely:
+  `status.kernelBootStatus.kernelInfo.checksum` is a uint32 (crc32) that
+  overflows the schema's `format: int32`, so virt-handler's status updates
+  are rejected forever. TWO enforcement points had to be fixed:
+  1. the VMI CRD schema — `format` dropped from both checksum fields, both
+     versions (direct patch + persistent `customizeComponents` JSON patch
+     on the KubeVirt CR — note: virt-operator does NOT re-apply CRDs on
+     reconcile, hence the direct patch);
+  2. the `virtualmachineinstances-update-validator.kubevirt.io` entry was
+     **removed from the `virt-api-validator` ValidatingWebhookConfiguration**
+     — virt-api re-validates with a schema compiled into the binary, which
+     the CRD patch can't reach. The apiserver still schema-validates via
+     the (patched) CRD.
+  **virt-operator re-applies the CRD (format → int32) within ~10s and the
+  apiserver then rejects status writes — so the only durable cluster-side
+  fix is to keep virt-operator scaled to 0** (`kubectl -n kubevirt scale
+  deploy virt-operator --replicas=0`). It is currently scaled to 0 on this
+  cluster; the data plane (virt-api/controller/handler/exportproxy) runs
+  fine without it. Restore with `--replicas=2` before a KubeVirt upgrade.
+  Verified end-to-end with the operator paused (e2e bootc test, 9.6 min:
+  build → boot → Running → live serial console). Report upstream to
+  kubevirt/kubevirt.
+  **Corral-side resilience (2026-06-13):** `parseVMList` rescues kernel-boot
+  VMs whose VMI status is frozen — if printableStatus is transitional but
+  the virt-launcher pod is Running, the VM shows Running
+  (`launcherRunningIndex`). So bootc VMs display correctly in the UI even if
+  the operator gets restored and the status freezes again (console/SSH at a
+  frozen VMI phase is still unverified, hence the paused-operator default).
+- **Bootc builds are pull-dominated.** The builder pod pull uses the node
+  cache, but `bootc install` re-pulls the image inside the pod (~1.3 GB for
+  centos-bootc) from the registry every build. A pull-through registry
+  mirror on-cluster would cut builds from ~15 min to ~3. The build pipeline
+  now reports pull progress, survives Job pod retries, and retries loop
+  device allocation (all found by e2e against the live cluster, 2026-06-12).
 
 ## Test suite (2026-06-11)
 
@@ -135,3 +304,27 @@ cmd 21%. Live-cluster e2e tests live behind `-tags integration`
 (`pkg/kubevirt/integration_test.go`) and `scripts/smoke-web.sh`; CI runs
 gofmt + vet + build + `go test -race` for both the default and `bootc` tag
 sets, plus a coverage report (`.github/workflows/ci.yml`).
+
+### Playwright web-UI e2e (e2e/, 2026-06-12)
+
+Full-flow browser tests against a **live cluster** (production-safe: every
+resource is `e2e-`-prefixed, deleted in `afterEach`, and verified gone; the
+cleanup guard refuses to touch anything unprefixed). Target via `CORRAL_URL`
+(default `http://localhost:8006`), namespace via `CORRAL_NS` (default
+`tailvm`). Run: build `-tags bootc`, `corral web`, then `cd e2e && npx
+playwright test`. Coverage:
+
+- create wizard field toggling for every source type (incl. bootc datalist)
+- catalog content checks (official distro sources, TurnKey, bootc catalog)
+- VM create through the UI for all six source paths: catalog containerdisk,
+  catalog official qcow2 (asserts the DV imports from cloud.debian.org),
+  containerDisk, import-by-URL (cirros, waits for CDI Succeeded + boots),
+  installer ISO (alpine), existing PVC (imports to the library first)
+- lifecycle via the UI toolbar buttons (start/stop/delete with confirm)
+- settings: Hardware-tab CPU/memory scale (asserts the VM spec), Snapshots
+  tab take + delete (longhorn)
+- consoles: raw websocket checks (VNC bridge speaks RFB, TTY returns serial
+  output) plus the real UI tabs (noVNC canvas, xterm screen)
+- SSH: throwaway keypair injected via the wizard's cloud-init box, login
+  through `virtctl port-forward` asserts `echo SSH_OK`
+- bootc build from the wizard (build-dialog log stream → VM exists)

@@ -139,6 +139,11 @@ spec:
         - name: corral-web
           image: ghcr.io/hanthor/corral:latest
           imagePullPolicy: Always
+          env:
+            # This deployment predates the corral-vms default — its VMs
+            # live in tailvm. New installs can drop this.
+            - name: CORRAL_NAMESPACE
+              value: tailvm
           ports:
             - containerPort: 8006
               name: http

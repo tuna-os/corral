@@ -1,0 +1,21 @@
+# A self-contained secondary network for testing Multus + corral's Add NIC
+# flow: a dedicated bridge (no physical uplink — pure VM-to-VM L2 on the same
+# node) with host-local IPAM. Talos ships the bridge/host-local CNI binaries
+# (flannel uses them), so nothing extra to install on the nodes.
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: corral-test-bridge
+  namespace: tailvm
+spec:
+  config: '{
+      "cniVersion": "0.3.1",
+      "type": "bridge",
+      "bridge": "corral-br0",
+      "ipam": {
+        "type": "host-local",
+        "subnet": "10.99.0.0/24",
+        "rangeStart": "10.99.0.10",
+        "rangeEnd": "10.99.0.200"
+      }
+    }'

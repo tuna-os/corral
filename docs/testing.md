@@ -320,3 +320,25 @@ async function deleteVM(page, name) { ... }
 | CI gate | `go test ./...` runs in <30s on PR |
 | Frontend regression | critical paths covered by Playwright |
 | Flake rate | <5% for integration tests (skip on capability mismatch) |
+
+---
+
+## Browser e2e: two tiers (2026-06-12)
+
+The Playwright suite (`e2e/corral.spec.js`) drives the real web UI against a
+real cluster, with multi-angle verification: every "the UI says it worked" is
+cross-checked from the cluster side (VMI phase, virt-launcher pod state, qemu
+container logs, guest serial output over the TTY websocket).
+
+**Safety:** every resource is `e2e-`-prefixed, deleted in `afterEach`
+(verified gone), and the cleanup guard refuses to touch unprefixed names —
+safe to run against production.
+
+| Tier | What | Where it runs |
+|---|---|---|
+| CI (default) | wizard flows, catalog content, create for every source type, CDI import to Succeeded (PVC flow), scale on a stopped VM, one full boot lifecycle (cirros) | `.github/workflows/e2e.yml`: kind + KubeVirt `useEmulation` + CDI on every push/PR — `npx playwright test --grep-invert "@live-only"` |
+| `@live-only` | console websockets (VNC RFB handshake, serial output) + fullscreen/scaling controls, SSH login with an injected key, RDP probe, snapshots (longhorn), bootc build → boot → serial check, boot-from-import | manually against the real cluster: `corral web` + `cd e2e && npx playwright test` |
+
+Knobs: `CORRAL_URL` (default `http://localhost:8006`), `CORRAL_NS` (default
+`tailvm`), `E2E_CONTAINERDISK` (lifecycle boot image; CI uses the cirros demo
+containerdisk because fedora won't boot in sensible time under TCG).

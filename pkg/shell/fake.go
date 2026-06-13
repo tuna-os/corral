@@ -40,8 +40,9 @@ func (Real) LookPath(name string) (string, error) {
 
 // Call records a single command invocation for test assertions.
 type Call struct {
-	Name string
-	Args []string
+	Name  string
+	Args  []string
+	Stdin string // input passed via RunStdin ("" for plain Run)
 }
 
 // FakeResponse defines the canned response for a command match.
@@ -93,17 +94,17 @@ func (f *Fake) AddPrefixResponse(prefix string, stdout string, err error) {
 // Run records the call and returns the matching response. Returns an error
 // if no response was registered for this command.
 func (f *Fake) Run(name string, args ...string) ([]byte, error) {
-	return f.recordAndRespond(name, args)
+	return f.recordAndRespond("", name, args)
 }
 
-// RunStdin records the call and returns the matching response.
-func (f *Fake) RunStdin(_ string, name string, args ...string) ([]byte, error) {
-	return f.recordAndRespond(name, args)
+// RunStdin records the call (stdin included) and returns the matching response.
+func (f *Fake) RunStdin(stdin string, name string, args ...string) ([]byte, error) {
+	return f.recordAndRespond(stdin, name, args)
 }
 
-func (f *Fake) recordAndRespond(name string, args []string) ([]byte, error) {
+func (f *Fake) recordAndRespond(stdin, name string, args []string) ([]byte, error) {
 	f.mu.Lock()
-	f.calls = append(f.calls, Call{Name: name, Args: args})
+	f.calls = append(f.calls, Call{Name: name, Args: args, Stdin: stdin})
 	f.mu.Unlock()
 
 	key := commandKey(name, args)
