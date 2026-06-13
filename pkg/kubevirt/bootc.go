@@ -207,25 +207,13 @@ spec:
               KERNEL_VERSION=$(ls /usr/lib/modules | sort -V | tail -n1)
               echo "KERNEL_VERSION=$KERNEL_VERSION"
 
-              # Loop allocation can fail transiently — the loop module/device
-              # nodes may not be present yet on a fresh node. Nudge them into
-              # existence and retry generously before failing to the Job backoff.
-              modprobe loop 2>/dev/null || true
-              [ -e /dev/loop-control ] || mknod /dev/loop-control c 10 237 2>/dev/null || true
-              LOOP=""
-              for i in $(seq 1 20); do
-                LOOP=$(losetup -f --show /output/disk.img 2>/dev/null) && break
-                echo "losetup attempt $i failed; retrying in 3s"
-                sleep 3
-              done
-              [ -n "$LOOP" ] || { echo "ERROR: no loop device available after 20 attempts"; exit 1; }
-              echo "Loop device: $LOOP"
-
-              mkfs.xfs -f "$LOOP"
+              # Format + mount the disk file directly — no loop device needed
+              # (pod security contexts often lack loop module access).
+              mkfs.xfs -f /output/disk.img 2>&1
               mkdir -p /target
-              mount "$LOOP" /target
+              mount /output/disk.img /target
 
-              ROOT_UUID=$(blkid -s UUID -o value "$LOOP")
+              ROOT_UUID=$(blkid -s UUID -o value /output/disk.img)
               echo "ROOT_UUID=$ROOT_UUID"
 
               bootc install to-filesystem \
