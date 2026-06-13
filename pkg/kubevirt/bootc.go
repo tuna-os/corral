@@ -179,7 +179,7 @@ metadata:
     app: corral-bootc-builder
 spec:
   backoffLimit: 1
-  ttlSecondsAfterFinished: 300
+  ttlSecondsAfterFinished: 900
   template:
     metadata:
       labels:
