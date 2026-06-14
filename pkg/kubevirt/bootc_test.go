@@ -10,7 +10,9 @@ import (
 func TestGenerateBootcVM_CloudInitTailscale(t *testing.T) {
 	vm := GenerateBootcVM("testvm", "myns", "test-pvc",
 		"quay.io/centos-bootc/centos-bootc:stream9",
-		"abc123", "6.1.0-test", "4G", 2, "",
+		"abc123", "6.1.0-test",
+		"root=UUID=abc123 rw ostree=/ostree/boot.1/default/deadbeef/0",
+		"4G", 2, "",
 		"tskey-auth-kTest123CNTRL")
 
 	if vm == nil {
@@ -21,6 +23,17 @@ func TestGenerateBootcVM_CloudInitTailscale(t *testing.T) {
 	spec := vm["spec"].(map[string]any)
 	tmpl := spec["template"].(map[string]any)
 	vmiSpec := tmpl["spec"].(map[string]any)
+
+	// The captured BLS cmdline (with the ostree= deployment arg) must be the
+	// one we boot with — without it the ostree initramfs hangs silently.
+	kargs := vmiSpec["domain"].(map[string]any)["firmware"].(map[string]any)["kernelBoot"].(map[string]any)["kernelArgs"].(string)
+	if !strings.Contains(kargs, "ostree=/ostree/boot.1/default/deadbeef/0") {
+		t.Errorf("kernelArgs missing ostree deployment arg: %q", kargs)
+	}
+	if !strings.Contains(kargs, "console=") {
+		t.Errorf("kernelArgs missing serial console: %q", kargs)
+	}
+
 	volumes := vmiSpec["volumes"].([]map[string]any)
 
 	var ci map[string]any
@@ -51,7 +64,9 @@ func TestGenerateBootcVM_CloudInitTailscale(t *testing.T) {
 func TestGenerateBootcVM_NoCloudInitWhenNoKey(t *testing.T) {
 	vm := GenerateBootcVM("testvm", "myns", "test-pvc",
 		"quay.io/centos-bootc/centos-bootc:stream9",
-		"abc123", "6.1.0-test", "4G", 2, "",
+		"abc123", "6.1.0-test",
+		"root=UUID=abc123 rw ostree=/ostree/boot.1/default/deadbeef/0",
+		"4G", 2, "",
 		"") // no tailscale key
 
 	if vm == nil {
