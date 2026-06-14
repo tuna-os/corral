@@ -73,6 +73,10 @@ rules:
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list"]
+  # Bootc builder reads pod logs to extract build variables.
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
   - apiGroups: [""]
     resources: ["pods/portforward"]
     verbs: ["create"]

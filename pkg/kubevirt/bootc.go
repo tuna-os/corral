@@ -73,7 +73,7 @@ func bootcRebuild(name, namespace, imageURI, sshPublicKey, diskSize string, prog
 		imageURI,
 		fmt.Sprintf("/usr/lib/modules/%s/vmlinuz", build.KernelVersion),
 		fmt.Sprintf("/usr/lib/modules/%s/initramfs.img", build.KernelVersion),
-		fmt.Sprintf("root=UUID=%s ro console=ttyS0", build.RootUUID))
+		bootcKernelArgs(build.KernelArgs, build.RootUUID))
 	if err := c.patchVMMerge(name, patch); err != nil {
 		return fmt.Errorf("updating kernel boot: %w", err)
 	}
@@ -131,6 +131,7 @@ func bootcBuildDisk(name, namespace, imageURI, sshPublicKey, diskSize string, pr
 		PVCName:       pvcName,
 		RootUUID:      vars["ROOT_UUID"],
 		KernelVersion: vars["KERNEL_VERSION"],
+		KernelArgs:    vars["KERNEL_ARGS"],
 	}
 	if res.RootUUID == "" {
 		return nil, fmt.Errorf("ROOT_UUID not found in builder logs")
@@ -201,6 +202,11 @@ spec:
             - |
               set -euo pipefail
               echo "=== Bootc install: %s ==="
+              # Ensure loop device nodes exist before mounting disk.img: mount's
+              # auto-loop asks the kernel for a free index and the container's
+              # static /dev has no node for freshly-allocated ones, so the mount
+              # fails with ENOENT. Pre-creating the nodes makes it deterministic.
+              for n in $(seq 0 63); do [ -e /dev/loop$n ] || mknod /dev/loop$n b 7 $n; done
               echo "$SSH_KEY" | base64 -d > /var/tmp/authorized_keys
               echo "SSH key written"
 
@@ -223,6 +229,14 @@ spec:
                 --bootloader none \
                 --karg=root=UUID=$ROOT_UUID \
                 /target 2>&1
+
+              # Capture the exact kernel cmdline bootc wrote to its BLS loader
+              # entry. It carries the ostree= deployment arg the initramfs needs
+              # to pivot to the real root; without it the guest hangs silently in
+              # early boot. KubeVirt kernelBoot pulls vmlinuz/initrd from the
+              # image but takes the cmdline from us, so we must reuse this one.
+              KERNEL_ARGS=$(grep -h '^options ' /target/boot/loader/entries/*.conf 2>/dev/null | head -n1 | sed 's/^options //')
+              echo "KERNEL_ARGS=$KERNEL_ARGS"
 
               DEPLOY_ROOT=$(ls -d /target/ostree/deploy/*/deploy/*.0 2>/dev/null | head -n1 || true)
               if [ -n "$DEPLOY_ROOT" ]; then
@@ -353,13 +367,13 @@ func waitForBootcJob(name, namespace string, progress io.Writer) (map[string]str
 func parseBuildVarsFromLog(log string) (map[string]string, error) {
 	vars := make(map[string]string)
 	for _, line := range strings.Split(log, "\n") {
-		for _, key := range []string{"ROOT_UUID", "KERNEL_VERSION"} {
+		for _, key := range []string{"ROOT_UUID", "KERNEL_VERSION", "KERNEL_ARGS"} {
 			if strings.HasPrefix(line, key+"=") {
 				vars[key] = strings.TrimSpace(strings.TrimPrefix(line, key+"="))
 			}
 		}
 	}
-	if vars["ROOT_UUID"] == "" || vars["KERNEL_VERSION"] == "" {
+	if vars["ROOT_UUID"] == "" || vars["KERNEL_VERSION"] == "" || vars["KERNEL_ARGS"] == "" {
 		// Include the last 500 chars of captured output for diagnostics.
 		tail := log
 		if len(tail) > 500 {
@@ -370,11 +384,27 @@ func parseBuildVarsFromLog(log string) (map[string]string, error) {
 	return vars, nil
 }
 
+// bootcKernelArgs returns the kernel command line to boot a bootc disk with.
+// It prefers the captured `options` line bootc wrote to its BLS loader entry
+// (which carries the essential `ostree=<deployment>` arg), and ensures a serial
+// console is wired up for log capture. If the build couldn't capture it, it
+// falls back to a synthesized line keyed off the root UUID.
+func bootcKernelArgs(captured, rootUUID string) string {
+	args := strings.TrimSpace(captured)
+	if args == "" {
+		args = fmt.Sprintf("root=UUID=%s ro", rootUUID)
+	}
+	if !strings.Contains(args, "console=") {
+		args += " console=ttyS0"
+	}
+	return args
+}
+
 // generateBootcVM creates a KubeVirt VirtualMachine manifest for a bootc-built disk.
 // Uses kernel boot (vmlinuz+initrd pulled from the bootc image at the detected
 // kernel version) since GRUB can't install on loopback devices with this
 // cluster's kernel.
-func generateBootcVM(name, namespace, pvcName, imageURI, rootUUID, kernelVersion, mem string, cpu int, node, tailscaleAuthKey string) map[string]any {
+func generateBootcVM(name, namespace, pvcName, imageURI, rootUUID, kernelVersion, kernelArgs, mem string, cpu int, node, tailscaleAuthKey string) map[string]any {
 	if mem == "" {
 		mem = "4G"
 	}
@@ -383,7 +413,11 @@ func generateBootcVM(name, namespace, pvcName, imageURI, rootUUID, kernelVersion
 	}
 
 	memMib := parseMem(mem)
-	kernelArgs := fmt.Sprintf("root=UUID=%s ro console=ttyS0", rootUUID)
+	// Prefer the exact cmdline bootc wrote to its BLS entry (it carries the
+	// ostree= deployment arg the initramfs needs). Fall back to a synthesized
+	// line only if the build couldn't capture it — that path can hang in early
+	// boot, but it's better than no args at all.
+	kernelArgs = bootcKernelArgs(kernelArgs, rootUUID)
 
 	volumes := []map[string]any{
 		{

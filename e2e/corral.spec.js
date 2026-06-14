@@ -815,11 +815,11 @@ test.describe('Corral web UI', () => {
     expect(manifest, 'VM uses kernel boot').toContain('kernelBoot');
 
     // The real proof the user cares about: the built disk actually boots.
-    // NOTE: on stock KubeVirt ≤1.8.2 + k8s 1.36 the reported status flaps
-    // indefinitely (kernelBootStatus.kernelInfo.checksum is a uint32 that the
-    // CRD schema validates as int32, so virt-handler's status updates get
-    // rejected). This cluster carries the CRD fix (format dropped via the
-    // KubeVirt CR's customizeComponents + direct patch, 2026-06-12).
+    // NOTE: stock KubeVirt ≤1.8.x + k8s 1.36 flaps the reported status forever
+    // (kernelBootStatus.kernelInfo.checksum is a uint32 the CRD schema validates
+    // as int32, so virt-handler's status updates get rejected). Fixed upstream
+    // in v1.9.0-beta.0 (Format:=int64, kubevirt commit e78c814e9); this cluster
+    // runs ≥v1.9.0-beta.0.
     await api(`/api/vms/${NS}/${vm}/start`, { method: 'POST' });
     expect(await waitFor(() => vmStatus(vm) === 'Running', 600_000, 5_000, `${vm} Running`)).toBe(true);
     assertVMHealthy(expect, vm);
