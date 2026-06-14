@@ -2,8 +2,9 @@ package catalog
 
 // BootcImage is a curated bootc (bootable container) image. These are the
 // upstream-maintained bases the bootc plugin can build into VM disks:
-// Fedora/CentOS bootc from the distros themselves, and Universal Blue's
-// uCore server images. All refs verified against their registries.
+// Fedora/CentOS bootc from the distros themselves, Universal Blue's uCore
+// server images, and the Universal Blue desktop images (Bluefin/Aurora/
+// Bazzite). All refs verified against their registries.
 type BootcImage struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
@@ -20,6 +21,15 @@ var BootcImages = []BootcImage{
 	{"centos-bootc-stream10", "CentOS Stream 10 bootc — official CentOS bootable container base", "quay.io/centos-bootc/centos-bootc:stream10", "centos.org", "centos"},
 	{"ucore", "Universal Blue uCore stable — Fedora CoreOS server with batteries included", "ghcr.io/ublue-os/ucore:stable", "universal-blue.org", "fedora"},
 	{"ucore-minimal", "Universal Blue uCore minimal stable — lean Fedora CoreOS server", "ghcr.io/ublue-os/ucore-minimal:stable", "universal-blue.org", "fedora"},
+
+	// Desktop bootc images (Universal Blue) — full graphical workstations that
+	// build and boot as VMs just like the server bases. The -dx variants add
+	// developer tooling (containers, IDEs, virtualization).
+	{"bluefin", "Universal Blue Bluefin — GNOME bootc desktop, cloud-native workstation", "ghcr.io/ublue-os/bluefin:stable", "projectbluefin.io", "gnome"},
+	{"bluefin-dx", "Universal Blue Bluefin DX — GNOME bootc desktop with developer tooling", "ghcr.io/ublue-os/bluefin-dx:stable", "projectbluefin.io", "gnome"},
+	{"aurora", "Universal Blue Aurora — KDE Plasma bootc desktop", "ghcr.io/ublue-os/aurora:stable", "getaurora.dev", "kde"},
+	{"aurora-dx", "Universal Blue Aurora DX — KDE Plasma bootc desktop with developer tooling", "ghcr.io/ublue-os/aurora-dx:stable", "getaurora.dev", "kde"},
+	{"bazzite", "Universal Blue Bazzite — gaming bootc desktop (Steam, emulators, handheld-ready)", "ghcr.io/ublue-os/bazzite:stable", "bazzite.gg", "steam"},
 }
 
 // FindBootc returns the bootc catalog image with the given name, or nil.
