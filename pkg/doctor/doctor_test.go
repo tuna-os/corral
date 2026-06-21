@@ -123,7 +123,7 @@ func TestRun_EmptyCluster_OnlyInstallsFixable(t *testing.T) {
 	if len(checks) == 0 {
 		t.Fatal("Run() returned no checks")
 	}
-	installable := map[string]bool{"KubeVirt installed": true, "CDI installed": true}
+	installable := map[string]bool{"KubeVirt installed": true, "CDI installed": true, "metrics-server": true}
 	for _, c := range checks {
 		if c.OK {
 			t.Errorf("check %q OK without a cluster", c.Name)
@@ -140,13 +140,15 @@ func TestFix_InstallsKubeVirtAndCDI(t *testing.T) {
 	fake.AddPrefixResponse("kubectl apply -f", "applied", nil)
 	// reconcileKubeVirt's follow-up read fails (webhook not up) — tolerated.
 	fake.AddPrefixResponse("kubectl patch kubevirt", "patched", nil)
+	// metrics-server install patches the deployment for --kubelet-insecure-tls.
+	fake.AddPrefixResponse("kubectl patch deployment metrics-server", "patched", nil)
 
 	fixed, err := Fix()
 	if err != nil {
 		t.Fatalf("Fix() error: %v", err)
 	}
-	if len(fixed) != 2 {
-		t.Errorf("Fix() fixed %v, want the KubeVirt + CDI installs", fixed)
+	if len(fixed) != 3 {
+		t.Errorf("Fix() fixed %v, want the KubeVirt + CDI + metrics-server installs", fixed)
 	}
 	var urls []string
 	for _, call := range fake.Calls() {

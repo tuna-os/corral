@@ -627,9 +627,14 @@ function renderTab(vm) {
         <dt>SSH</dt><dd><code>corral ssh ${esc(vm.name)}</code></dd>
         <dt>RDP</dt><dd id="vm-rdp">${vm.running ? 'checking…' : '—'}</dd>
       </dl>
+      <div id="cpu-graph-box" class="panel-section">
+        <h2 class="section">${icon('cpu')} CPU usage</h2>
+        <div id="cpu-graph"><p class="muted">${vm.running ? 'loading…' : 'VM is stopped'}</p></div>
+      </div>
       <div id="guest-info"></div>
       <div id="powersched-box" class="panel-section"><p class="muted">loading schedule…</p></div>`;
       if (vm.running) loadMetrics(vm);
+      if (vm.running) loadCPUGraph(vm);
       if (vm.running) checkRDP(vm);
       if (vm.agentConnected) loadGuestInfo(vm);
       renderPowerSchedule(vm);
@@ -757,6 +762,58 @@ async function loadMetrics(vm) {
     const el = $('#vm-usage');
     if (el) el.textContent = (m.cpu || m.mem) ? `${m.cpu || '?'} CPU · ${m.mem || '?'} mem` : 'no metrics yet';
   } catch { /* metrics-server may be absent */ }
+}
+
+// ── CPU sparkline (RRD-style history) ─────────────────────────────
+// The server samples per-VM CPU into a bounded ring buffer; we poll the
+// retained window and draw a sparkline. The poller self-cancels once the
+// graph element leaves the DOM (tab/VM switch via disconnectConsoles).
+let cpuGraphTimer = null;
+
+function stopCPUGraph() {
+  if (cpuGraphTimer) { clearInterval(cpuGraphTimer); cpuGraphTimer = null; }
+}
+
+async function loadCPUGraph(vm) {
+  stopCPUGraph();
+  const draw = async () => {
+    const box = $('#cpu-graph');
+    if (!box) { stopCPUGraph(); return; } // navigated away
+    let hist;
+    try { hist = await api(`/api/vms/${vm.namespace}/${vm.name}/metrics/history`); }
+    catch { box.innerHTML = `<p class="muted">CPU history unavailable</p>`; return; }
+    box.innerHTML = cpuSparkline(hist, vm);
+  };
+  await draw();
+  cpuGraphTimer = setInterval(draw, 15000);
+}
+
+function cpuSparkline(hist, vm) {
+  if (!hist || !hist.length) {
+    return `<p class="muted">No CPU samples yet — install <strong>metrics-server</strong>
+      (see <em>Cluster health</em>) and give it a moment to collect data.</p>`;
+  }
+  const cap = (vm.cpu || 1) * 1000;            // allocated millicores
+  const peak = Math.max(...hist.map((s) => s.cpu));
+  const top = Math.max(cap, peak) || 1;        // y-axis ceiling
+  const W = 600;
+  const H = 80;
+  const n = hist.length;
+  const xc = (i) => (n <= 1 ? 0 : (i / (n - 1)) * W);
+  const yc = (c) => H - (c / top) * H;
+  const line = hist.map((s, i) => `${xc(i).toFixed(1)},${yc(s.cpu).toFixed(1)}`).join(' ');
+  const area = `0,${H} ${line} ${W},${H}`;
+  const last = hist[n - 1].cpu;
+  const pct = ((last / cap) * 100).toFixed(0);
+  const capLine = cap <= top ? `<line class="spark-cap" x1="0" y1="${yc(cap).toFixed(1)}" x2="${W}" y2="${yc(cap).toFixed(1)}" />` : '';
+  const mins = Math.max(1, Math.round((n * 15) / 60));
+  return `<svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="CPU usage sparkline">
+      <polygon class="spark-area" points="${area}" />
+      <polyline class="spark-line" points="${line}" />
+      ${capLine}
+    </svg>
+    <div class="muted spark-legend">now <strong>${last}m</strong> (${pct}% of ${vm.cpu} vCPU)
+      · peak ${peak}m · last ~${mins}m</div>`;
 }
 
 // Autostart/shutdown windows (schedule plugin): two cron boundaries that flip
@@ -1191,6 +1248,7 @@ function connectTTY(vm, body) {
 }
 
 function disconnectConsoles() {
+  stopCPUGraph();
   try { rfb?.disconnect(); } catch { /* already gone */ }
   rfb = null;
   try { ttyWS?.close(); } catch { /* already gone */ }
