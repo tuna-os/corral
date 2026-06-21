@@ -264,12 +264,18 @@ dl.props dd { margin: 0; word-break: break-all; }
   margin-bottom: 12px;
 }
 .wiz-card {
+  position: relative;
   border: 1px solid var(--border); border-radius: var(--radius);
   padding: 12px; cursor: pointer;
   display: flex; flex-direction: column; gap: 6px; align-items: flex-start;
   background: var(--panel);
 }
 .wiz-card:hover { border-color: var(--accent, #4a9eda); }
+/* "Add source" card + the remove × on custom cards */
+.wiz-card.wiz-add { border-style: dashed; align-items: center; justify-content: center; text-align: center; color: var(--muted); }
+.wiz-add-plus { display: inline-flex; }
+.wiz-add-plus .icon { width: 22px; height: 22px; }
+.wiz-rmsrc { position: absolute; top: 4px; right: 6px; z-index: 1; }
 .wiz-card.selected { border-color: var(--accent, #4a9eda); outline: 1px solid var(--accent, #4a9eda); }
 .wiz-card .muted { font-size: .78rem; }
 .wiz-logo { width: 28px; height: 28px; }

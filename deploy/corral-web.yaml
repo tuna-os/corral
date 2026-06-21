@@ -70,6 +70,10 @@ rules:
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["get", "create", "delete"]
+  # User-defined custom image/ISO sources persist in a ConfigMap.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "create", "update", "patch"]
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list"]

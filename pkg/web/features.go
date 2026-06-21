@@ -11,6 +11,7 @@ import (
 	"github.com/hanthor/corral/pkg/doctor"
 	"github.com/hanthor/corral/pkg/kubevirt"
 	"github.com/hanthor/corral/pkg/plugin"
+	"github.com/hanthor/corral/pkg/sources"
 	"github.com/hanthor/corral/pkg/types"
 )
 
@@ -432,14 +433,80 @@ func handleBootcRebuild(w http.ResponseWriter, r *http.Request) {
 	jsonResp(w, http.StatusAccepted, map[string]string{"task": id})
 }
 
-// GET /api/images — the built-in OS image catalog.
-// ?type=bootc returns the curated bootc image catalog instead.
+// GET /api/images — the built-in OS image catalog, with any user-defined
+// custom sources appended (flagged custom:true). ?type=bootc returns the
+// curated bootc image catalog instead.
 func handleImages(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("type") == "bootc" {
 		jsonResp(w, http.StatusOK, catalog.BootcImages)
 		return
 	}
-	jsonResp(w, http.StatusOK, catalog.Images)
+	list := make([]sources.Source, 0, len(catalog.Images))
+	for _, img := range catalog.Images {
+		list = append(list, sources.Source{Image: img})
+	}
+	if custom, err := sources.Load(kubevirt.DefaultNamespace); err == nil {
+		list = append(list, custom...)
+	}
+	jsonResp(w, http.StatusOK, list)
+}
+
+// GET /api/sources — just the user-defined custom sources (for management UI).
+func handleListSources(w http.ResponseWriter, r *http.Request) {
+	srcs, err := sources.Load(kubevirt.DefaultNamespace)
+	if err != nil {
+		errResp(w, http.StatusInternalServerError, err)
+		return
+	}
+	if srcs == nil {
+		srcs = []sources.Source{}
+	}
+	jsonResp(w, http.StatusOK, srcs)
+}
+
+// POST /api/sources — add/replace a custom source.
+// Body: {name, description, kind: "containerDisk"|"url"|"iso", uri, defaultUser?}
+func handleAddSource(w http.ResponseWriter, r *http.Request) {
+	var b struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		Kind        string `json:"kind"`
+		URI         string `json:"uri"`
+		DefaultUser string `json:"defaultUser"`
+		Variant     string `json:"variant"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
+		errResp(w, http.StatusBadRequest, err)
+		return
+	}
+	s := sources.Source{Image: catalog.Image{
+		Name: b.Name, Description: b.Description, DefaultUser: b.DefaultUser, Variant: b.Variant,
+	}}
+	switch b.Kind {
+	case "containerDisk":
+		s.ContainerDisk = b.URI
+	case "url":
+		s.URL = b.URI
+	case "iso":
+		s.ISO = b.URI
+	default:
+		errResp(w, http.StatusBadRequest, fmt.Errorf("kind must be containerDisk, url, or iso"))
+		return
+	}
+	if err := sources.Add(kubevirt.DefaultNamespace, s); err != nil {
+		errResp(w, http.StatusBadRequest, err)
+		return
+	}
+	jsonResp(w, http.StatusOK, map[string]string{"status": "ok", "name": s.Name})
+}
+
+// DELETE /api/sources/{name} — remove a custom source.
+func handleDeleteSource(w http.ResponseWriter, r *http.Request) {
+	if err := sources.Remove(kubevirt.DefaultNamespace, r.PathValue("name")); err != nil {
+		errResp(w, http.StatusInternalServerError, err)
+		return
+	}
+	jsonResp(w, http.StatusOK, map[string]string{"status": "removed"})
 }
 
 // GET /api/instancetypes — cluster instancetypes + preferences for the create wizard
