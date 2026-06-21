@@ -20,3 +20,8 @@ e2e/test-results/
 
 # Local Claude Code settings
 .claude/settings.local.json
+
+# Scratch / transcript dumps — never commit (may contain secrets)
+corral.txt
+*.transcript
+test-results/
