@@ -633,11 +633,8 @@ func exportQcow2(w http.ResponseWriter, ns, name string) {
 		errResp(w, http.StatusInternalServerError, err)
 		return
 	}
-	// -c = zlib-compressed qcow2: compact, seekable, re-importable by CDI/qemu.
-	cmd := exec.Command(qemuImg, "convert", "-f", "raw", "-O", "qcow2", "-c", rawPath, qcowPath)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		errResp(w, http.StatusInternalServerError,
-			fmt.Errorf("qemu-img convert: %s", strings.TrimSpace(string(out))))
+	if err := convertRawToQcow2(qemuImg, rawPath, qcowPath); err != nil {
+		errResp(w, http.StatusInternalServerError, err)
 		return
 	}
 	os.Remove(rawPath) // free the raw before streaming the qcow2
@@ -654,6 +651,17 @@ func exportQcow2(w http.ResponseWriter, ns, name string) {
 		w.Header().Set("Content-Length", strconv.FormatInt(st.Size(), 10))
 	}
 	io.Copy(w, f)
+}
+
+// convertRawToQcow2 runs qemu-img to turn a raw disk into a zlib-compressed
+// qcow2 (-c): compact, seekable, and re-importable by CDI/qemu. Extracted so the
+// conversion (and its exact flags) is unit-testable with a real qemu-img.
+func convertRawToQcow2(qemuImg, rawPath, qcowPath string) error {
+	cmd := exec.Command(qemuImg, "convert", "-f", "raw", "-O", "qcow2", "-c", rawPath, qcowPath)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("qemu-img convert: %s", strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 func handleDeleteVM(w http.ResponseWriter, r *http.Request) {
