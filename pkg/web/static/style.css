@@ -371,6 +371,9 @@ dialog .row label { flex: 1; }
 dialog .hint { color: var(--muted); font-size: .78rem; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 
+.pick-dialog h3 { margin: 0 0 8px; font-size: 1.05rem; }
+.pick-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+
 .toast {
   position: fixed;
   bottom: 18px;

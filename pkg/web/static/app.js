@@ -628,15 +628,49 @@ async function post(vm, path, body) {
 
 async function migrateVM(vm) {
   const others = nodes.filter((n) => n.ready && n.name !== vm.node).map((n) => n.name);
-  const target = others.length
-    ? prompt(`Migrate ${vm.name} to which node?\nAvailable: ${others.join(', ')}\n(leave blank to let the scheduler choose)`, others[0] ?? '')
-    : '';
+  if (!others.length) { toast('No other ready node to migrate to.'); return; }
+  const target = await pickNode(vm, others);
   if (target === null) return; // cancelled
+  let res;
   try {
-    await post(vm, '/migrate', { targetNode: target.trim() });
-    toast(`Migrating ${vm.name}…`);
-  } catch (e) { toast(e.message); }
-  setTimeout(refresh, 800);
+    res = await post(vm, '/migrate', { targetNode: target });
+  } catch (e) { toast(e.message); return; }
+  if (res && res.task) {
+    watchBuild(res.task, vm.name, {
+      titleRun: `Migrating ${vm.name}${target ? ` → ${target}` : ''}…`,
+      titleDone: `✅ ${vm.name} migrated`,
+      titleFail: `❌ Migration failed`,
+    });
+  }
+}
+
+// pickNode shows a small modal with a target-node dropdown (eligible nodes
+// only). Resolves to the chosen node name, '' for "let the scheduler choose",
+// or null if cancelled.
+function pickNode(vm, eligible) {
+  return new Promise((resolve) => {
+    const dlg = document.createElement('dialog');
+    dlg.className = 'pick-dialog';
+    dlg.innerHTML = `
+      <h3>Migrate ${esc(vm.name)}</h3>
+      <p class="muted">Currently on <strong>${esc(vm.node || '—')}</strong>. Pick a target node.</p>
+      <label>Target node
+        <select id="pick-node">
+          <option value="">Auto — let the scheduler choose</option>
+          ${eligible.map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join('')}
+        </select>
+      </label>
+      <div class="pick-actions">
+        <button class="btn" value="cancel">Cancel</button>
+        <button class="btn primary" id="pick-go">${icon('migrate')} Migrate</button>
+      </div>`;
+    document.body.appendChild(dlg);
+    const finish = (val) => { dlg.close(); dlg.remove(); resolve(val); };
+    dlg.querySelector('[value="cancel"]').onclick = () => finish(null);
+    dlg.querySelector('#pick-go').onclick = () => finish(dlg.querySelector('#pick-node').value);
+    dlg.addEventListener('cancel', () => finish(null)); // Esc key
+    dlg.showModal();
+  });
 }
 
 async function cloneVM(vm) {
@@ -1429,11 +1463,14 @@ $('#create-form').onsubmit = async (e) => {
 };
 
 // Poll a bootc build task, streaming its log into the build dialog.
-function watchBuild(taskID, vmName) {
+function watchBuild(taskID, vmName, opts = {}) {
   const dlg = $('#build-dialog');
   const log = $('#build-log');
   const title = $('#build-title');
-  title.textContent = `Building bootc disk for ${vmName}…`;
+  const titleRun = opts.titleRun || `Building bootc disk for ${vmName}…`;
+  const titleDone = opts.titleDone || `✅ ${vmName} ready`;
+  const titleFail = opts.titleFail || `❌ Build failed`;
+  title.textContent = titleRun;
   log.textContent = '';
   dlg.showModal();
 
@@ -1444,11 +1481,11 @@ function watchBuild(taskID, vmName) {
     log.scrollTop = log.scrollHeight;
     if (t.status === 'done') {
       clearInterval(timer);
-      title.textContent = `✅ ${vmName} ready`;
+      title.textContent = titleDone;
       refresh();
     } else if (t.status === 'error') {
       clearInterval(timer);
-      title.textContent = `❌ Build failed`;
+      title.textContent = titleFail;
       log.textContent += `\n${t.error}`;
     }
   }, 2000);

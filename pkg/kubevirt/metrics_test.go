@@ -2,6 +2,45 @@ package kubevirt
 
 import "testing"
 
+func TestMigrationState_Completed(t *testing.T) {
+	c, r := newFakeClient()
+	r.AddResponseKV("kubectl", []string{"get", "vmi", "web", "-n", "tailvm", "-o", "json"},
+		`{"status":{"migrationState":{"completed":true,"failed":false,"sourceNode":"bihar","targetNode":"karnataka"}}}`, nil)
+	st, err := c.MigrationState("web")
+	if err != nil {
+		t.Fatalf("MigrationState: %v", err)
+	}
+	if !st.Present || !st.Completed || st.Active || st.Failed {
+		t.Errorf("unexpected state: %+v", st)
+	}
+	if st.TargetNode != "karnataka" {
+		t.Errorf("targetNode = %q, want karnataka", st.TargetNode)
+	}
+}
+
+func TestMigrationState_Active(t *testing.T) {
+	c, r := newFakeClient()
+	r.AddResponseKV("kubectl", []string{"get", "vmi", "web", "-n", "tailvm", "-o", "json"},
+		`{"status":{"migrationState":{"completed":false,"failed":false,"sourceNode":"bihar","targetNode":"karnataka"}}}`, nil)
+	st, _ := c.MigrationState("web")
+	if !st.Present || !st.Active || st.Completed || st.Failed {
+		t.Errorf("expected active migration, got %+v", st)
+	}
+}
+
+func TestMigrationState_None(t *testing.T) {
+	c, r := newFakeClient()
+	r.AddResponseKV("kubectl", []string{"get", "vmi", "web", "-n", "tailvm", "-o", "json"},
+		`{"status":{}}`, nil)
+	st, err := c.MigrationState("web")
+	if err != nil {
+		t.Fatalf("MigrationState: %v", err)
+	}
+	if st.Present {
+		t.Errorf("expected Present=false when no migrationState, got %+v", st)
+	}
+}
+
 func TestParseMilliCPU(t *testing.T) {
 	cases := map[string]int{
 		"123m": 123,

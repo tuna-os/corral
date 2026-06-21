@@ -33,6 +33,7 @@ const dvExists = (n) => kubectl(`kubectl get dv ${n} -n ${NS} -o name --ignore-n
 const vmStatus = (n) => kubectl(`kubectl get vm ${n} -n ${NS} -o jsonpath='{.status.printableStatus}'`).replace(/'/g, '');
 const dvPhase = (n) => kubectl(`kubectl get dv ${n} -n ${NS} -o jsonpath='{.status.phase}'`).replace(/'/g, '');
 const vmiPhase = (n) => kubectl(`kubectl get vmi ${n} -n ${NS} -o jsonpath='{.status.phase}' --ignore-not-found`).replace(/'/g, '');
+const vmiNode = (n) => kubectl(`kubectl get vmi ${n} -n ${NS} -o jsonpath='{.status.nodeName}' --ignore-not-found`).replace(/'/g, '');
 
 // assertVMHealthy cross-checks a "Running" VM from the cluster side: the VMI
 // is in phase Running, the virt-launcher pod is Running, and the qemu process
@@ -297,6 +298,42 @@ test.describe('Corral web UI', () => {
     page.once('dialog', (d) => d.accept());
     await page.click('#content .toolbar [data-act="delete"]');
     expect(await waitFor(() => !vmExists(vm), 60_000, 3000, `${vm} deleted`)).toBe(true);
+  });
+
+  test('live-migrate a running VM between nodes via the UI @live-only', async ({ page }) => {
+    test.setTimeout(600_000);
+    const vm = trackVM('e2e-mig-' + uid());
+
+    // An ephemeral containerDisk root is live-migratable (no RWO PVC pinning).
+    await createVM(page, { name: vm, sourceType: 'containerDisk',
+      source: CTR_IMAGE, cpu: 1, mem: '2G' });
+    expect(await waitFor(() => vmExists(vm), 30_000, 2000, `vm ${vm}`)).toBe(true);
+
+    await openVM(page, vm);
+    await page.click('#content .toolbar [data-act="start"]');
+    expect(await waitFor(() => vmStatus(vm) === 'Running', 240_000, 4000, `${vm} Running`)).toBe(true);
+    assertVMHealthy(expect, vm);
+
+    const startNode = await waitFor(() => vmiNode(vm) !== '', 60_000, 3000, `${vm} scheduled`) && vmiNode(vm);
+    expect(startNode, 'VM should be scheduled on a node').not.toBe('');
+
+    // Pick another ready node (the cluster's two amd64 hosts share a CPU vendor).
+    const { body: liveNodes } = await api('/api/nodes');
+    const target = (liveNodes || []).map((n) => n.name).find((n) => n && n !== startNode);
+    test.skip(!target, 'needs a second ready node to migrate to');
+
+    // Drive the one-click UI: Migrate → target-node picker → confirm.
+    await openVM(page, vm);
+    await page.click('#content .toolbar [data-act="migrate"]');
+    await page.waitForSelector('.pick-dialog[open]', { timeout: 10_000 });
+    await page.selectOption('.pick-dialog #pick-node', target);
+    await page.click('.pick-dialog #pick-go');
+    await page.waitForSelector('#build-dialog[open]', { timeout: 10_000 });
+
+    // It lands on the chosen node and stays Running (reachable) throughout.
+    expect(await waitFor(() => vmiNode(vm) === target, 300_000, 5000, `${vm} migrated → ${target}`)).toBe(true);
+    expect(vmStatus(vm)).toBe('Running');
+    assertVMHealthy(expect, vm);
   });
 
   // ── 4. Catalog create (containerdisk entry) ────────────────────────
