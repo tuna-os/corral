@@ -1044,4 +1044,78 @@ test.describe('Corral web UI', () => {
     }
   });
 
+  // ── New UI flows (non-live): multi-select, export picker, tags, identity ──
+  // These exercise the SPA surfaces added for bulk actions (#19), qcow2 export
+  // (#28), tags (#18) and the identity gate (#16). They run on kind — a single
+  // stopped containerDisk VM is enough; nothing needs to boot.
+
+  // Reload the datacenter and wait for a VM's row to appear in the table.
+  async function waitForDCRow(page, name) {
+    for (let i = 0; i < 20; i++) {
+      await page.goto(CORRAL_URL);
+      await page.waitForSelector('#content table', { timeout: 15_000 }).catch(() => {});
+      const row = page.locator(`#content tr[data-key="${NS}/${name}"]`);
+      if (await row.count()) return row;
+      await delay(2000);
+    }
+    throw new Error(`VM ${name} never appeared in the datacenter table`);
+  }
+
+  test('whoami exposes identity + privilege (open mode = admin)', async () => {
+    const { status, body } = await api('/api/whoami');
+    expect(status).toBe(200);
+    // No CORRAL_ADMINS configured in the e2e server → single-user/admin mode.
+    expect(body).toHaveProperty('admin');
+    expect(body).toHaveProperty('enforced');
+    expect(body.admin).toBe(true);
+    expect(body.enforced).toBe(false);
+  });
+
+  test('VM table: multi-select reveals the bulk-action bar + export picker', async ({ page }) => {
+    test.setTimeout(180_000);
+    const vm = trackVM('e2e-ui-' + uid());
+    await createVM(page, { name: vm, sourceType: 'containerDisk', source: CTR_IMAGE, cpu: 1, mem: '2G' });
+    expect(await waitFor(() => vmExists(vm), 30_000, 2000, `vm ${vm}`)).toBe(true);
+
+    // Multi-select: the bulk bar is hidden until a row checkbox is ticked.
+    const row = await waitForDCRow(page, vm);
+    await expect(page.locator('#content .bulkbar')).toBeHidden();
+    await row.locator('.vm-check').check();
+    await expect(page.locator('#content .bulkbar')).toBeVisible();
+    await expect(page.locator('#content .bulkbar-count')).toHaveText(/1 selected/);
+    // Select-all toggles every row checkbox.
+    await page.locator('#content .vm-check-all').check();
+    await expect(row.locator('.vm-check')).toBeChecked();
+
+    // Export picker offers both qcow2 and raw (stopped VM → Export is enabled).
+    await openVM(page, vm);
+    await page.click('#content .toolbar [data-act="export"]');
+    await page.waitForSelector('.pick-dialog[open]', { timeout: 10_000 });
+    const opts = await page.locator('.pick-dialog #pick-fmt option').evaluateAll(
+      (os) => os.map((o) => o.value));
+    expect(opts).toContain('qcow2');
+    expect(opts).toContain('raw');
+    await page.click('.pick-dialog [value="cancel"]'); // don't actually download
+  });
+
+  test('tags: setting a tag renders a chip and a working filter', async ({ page }) => {
+    test.setTimeout(180_000);
+    const vm = trackVM('e2e-tag-' + uid());
+    await createVM(page, { name: vm, sourceType: 'containerDisk', source: CTR_IMAGE, cpu: 1, mem: '2G' });
+    expect(await waitFor(() => vmExists(vm), 30_000, 2000, `vm ${vm}`)).toBe(true);
+
+    // Tag via the API (persisted as a corral.dev/tag.* label), then see it in UI.
+    const { status } = await api(`/api/vms/${NS}/${vm}/tags`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tag: 'e2e', on: true }),
+    });
+    expect(status).toBe(200);
+
+    const row = await waitForDCRow(page, vm);
+    await expect(row.locator('.chip.mini')).toHaveText(/e2e/);
+    // The filter bar appears and narrows the table to the tagged VM.
+    await page.click('#content [data-tagfilter="e2e"]');
+    await expect(page.locator(`#content tr[data-key="${NS}/${vm}"]`)).toBeVisible();
+  });
+
 });
