@@ -120,9 +120,11 @@ func Run() []Check {
 	})
 	metrics := ok("kubectl", "get", "apiservices", "v1beta1.metrics.k8s.io")
 	checks = append(checks, Check{
-		Name:   "metrics-server",
-		OK:     metrics,
-		Detail: "live CPU/memory on the summary tab",
+		Name:    "metrics-server",
+		OK:      metrics,
+		Detail:  detailIf(metrics, "live CPU/memory + summary sparkline", "missing — fix installs metrics-server (powers the CPU graph)"),
+		Fixable: !metrics,
+		fix:     installMetricsServer,
 	})
 
 	return checks
@@ -193,6 +195,23 @@ func installKubeVirt() error {
 		return err
 	}
 	reconcileKubeVirt() // best-effort; needs the admission webhook to be up
+	return nil
+}
+
+// installMetricsServer applies the upstream metrics-server, then patches it with
+// --kubelet-insecure-tls — kubelets on many clusters (Talos, kubeadm) serve
+// self-signed certs that metrics-server otherwise rejects.
+func installMetricsServer() error {
+	const url = "https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml"
+	if err := applyURL(url); err != nil {
+		return err
+	}
+	out, err := run("kubectl", "patch", "deployment", "metrics-server", "-n", "kube-system",
+		"--type=json", "-p",
+		`[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]`)
+	if err != nil {
+		return fmt.Errorf("patch metrics-server: %s", strings.TrimSpace(string(out)))
+	}
 	return nil
 }
 
