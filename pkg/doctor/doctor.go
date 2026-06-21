@@ -127,6 +127,15 @@ func Run() []Check {
 		fix:     installMetricsServer,
 	})
 
+	// Informational: the pull-through cache that speeds bootc builds. Not
+	// auto-fixed — it's an opt-in deploy (deploy/registry-cache.yaml).
+	cache := ok("kubectl", "get", "svc", "registry-cache", "-n", "corral")
+	checks = append(checks, Check{
+		Name:   "registry cache",
+		OK:     cache,
+		Detail: detailIf(cache, "ghcr.io pulls cached on-cluster — faster bootc builds", "not deployed (optional) — kubectl apply -f deploy/registry-cache.yaml to speed bootc builds"),
+	})
+
 	return checks
 }
 
