@@ -10,7 +10,19 @@ name: E2E
 on:
   push:
     branches: [main]
-  pull_request: {}
+  # Only run the (expensive) browser e2e when something that affects runtime
+  # behaviour changes — Go code, the served UI, the e2e specs themselves, or the
+  # deploy manifests. Docs/marketplace/CI-config-only PRs skip it.
+  pull_request:
+    paths:
+      - "**.go"
+      - "go.mod"
+      - "go.sum"
+      - "e2e/**"
+      - "pkg/web/static/**"
+      - "deploy/**"
+      - "Containerfile"
+      - ".github/workflows/e2e.yml"
   workflow_dispatch:
 
 env:

@@ -3,9 +3,15 @@ name: CI
 on:
   push:
     branches: [main]
-  # Run the fast gate (gofmt/vet/build/test -race) on every PR, including
-  # stacked PRs whose base is another feature branch — not just PRs into main.
-  pull_request: {}
+  # Run the fast gate (gofmt/vet/build/test -race) when Go code (or this
+  # workflow) changes — on every PR regardless of base branch, so stacked PRs
+  # are covered. Docs/marketplace/UI-asset-only PRs skip it (no Go to test).
+  pull_request:
+    paths:
+      - "**.go"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/ci.yml"
   workflow_dispatch:
 
 env:
