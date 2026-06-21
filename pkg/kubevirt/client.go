@@ -815,6 +815,13 @@ func GenerateDataVolume(name, namespace, isoURL string) map[string]any {
 		"metadata": map[string]any{
 			"name":      name,
 			"namespace": namespace,
+			// Provision + import immediately instead of waiting for a consumer.
+			// On WaitForFirstConsumer StorageClasses (kind's local-path, many
+			// cloud defaults) a standalone library import has no consuming pod,
+			// so without this the PVC never binds and the import hangs forever.
+			"annotations": map[string]string{
+				"cdi.kubevirt.io/storage.bind.immediate.requested": "true",
+			},
 		},
 		"spec": map[string]any{
 			"source": map[string]any{
