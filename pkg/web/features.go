@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/hanthor/corral/pkg/catalog"
@@ -326,6 +327,24 @@ func handleMarkTemplate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResp(w, http.StatusOK, map[string]bool{"isTemplate": b.On})
+}
+
+// POST /api/vms/{ns}/{name}/tags  body: {tag, on}  — add/remove a tag label
+func handleSetTag(w http.ResponseWriter, r *http.Request) {
+	ns, name := r.PathValue("ns"), r.PathValue("name")
+	var b struct {
+		Tag string `json:"tag"`
+		On  bool   `json:"on"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&b); err != nil || strings.TrimSpace(b.Tag) == "" {
+		errResp(w, http.StatusBadRequest, fmt.Errorf("tag is required"))
+		return
+	}
+	if err := kubevirt.NewClient(ns).SetTag(name, b.Tag, b.On); err != nil {
+		errResp(w, http.StatusInternalServerError, err)
+		return
+	}
+	jsonResp(w, http.StatusOK, map[string]any{"tag": b.Tag, "on": b.On})
 }
 
 // GET /api/nads — Multus NetworkAttachmentDefinitions for secondary NICs
