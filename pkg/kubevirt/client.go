@@ -700,14 +700,8 @@ func GenerateVM(opts types.CreateOpts) map[string]any {
 			}
 		}
 	}
-	// Join the tailnet on first boot. Skipped when the extra cloud-init
-	// already declares runcmd — two runcmd keys would be invalid YAML.
-	if opts.TailscaleAuthKey != "" && !strings.Contains(opts.CloudInitExtra, "runcmd:") {
-		userData += fmt.Sprintf(`runcmd:
-  - ['sh', '-c', 'command -v tailscale >/dev/null 2>&1 || curl -fsSL https://tailscale.com/install.sh | sh']
-  - ['tailscale', 'up', '--auth-key=%s', '--hostname=%s']
-`, opts.TailscaleAuthKey, name)
-	}
+	// Tailnet access is provided by the Tailscale operator proxy (ApplyProxy),
+	// not by joining from inside the guest — so no in-guest tailscale here.
 	if opts.CloudInitExtra != "" {
 		userData = mergeCloudInit(userData, opts.CloudInitExtra)
 	}

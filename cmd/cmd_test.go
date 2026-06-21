@@ -143,45 +143,6 @@ func TestRequireOrPrompt_EmptyStringArg(t *testing.T) {
 	}
 }
 
-func TestTsAuthKey_Flag(t *testing.T) {
-	orig := createTSAuthKey
-	createTSAuthKey = "tskey-flag-abc"
-	defer func() { createTSAuthKey = orig }()
-
-	key := tsAuthKey()
-	if key != "tskey-flag-abc" {
-		t.Errorf("expected tskey-flag-abc, got %s", key)
-	}
-}
-
-func TestTsAuthKey_Fallback(t *testing.T) {
-	orig := createTSAuthKey
-	createTSAuthKey = ""
-	defer func() { createTSAuthKey = orig }()
-
-	t.Setenv("TS_AUTHKEY", "tskey-env-xyz")
-
-	key := tsAuthKey()
-	if key != "tskey-env-xyz" {
-		t.Errorf("expected tskey-env-xyz from env, got %s", key)
-	}
-}
-
-func TestTsAuthKey_None(t *testing.T) {
-	orig := createTSAuthKey
-	createTSAuthKey = ""
-	defer func() { createTSAuthKey = orig }()
-
-	t.Setenv("TS_AUTHKEY", "")
-	// Clear config file fallback
-	t.Setenv("HOME", t.TempDir())
-
-	key := tsAuthKey()
-	if key != "" {
-		t.Errorf("expected empty key, got %s", key)
-	}
-}
-
 // ── Command structure tests ──────────────────────────────────────
 
 func TestRootCommand_HasExpectedSubcommands(t *testing.T) {
@@ -210,7 +171,7 @@ func TestCreateCommand_Flags(t *testing.T) {
 		"kubevirt", "mem", "cpu", "disk", "iso", "qcow",
 		"force", "container-disk", "image", "import", "pvc",
 		"namespace", "node", "cloud-init-password", "cloud-init",
-		"ts-authkey", "instancetype", "preference",
+		"instancetype", "preference",
 	}
 
 	for _, flag := range expectedFlags {
