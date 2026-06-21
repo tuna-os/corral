@@ -421,10 +421,18 @@ function renderNode(main, name) {
 
 function vmTable(list) {
   if (!list.length) return `<p class="console-msg">No virtual machines.</p>`;
-  return `<table><thead><tr>
+  return `<div class="bulkbar" hidden>
+      <span class="bulkbar-count">0 selected</span>
+      <button class="btn sm" data-bulk="start">${icon('play')} Start</button>
+      <button class="btn sm" data-bulk="stop">${icon('stop')} Stop</button>
+      <button class="btn sm" data-bulk="restart">${icon('restart')} Restart</button>
+    </div>
+    <table><thead><tr>
+      <th class="check"><input type="checkbox" class="vm-check-all" title="Select all"></th>
       <th>Name</th><th>Status</th><th>Node</th><th>Namespace</th><th>CPU</th><th>Mem</th><th>IP</th>
     </tr></thead><tbody>
     ${list.map((v) => `<tr data-key="${esc(vmKey(v))}">
+      <td class="check"><input type="checkbox" class="vm-check" value="${esc(vmKey(v))}"></td>
       <td>${esc(v.name)}</td>
       <td><span class="dot ${v.ready ? 'on' : v.running ? 'mid' : 'off'}"></span> ${esc(v.status)}</td>
       <td>${esc(v.node || '—')}</td><td>${esc(v.namespace)}</td>
@@ -434,9 +442,59 @@ function vmTable(list) {
 }
 
 function bindVMTable(root) {
+  // Row click opens the VM — except clicks landing in the checkbox cell.
   root.querySelectorAll('tr[data-key]').forEach((tr) => {
-    tr.onclick = () => select({ type: 'vm', key: tr.dataset.key });
+    tr.onclick = (e) => {
+      if (e.target.closest('.check')) return;
+      select({ type: 'vm', key: tr.dataset.key });
+    };
   });
+
+  const checks = [...root.querySelectorAll('.vm-check')];
+  const all = root.querySelector('.vm-check-all');
+  const bar = root.querySelector('.bulkbar');
+  if (!checks.length || !bar) return;
+
+  const selectedKeys = () => checks.filter((c) => c.checked).map((c) => c.value);
+  const update = () => {
+    const n = selectedKeys().length;
+    bar.hidden = n === 0;
+    bar.querySelector('.bulkbar-count').textContent = `${n} selected`;
+    if (all) {
+      all.checked = n > 0 && n === checks.length;
+      all.indeterminate = n > 0 && n < checks.length;
+    }
+  };
+
+  checks.forEach((c) => {
+    c.onclick = (e) => e.stopPropagation();
+    c.onchange = update;
+  });
+  if (all) {
+    all.onclick = (e) => e.stopPropagation();
+    all.onchange = () => { checks.forEach((c) => { c.checked = all.checked; }); update(); };
+  }
+
+  bar.querySelectorAll('[data-bulk]').forEach((b) => {
+    b.onclick = async (e) => {
+      e.stopPropagation();
+      const act = b.dataset.bulk;
+      const sel = selectedKeys().map(findVM).filter(Boolean);
+      if (!sel.length) return;
+      const verb = act === 'start' ? 'Start' : act === 'stop' ? 'Stop' : 'Restart';
+      if (!confirm(`${verb} ${sel.length} VM${sel.length === 1 ? '' : 's'}?`)) return;
+      let ok = 0;
+      let fail = 0;
+      await Promise.all(sel.map(async (vm) => {
+        try { await api(`/api/vms/${vm.namespace}/${vm.name}/${act}`, { method: 'POST' }); ok += 1; }
+        catch { fail += 1; }
+      }));
+      toast(`${verb}: ${ok} ok${fail ? `, ${fail} failed` : ''}`);
+      setTimeout(() => refresh(), 800);
+    };
+  });
+
+  update();
 }
 
 // ── VM view ───────────────────────────────────────────────────────
