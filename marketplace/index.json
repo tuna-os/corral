@@ -1,6 +1,16 @@
 {
   "plugins": [
     {
+      "name": "backup",
+      "description": "On-demand VM disk backup to S3/R2 and restore — exports a stopped VM's disk, uploads it to any rclone remote, and restores via CDI image-upload. Run `corral backup create <vm> --dest r2:bucket/path` and `corral backup restore <name> --src … --size 20Gi`.",
+      "version": "0.1.0",
+      "homepage": "https://github.com/hanthor/corral/tree/main/cmd/corral-backup",
+      "platforms": {
+        "linux/amd64": { "url": "https://github.com/hanthor/corral/releases/download/plugins/corral-backup-linux-amd64" },
+        "linux/arm64": { "url": "https://github.com/hanthor/corral/releases/download/plugins/corral-backup-linux-arm64" }
+      }
+    },
+    {
       "name": "bootc",
       "description": "Boot a bootable container image as a VM — bootc install runs on-cluster, then the VM kernel-boots from the image. create / images / rebuild / upgrade / switch / status. Run `corral bootc create <name> --image ...`.",
       "version": "0.2.0",
