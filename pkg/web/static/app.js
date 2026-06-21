@@ -45,6 +45,38 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g,
 const vmKey = (vm) => `${vm.namespace}/${vm.name}`;
 const findVM = (key) => vms.find((v) => vmKey(v) === key);
 
+// Tag the tree/list is filtered to, or null for "show all".
+let tagFilter = null;
+
+// Add (on=true) or remove (on=false) a tag on a VM, then refresh.
+async function setTag(vm, tag, on) {
+  try { await post(vm, '/tags', { tag, on }); }
+  catch (e) { toast(e.message); return; }
+  setTimeout(() => refresh(), 500);
+}
+
+// Removable tag chips for a VM, plus an "+ add" affordance (bound by bindTags).
+function tagChips(vm) {
+  const tags = vm.tags || [];
+  const chips = tags.map((t) =>
+    `<span class="chip">${esc(t)}<button class="chip-x" data-untag="${esc(t)}" title="Remove tag">×</button></span>`).join('');
+  return `${chips || '<span class="muted">none</span>'}
+    <button class="btn sm" id="tag-add">${icon('plus')} Tag</button>`;
+}
+
+function bindTags(vm) {
+  const el = $('#vm-tags');
+  if (!el) return;
+  el.querySelectorAll('[data-untag]').forEach((b) => {
+    b.onclick = () => setTag(vm, b.dataset.untag, false);
+  });
+  const add = el.querySelector('#tag-add');
+  if (add) add.onclick = () => {
+    const t = prompt('Add tag (letters, digits, -_.):', '');
+    if (t && t.trim()) setTag(vm, t.trim(), true);
+  };
+}
+
 // Fingerprint of the last-rendered state. The 5s poll only re-renders when
 // the data (or what's selected) actually changed — otherwise innerHTML
 // replacement would reset scroll position and text selection on every tick.
@@ -354,6 +386,9 @@ async function renderExtensions(main) {
 function renderDatacenter(main) {
   const running = vms.filter((v) => v.ready).length;
   const ready = nodes.filter((n) => n.ready).length;
+  const allTags = [...new Set(vms.flatMap((v) => v.tags || []))].sort();
+  if (tagFilter && !allTags.includes(tagFilter)) tagFilter = null; // tag vanished
+  const shown = tagFilter ? vms.filter((v) => (v.tags || []).includes(tagFilter)) : vms;
   main.innerHTML = `
     <div class="page-head"><h1>Datacenter</h1></div>
     <div class="cards">
@@ -361,12 +396,20 @@ function renderDatacenter(main) {
       <div class="card"><div class="num">${running}</div><div class="label">running</div></div>
       <div class="card"><div class="num">${ready}/${nodes.length}</div><div class="label">nodes ready</div></div>
     </div>
-    ${vmTable(vms)}
+    ${allTags.length ? `<div class="tagbar">
+      <span class="muted">Filter by tag:</span>
+      <button class="chip filter ${tagFilter ? '' : 'active'}" data-tagfilter="">all</button>
+      ${allTags.map((t) => `<button class="chip filter ${tagFilter === t ? 'active' : ''}" data-tagfilter="${esc(t)}">${esc(t)}</button>`).join('')}
+    </div>` : ''}
+    ${vmTable(shown)}
     <h2 class="section">${icon('disk')} Image library
       <button class="btn" id="dc-import">${icon('download')} Import image</button>
     </h2>
     <div id="dc-images"><p class="muted">loading…</p></div>`;
   bindVMTable(main);
+  main.querySelectorAll('[data-tagfilter]').forEach((b) => {
+    b.onclick = () => { tagFilter = b.dataset.tagfilter || null; renderDatacenter(main); markRendered(); };
+  });
   $('#dc-import').onclick = importImage;
   loadImages();
 }
@@ -450,7 +493,7 @@ function vmTable(list) {
     </tr></thead><tbody>
     ${list.map((v) => `<tr data-key="${esc(vmKey(v))}">
       <td class="check"><input type="checkbox" class="vm-check" value="${esc(vmKey(v))}"></td>
-      <td>${esc(v.name)}</td>
+      <td>${esc(v.name)}${(v.tags || []).map((t) => `<span class="chip mini">${esc(t)}</span>`).join('')}</td>
       <td><span class="dot ${v.ready ? 'on' : v.running ? 'mid' : 'off'}"></span> ${esc(v.status)}</td>
       <td>${esc(v.node || '—')}</td><td>${esc(v.namespace)}</td>
       <td>${v.cpu}</td><td>${esc(v.mem)}</td><td>${esc(v.ip || '—')}</td>
@@ -571,6 +614,7 @@ function renderTab(vm) {
     case 'summary':
       body.innerHTML = `<dl class="props">
         <dt>Status</dt><dd>${esc(vm.status)}</dd>
+        <dt>Tags</dt><dd id="vm-tags">${tagChips(vm)}</dd>
         <dt>Namespace</dt><dd>${esc(vm.namespace)}</dd>
         <dt>Node</dt><dd>${esc(vm.node || '—')}</dd>
         <dt>vCPUs</dt><dd>${vm.cpu}</dd>
@@ -589,6 +633,7 @@ function renderTab(vm) {
       if (vm.running) checkRDP(vm);
       if (vm.agentConnected) loadGuestInfo(vm);
       renderPowerSchedule(vm);
+      bindTags(vm);
       break;
     case 'console': connectVNC(vm, body); break;
     case 'terminal': connectTTY(vm, body); break;

@@ -212,6 +212,35 @@ dl.props {
 dl.props dt { color: var(--muted); }
 dl.props dd { margin: 0; word-break: break-all; }
 
+/* Tags: chips on rows/detail + a filter bar above the datacenter list. */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 9px;
+  margin: 0 4px 2px 0;
+  border-radius: 999px;
+  font-size: .78rem;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+.chip.mini { padding: 1px 7px; font-size: .72rem; margin-left: 6px; vertical-align: middle; }
+.chip-x {
+  background: none; border: none; color: var(--muted);
+  cursor: pointer; font-size: 1rem; line-height: 1; padding: 0;
+}
+.chip-x:hover { color: var(--red); }
+.chip.filter { cursor: pointer; }
+.chip.filter:hover { border-color: var(--muted); }
+.chip.filter.active { background: var(--accent); border-color: var(--accent); color: #14100b; font-weight: 600; }
+.tagbar {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+  margin-bottom: 12px;
+}
+.tagbar .muted { font-size: .82rem; margin-right: 4px; }
+#vm-tags { display: flex; align-items: center; flex-wrap: wrap; gap: 2px; }
+
 #vnc-screen, #tty-screen {
   background: #000;
   border: 1px solid var(--border);

@@ -568,6 +568,55 @@ func (c *Client) AddNIC(name, nad, iface string) error {
 
 // MarkTemplate labels (or unlabels) a VM as a golden template. Templates are
 // ordinary stopped VMs that "create from template" clones.
+// tagLabelPrefix namespaces user tags as VM labels so they survive round-trips
+// and are selectable with `kubectl get vm -l corral.dev/tag.<name>`.
+const tagLabelPrefix = "corral.dev/tag."
+
+// tagsFromLabels extracts the sorted set of user tags from a VM's labels.
+func tagsFromLabels(labels map[string]string) []string {
+	var tags []string
+	for k, v := range labels {
+		if v == "true" && strings.HasPrefix(k, tagLabelPrefix) {
+			if t := strings.TrimPrefix(k, tagLabelPrefix); t != "" {
+				tags = append(tags, t)
+			}
+		}
+	}
+	sort.Strings(tags)
+	return tags
+}
+
+// sanitizeTag normalises a user tag to a valid Kubernetes label-name segment
+// (lowercase alnum plus -_.). Returns "" if nothing valid remains.
+func sanitizeTag(tag string) string {
+	tag = strings.ToLower(strings.TrimSpace(tag))
+	var b strings.Builder
+	for _, r := range tag {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' {
+			b.WriteRune(r)
+		}
+	}
+	out := strings.Trim(b.String(), "-_.")
+	if len(out) > 63 {
+		out = out[:63]
+	}
+	return out
+}
+
+// SetTag adds (on) or removes (off) a single tag label on a VM.
+func (c *Client) SetTag(name, tag string, on bool) error {
+	t := sanitizeTag(tag)
+	if t == "" {
+		return fmt.Errorf("invalid tag %q (use letters, digits, -_.)", tag)
+	}
+	val := tagLabelPrefix + t + "=true"
+	if !on {
+		val = tagLabelPrefix + t + "-" // trailing - removes the label
+	}
+	_, err := c.runner().Run("kubectl", "label", "vm", name, "-n", c.Namespace, val, "--overwrite")
+	return err
+}
+
 func (c *Client) MarkTemplate(name string, on bool) error {
 	val := "corral.dev/template=true"
 	if !on {
