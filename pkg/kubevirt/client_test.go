@@ -772,6 +772,12 @@ func TestGenerateDataVolume_Metadata(t *testing.T) {
 	if meta["namespace"] != "tailvm" {
 		t.Errorf("namespace = %v, want tailvm", meta["namespace"])
 	}
+	// Immediate binding so library imports don't hang on WaitForFirstConsumer
+	// StorageClasses (the import has no consuming pod to trigger binding).
+	ann, _ := meta["annotations"].(map[string]string)
+	if ann["cdi.kubevirt.io/storage.bind.immediate.requested"] != "true" {
+		t.Errorf("DataVolume must request immediate binding, got annotations %v", ann)
+	}
 }
 
 func TestGenerateVM_ContainerDiskWithoutDatadisk(t *testing.T) {
