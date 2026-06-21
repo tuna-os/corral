@@ -219,7 +219,64 @@ func builderScript(imageURI, sshPublicKey string) string {
 	return strings.NewReplacer(
 		"__IMAGE__", imageURI,
 		"__SSHKEY__", strings.TrimSpace(sshPublicKey),
+		"__MIRRORCONF__", builderMirrorConf(),
 	).Replace(builderCloudInit)
+}
+
+// registryCache identifies the in-cluster pull-through cache Service.
+const (
+	registryCacheService   = "registry-cache"
+	registryCacheNamespace = "corral"
+	registryCachePort      = "5000"
+)
+
+// bootcRegistryMirror is the pull-through cache host:port for the builder's
+// podman. It is DEFAULT-ON when the cache is deployed: if the registry-cache
+// Service exists, builds route ghcr.io through it automatically (deploy
+// registry-cache.yaml to turn it on). When the cache is absent, this returns ""
+// and builds pull directly exactly as before — so there's no regression for
+// clusters without it. CORRAL_REGISTRY_MIRROR overrides the host; set it to
+// "off"/"none" to force-disable even when the cache is present.
+func bootcRegistryMirror() string {
+	switch v := strings.TrimSpace(os.Getenv("CORRAL_REGISTRY_MIRROR")); strings.ToLower(v) {
+	case "":
+		return detectRegistryCache() // default: use the cache when it's deployed
+	case "off", "none", "false", "0":
+		return ""
+	default:
+		return v
+	}
+}
+
+// detectRegistryCache returns the cache Service's cluster DNS host:port when the
+// Service exists, else "". Probed per build (builds are infrequent).
+func detectRegistryCache() string {
+	out, err := runPkg("kubectl", "get", "svc", registryCacheService,
+		"-n", registryCacheNamespace, "-o", "jsonpath={.metadata.name}")
+	if err != nil || strings.TrimSpace(string(out)) == "" {
+		return ""
+	}
+	return registryCacheService + "." + registryCacheNamespace + ".svc.cluster.local:" + registryCachePort
+}
+
+// builderMirrorConf renders the registries.conf.d body that points the builder's
+// podman at the cache for ghcr.io (where the heavy desktop bootc images live),
+// indented to sit under `content: |`. Empty (a harmless empty drop-in) when no
+// mirror is configured. See deploy/registry-cache.yaml.
+func builderMirrorConf() string {
+	host := bootcRegistryMirror()
+	if host == "" {
+		return ""
+	}
+	lines := []string{
+		`[[registry]]`,
+		`prefix = "ghcr.io"`,
+		`location = "ghcr.io"`,
+		`[[registry.mirror]]`,
+		fmt.Sprintf(`location = %q`, host),
+		`insecure = true`,
+	}
+	return strings.Join(lines, "\n      ") // 6-space indent under content: |
 }
 
 // generateBuilderSecret holds the cloud-init userData (too large for KubeVirt's
@@ -295,6 +352,9 @@ func generateBuilderVM(name, namespace, pvcName, secretName string) map[string]a
 // CORRAL_BUILD_FAIL on the serial console signal the result to waitForBuilderVM.
 const builderCloudInit = `#cloud-config
 write_files:
+  - path: /etc/containers/registries.conf.d/corral-mirror.conf
+    content: |
+      __MIRRORCONF__
   - path: /root/buildkey.pub
     content: "__SSHKEY__"
   - path: /root/build.sh

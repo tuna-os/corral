@@ -1,0 +1,89 @@
+# On-cluster pull-through registry cache for ghcr.io — speeds bootc builds by
+# serving big desktop/base images from a local cache instead of re-pulling from
+# ghcr.io on every build (the builder VM's pull dominates build time).
+#
+# How it's used: when this Service exists, the bootc builder auto-routes ghcr.io
+# pulls through it (corral detects the `registry-cache` Service — no extra
+# config). Absent, builds pull directly as before (no regression). Force-disable
+# with CORRAL_REGISTRY_MIRROR=off on the corral-web Deployment.
+#
+# This is a standard `registry:2` in proxy (pull-through) mode. One instance
+# caches one upstream — ghcr.io here, where the Universal Blue / hanthor images
+# live. Apply with: kubectl apply -f deploy/registry-cache.yaml
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: registry-cache
+  namespace: corral
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 50Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: registry-cache
+  namespace: corral
+  labels:
+    app: registry-cache
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: registry-cache
+  strategy:
+    type: Recreate # single RWO PVC — don't run two pods at once
+  template:
+    metadata:
+      labels:
+        app: registry-cache
+    spec:
+      containers:
+        - name: registry
+          image: registry:2
+          env:
+            # Pull-through cache mode for ghcr.io.
+            - name: REGISTRY_PROXY_REMOTEURL
+              value: "https://ghcr.io"
+            - name: REGISTRY_STORAGE_FILESYSTEM_ROOTDIRECTORY
+              value: /var/lib/registry
+            # Trim the cache as it grows so it can't fill the PVC.
+            - name: REGISTRY_STORAGE_DELETE_ENABLED
+              value: "true"
+          ports:
+            - containerPort: 5000
+              name: registry
+          volumeMounts:
+            - name: cache
+              mountPath: /var/lib/registry
+          readinessProbe:
+            httpGet:
+              path: /v2/
+              port: 5000
+            initialDelaySeconds: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+      volumes:
+        - name: cache
+          persistentVolumeClaim:
+            claimName: registry-cache
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: registry-cache
+  namespace: corral
+spec:
+  selector:
+    app: registry-cache
+  ports:
+    - name: registry
+      port: 5000
+      targetPort: 5000
