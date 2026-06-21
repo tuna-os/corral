@@ -4,10 +4,11 @@
 
 ### VM
 
-A virtual machine managed by Corral. Lives in one of two backends: **qemu**
-(local host, systemd-managed) or **kubevirt** (on the Talos K8s cluster).
-Every VM has a unique **name** (within the registry) and is stored in
-`~/.local/share/tailvm/registry.json`.
+A virtual machine managed by Corral. Runs on the **kubevirt** backend (the
+Talos K8s cluster) — the primary and only actively-developed backend. A
+legacy **qemu** backend still exists for local CLI/TUI VMs but is frozen
+(see [Backend](#backend)). Every VM has a unique **name** (within the
+registry) and is stored in `~/.local/share/tailvm/registry.json`.
 
 ### vmid
 
@@ -19,20 +20,31 @@ hash of their name.
 
 ### Backend
 
-Where a VM's compute resources live. Two backends:
+Where a VM's compute resources live.
 
-- **qemu** — local `qemu-system-x86_64` process managed via systemd user
-  units. Networking via user-mode with hostfwd. Access through the host's
-  Tailscale IP.
-- **kubevirt** — VM runs as a KubeVirt `VirtualMachine` resource on the
-  Talos cluster. Managed via `kubectl`/`virtctl`. Access through
-  `virtctl` tunnels or port-proxy Service on the tailnet.
+- **kubevirt** — the primary backend. VM runs as a KubeVirt
+  `VirtualMachine` resource on the Talos cluster. Managed via
+  `kubectl`/`virtctl`. Access through `virtctl` tunnels or port-proxy
+  Service on the tailnet. The web UI targets this backend exclusively.
+- **qemu** — **legacy, frozen.** Local `qemu-system-x86_64` process
+  managed via systemd user units; user-mode networking with hostfwd;
+  access through the host's Tailscale IP. CLI/TUI only — never surfaced in
+  the web UI. Receives no new features; removal is a future decision.
 
 ### Registry
 
 The file `~/.local/share/tailvm/registry.json` (mode 0600). Maps VM names
 to their backend, namespace, cloud-init password, and other metadata. The
 single source of truth for local VM state. Live probing is the fallback.
+
+### Container (CT)
+
+A "pet" pod presented in the Proxmox shape of an LXC container: a Kubernetes
+pod with a **PVC-backed persistent rootfs** and an init process, treated as a
+long-lived, console-able, SSH-able lightweight machine — not a disposable
+workload. The honest middle ground between a VM and a cattle pod. Distinct
+from ordinary K8s Deployments/pods, which Corral does not present as CTs.
+_Avoid_: LXC (the PVE term), workload, deployment.
 
 ### Plugin
 
