@@ -1,6 +1,9 @@
 package main
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"testing"
 
 	"github.com/hanthor/corral/pkg/shell"
@@ -42,6 +45,43 @@ func TestEnsureRclone(t *testing.T) {
 	runner = ok
 	if err := ensureRclone(); err != nil {
 		t.Errorf("expected success when rclone present: %v", err)
+	}
+}
+
+// Exercises the real rclone invocation the backup/restore flows use: copyto
+// between two paths (rclone's local backend needs no config), proving the
+// command shape works end to end. Skips when rclone isn't installed (CI
+// installs it so this runs there).
+func TestRclone_RealCopytoRoundTrip(t *testing.T) {
+	if _, err := exec.LookPath("rclone"); err != nil {
+		t.Skip("rclone not installed")
+	}
+	orig := runner
+	runner = shell.Real{}
+	defer func() { runner = orig }()
+
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src.img.gz")
+	dst := filepath.Join(dir, "remote", "backup.img.gz")
+	back := filepath.Join(dir, "restored.img.gz")
+	payload := []byte("corral-backup-roundtrip")
+	if err := os.WriteFile(src, payload, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ensureRclone(); err != nil {
+		t.Fatalf("ensureRclone with rclone present: %v", err)
+	}
+	// "Upload" then "download" (both real rclone copyto calls).
+	if out, err := runner.Run("rclone", "copyto", src, dst); err != nil {
+		t.Fatalf("rclone copyto up: %s", out)
+	}
+	if out, err := runner.Run("rclone", "copyto", dst, back); err != nil {
+		t.Fatalf("rclone copyto down: %s", out)
+	}
+	got, err := os.ReadFile(back)
+	if err != nil || string(got) != string(payload) {
+		t.Fatalf("round-trip mismatch: got %q err %v", got, err)
 	}
 }
 
