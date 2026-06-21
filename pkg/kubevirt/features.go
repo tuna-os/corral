@@ -52,6 +52,51 @@ func (c *Client) Migrate(name, targetNode string) error {
 	return c.virtctlRun("migrate", name, "-n", c.Namespace)
 }
 
+// MigrationState is a snapshot of a VM's most recent live migration, read from
+// the VMI's status.migrationState.
+type MigrationState struct {
+	Present    bool   `json:"present"` // a migrationState exists on the VMI
+	Active     bool   `json:"active"`
+	Completed  bool   `json:"completed"`
+	Failed     bool   `json:"failed"`
+	SourceNode string `json:"sourceNode"`
+	TargetNode string `json:"targetNode"`
+}
+
+// MigrationState reads the VMI's live-migration progress. A VMI with no
+// migration yet returns Present=false (not an error).
+func (c *Client) MigrationState(name string) (MigrationState, error) {
+	out, err := c.runner().Run("kubectl", "get", "vmi", name, "-n", c.Namespace, "-o", "json")
+	if err != nil {
+		return MigrationState{}, err
+	}
+	var vmi struct {
+		Status struct {
+			MigrationState *struct {
+				Completed  bool   `json:"completed"`
+				Failed     bool   `json:"failed"`
+				SourceNode string `json:"sourceNode"`
+				TargetNode string `json:"targetNode"`
+			} `json:"migrationState"`
+		} `json:"status"`
+	}
+	if err := json.Unmarshal(out, &vmi); err != nil {
+		return MigrationState{}, err
+	}
+	ms := vmi.Status.MigrationState
+	if ms == nil {
+		return MigrationState{}, nil
+	}
+	return MigrationState{
+		Present:    true,
+		Active:     !ms.Completed && !ms.Failed,
+		Completed:  ms.Completed,
+		Failed:     ms.Failed,
+		SourceNode: ms.SourceNode,
+		TargetNode: ms.TargetNode,
+	}, nil
+}
+
 func (c *Client) virtctlRun(args ...string) error {
 	virtctl, err := c.ensureVirtctl()
 	if err != nil {
