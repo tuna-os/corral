@@ -929,4 +929,76 @@ test.describe('Corral web UI', () => {
     await waitFor(() => vmStatus(vm) === 'Stopped', 120_000, 4000, `${vm} Stopped`);
   });
 
+  // ── 14. Bootc rebuild: SSH access survives a --wipe rebuild ─────────
+  // The disk is wiped+rebuilt; the key (recorded as a VM annotation at create)
+  // must be re-baked, or the VM would be locked out. Uses fedora-bootc (fast
+  // ostree build) and rebuilds via the API with NO key in the request.
+  test('bootc rebuild re-bakes the SSH key and preserves access @live-only', async ({ page }) => {
+    test.setTimeout(2_700_000); // 45 min — two fedora-bootc builds + boots
+
+    const { body: caps } = await api('/api/capabilities');
+    test.skip(!caps.bootc, 'bootc plugin not enabled on this server');
+
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'corral-e2e-'));
+    const key = path.join(dir, 'id_ed25519');
+    execSync(`ssh-keygen -t ed25519 -N "" -f ${key} -q`);
+    const pub = fs.readFileSync(`${key}.pub`, 'utf8').trim();
+    const vm = trackVM('e2e-rb-' + uid());
+
+    const sshOK = (marker) => new Promise((resolve) => {
+      const port = 20000 + Math.floor(Math.random() * 10000);
+      const fwd = spawn('virtctl', ['port-forward', `vm/${vm}`, `${port}:22`, '-n', NS],
+        { stdio: ['ignore', 'pipe', 'pipe'] });
+      setTimeout(() => {
+        try {
+          const out = execSync(
+            `ssh -p ${port} -i ${key} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ` +
+            `-o ConnectTimeout=8 -o BatchMode=yes root@127.0.0.1 echo ${marker} 2>&1`,
+            { timeout: 22000, encoding: 'utf8' });
+          fwd.kill('SIGKILL'); resolve(out.includes(marker));
+        } catch { fwd.kill('SIGKILL'); resolve(false); }
+      }, 4000);
+    });
+
+    try {
+      // Create a fedora-bootc VM (no namespace in body → server default = test ns).
+      const { body: createRes } = await api('/api/vms', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: vm, bootc: 'quay.io/fedora/fedora-bootc:44',
+          cpu: 2, mem: '4G', disk: '30G', sshKey: pub }),
+      });
+      expect(createRes.task, 'bootc create returned a task').toBeTruthy();
+      await delay(15000);
+      expect(await waitFor(() => vmExists(vm), 1_500_000, 10_000, `vm ${vm} built`)).toBe(true);
+
+      // The SSH key is recorded on the VM so rebuild can re-bake it.
+      const ann = kubectl(`kubectl get vm ${vm} -n ${NS} -o jsonpath={.metadata.annotations.corral\\.bootc/ssh-key}`);
+      expect(ann, 'VM records the corral.bootc/ssh-key annotation').toContain('ssh-ed25519');
+
+      // Start + initial SSH.
+      await api(`/api/vms/${NS}/${vm}/start`, { method: 'POST' });
+      expect(await waitFor(() => vmStatus(vm) === 'Running', 600_000, 5000, `${vm} Running`)).toBe(true);
+      expect(await waitFor(() => sshOK('RB_BEFORE'), 360_000, 10_000, 'ssh before rebuild')).toBe(true);
+
+      // Rebuild via the API with NO sshKey in the request — must use the annotation.
+      const { body: rb } = await api(`/api/vms/${NS}/${vm}/bootc/rebuild`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: 'quay.io/fedora/fedora-bootc:44' }),
+      });
+      expect(rb.task, 'rebuild returned a task').toBeTruthy();
+      // Rebuild stops the VM, wipes+rebuilds the disk, restarts it.
+      expect(await waitFor(() => vmStatus(vm) === 'Stopped', 180_000, 5000, `${vm} stopped for rebuild`)).toBe(true);
+      expect(await waitFor(() => vmStatus(vm) === 'Running', 1_500_000, 10_000, `${vm} Running after rebuild`)).toBe(true);
+
+      // The key must survive the --wipe — re-baked from the annotation.
+      expect(await waitFor(() => sshOK('RB_AFTER'), 360_000, 10_000, 'ssh after rebuild'),
+        'SSH access preserved across the --wipe rebuild (key re-baked from the VM annotation)').toBe(true);
+
+      await api(`/api/vms/${NS}/${vm}/stop`, { method: 'POST' });
+      await waitFor(() => vmStatus(vm) === 'Stopped', 120_000, 4000, `${vm} Stopped`);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
 });
