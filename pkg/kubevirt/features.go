@@ -524,6 +524,28 @@ func (c *Client) Export(name, volume, outputPath string) (string, error) {
 			return "", fmt.Errorf("%s has no persistent disk to export (ephemeral container-disk VMs have nothing to back up)", name)
 		}
 	}
+	return c.exportFormat(virtctl, name, volume, outputPath, "gzip")
+}
+
+// ExportRaw downloads the VM's disk uncompressed (no gzip) — the source for an
+// on-the-fly qcow2 conversion. Same preconditions as Export.
+func (c *Client) ExportRaw(name, volume, outputPath string) (string, error) {
+	virtctl, err := c.ensureVirtctl()
+	if err != nil {
+		return "", err
+	}
+	if volume == "" {
+		if volume, err = c.primaryPVC(name); err != nil {
+			return "", err
+		}
+		if volume == "" {
+			return "", fmt.Errorf("%s has no persistent disk to export (ephemeral container-disk VMs have nothing to back up)", name)
+		}
+	}
+	return c.exportFormat(virtctl, name, volume, outputPath, "raw")
+}
+
+func (c *Client) exportFormat(virtctl, name, volume, outputPath, format string) (string, error) {
 	if outputPath == "" {
 		outputPath = name + ".img.gz"
 	}
@@ -534,7 +556,7 @@ func (c *Client) Export(name, volume, outputPath string) (string, error) {
 	// export proxy has no external Ingress, so external links never appear.
 	args := []string{"vmexport", "download", expName,
 		"--namespace=" + c.Namespace, "--vm=" + name, "--volume=" + volume,
-		"--output=" + outputPath, "--format=gzip", "--insecure", "--port-forward"}
+		"--output=" + outputPath, "--format=" + format, "--insecure", "--port-forward"}
 	cmd := exec.Command(virtctl, args...)
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr

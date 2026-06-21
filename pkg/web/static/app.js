@@ -670,11 +670,7 @@ async function vmAction(vm, act) {
     catch (e) { toast(e.message); }
     return setTimeout(refresh, 600);
   }
-  if (act === 'export') {
-    toast('Preparing backup… the download will start when ready.');
-    window.location.href = `/api/vms/${vm.namespace}/${vm.name}/export`;
-    return;
-  }
+  if (act === 'export') return exportVM(vm);
   if (act === 'upgrade') {
     const ref = prompt('Rebuild from which bootc image?\nLeave blank to pull the latest of the current image, or enter a new image to switch.', '');
     if (ref === null) return; // cancelled
@@ -717,6 +713,44 @@ async function migrateVM(vm) {
       titleFail: `❌ Migration failed`,
     });
   }
+}
+
+// exportVM lets the user pick a disk-backup format, then downloads it. qcow2
+// (compact, compressed, portable) is the default; raw.gz is the no-qemu-img
+// fallback the server always supports.
+async function exportVM(vm) {
+  const fmt = await pickExportFormat(vm);
+  if (!fmt) return; // cancelled
+  toast('Preparing backup… the download will start when ready.');
+  const q = fmt === 'qcow2' ? '?format=qcow2' : '';
+  window.location.href = `/api/vms/${vm.namespace}/${vm.name}/export${q}`;
+}
+
+function pickExportFormat(vm) {
+  return new Promise((resolve) => {
+    const dlg = document.createElement('dialog');
+    dlg.className = 'pick-dialog';
+    dlg.innerHTML = `
+      <h3>Export ${esc(vm.name)}</h3>
+      <p class="muted">Download a backup of the VM's disk.</p>
+      <label>Format
+        <select id="pick-fmt">
+          <option value="qcow2">qcow2 — compact, compressed, portable (recommended)</option>
+          <option value="raw">raw.gz — gzipped raw image (always available)</option>
+        </select>
+      </label>
+      <p class="muted" style="font-size:.78rem">qcow2 needs qemu-img on the server; if it's unavailable the download falls back with a clear error and raw.gz still works.</p>
+      <div class="pick-actions">
+        <button class="btn" value="cancel">Cancel</button>
+        <button class="btn primary" id="pick-go">${icon('download')} Download</button>
+      </div>`;
+    document.body.appendChild(dlg);
+    const finish = (val) => { dlg.close(); dlg.remove(); resolve(val); };
+    dlg.querySelector('[value="cancel"]').onclick = () => finish(null);
+    dlg.querySelector('#pick-go').onclick = () => finish(dlg.querySelector('#pick-fmt').value);
+    dlg.addEventListener('cancel', () => finish(null));
+    dlg.showModal();
+  });
 }
 
 // pickNode shows a small modal with a target-node dropdown (eligible nodes
