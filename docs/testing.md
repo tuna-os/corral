@@ -342,3 +342,18 @@ safe to run against production.
 Knobs: `CORRAL_URL` (default `http://localhost:8006`), `CORRAL_NS` (default
 `tailvm`), `E2E_CONTAINERDISK` (lifecycle boot image; CI uses the cirros demo
 containerdisk because fedora won't boot in sensible time under TCG).
+
+### Update (2026-06-21)
+
+- **Path-targeted CI.** Both workflows now run only when the diff touches their
+  area: the fast Go gate on `**.go`/`go.mod`; the e2e suite on Go / `pkg/web/static`
+  / `e2e` / `deploy`. Docs/marketplace-only PRs skip both; `main` pushes stay
+  fully validated.
+- **Real external tools run in CI.** The fast gate installs `qemu-utils` +
+  `rclone` so `TestConvertRawToQcow2_Real` (qcow2 export) and the backup
+  plugin's `rclone copyto` round-trip run for real instead of skipping.
+- **Non-live e2e widened** to the new SPA flows: multi-select bulk bar, the
+  export format picker, tag chips + filter, `/api/whoami`, and read-only gating
+  (via a `page.route` mock — no Tailscale headers needed).
+- **`@live-only` adds** live migration between nodes and the bootc rebuild
+  SSH-survives-`--wipe` round-trip.

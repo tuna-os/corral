@@ -40,10 +40,12 @@ VMs are cattle. Stop treating each one like a networking project.
   `<name>-vm.your-tailnet.ts.net`.
 - **A Proxmox-style web UI.** `corral web` serves a dark, mobile-friendly
   dashboard: datacenter → node → VM tree, live status, create wizard,
-  start/stop/restart/pause/migrate, and *real consoles in the browser* —
-  noVNC graphics and an xterm.js serial TTY. It also runs **on the cluster
-  itself** (`talos-k8s/corral-web.yaml`), exposed to your tailnet by the
-  Tailscale operator. CLI, TUI, and web all share the same state.
+  start/stop/restart/pause, **one-click live migration** with a target-node
+  picker, **multi-select bulk start/stop**, **tags** (chips + tree filter), a
+  per-VM **CPU usage sparkline**, disk **export** (qcow2 or raw.gz), and *real
+  consoles in the browser* — noVNC graphics and an xterm.js serial TTY. It also
+  runs **on the cluster itself** (`deploy/corral-web.yaml`), exposed to your
+  tailnet by the Tailscale operator. CLI, TUI, and web all share the same state.
 - **One static Go binary.** No daemons, no controllers to install, no
   client-side K8s SDK. It drives `kubectl`/`virtctl`/`systemctl` — the tools
   you already trust — and gets out of the way.
@@ -117,14 +119,36 @@ The web UI has an **Extensions** tab to browse and install the same plugins.
 The flagship extension, `corral bootc`, turns a bootable container image into a
 running VM without any local tooling:
 
-1. Corral creates a PVC and runs a privileged Job **using your image as the
-   builder** — `bootc install to-filesystem` onto an XFS loopback disk, your
-   SSH key baked in, sshd enabled.
+1. Corral provisions a block-mode PVC and runs a short-lived **builder VM**
+   (not a pod) that runs `bootc install to-disk` onto it — so the VM's own
+   kernel does the filesystem work. This is what lets it install images the
+   node kernel can't handle, e.g. Universal Blue desktops (bluefin/dakota) that
+   need **btrfs + composefs**. The right backend (ostree vs composefs) and
+   filesystem are auto-detected from the image; your SSH key is baked in and
+   sshd enabled.
 2. Build logs stream to your terminal live.
-3. The VM kernel-boots directly from the image's own kernel/initramfs
-   (auto-detected), so no bootloader gymnastics are needed.
+3. The finished disk is self-bootable (GPT + ESP + bootloader), so the final VM
+   **UEFI-boots** it — no kernelBoot, no bootloader gymnastics.
 
-Rebuild your OS in CI, `corral create` it as a VM in minutes.
+`corral bootc rebuild|upgrade|switch` re-bakes the disk from a new image (the
+SSH key is re-applied across the `--wipe`). Rebuild your OS in CI, `corral
+create` it as a VM in minutes.
+
+**Faster builds:** deploy `deploy/registry-cache.yaml` (an on-cluster
+pull-through cache for ghcr.io) and the builder routes image pulls through it
+automatically — no config. Disable with `CORRAL_REGISTRY_MIRROR=off`.
+
+### The backup plugin
+
+`corral backup` ships VM disk backups to any S3/R2 bucket via rclone:
+
+```bash
+corral backup create web --dest r2:backups/corral      # export + upload
+corral backup restore web-restored --src r2:backups/corral/web-….img.gz --size 20Gi
+corral backup list --dest r2:backups/corral
+```
+
+Needs `rclone` configured for your remote (`rclone config`) and `virtctl`.
 
 ## Configuration
 
@@ -137,6 +161,15 @@ tailscale:
 `corral config` shows what's active. State lives in
 `~/.local/share/tailvm/` (registry + local VM disks) — shared with the
 legacy `tailvm` tool, so existing VMs keep working.
+
+Environment overrides (handy for the in-cluster web deployment):
+
+| Variable | Effect |
+|---|---|
+| `CORRAL_NAMESPACE` | default VM namespace (code default: `corral-vms`) |
+| `CORRAL_ADMINS` | comma-separated tailnet logins allowed to mutate; unset = single-user/open (see [Web UI](#web-ui)) |
+| `CORRAL_REGISTRY_MIRROR` | override/disable (`off`) the bootc builder's pull-through cache host |
+| `CORRAL_BOOTC_BUILD_TIMEOUT` | minutes to wait for a bootc builder VM (default 45) |
 
 ## Web UI
 
@@ -156,8 +189,13 @@ kubectl apply -f deploy/corral-web.yaml
 > walks through the whole stack — KubeVirt + CDI, the feature gates,
 > Longhorn + snapshots, Multus, and deploying Corral.
 
-No auth is built in — tailnet membership *is* the auth. Never bind a public
-interface. Feature roadmap: [`WEBUI-PLAN.md`](WEBUI-PLAN.md).
+Tailnet membership *is* the authentication — never bind a public interface.
+For **authorization**, set `CORRAL_ADMINS` to a comma-separated list of tailnet
+logins: listed users can mutate; everyone else gets a **read-only** UI and
+mutating API calls are rejected (403). Unset = single-user/open (the default).
+Identity comes from the Tailscale ingress headers — see
+[ADR-0003](docs/adr/0003-identity-source.md). Feature roadmap:
+[`WEBUI-PLAN.md`](WEBUI-PLAN.md).
 
 ## Command reference
 
