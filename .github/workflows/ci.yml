@@ -23,6 +23,13 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # Real-tool tests (qcow2 conversion, rclone round-trip) run here instead of
+      # skipping — see TestConvertRawToQcow2_Real / TestRclone_RealCopytoRoundTrip.
+      - name: Install test tools (qemu-img, rclone)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-utils rclone
+
       - name: gofmt
         run: |
           unformatted=$(gofmt -l .)
