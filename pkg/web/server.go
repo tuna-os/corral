@@ -53,9 +53,9 @@ func Serve(addr string) error {
 	return http.ListenAndServe(addr, mux)
 }
 
-// newMux builds the HTTP router. Split out from Serve so tests can exercise the
-// full route table with httptest.
-func newMux() (*http.ServeMux, error) {
+// newMux builds the HTTP router (wrapped in the admin gate). Split out from
+// Serve so tests can exercise the full route table with httptest.
+func newMux() (http.Handler, error) {
 	sub, err := fs.Sub(staticFS, "static")
 	if err != nil {
 		return nil, err
@@ -69,6 +69,7 @@ func newMux() (*http.ServeMux, error) {
 	// same corral web deployment.
 	mux.Handle("/api2/json/", proxmox.NewHandler(kubevirt.DefaultNamespace))
 
+	mux.HandleFunc("GET /api/whoami", handleWhoami)
 	mux.HandleFunc("GET /api/vms", handleListVMs)
 	mux.HandleFunc("POST /api/vms", handleCreateVM)
 	mux.HandleFunc("GET /api/nodes", handleNodes)
@@ -130,7 +131,9 @@ func newMux() (*http.ServeMux, error) {
 	mux.Handle("GET /api/tty/{ns}/{name}", wsServer(ttyBridge))
 	mux.Handle("GET /api/rdp/{ns}/{name}", wsServer(rdpBridge))
 
-	return mux, nil
+	// The admin gate lets safe (GET) requests through and rejects mutating
+	// requests from non-admins when CORRAL_ADMINS is set.
+	return adminGate(mux), nil
 }
 
 func jsonResp(w http.ResponseWriter, code int, v any) {
