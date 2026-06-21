@@ -401,20 +401,20 @@ func handleCreateVM(w http.ResponseWriter, r *http.Request) {
 	}
 
 	opts := types.CreateOpts{
-		Name:             req.Name,
-		Namespace:        ns,
-		CPU:              req.CPU,
-		Mem:              req.Mem,
-		Disk:             req.Disk,
-		ContainerDisk:    containerDisk,
-		ImportURL:        req.Import,
-		ISO:              req.ISO,
-		PVC:              req.PVC,
-		Node:             req.Node,
-		CloudInitExtra:   req.CloudInit,
-		InstanceType:     req.InstanceType,
-		Preference:       req.Preference,
-		SSHPublicKey:     sshKey,
+		Name:           req.Name,
+		Namespace:      ns,
+		CPU:            req.CPU,
+		Mem:            req.Mem,
+		Disk:           req.Disk,
+		ContainerDisk:  containerDisk,
+		ImportURL:      req.Import,
+		ISO:            req.ISO,
+		PVC:            req.PVC,
+		Node:           req.Node,
+		CloudInitExtra: req.CloudInit,
+		InstanceType:   req.InstanceType,
+		Preference:     req.Preference,
+		SSHPublicKey:   sshKey,
 	}
 	done := taskBegin("create", ns+"/"+req.Name)
 	if err := kubevirt.CreateVM(opts); err != nil {
