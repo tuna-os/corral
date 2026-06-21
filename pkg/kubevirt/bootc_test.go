@@ -11,7 +11,7 @@ import (
 // disk via UEFI and carries no cloud-init disk of its own.
 func TestGenerateBootcVM_NoInGuestCloudInit(t *testing.T) {
 	vm := GenerateBootcVM("testvm", "myns", "testvm-bootc-disk",
-		"quay.io/centos-bootc/centos-bootc:stream9", "4G", 2, "")
+		"quay.io/centos-bootc/centos-bootc:stream9", "ssh-ed25519 AAAAKEY u@h", "4G", 2, "")
 	if vm == nil {
 		t.Fatal("GenerateBootcVM returned nil (bootc plugin not compiled in?)")
 	}

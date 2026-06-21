@@ -60,7 +60,7 @@ func main() {
 			if err != nil {
 				return fmt.Errorf("bootc build: %w", err)
 			}
-			vm := kubevirt.GenerateBootcVM(name, ns, build.PVCName, image, mem, cpu, node)
+			vm := kubevirt.GenerateBootcVM(name, ns, build.PVCName, image, key, mem, cpu, node)
 			if vm == nil {
 				return fmt.Errorf("bootc VM manifest unavailable")
 			}
