@@ -1043,6 +1043,13 @@ func applyProxyManifest(label, manifest string) error {
 
 // ApplyProxy creates/updates the proxy resources for a VM.
 func ApplyProxy(name, ns string, ports []int) error {
+	// The proxy Service is only useful if the Tailscale K8s operator is there to
+	// turn its `tailscale.com/expose` annotation into a tailnet device. Without
+	// the operator (e.g. a plain/kind cluster) the proxy Deployment is just a
+	// useless socat pod, so skip it — keeps non-operator clusters clean.
+	if !tailscaleOperatorPresent() {
+		return nil
+	}
 	if err := applyProxyManifest("RBAC", GenerateProxyRBAC(name, ns)); err != nil {
 		return err
 	}
@@ -1055,6 +1062,14 @@ func ApplyProxy(name, ns string, ports []int) error {
 		return err
 	}
 	return nil
+}
+
+// tailscaleOperatorPresent reports whether the Tailscale K8s operator is
+// installed, by checking for the `tailscale` IngressClass it registers. Used to
+// skip exposing VMs on clusters without the operator.
+func tailscaleOperatorPresent() bool {
+	_, err := runPkg("kubectl", "get", "ingressclass", "tailscale")
+	return err == nil
 }
 
 // DeleteProxy removes all proxy resources for a VM.
