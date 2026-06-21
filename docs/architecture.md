@@ -166,10 +166,10 @@ corral create web --kubevirt --image fedora
 ```
 corral bootc create dev --image quay.io/centos-bootc/...
   │
-  ├─ kubevirt.BootcBuildDisk()           → creates Job + PVC
-  │   ├─ Job: bootc install to-filesystem (on-cluster)
+  ├─ kubevirt.BootcBuildDisk()           → block PVC + short-lived builder VM
+  │   ├─ builder VM: bootc install to-disk (composefs/ostree auto-detected)
   │   └─ Progress streams to stderr / task log
-  ├─ kubevirt.GenerateBootcVM()          → VM manifest (kernel-boot from disk)
+  ├─ kubevirt.GenerateBootcVM()          → VM manifest (UEFI-boots the disk)
   ├─ kubevirt.Apply(vm)                  → kubectl apply
   └─ registry.Set("dev", {backend, namespace})
 ```
@@ -229,8 +229,10 @@ The `deploy/corral-web.yaml` manifest:
 5. Tailscale Ingress (`ingressClassName: tailscale`) → TLS at
    `corral.<tailnet>.ts.net`
 
-No auth is built in — tailnet membership *is* the auth. Never bind a
-public interface.
+Tailnet membership *is* the authentication — never bind a public interface.
+Authorization is an `adminGate` middleware: `CORRAL_ADMINS` (tailnet logins)
+gates mutating requests, with everyone else read-only (see
+[ADR-0003](adr/0003-identity-source.md)). Unset = single-user/open.
 
 ## Plugin system
 

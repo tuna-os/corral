@@ -100,11 +100,30 @@ Execute an action on a VM. Valid actions:
 | `restart` | Restart |
 | `pause` | Freeze (kubevirt only) |
 | `unpause` | Resume (kubevirt only) |
-| `migrate` | Live-migrate (kubevirt only) |
-
-`migrate` accepts an optional body `{"targetNode": "bihar"}`.
+| `migrate` | Live-migrate (kubevirt only) — prefer the dedicated endpoint below |
 
 **Response**: `{"status": "ok"}`
+
+### `POST /api/vms/{ns}/{name}/migrate`
+
+Live-migrate as a tracked background task with progress in the activity panel.
+The trigger runs synchronously (so "not migratable / cross-vendor" errors come
+back immediately); the migration is then watched to completion.
+
+**Body**: `{"targetNode": "bihar"}` (optional — empty lets the scheduler choose,
+from among same-CPU-vendor nodes).
+
+**Response**: `202 {"task": "migrate-…"}` — poll `GET /api/tasks/{id}`.
+
+### `POST /api/vms/{ns}/{name}/tags`
+
+Add or remove a tag, persisted as a `corral.dev/tag.<name>` VM label (so tags
+survive round-trips and are `kubectl get vm -l`-selectable). Tags are surfaced
+on every VM in `GET /api/vms`.
+
+**Body**: `{"tag": "prod", "on": true}`
+
+**Response**: `{"tag": "prod", "on": true}`
 
 ### `DELETE /api/vms/{ns}/{name}`
 
@@ -274,9 +293,28 @@ Recent K8s events for the VM (Proxmox-style task log).
 Live CPU/memory/disk metrics. Returns null values if the metrics-server isn't
 available.
 
+### `GET /api/vms/{ns}/{name}/metrics/history`
+
+Retained CPU samples for the Summary-panel sparkline. The server samples every
+running VM every ~15s into a bounded in-memory ring buffer (~1h). Returns
+`[{"t": <epoch-ms>, "cpu": <millicores>}, …]` — an empty array when
+metrics-server is absent.
+
 ---
 
 ## Infrastructure
+
+### `GET /api/whoami`
+
+The caller's tailnet identity and privilege, for the UI to show the logged-in
+user and switch to read-only for non-admins. Identity comes from the Tailscale
+ingress headers; admin is governed by `CORRAL_ADMINS` (see
+[ADR-0003](adr/0003-identity-source.md)).
+
+**Response**: `{"login": "alice@github", "name": "Alice", "admin": true, "enforced": false}`
+
+Mutating requests (non-GET) are rejected with `403` for non-admins when an
+allowlist is configured.
 
 ### `GET /api/nodes`
 
@@ -377,9 +415,16 @@ browser.
 
 ### `GET /api/vms/{ns}/{name}/export`
 
-Download a VM disk as gzip. The VM must be stopped (RWO disk is busy while
+Download a VM disk backup. The VM must be stopped (RWO disk is busy while
 running). Triggers `virtctl vmexport` and streams the result.
-Content-Type: `application/gzip`.
+
+| Query | Format | Content-Type |
+|---|---|---|
+| *(default)* | gzipped raw (`name.img.gz`) | `application/gzip` |
+| `?format=qcow2` | compressed qcow2 (`name.qcow2`) | `application/octet-stream` |
+
+qcow2 needs `qemu-img` on the server (it converts the raw export); if absent the
+request returns `501` and the default raw.gz still works.
 
 ---
 
