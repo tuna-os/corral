@@ -1071,6 +1071,29 @@ test.describe('Corral web UI', () => {
     expect(body.enforced).toBe(false);
   });
 
+  test('identity gate: read-only mode hides mutating controls', async ({ page }) => {
+    // Mock whoami → a non-admin so the SPA flips to read-only. This exercises
+    // the UI gating without needing CORRAL_ADMINS or a Tailscale identity header
+    // (which kind can't inject) — the server enforcement is unit-tested.
+    await page.route('**/api/whoami', (route) => route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ login: 'viewer@example', name: 'Viewer', admin: false, enforced: true }),
+    }));
+    await page.goto(CORRAL_URL);
+    await page.waitForSelector('#tree', { timeout: 15_000 });
+
+    // The read-only badge shows and the Create button is hidden.
+    await expect(page.locator('#whoami .ro-badge')).toBeVisible();
+    await expect(page.locator('#btn-create')).toBeHidden();
+    await expect(page.locator('body')).toHaveClass(/read-only/);
+
+    // Removing the override (admin again) restores the Create button.
+    await page.unroute('**/api/whoami');
+    await page.goto(CORRAL_URL);
+    await page.waitForSelector('#tree', { timeout: 15_000 });
+    await expect(page.locator('#btn-create')).toBeVisible();
+  });
+
   test('VM table: multi-select reveals the bulk-action bar + export picker', async ({ page }) => {
     test.setTimeout(180_000);
     const vm = trackVM('e2e-ui-' + uid());
