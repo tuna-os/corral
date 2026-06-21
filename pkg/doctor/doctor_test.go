@@ -55,6 +55,7 @@ func scriptHealthyCluster(fake *shell.Fake) {
 		"volumesnapshotclass.snapshot.storage.k8s.io/longhorn-snapshot\n", nil)
 	fake.AddResponse("kubectl get deploy -A -l kubevirt.io=virt-exportproxy", "virt-exportproxy", nil)
 	fake.AddResponse("kubectl get apiservices v1beta1.metrics.k8s.io", "ok", nil)
+	fake.AddResponse("kubectl get svc registry-cache -n corral", "registry-cache", nil)
 }
 
 func checkByName(t *testing.T, checks []Check, name string) Check {
