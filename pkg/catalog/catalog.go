@@ -68,6 +68,17 @@ var Images = []Image{
 	{Name: "almalinux-10-official", Description: "AlmaLinux 10 GenericCloud, from repo.almalinux.org",
 		URL: "https://repo.almalinux.org/almalinux/10/cloud/x86_64/images/AlmaLinux-10-GenericCloud-latest.x86_64.qcow2", DefaultUser: "almalinux", Source: "almalinux.org", Logo: "almalinux", Variant: "server"},
 
+	// Universal Blue desktop installer ISOs (finish the install over VNC). Only
+	// ISOs whose CDN copy was rebuilt within ~60 days are listed — Bazzite and
+	// Bluefin GTS ISOs are months stale, so they're omitted (use the bootc
+	// images via `corral bootc create` instead, which always pull fresh).
+	{Name: "bluefin-iso", Description: "Bluefin — GNOME bootc desktop (installer ISO)",
+		ISO: "https://download.projectbluefin.io/bluefin-stable-x86_64.iso", Source: "projectbluefin.io", Logo: "gnome", Variant: "desktop"},
+	{Name: "aurora-iso", Description: "Aurora — KDE Plasma bootc desktop (installer ISO)",
+		ISO: "https://dl.getaurora.dev/aurora-stable-webui-x86_64.iso", Source: "getaurora.dev", Logo: "kde", Variant: "desktop"},
+	{Name: "aurora-nvidia-open-iso", Description: "Aurora — KDE Plasma, NVIDIA open driver (installer ISO)",
+		ISO: "https://dl.getaurora.dev/aurora-nvidia-open-stable-webui-x86_64.iso", Source: "getaurora.dev", Logo: "kde", Variant: "desktop"},
+
 	// TurnKey Linux appliances — installer ISOs (finish the install over VNC).
 	// TurnKey's mirror serves plain HTTP only; releases are GPG-signed upstream.
 	{Name: "turnkey-core", Description: "TurnKey Core 18.1 — minimal Debian appliance base (installer ISO)",
