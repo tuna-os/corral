@@ -62,7 +62,7 @@ func TestRenderBuilderVM(t *testing.T) {
 // The final bootc VM must UEFI-boot the block disk PVC — no kernelBoot.
 func TestRenderBootcFinalVM(t *testing.T) {
 	vm := generateBootcVM("dak", "corral-vms", "dak-bootc-disk",
-		"ghcr.io/projectbluefin/dakota:testing", "4G", 2, "")
+		"ghcr.io/projectbluefin/dakota:testing", "ssh-ed25519 AAAAREBUILDKEY u@h", "4G", 2, "")
 	data, _ := json.Marshal(vm)
 	js := string(data)
 
@@ -74,5 +74,9 @@ func TestRenderBootcFinalVM(t *testing.T) {
 	}
 	if !strings.Contains(js, "dak-bootc-disk") {
 		t.Errorf("final VM must boot the disk PVC")
+	}
+	// The SSH key is recorded on the VM so rebuild/upgrade/switch can re-bake it.
+	if !strings.Contains(js, "corral.bootc/ssh-key") || !strings.Contains(js, "AAAAREBUILDKEY") {
+		t.Errorf("final VM must record the SSH key annotation for rebuilds")
 	}
 }
