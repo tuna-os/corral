@@ -58,7 +58,6 @@ type CreateOpts struct {
 	CloudInitPassword string
 	CloudInitExtra    string
 	SSHPublicKey      string
-	TailscaleAuthKey  string // injected into cloud-init so the VM joins the tailnet
 	InstanceType      string // KubeVirt cluster instancetype (sets CPU/mem); overrides CPU/Mem
 	Preference        string // KubeVirt cluster preference (devices/firmware defaults)
 }

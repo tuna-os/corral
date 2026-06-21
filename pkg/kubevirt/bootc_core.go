@@ -15,23 +15,18 @@ func errBootcUnavailable() error {
 // is always compiled and holds the registration seam; bootc.go (//go:build
 // bootc) registers the real implementations in its init().
 
-// BootcBuildResult describes a finished on-cluster bootc disk build.
+// BootcBuildResult describes a finished on-cluster bootc disk build. The disk is
+// installed by a builder VM via `bootc install to-disk` and is fully
+// self-bootable (GPT + ESP + bootloader), so the only thing callers need is the
+// PVC holding it — the final VM boots it via UEFI firmware.
 type BootcBuildResult struct {
-	PVCName       string
-	RootUUID      string // root filesystem UUID, for the root= kernel arg
-	KernelVersion string // kernel version shipped in the image, for kernelBoot paths
-	// KernelArgs is the full kernel command line captured from the bootc
-	// install's BLS loader entry — it includes the `ostree=<deployment>` arg
-	// that the ostree initramfs needs to pivot to the real root. Synthesizing
-	// `root=UUID=… ro` alone omits that and the guest hangs silently in early
-	// boot, so we always boot with the cmdline bootc itself wrote.
-	KernelArgs string
+	PVCName string
 }
 
 // Registered by bootc.go when the `bootc` build tag is set; nil otherwise.
 var (
 	bootcBuildFunc   func(name, namespace, imageURI, sshPublicKey, diskSize string, progress io.Writer) (*BootcBuildResult, error)
-	bootcVMFunc      func(name, namespace, pvcName, imageURI, rootUUID, kernelVersion, kernelArgs, mem string, cpu int, node, tailscaleAuthKey string) map[string]any
+	bootcVMFunc      func(name, namespace, pvcName, imageURI, mem string, cpu int, node string) map[string]any
 	bootcRebuildFunc func(name, namespace, imageURI, sshPublicKey, diskSize string, progress io.Writer) error
 )
 
@@ -47,13 +42,13 @@ func BootcBuildDisk(name, namespace, imageURI, sshPublicKey, diskSize string, pr
 	return bootcBuildFunc(name, namespace, imageURI, sshPublicKey, diskSize, progress)
 }
 
-// GenerateBootcVM builds the VM manifest for a bootc-built disk. Returns nil if
-// the plugin isn't compiled in.
-func GenerateBootcVM(name, namespace, pvcName, imageURI, rootUUID, kernelVersion, kernelArgs, mem string, cpu int, node, tailscaleAuthKey string) map[string]any {
+// GenerateBootcVM builds the final VM manifest that UEFI-boots a bootc-built
+// block disk PVC. Returns nil if the plugin isn't compiled in.
+func GenerateBootcVM(name, namespace, pvcName, imageURI, mem string, cpu int, node string) map[string]any {
 	if bootcVMFunc == nil {
 		return nil
 	}
-	return bootcVMFunc(name, namespace, pvcName, imageURI, rootUUID, kernelVersion, kernelArgs, mem, cpu, node, tailscaleAuthKey)
+	return bootcVMFunc(name, namespace, pvcName, imageURI, mem, cpu, node)
 }
 
 // BootcRebuild rebuilds an existing bootc VM's disk from imageURI (the same

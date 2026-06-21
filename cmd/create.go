@@ -5,7 +5,6 @@ import (
 	"os"
 
 	"github.com/hanthor/corral/pkg/catalog"
-	"github.com/hanthor/corral/pkg/config"
 	"github.com/hanthor/corral/pkg/kubevirt"
 	"github.com/hanthor/corral/pkg/qemu"
 	"github.com/hanthor/corral/pkg/types"
@@ -28,7 +27,6 @@ var (
 	createNode              string
 	createCloudInitPassword string
 	createCloudInit         string
-	createTSAuthKey         string
 	createInstanceType      string
 	createPreference        string
 )
@@ -84,17 +82,8 @@ func init() {
 	createCmd.Flags().StringVar(&createNode, "node", "", "[kubevirt] Schedule on specific node")
 	createCmd.Flags().StringVar(&createCloudInitPassword, "cloud-init-password", "", "[kubevirt] Cloud-init password")
 	createCmd.Flags().StringVar(&createCloudInit, "cloud-init", "", "[kubevirt] Extra cloud-init user-data YAML")
-	createCmd.Flags().StringVar(&createTSAuthKey, "ts-authkey", "", "[kubevirt] Tailscale auth key for the VM (default: config/TS_AUTHKEY)")
 	createCmd.Flags().StringVar(&createInstanceType, "instancetype", "", "[kubevirt] Cluster instancetype for sizing (overrides --cpu/--mem)")
 	createCmd.Flags().StringVar(&createPreference, "preference", "", "[kubevirt] Cluster preference (guest device/firmware defaults)")
-}
-
-// tsAuthKey resolves the Tailscale auth key: flag > env/config file.
-func tsAuthKey() string {
-	if createTSAuthKey != "" {
-		return createTSAuthKey
-	}
-	return config.AuthKey()
 }
 
 func runKubevirtCreate(name string) error {
@@ -139,13 +128,14 @@ func runKubevirtCreate(name string) error {
 		InstanceType:      createInstanceType,
 		Preference:        createPreference,
 		SSHPublicKey:      kubevirt.LoadSSHPublicKey(),
-		TailscaleAuthKey:  tsAuthKey(),
-	}
-	if opts.TailscaleAuthKey != "" {
-		fmt.Fprintln(os.Stderr, "Tailscale auth key found — VM will join the tailnet on first boot")
 	}
 	if err := kubevirt.CreateVM(opts); err != nil {
 		return err
+	}
+	// Expose SSH/VNC on the tailnet via the Tailscale operator proxy (no
+	// in-guest tailscale needed). Best-effort — the VM is already created.
+	if err := kubevirt.ApplyProxy(name, ns, []int{22, 5900}); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: tailnet expose failed: %v\n", err)
 	}
 
 	if registryStore != nil {

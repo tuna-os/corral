@@ -1,0 +1,88 @@
+# Dedicated corral-web instance for @live-only e2e runs, isolated from the
+# production VM namespace (corral-vms). It defaults all VM operations to the
+# corral-e2e namespace via CORRAL_NAMESPACE, and is reachable on the tailnet at
+# https://corral-e2e.manatee-basking.ts.net. Reuses the cluster-scoped
+# corral-web ServiceAccount/ClusterRole from deploy/corral-web.yaml.
+#
+#   kubectl apply -f deploy/corral-web.yaml      # ClusterRole/SA (prod)
+#   kubectl apply -f deploy/corral-web-e2e.yaml  # this e2e instance
+#   cd e2e && CORRAL_URL=https://corral-e2e.manatee-basking.ts.net \
+#     CORRAL_NS=corral-e2e ./node_modules/.bin/playwright test
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: corral-e2e
+  labels:
+    # Match corral-vms: KubeVirt virt-launcher + the bootc builder/proxy pods
+    # need privileged PodSecurity.
+    pod-security.kubernetes.io/enforce: privileged
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: corral-web-e2e
+  namespace: corral
+  labels:
+    app: corral-web-e2e
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: corral-web-e2e
+  template:
+    metadata:
+      labels:
+        app: corral-web-e2e
+    spec:
+      serviceAccountName: corral-web
+      containers:
+        - name: corral-web
+          image: ghcr.io/hanthor/corral:latest
+          imagePullPolicy: Always
+          env:
+            - name: CORRAL_NAMESPACE
+              value: corral-e2e
+          ports:
+            - containerPort: 8006
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8006
+            initialDelaySeconds: 2
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: corral-web-e2e
+  namespace: corral
+spec:
+  selector:
+    app: corral-web-e2e
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8006
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: corral-web-e2e
+  namespace: corral
+spec:
+  defaultBackend:
+    service:
+      name: corral-web-e2e
+      port:
+        number: 80
+  ingressClassName: tailscale
+  tls:
+    - hosts:
+        - corral-e2e

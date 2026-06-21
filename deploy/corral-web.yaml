@@ -101,16 +101,17 @@ rules:
   - apiGroups: ["batch"]
     resources: ["jobs"]
     verbs: ["get", "list", "create", "delete"]
-  # VM deletion also cleans up per-VM proxy resources
+  # Per-VM Tailscale operator proxy (ApplyProxy): create the SA/Role/RoleBinding/
+  # Service/Deployment that expose a VM on the tailnet; VM deletion cleans them up.
   - apiGroups: ["apps"]
     resources: ["deployments"]
-    verbs: ["get", "delete"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
   - apiGroups: [""]
     resources: ["services", "serviceaccounts"]
-    verbs: ["get", "delete"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
   - apiGroups: ["rbac.authorization.k8s.io"]
     resources: ["roles", "rolebindings"]
-    verbs: ["get", "delete"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

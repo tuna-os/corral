@@ -720,27 +720,6 @@ func TestGenerateVM_CloudInitPassword(t *testing.T) {
 	}
 }
 
-func TestGenerateVM_TailscaleAuthKey(t *testing.T) {
-	opts := types.CreateOpts{
-		Name:             "tsvm",
-		TailscaleAuthKey: "tskey-auth-abc123",
-	}
-	vm := GenerateVM(opts)
-
-	tmpl := vm["spec"].(map[string]any)["template"].(map[string]any)
-	vmSpec := tmpl["spec"].(map[string]any)
-	volumes := vmSpec["volumes"].([]map[string]any)
-
-	for _, v := range volumes {
-		if ci, ok := v["cloudInitNoCloud"]; ok {
-			userData := ci.(map[string]any)["userData"].(string)
-			if userData == "" {
-				t.Error("empty cloud-init")
-			}
-		}
-	}
-}
-
 func TestGenerateVM_SSHPublicKey(t *testing.T) {
 	opts := types.CreateOpts{
 		Name:         "sshvm",

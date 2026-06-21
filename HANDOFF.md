@@ -1,12 +1,415 @@
-# Corral handoff — 2026-06-11
+# Corral handoff — 2026-06-11 (active section updated 2026-06-14)
 
 > Project: **Corral** (`corral` binary, `github.com/hanthor/corral`, public repo)
-> Live: `https://corral.manatee-basking.ts.net` (cluster deployment on bihar)
+> Live: `https://corral-1.manatee-basking.ts.net` (cluster deployment, ns `corral`)
 > Docs: [README.md](README.md), [SPEC.md](SPEC.md), [WEBUI-PLAN.md](WEBUI-PLAN.md),
 > [docs/api.md](docs/api.md), [docs/architecture.md](docs/architecture.md),
 > [docs/kubevirt-proxmox-setup.md](docs/kubevirt-proxmox-setup.md)
 > Domain: [CONTEXT.md](CONTEXT.md), [AGENTS.md](AGENTS.md)
 > ADRs: [docs/adr/](docs/adr/)
+
+---
+
+## Active work (2026-06-19) — branch `feat/bootc-desktop-catalog`
+
+**Goal:** get the bootc e2e (`e2e/corral.spec.js:764`, `@live-only`) green end-to-end:
+build → boot → SSH via `virtctl port-forward` → **SSH over Tailscale**.
+
+**DONE — unify all VMs on the Tailscale operator proxy (no in-guest tailscale).**
+Composefs bootc images (`fedora-bootc:44`, `centos-bootc:stream9/10`, `dakota`)
+seal `/etc` read-only at `bootc install` time, so post-install tailscale injection
+is impossible (EROFS, aborts the build). Instead **all** VMs now get tailnet access
+from the Tailscale K8s operator via `kubevirt.ApplyProxy(name, ns, ports)`
+(`pkg/kubevirt/client.go`): a Service annotated `tailscale.com/expose:true` +
+hostname `<name>-vm`, plus a `corral-proxy` pod that discovers the VM's guest IP
+from the VMI status and `socat`-forwards :22 (+VNC) to it. `ssh <user>@<name>-vm`
+over the tailnet reaches the already-enabled guest sshd with **zero in-guest
+tailscale** — composefs-agnostic, no auth key baked in, identical on ostree and
+composefs images. The operator has its own creds, so `TS_AUTHKEY` /
+`TailscaleAuthKey` is gone for VMs.
+
+**Changes made (this session, uncommitted):**
+- Removed in-guest tailscale: cloud-init `runcmd` join in `client.go`, the bootc
+  cloud-init volume in `generateBootcVM`, `generateBootcTailscaleSetup`, the
+  `TailscaleAuthKey` field + `--ts-authkey` flag (types.go/create.go/server.go/
+  cmd/corral-bootc).
+- `ApplyProxy(name, ns, []int{22,5900})` now called on **every** VM create
+  (regular web+CLI ports 22/5900/3389, bootc web+CLI 22/5900) — unconditional.
+- Tests fixed for the new signatures: `bootc_test.go`
+  (`TestGenerateBootcVM_KernelArgsAndNoInGuestTailscale`), `bootc_render_test.go`
+  (6-arg `generateBootcJob`), `client_test.go` (dropped the TailscaleAuthKey test),
+  `cmd/cmd_test.go` (dropped `ts-authkey` flag + 3 tsAuthKey tests). `go build`,
+  `go vet`, `go test` all green for both the default and `bootc` tag sets.
+- e2e: both tailscale blocks (regular fedora VM, bootc) now match the operator
+  device `<vm>-vm`. Bootc test image switched to
+  **`ghcr.io/projectbluefin/dakota:testing`** (desktop, composefs), disk 30G.
+
+**Deployed:** amd64 `-tags bootc` binary built, image pushed
+`ghcr.io/hanthor/corral:latest`, `deploy/corral-web` rolled out 2026-06-19/20. Live
+server reports `bootc:true`.
+
+**Root cause found on the first dakota e2e: server-side 15-min build cap.** The
+operator-proxy refactor is fine; the e2e failed at the *build* step with
+`bootc build failed: timeout waiting for bootc build (15 minutes)`. Sequence
+(verified): node pulls dakota in ~3m47s (3.0 GB, 120 layers), then `bootc install`
+**re-pulls the same image in-pod via ostree** (no node cache) and checks it out
+layer by layer — a desktop image blows past 15 min. `waitForBootcJob` in
+`pkg/kubevirt/bootc.go` had two hardcoded 15-min loops (450×2s). **Fix:** both now
+use `bootcBuildTimeout()` — default **30 min**, override with
+`CORRAL_BOOTC_BUILD_TIMEOUT` (minutes). e2e build-wait bumped to 35 min, outer
+`test.setTimeout` to 65 min. Rebuilt/pushed/rolled out; **dakota e2e re-running**.
+If 30 min still isn't enough, bump `CORRAL_BOOTC_BUILD_TIMEOUT` on the deployment
+env (no rebuild needed) — that's why it's configurable.
+
+**Two more blockers found + fixed on the next runs:**
+
+1. **Proxy RBAC: corral-web couldn't create the proxy resources.** Second run
+   built+booted fine but the task errored `proxy RBAC: exit status 1` — the
+   `corral-web` ClusterRole had only `get,delete` on deployments/services/
+   serviceaccounts/roles/rolebindings (enough for DeleteProxy, not ApplyProxy).
+   Fixed in `deploy/corral-web.yaml`: added `list,create,update,patch` to those,
+   **plus** `subresources.kubevirt.io virtualmachineinstances/portforward:
+   get,create` — the per-VM proxy Role grants portforward, and RBAC privilege-
+   escalation prevention blocks creating a Role granting a verb the creator
+   lacks. Applied live (ClusterRole only, not the Deployment, to preserve the
+   live-only env).
+
+2. **dakota ships sshd DISABLED** (`/usr/lib/systemd/system-preset/openssh.preset:
+   disable sshd.service`). Universal Blue desktop images disable sshd by preset;
+   server bootc images (fedora/centos-bootc) enable it. `bootc install
+   --root-ssh-authorized-keys` writes the key, but sshd never starts, and
+   composefs /etc is read-only so we can't `systemctl enable` post-install.
+   Verified by inspecting the image on-cluster (sshd binary present,
+   `PermitRootLogin` defaults to `prohibit-password` = key auth OK). **Fix:**
+   `bootcKernelArgs` now appends **`systemd.wants=sshd.service`** to the VM
+   cmdline (we already control kernelBoot kernelArgs) — pulls sshd + host-key
+   generation into the boot transaction with no enable symlink, idempotent for
+   server images, composefs-agnostic. e2e port-forward SSH window bumped
+   180s→360s (desktop first boot is slow). Unit test asserts the arg.
+
+**ROOT-CAUSED — dakota boot failure = XFS root vs btrfs-only initramfs.** dakota
+builds (~25 min) and starts, but the guest dropped to emergency mode. Captured the
+exact error via KubeVirt `logSerialConsole` (set `domain.devices.logSerialConsole:
+true`, then `kubectl logs <virt-launcher-pod> -c guest-console-log`):
+
+```
+mount[176]: mount: /sysroot: unknown filesystem type 'xfs'.
+sysroot.mount: Mount process exited, code=exited, status=32
+[FAILED] Failed to mount sysroot.mount - /sysroot.  → emergency.target
+```
+
+Our builder formats the root **XFS** (`mkfs.xfs`), but Universal Blue **desktop**
+images (bluefin/dakota, custom kernel `7.0.7`, 200 MB initramfs) default to
+**btrfs** and their stock initramfs ships **no xfs module** (boot even runs
+`modprobe@btrfs.service`). KubeVirt kernelBoot boots that stock initramfs, so it
+can't mount our XFS root → `sysroot.mount` fails → emergency → no multi-user, no
+sshd (hence the SSH banner-exchange timeouts; the systemd.wants fix was right but
+moot until boot). Ruled out along the way: composefs/readonly-sysroot (identical to
+fedora-bootc:44, which boots), verity (`veritysetup.target` reaches OK), device/uuid
+(`systemd-fsck-root` passes), `rootfstype=xfs` (still "unknown filesystem type").
+Confirmed the deployment has no `/etc/fstab` and the `.ostree.cfs` composefs blob
+is present, so sysroot.mount is generated purely from `root=UUID=` → fstype is the
+only variable.
+
+**FIX (shipped):** builder root fstype is now configurable —
+`bootcRootFS()` / **`CORRAL_BOOTC_ROOTFS`** env (default `xfs`, so server images are
+unchanged). `generateBootcJob` swaps `mkfs.xfs`→`mkfs.<fs>`; `bootcKernelArgs`
+appends `rootfstype=<fs>`. Set **`CORRAL_BOOTC_ROOTFS=btrfs`** on `deploy/corral-web`
+(live) to build dakota/UB desktop images with a btrfs root their initramfs can
+mount. **Re-validating now** with `dbg-dak4` (btrfs build → boot → past sysroot.mount
+→ multi-user → sshd → proxy → tailnet). 
+
+**...but btrfs build FAILED on Talos — deeper constraint found.** `mkfs.btrfs`
+succeeds but `mount` of the btrfs disk fails IN THE BUILDER: `mount: unknown
+filesystem type 'btrfs'`. The builder formats+mounts the disk **on the Talos build
+node** (to run `bootc install to-filesystem`), and **Talos's kernel has no btrfs
+module** (it's an optional `siderolabs/btrfs` system extension, not installed).
+Probed both sides directly:
+- **Build node (Talos bihar):** mounts **xfs, ext4** — NOT btrfs.
+- **dakota guest:** kernel has `xfs.ko`+`btrfs.ko` in `/usr/lib/modules`, but its
+  **initramfs ships btrfs ONLY** (no xfs, no ext4 module). KubeVirt kernelBoot
+  boots that stock initramfs, so the guest can only mount **btrfs** as root.
+
+So the root fs must be mountable by BOTH the Talos node (xfs/ext4) AND dakota's
+initramfs (btrfs) — **the intersection is empty**. xfs builds but won't boot
+(guest); btrfs boots but won't build (node). The `CORRAL_BOOTC_ROOTFS` knob can't
+resolve this alone; **reverted the live env back to xfs** so normal builds work.
+
+**To actually run dakota/UB-desktop images, pick one (real work, decision needed):**
+1. **Add `siderolabs/btrfs` to the Talos nodes** (machineconfig + reboot bihar/
+   karnataka). Then build btrfs; dakota's btrfs initramfs boots it. Cleanest,
+   aligns with how UB images are designed — but it's a cluster infra change.
+2. **Regenerate dakota's initramfs with xfs and boot that.** The dakota builder
+   container has dracut + xfs.ko, so it can rebuild the initramfs `--add-drivers
+   xfs`. But KubeVirt kernelBoot reads kernel/initrd from a *container image*, so
+   we'd build+push a tiny per-VM kernel image, OR switch off kernelBoot to UEFI
+   disk boot (systemd-boot, dakota's bootloader) reading the initrd from the disk.
+   Keeps infra unchanged; bigger pipeline rework.
+3. **Park UB desktop images**; keep the fstype-configurable code for images where
+   node+guest fs agree; point the e2e back at a server bootc image (fedora/
+   centos-bootc) that builds xfs and boots.
+
+The fstype-configurable code (`CORRAL_BOOTC_ROOTFS`) is committed regardless —
+it's the right primitive once a viable fs exists (e.g. after option 1).
+
+## VM-based builder PoC (2026-06-20) — decision: replace the pod builder
+
+James chose to **replace the pod/kernelBoot builder** with a **VM-based `bootc
+install to-disk`** builder (the original never-automated PoC from old HANDOFF @
+16a4a75^). A builder VM's *full kernel* does the fs work (so the Talos-node btrfs
+gap is irrelevant), `to-disk` writes a real bootable disk (GPT + ESP + bootloader),
+and the final VM boots it via firmware — no kernelBoot, no fstype/initramfs
+mismatch. **Manually proven on-cluster** (manifests in /tmp/poc-builder.yaml,
+block PVC `poc-dakota-disk`, builder VM `poc-builder`):
+- Builder VM = `quay.io/containerdisks/fedora:42` + 40Gi emptyDisk scratch
+  (/var/lib/containers) + block-mode target PVC (`serial: target`) + cloud-init.
+- `podman pull dakota` (~3.4 min) then `podman run --privileged --pid=host -v
+  /dev:/dev -v scratch:/var/lib/containers -v key:/buildkey.pub dakota bootc
+  install to-disk --wipe ... /dev/disk/by-id/virtio-target`. Source auto-detect
+  works (no overlay-ref bug). Read progress via `logSerialConsole` +
+  `guest-console-log`.
+- **WORKS through:** GPT (BIOS boot + 512M ESP + XFS root — dakota's declared
+  root fs!), XFS root, full ostree deploy (~16 min), `Initializing systemd-boot`.
+- **BLOCKED at the bootloader:** `error: Installing to disk: bootupd is required
+  for ostree-based installs`. dakota:testing (Bluefin **"Dakotaraptor"**
+  experimental branch, bootc 1.16.1) ships **no bootupd and no dnf/rpm** to add it;
+  bootc hard-requires bootupd for the EFI payload even with `--bootloader systemd`
+  and even without `--generic-image`. This is a gap in this bleeding-edge image.
+
+**ROOT CAUSE of "Volume corrupt" FOUND (via James's own `ostree-composefs-rebase`
+tool, /home/james/dev/ostree-composefs-rebase, src/migration/mod.rs:1151):** bootc's
+composefs backend writes the kernel/initrd to the ESP by **reading them back from the
+EROFS/composefs store, which returns ZERO-FILLED content past the inline threshold**
+— so the 200 MB initrd on the ESP is corrupt past ~13 MB (exactly what mtools/OVMF
+saw). James's tool works around it by **re-extracting the real bytes** (`podman create`
++ `podman cp`, or registry stream). **Fix applied to the PoC:** after `bootc install
+to-disk --composefs-backend`, mount the ESP (`/dev/disk/by-id/virtio-target-part2`,
+works in the builder VM's full-kernel udev), `podman cp
+<dakota>:/usr/lib/modules/<kver>/{vmlinuz,initramfs.img}` over the corrupt
+`/EFI/Linux/bootc_composefs-<hash>/{vmlinuz,initrd}`, sync, umount. Re-validating.
+NB: dakota's intended install (tuna-installer / projectbluefin/bootc-installer,
+images.json) uses **filesystem=btrfs** (not xfs) — revisit fs choice when codifying.
+
+**PROVEN VM-builder recipe for dakota (composefs) — codify this:**
+1. block-mode target PVC; builder VM = fedora:42 containerdisk + 40Gi emptyDisk
+   scratch (/var/lib/containers) + target PVC (serial `target`) + cloud-init.
+2. `podman pull <img>`; `podman run --privileged --pid=host --security-opt
+   label=type:unconfined_t -v /var/lib/containers:/var/lib/containers -v /dev:/dev
+   -v key:/buildkey.pub <img> bootc install to-disk --composefs-backend --wipe
+   --root-ssh-authorized-keys /buildkey.pub /dev/disk/by-id/virtio-target`.
+3. **initrd fixup** (bootc EROFS zero-fill bug): `podman cp <img>:/usr/lib/modules
+   /m` (NOT `podman run ls` — dakota's uutils ls returns nothing; copy the dir and
+   `KVER=$(ls /m|head -1)`), then `cp /m/$KVER/{vmlinuz,initramfs.img}` over
+   `/EFI/Linux/bootc_composefs-<hash>/{vmlinuz,initrd}` on the mounted ESP
+   (/dev/disk/by-id/virtio-target-part2 — works in the builder VM's full-kernel udev).
+4. **kargs** on the BLS entry options (sed on `/EFI/.../loader/entries/*.conf`): add
+   `console=ttyS0` (serial visibility) + `systemd.wants=sshd.service` (dakota ships
+   sshd disabled; composefs /etc is writable at runtime so this starts it).
+   MUST use the SAME image for install + fixup (dakota:testing bumped 7.0.7→7.0.11
+   mid-session → kernel/modules skew → no virtio_net → sshd unreachable).
+5. final VM: boot the block PVC via UEFI (`firmware.bootloader.efi`, q35) — NO
+   kernelBoot.
+6. **MUST use `--filesystem btrfs`** on the bootc install. dakota's install.toml
+   defaults root to xfs, but its initramfs is **btrfs-only** (no xfs module) and its
+   own installer (images.json) uses btrfs. An xfs root → initramfs can't mount it →
+   `/dev/gpt-auto-root` + initramfs emergency (saw it via console=ttyS0). bootc flag:
+   `bootc install to-disk --filesystem btrfs` (values xfs|ext4|btrfs). The builder
+   VM's full kernel handles btrfs (the Talos *node* can't — that's why the old pod
+   builder never could).
+7. **Inject root SSH key MANUALLY** — `--root-ssh-authorized-keys` is a **no-op with
+   the composefs backend** (verified: `find authorized_keys` on the disk = nothing).
+   On composefs dakota, runtime `/root` = `/var/roothome` and `/var` =
+   `state/os/default/var` (btrfs subvol). Write the pubkey to
+   `<btrfs-root>/state/os/default/var/roothome/.ssh/authorized_keys` (mkdir .ssh 0700,
+   file 0600, root:root) by mounting `/dev/disk/by-id/virtio-target-part3` in the
+   builder VM.
+
+**✅ DAKOTA BOOTS + SSH WORKS END-TO-END (2026-06-20).** PoC: `ssh root@…` →
+`PRETTY_NAME="Bluefin"`, kernel 7.0.11, root fstype `overlay` (composefs),
+`bootc status` = healthy BootcHost.
+
+**✅ CODIFIED INTO GO (2026-06-20).** Pod builder fully replaced by the VM-builder in
+`pkg/kubevirt/bootc.go`:
+- `bootcBuildDisk`: creates a **block-mode** target PVC (`generateBlockPVC`), a
+  cloud-init **Secret** (`generateBuilderSecret` — script exceeds KubeVirt's 2 KB
+  inline userData limit, so `cloudInitNoCloud.secretRef`), and a builder VM
+  (`generateBuilderVM`: fedora:42 containerdisk + 40Gi emptyDisk scratch + block
+  target via `serial: target` + the secret), starts it, `waitForBuilderVM` (polls
+  the virt-launcher `guest-console-log` for `CORRAL_BUILD_OK/FAIL`, streams progress),
+  then deletes builder VM + secret. Returns `BootcBuildResult{PVCName}` (the
+  RootUUID/KernelVersion/KernelArgs fields are gone).
+- `builderCloudInit` const = the proven recipe; **auto-detects backend**: composefs
+  (no bootupd) → `--composefs-backend --filesystem btrfs` + initrd fixup + manual
+  key inject; ostree (has bootupd) → plain to-disk + xfs. Both add
+  `console=ttyS0 systemd.wants=sshd.service` to the BLS entries.
+- `generateBootcVM`: final VM = UEFI boot of the block PVC (q35 +
+  `firmware.bootloader.efi`, NO kernelBoot). Seam in bootc_core.go + callers
+  (server.go, cmd/corral-bootc) updated to the new 7-arg signature.
+- `bootcRebuild`: simplified (no kernelBoot patch — same-named disk PVC + restart).
+- Knobs: `CORRAL_BOOTC_BUILD_TIMEOUT` (min, default 45), `CORRAL_BOOTC_BUILDER_IMAGE`.
+- Tests rewritten (`bootc_render_test.go`, `bootc_test.go`); `go build`/`vet`/`test`
+  green both tag sets. e2e updated (no kernelBoot → assert `efi`; builder-VM
+  diagnostic via guest-console-log; 80 min budget).
+
+**✅ CODIFIED PATH VALIDATED END-TO-END (2026-06-20)** via the API (`cod1`,
+dakota:testing): builder VM build 35m → final VM created using `efi` (UEFI, no
+kernelBoot) → started → `ssh root@cod1` (port-forward): Bluefin, kernel 7.0.11,
+root `overlay` (composefs) → **operator-proxy tailnet device `cod1-vm` came up →
+`ssh root@cod1-vm` works**. The whole bootc stack the e2e exercises now passes
+through the codified server. cod1 cleaned up.
+
+**Proxy hardening (2026-06-20):** the build-time `ApplyProxy` flaked once
+(`proxy RBAC: exit status 1`) and wrongly failed the whole build. Fixed: (a)
+server.go bootc path now runs `ApplyProxy` as a **separate best-effort task after
+the build finishes** — a flaky proxy no longer marks a good build as failed (the
+VM is up + reachable via port-forward regardless); (b) `ApplyProxy` retry hardened
+to 12×5s and now covers the Service/Deployment applies too (`applyProxyManifest`).
+The proxy RBAC itself is correct (corral-web holds vmi get/vnc/portforward, so no
+bind/escalate needed); the failure was transient.
+
+**Production-safe e2e isolation (2026-06-20).** The `corral-vms` namespace is now
+**production**. Live e2e must NOT touch it. Added `deploy/corral-web-e2e.yaml`: a
+second corral-web (same cluster-scoped SA/ClusterRole) defaulting to the
+**`corral-e2e`** namespace (`CORRAL_NAMESPACE=corral-e2e`), reachable at
+`https://corral-e2e.manatee-basking.ts.net`. Because the API create handler honors
+`req.Namespace` AND the UI form defaults to the server's namespace, pointing the
+suite at this instance isolates everything — no per-test namespace plumbing:
+```
+cd e2e && CORRAL_URL=https://corral-e2e.manatee-basking.ts.net \
+  CORRAL_NS=corral-e2e ./node_modules/.bin/playwright test --grep "@live-only"
+```
+**CI:** `.github/workflows/e2e.yml` runs only the CI tier
+(`--grep-invert @live-only`) on kind+emulated KubeVirt. The @live-only tier (bootc,
+SSH, consoles, snapshots) is **NOT in CI** — run manually against corral-e2e.
+
+**Both backends validated (2026-06-20):** composefs (dakota, `cod1`) AND ostree
+(fedora-bootc:44, `ost2`) both build → UEFI boot → SSH via the codified VM-builder.
+Two fixes landed during e2e validation against corral-e2e:
+- **ostree UEFI boot:** `bootc install to-disk` via bootupd only writes
+  EFI/<vendor>/ + an NVRAM entry; a fresh VM has empty NVRAM → "No bootable
+  option". Fixed by adding **`--generic-image`** on the ostree branch (writes the
+  removable EFI/BOOT/BOOTX64.EFI fallback path, skips firmware changes).
+- **backend detection:** UB desktop images ship Rust uutils — `--entrypoint
+  /bin/sh -c '...'` returns NOTHING, so my first "hardened" sh-script detection
+  misdetected dakota as ostree → built xfs → didn't boot. Reverted to per-probe
+  `--entrypoint /usr/bin/test -e <path>` (the form cod1 proved): bootupd present →
+  ostree; else systemd-boot present → composefs.
+- **create-dialog timeout:** the hardened `ApplyProxy` (12×5s retry) ran
+  synchronously on the regular create path, blocking the response past the UI's
+  20s dialog timeout (broke the Tailscale e2e). Now async/best-effort after the
+  response (server.go), matching the bootc path.
+
+**Backend detection — must inspect the filesystem, never execute the image.**
+Burned two e2e builds: my "hardened" detection misdetected dakota as ostree →
+built xfs → didn't boot. Root cause: dakota's `/usr/bin/test` (and `/bin/sh`) are
+symlinks to **uutils-coreutils** (a multicall binary); podman `--entrypoint` can't
+dispatch it (argv[0] breaks), so any "run a binary in the image" probe returns
+nothing. **Fix:** `CTR=$(podman create $IMG)` then `podman cp "$CTR:<path>" -`
+existence checks (no execution); reuse the same CTR for the composefs modules
+copy. Verified early-exit: dakota → `CORRAL_BACKEND=composefs FS=btrfs`. dakota
+is a moving target (kver + tooling change daily) — filesystem inspection is the
+only robust read.
+
+**Proxy RBAC — apiGroup bug (not load).** `ApplyProxy` failed with
+`proxy RBAC: exit status 1`; surfacing kubectl's stderr (added to `applyManifest`)
+revealed the truth: `roles ... is forbidden: user "corral-web" is attempting to
+grant RBAC permissions not currently held: {APIGroups:["kubevirt.io"], Resources:
+["virtualmachineinstances/portforward"], Verbs:["create"]}`. `GenerateProxyRBAC`
+granted `portforward` under **`kubevirt.io`**, but the subresource lives under
+**`subresources.kubevirt.io`** — and the proxy doesn't even use portforward (the
+proxy pod socats to the guest IP it reads from the K8s API). **Fix:** dropped the
+portforward rule from the proxy Role entirely (it now grants only vmi-get +
+vnc-get, both held by corral-web → escalation passes), and removed the matching
+(now-vestigial) portforward grant from corral-web's ClusterRole. (My earlier manual
+tests used the *correct* apiGroup, so they passed and masked the real Role's bug.)
+Also: `applyManifest` surfaces stderr; ApplyProxy is best-effort + 12×5s retry;
+regular create runs it async after the response (was blocking the UI's 20s
+create-dialog timeout → broke the Tailscale e2e).
+
+**Status: code complete + deployed; composefs + ostree both validated. Re-running
+the bootc + Tailscale e2e against corral-e2e (isolated from production corral-vms).
+Not yet committed.**
+
+Builds/deploys: same loop as above; live server has the codified binary.
+
+**RESULT: composefs backend BUILDS + installs dakota; "Volume corrupt" WAS bootc's
+EROFS zero-fill of the initrd on the ESP, fixed by re-extracting real bytes.** `bootc install to-disk --composefs-backend`
+**succeeded** (POC_BUILD_OK): GPT (BIOS boot + 1G ESP + composefs root), full
+dakota deploy, "Installing bootloader via systemd-boot" (NO bootupd). The final VM
+(block PVC, UEFI/q35 `firmware.bootloader.efi`) **boots: OVMF → systemd-boot →
+finds the composefs BLS entry** (`/EFI/Linux/bootc_composefs-<hash>/{vmlinuz,initrd}`,
+`options ... composefs=?<hash>`). But it fails: `Error preparing initrd: Volume
+corrupt`. Inspected the ESP (mtools at the partition offset): vmlinuz 19 MB OK,
+**initrd dir-entry says 200 MB but its FAT chain breaks** — mtools `Fat problem
+while decoding`, reads only 13 MB; OVMF independently reports Volume corrupt. So
+OVMF/EDK2's FAT driver can't read the large/fragmented 200 MB initrd off the ESP —
+a known bleeding-edge issue (experimental composefs backend + huge initrd on FAT),
+not a corral bug. Next options to try (each ~18 min): retry build (FAT frag may
+vary); larger/explicit-cluster ESP; UKI (but it's also a big FAT file — same risk);
+newer OVMF; or report upstream. dakota disk left as pvc/poc-dakota-disk (vm/poc-dakota
+stopped) for follow-up.
+
+**ANSWER (per bootc docs + James): use the composefs backend.** dakota is a
+composefs + systemd-boot image with NO bootupd — that's exactly the bootc
+**composefs-rs backend** (`bootc install to-disk --composefs-backend`), not the
+default ostree backend (which we ran → needed bootupd). The composefs backend
+manages systemd-boot itself (no bootupd) and boots via UKI/BLS, sidestepping
+dakota's btrfs-only standalone initramfs. Flag confirmed present in dakota's bootc
+1.16.1: `--composefs-backend  If true, composefs backend is used, else ostree`.
+(dakota has systemd-boot + no bootupd but NO UKI at /boot/EFI/Linux — UKI is for
+auto-detect; testing the explicit flag with BLS kernel+initramfs.) Build running
+with `bootc install to-disk --composefs-backend --wipe ...` (dropped
+--generic-image/--bootloader which forced the ostree+bootupd path). Docs:
+https://bootc.dev/bootc/experimental-composefs.html (marked experimental).
+
+**Superseded fork below (kept for context) for dakota's bootloader (~18 min each):**
+- a. Installer-container trick: run `bootc install to-disk --source-imgref
+  docker://dakota` from a container that HAS bootupd (fedora-bootc:42 has
+  `/usr/sbin/bootupctl` + payload) — but its payload is Fedora grub2/shim, not
+  dakota's systemd-boot; uncertain whether the resulting disk boots dakota.
+- b. `bootc-image-builder` (official image→disk tool) in the builder VM → raw
+  image → dd to the block PVC. May handle the bootloader where bare `to-disk`
+  can't.
+- c. `--bootloader none` + manually install systemd-boot to the ESP (ostree BLS
+  kernels live on the XFS /boot, not the FAT ESP — non-trivial layout plumbing).
+- d. Validate the whole pipeline + the final-VM UEFI boot with a server bootc
+  image that HAS bootupd (fedora/centos-bootc), then **codify the VM-builder into
+  Go** (replacing generateBootcJob/GenerateBootcVM, BootcBuildResult, the wait
+  loop, server.go, cmd/corral-bootc, tests). Treat dakota's image gap separately.
+
+**Codification (still TODO, large):** new build path = block PVC + builder VM
+(cloud-init runs to-disk) + poll-to-Succeeded + delete builder + final VM booting
+the block PVC via UEFI firmware (`domain.firmware.bootloader.efi`). No more
+RootUUID/KernelVersion/KernelArgs capture (disk is self-bootable). Update
+`BootcRebuild` too. PoC leftovers in `corral-vms`: vm/poc-builder (off),
+pvc/poc-dakota-disk — reuse or clean up.
+
+The other 4 fixes (operator proxy, build timeout, proxy RBAC + retry, systemd.wants)
+are correct and orthogonal. Diagnostic tip: **KubeVirt `logSerialConsole` +
+`guest-console-log` container** is the reliable way to read a bootc guest's boot —
+`virtctl console` loses the race on fast-failing boots, and these images' initramfs
+emergency demands a root password (no `rd.shell`/`rd.break` passwordless shell).
+
+**Note on running the e2e:** use the project-local playwright from `e2e/`
+(`cd e2e && ./node_modules/.bin/playwright test …`), NOT bare `npx playwright`
+— npx fetches a newer version that mismatches and errors out before any test runs.
+
+**Deploy loop:**
+```bash
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags bootc -o build/corral .
+podman build --arch amd64 -t ghcr.io/hanthor/corral:latest -f Containerfile .
+podman push ghcr.io/hanthor/corral:latest   # gh auth token | podman login ghcr.io -u hanthor --password-stdin
+kubectl -n corral rollout restart deploy/corral-web && kubectl -n corral rollout status deploy/corral-web
+```
+
+**Run the e2e:**
+```bash
+env CORRAL_URL=https://corral-1.manatee-basking.ts.net \
+  npx playwright test --grep "bootc VM" --reporter=line
+```
+(Clean up `e2e-`/`dbg-` prefixed VMs+PVCs in `corral-vms` first.)
+
+---
 
 ## Status: shipped
 
