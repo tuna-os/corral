@@ -3,6 +3,8 @@ name: CI
 on:
   push:
     branches: [main]
+  # Run the fast gate (gofmt/vet/build/test -race) on every PR, including
+  # stacked PRs whose base is another feature branch — not just PRs into main.
   pull_request: {}
   workflow_dispatch:
 
