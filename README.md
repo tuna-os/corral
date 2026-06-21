@@ -65,6 +65,11 @@ Or grab a prebuilt `corral-linux-{amd64,arm64}` from the CI artifacts.
 
 Optional: `corral completion fish | source` (bash/zsh/fish, via Cobra).
 
+Development tasks run through [`just`](https://github.com/casey/just): `just`
+lists them — `build`, `test`, `vet`, `ci` (the pre-push gate), and
+`regen-catalog` (refresh the Universal Blue / Bluefin / TunaOS bootc catalog
+from ghcr, dropping anything not rebuilt in ~60 days).
+
 ## Quick start
 
 ```bash
