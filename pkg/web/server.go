@@ -100,6 +100,7 @@ func newMux() (*http.ServeMux, error) {
 	mux.HandleFunc("POST /api/vms/{ns}/{name}/expand", handleExpand)
 	mux.HandleFunc("POST /api/vms/{ns}/{name}/clone", handleClone)
 	mux.HandleFunc("POST /api/vms/{ns}/{name}/template", handleMarkTemplate)
+	mux.HandleFunc("POST /api/vms/{ns}/{name}/tags", handleSetTag)
 	mux.HandleFunc("GET /api/vms/{ns}/{name}/guestinfo", handleGuestInfo)
 	mux.HandleFunc("GET /api/vms/{ns}/{name}/rdp", handleRDPCheck)
 	mux.HandleFunc("POST /api/vms/{ns}/{name}/bootc/rebuild", handleBootcRebuild)

@@ -273,6 +273,7 @@ func parseVMList(out []byte, vmis map[string]vmiStatus, vendors map[string]strin
 			VNC:        proxyStatusFn(name, ns),
 			IsTemplate: vm.Metadata.Labels["corral.dev/template"] == "true",
 			Bootc:      kernelBoot,
+			Tags:       tagsFromLabels(vm.Metadata.Labels),
 		}
 		// Overlay live VMI facts (actual node, IP, migratability, agent).
 		// LiveMigratable reflects REAL viability: KubeVirt's condition AND a
