@@ -8,6 +8,9 @@ const $ = (sel) => document.querySelector(sel);
 let vms = [];
 let nodes = [];
 let caps = { storageClass: '', canExpand: false, canSnapshot: false };
+// Authenticated tailnet identity + privilege (see /api/whoami). Defaults to
+// admin so the UI is fully enabled until told otherwise (single-user mode).
+let me = { login: '', name: '', admin: true, enforced: false };
 let availableNADs = [];
 let selected = { type: 'dc' }; // {type:'dc'} | {type:'node',name} | {type:'vm',key}
 let tab = 'summary';
@@ -79,6 +82,20 @@ async function loadCaps() {
   // The Windows create flow is compiled into the web server (manifest gen in
   // pkg/kubevirt), so it's always available — no plugin install needed.
   try { availableNADs = await api('/api/nads'); } catch { availableNADs = []; }
+}
+
+// loadWhoami fetches the caller identity and flips the UI into read-only mode
+// for non-admins (the server still enforces this; the UI just hides controls).
+async function loadWhoami() {
+  try { me = await api('/api/whoami'); } catch { return; }
+  const el = $('#whoami');
+  if (el) {
+    const badge = me.admin ? '' : '<span class="ro-badge">read-only</span>';
+    if (me.login) el.innerHTML = `<span class="who-name">${esc(me.name || me.login)}</span>${badge}`;
+    else if (me.enforced) el.innerHTML = badge; // behind the gate but unidentified
+    else el.textContent = '';
+  }
+  document.body.classList.toggle('read-only', !me.admin);
 }
 
 async function loadInstanceTypes() {
@@ -1399,6 +1416,7 @@ function closeDrawer() { $('#tree').classList.remove('open'); }
 $('#btn-menu').innerHTML = icon('menu');
 $('#btn-create').innerHTML = `${icon('plus')} Create VM`;
 
+loadWhoami();
 loadCaps();
 loadInstanceTypes();
 refresh();

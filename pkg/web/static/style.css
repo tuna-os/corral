@@ -112,6 +112,19 @@ main {
 
 .toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-left: auto; }
 
+/* Authenticated identity in the header + read-only mode (non-admin callers). */
+.whoami { display: inline-flex; align-items: center; gap: 8px; font-size: .85rem; color: var(--muted); }
+.whoami .who-name { color: var(--text); }
+.ro-badge {
+  padding: 2px 8px; border-radius: 999px; font-size: .72rem;
+  color: var(--yellow); border: 1px solid var(--yellow); background: transparent;
+  text-transform: uppercase; letter-spacing: .04em;
+}
+/* In read-only mode the server rejects mutations anyway — hide the controls
+   that would only ever 403, leaving view-only surfaces (consoles, tabs). */
+body.read-only #btn-create,
+body.read-only .toolbar { display: none !important; }
+
 .btn {
   display: inline-flex;
   align-items: center;

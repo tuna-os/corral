@@ -152,6 +152,15 @@ spec:
             # Override with CORRAL_NAMESPACE=custom-ns if needed.
             - name: CORRAL_NAMESPACE
               value: corral-vms
+            # Admin allowlist (comma-separated tailnet logins). When unset,
+            # the UI is single-user/open. When set, only these logins may
+            # perform mutating actions; everyone else is read-only. Identity
+            # comes from the Tailscale ingress (see docs/adr/0003).
+            # SECURITY: this trusts the Tailscale-User-Login header, which is
+            # only safe because all traffic reaches this pod via the Tailscale
+            # operator Ingress. Do not add a second, non-Tailscale ingress path.
+            # - name: CORRAL_ADMINS
+            #   value: "alice@github,bob@github"
           ports:
             - containerPort: 8006
               name: http
