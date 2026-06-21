@@ -465,9 +465,15 @@ test.describe('Corral web UI', () => {
       const m = /^([\d.]+)(Mi|Gi|M|G)?$/.exec(q || '');
       return m ? parseFloat(m[1]) * (m[2]?.startsWith('G') ? 1024 : 1) : 0;
     };
+    // Query each field separately — a multi-field jsonpath with spaces gets
+    // word-split by the shell, so kubectl reads the later {…} tokens as extra
+    // resource names ("… not found") and the poll never matches.
+    const vmField = (path) =>
+      kubectl(`kubectl get vm ${vm} -n ${NS} -o jsonpath='{${path}}'`).replace(/'/g, '');
     const scaled = await waitFor(() => {
-      const out = kubectl(`kubectl get vm ${vm} -n ${NS} -o jsonpath='{.spec.template.spec.domain.cpu.sockets} {.spec.template.spec.domain.cpu.cores} {.spec.template.spec.domain.memory.guest}'`).replace(/'/g, '');
-      const [sockets, cores, mem] = out.split(' ');
+      const sockets = vmField('.spec.template.spec.domain.cpu.sockets');
+      const cores = vmField('.spec.template.spec.domain.cpu.cores');
+      const mem = vmField('.spec.template.spec.domain.memory.guest');
       const vcpus = (parseInt(sockets, 10) || 1) * (parseInt(cores, 10) || 1);
       return vcpus === 2 && toMib(mem) === 3072;
     }, 60_000, 3000, `${vm} scaled to 2 vCPU / 3072Mi`);
