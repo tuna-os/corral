@@ -51,7 +51,9 @@ func TestCatalog_NotEmpty(t *testing.T) {
 		if n != 1 {
 			t.Errorf("Images[%d] (%s) has %d of ContainerDisk/URL/ISO set, want exactly 1", i, img.Name, n)
 		}
-		if img.DefaultUser == "" {
+		// Desktop installer ISOs create the user interactively, so they have no
+		// preset DefaultUser; cloud images and appliances must declare one.
+		if img.DefaultUser == "" && img.Variant != "desktop" {
 			t.Errorf("Images[%d] (%s) has empty DefaultUser", i, img.Name)
 		}
 		if img.Source == "" {
