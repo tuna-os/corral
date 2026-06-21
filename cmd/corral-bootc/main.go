@@ -12,7 +12,6 @@ import (
 	"os"
 
 	"github.com/hanthor/corral/pkg/catalog"
-	"github.com/hanthor/corral/pkg/config"
 	"github.com/hanthor/corral/pkg/kubevirt"
 	"github.com/hanthor/corral/pkg/registry"
 	"github.com/hanthor/corral/pkg/types"
@@ -61,13 +60,16 @@ func main() {
 			if err != nil {
 				return fmt.Errorf("bootc build: %w", err)
 			}
-			vm := kubevirt.GenerateBootcVM(name, ns, build.PVCName, image,
-				build.RootUUID, build.KernelVersion, build.KernelArgs, mem, cpu, node, config.AuthKey())
+			vm := kubevirt.GenerateBootcVM(name, ns, build.PVCName, image, mem, cpu, node)
 			if vm == nil {
 				return fmt.Errorf("bootc VM manifest unavailable")
 			}
 			if err := kubevirt.Apply(vm); err != nil {
 				return fmt.Errorf("creating VM: %w", err)
+			}
+			// Expose SSH/VNC on the tailnet via the Tailscale operator proxy.
+			if err := kubevirt.ApplyProxy(name, ns, []int{22, 5900}); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: tailnet expose failed: %v\n", err)
 			}
 			if store, err := registry.NewStore(); err == nil {
 				store.Set(name, types.RegistryEntry{

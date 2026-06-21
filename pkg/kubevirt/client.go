@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -700,14 +702,8 @@ func GenerateVM(opts types.CreateOpts) map[string]any {
 			}
 		}
 	}
-	// Join the tailnet on first boot. Skipped when the extra cloud-init
-	// already declares runcmd — two runcmd keys would be invalid YAML.
-	if opts.TailscaleAuthKey != "" && !strings.Contains(opts.CloudInitExtra, "runcmd:") {
-		userData += fmt.Sprintf(`runcmd:
-  - ['sh', '-c', 'command -v tailscale >/dev/null 2>&1 || curl -fsSL https://tailscale.com/install.sh | sh']
-  - ['tailscale', 'up', '--auth-key=%s', '--hostname=%s']
-`, opts.TailscaleAuthKey, name)
-	}
+	// Tailnet access is provided by the Tailscale operator proxy (ApplyProxy),
+	// not by joining from inside the guest — so no in-guest tailscale here.
 	if opts.CloudInitExtra != "" {
 		userData = mergeCloudInit(userData, opts.CloudInitExtra)
 	}
@@ -1030,26 +1026,50 @@ func ExposedPorts(name, ns string) []int {
 	return ports
 }
 
+// applyProxyManifest applies one proxy manifest with retries. The proxy Role
+// grants only vmi get + vnc get (both held by corral-web, so the RBAC
+// privilege-escalation check passes); retries cover transient apiserver/webhook
+// blips during the post-build churn.
+func applyProxyManifest(label, manifest string) error {
+	var err error
+	for attempt := 0; attempt < 12; attempt++ {
+		if err = applyManifest(manifest); err == nil {
+			return nil
+		}
+		time.Sleep(5 * time.Second)
+	}
+	return fmt.Errorf("proxy %s: %w", label, err)
+}
+
 // ApplyProxy creates/updates the proxy resources for a VM.
 func ApplyProxy(name, ns string, ports []int) error {
-	// RBAC
-	rbac := GenerateProxyRBAC(name, ns)
-	if err := applyManifest(rbac); err != nil {
-		return fmt.Errorf("proxy RBAC: %w", err)
+	// The proxy Service is only useful if the Tailscale K8s operator is there to
+	// turn its `tailscale.com/expose` annotation into a tailnet device. Without
+	// the operator (e.g. a plain/kind cluster) the proxy Deployment is just a
+	// useless socat pod, so skip it — keeps non-operator clusters clean.
+	if !tailscaleOperatorPresent() {
+		return nil
 	}
-	// Service
-	svc := GenerateProxyService(name, ns, ports)
-	svcData, _ := json.Marshal(svc)
-	if err := applyManifest(string(svcData)); err != nil {
-		return fmt.Errorf("proxy service: %w", err)
+	if err := applyProxyManifest("RBAC", GenerateProxyRBAC(name, ns)); err != nil {
+		return err
 	}
-	// Deployment
-	deploy := GenerateProxyDeployment(name, ns, ports)
-	deployData, _ := json.Marshal(deploy)
-	if err := applyManifest(string(deployData)); err != nil {
-		return fmt.Errorf("proxy deployment: %w", err)
+	svc, _ := json.Marshal(GenerateProxyService(name, ns, ports))
+	if err := applyProxyManifest("service", string(svc)); err != nil {
+		return err
+	}
+	deploy, _ := json.Marshal(GenerateProxyDeployment(name, ns, ports))
+	if err := applyProxyManifest("deployment", string(deploy)); err != nil {
+		return err
 	}
 	return nil
+}
+
+// tailscaleOperatorPresent reports whether the Tailscale K8s operator is
+// installed, by checking for the `tailscale` IngressClass it registers. Used to
+// skip exposing VMs on clusters without the operator.
+func tailscaleOperatorPresent() bool {
+	_, err := runPkg("kubectl", "get", "ingressclass", "tailscale")
+	return err == nil
 }
 
 // DeleteProxy removes all proxy resources for a VM.
@@ -1084,9 +1104,6 @@ rules:
   - apiGroups: ["kubevirt.io"]
     resources: ["virtualmachineinstances"]
     verbs: ["get"]
-  - apiGroups: ["kubevirt.io"]
-    resources: ["virtualmachineinstances/portforward"]
-    verbs: ["create"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -1166,25 +1183,47 @@ func CreateVM(opts types.CreateOpts) error {
 
 // applyManifest pipes a YAML manifest string to kubectl apply.
 func applyManifest(yaml string) error {
-	_, err := applyRunner.RunStdin(yaml, "kubectl", "apply", "-f", "-")
+	out, err := getApplyRunner().RunStdin(yaml, "kubectl", "apply", "-f", "-")
+	if err != nil {
+		// RunStdin returns combined stdout+stderr; surface it so callers don't
+		// just see "exit status 1".
+		if msg := strings.TrimSpace(string(out)); msg != "" {
+			return fmt.Errorf("%w: %s", err, msg)
+		}
+	}
 	return err
 }
 
-// applyRunner is the Runner used by Apply. Set during tests.
-var applyRunner shell.Runner = shell.Real{}
+// The package shell-out runners are swapped by tests (SetApplyRunner /
+// SetPackageRunner) while background goroutines (e.g. async ApplyProxy from a
+// create handler) read them, so guard access with a mutex — otherwise `go test
+// -race` flags the read/write.
+var (
+	runnerMu             sync.RWMutex
+	applyRunner          shell.Runner = shell.Real{} // runner used by Apply
+	defaultPackageRunner shell.Runner = shell.Real{} // runner for package-level kubectl
+)
+
+func getApplyRunner() shell.Runner { runnerMu.RLock(); defer runnerMu.RUnlock(); return applyRunner }
+func getPackageRunner() shell.Runner {
+	runnerMu.RLock()
+	defer runnerMu.RUnlock()
+	return defaultPackageRunner
+}
 
 // SetApplyRunner overrides the runner for Apply (for unit tests).
-func SetApplyRunner(r shell.Runner) { applyRunner = r }
-
-// defaultPackageRunner is used by package-level functions that shell out directly.
-var defaultPackageRunner shell.Runner = shell.Real{}
+func SetApplyRunner(r shell.Runner) { runnerMu.Lock(); defer runnerMu.Unlock(); applyRunner = r }
 
 // SetPackageRunner overrides the runner for package-level kubectl calls (for unit tests).
-func SetPackageRunner(r shell.Runner) { defaultPackageRunner = r }
+func SetPackageRunner(r shell.Runner) {
+	runnerMu.Lock()
+	defer runnerMu.Unlock()
+	defaultPackageRunner = r
+}
 
 // runPkg is a helper for package-level functions to use the testable runner.
 func runPkg(name string, args ...string) ([]byte, error) {
-	return defaultPackageRunner.Run(name, args...)
+	return getPackageRunner().Run(name, args...)
 }
 
 // cpuSpec builds a hotplug-ready CPU topology: one core/thread per socket so
