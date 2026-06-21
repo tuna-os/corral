@@ -95,6 +95,10 @@ func TestCreateWindowsVM_WithRDP(t *testing.T) {
 	})
 	t.Setenv("HOME", t.TempDir())
 
+	// ApplyProxy only exposes the VM when the Tailscale operator is present
+	// (it probes for the `tailscale` IngressClass) — pretend it is here.
+	fake.AddResponseKV("kubectl", []string{"get", "ingressclass", "tailscale"}, "tailscale", nil)
+
 	if err := createWindowsVM("win11", "tailvm", "https://example.com/win11.iso",
 		"64Gi", "8Gi", 4, true); err != nil {
 		t.Fatalf("createWindowsVM --rdp: %v", err)
