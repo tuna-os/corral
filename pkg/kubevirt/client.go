@@ -590,6 +590,10 @@ func (c *Client) portInUse(port int) bool {
 	return cmd.Run() == nil
 }
 
+// Virtctl resolves the virtctl binary path (exported for plugins that shell to
+// virtctl directly, e.g. corral-backup's CDI image-upload restore).
+func (c *Client) Virtctl() (string, error) { return c.ensureVirtctl() }
+
 func (c *Client) ensureVirtctl() (string, error) {
 	path, err := c.runner().LookPath("virtctl")
 	if err != nil {
