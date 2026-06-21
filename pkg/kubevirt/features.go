@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -838,6 +839,66 @@ func (c *Client) Metrics(name string) map[string]string {
 		res["mem"] = f[2]
 	}
 	return res
+}
+
+// SampleAllCPU returns current CPU usage in millicores for every running VM,
+// keyed by "namespace/vm". It joins `kubectl top` (usage by pod) with the
+// virt-launcher pods' vm.kubevirt.io/name label. Returns nil when
+// metrics-server is unavailable, so callers degrade gracefully.
+func SampleAllCPU() map[string]int {
+	out, err := runPkg("kubectl", "get", "pods", "-A", "-l", "kubevirt.io=virt-launcher", "-o", "json")
+	if err != nil {
+		return nil
+	}
+	var pods struct {
+		Items []struct {
+			Metadata struct {
+				Name      string            `json:"name"`
+				Namespace string            `json:"namespace"`
+				Labels    map[string]string `json:"labels"`
+			} `json:"metadata"`
+		} `json:"items"`
+	}
+	if json.Unmarshal(out, &pods) != nil {
+		return nil
+	}
+	podToVM := map[string]string{} // "ns/podname" -> "ns/vm"
+	for _, p := range pods.Items {
+		if vm := p.Metadata.Labels["vm.kubevirt.io/name"]; vm != "" {
+			podToVM[p.Metadata.Namespace+"/"+p.Metadata.Name] = p.Metadata.Namespace + "/" + vm
+		}
+	}
+	if len(podToVM) == 0 {
+		return map[string]int{}
+	}
+	top, err := runPkg("kubectl", "top", "pod", "-A", "-l", "kubevirt.io=virt-launcher", "--no-headers")
+	if err != nil {
+		return nil // metrics-server absent
+	}
+	res := map[string]int{}
+	for _, line := range strings.Split(strings.TrimSpace(string(top)), "\n") {
+		f := strings.Fields(line) // NAMESPACE NAME CPU(cores) MEMORY(bytes)
+		if len(f) < 3 {
+			continue
+		}
+		if key, ok := podToVM[f[0]+"/"+f[1]]; ok {
+			res[key] = parseMilliCPU(f[2])
+		}
+	}
+	return res
+}
+
+// parseMilliCPU parses a `kubectl top` CPU value ("123m", or "1" = 1 core).
+func parseMilliCPU(s string) int {
+	s = strings.TrimSpace(s)
+	if strings.HasSuffix(s, "m") {
+		n, _ := strconv.Atoi(strings.TrimSuffix(s, "m"))
+		return n
+	}
+	if f, err := strconv.ParseFloat(s, 64); err == nil {
+		return int(f * 1000)
+	}
+	return 0
 }
 
 // ── Storage / capability detection ────────────────────────────────

@@ -375,6 +375,7 @@ func TestHandleDoctorFix(t *testing.T) {
 	// (kubectl apply of the upstream manifests) and best-effort reconfigures.
 	fx.Runner.AddPrefixResponse("kubectl apply -f", "applied", nil)
 	fx.Runner.AddPrefixResponse("kubectl patch kubevirt", "patched", nil)
+	fx.Runner.AddPrefixResponse("kubectl patch deployment metrics-server", "patched", nil)
 
 	resp, err := http.Post(fx.Server.URL+"/api/doctor/fix", "application/json", nil)
 	if err != nil {
