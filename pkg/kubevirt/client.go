@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -1167,7 +1168,7 @@ func CreateVM(opts types.CreateOpts) error {
 
 // applyManifest pipes a YAML manifest string to kubectl apply.
 func applyManifest(yaml string) error {
-	out, err := applyRunner.RunStdin(yaml, "kubectl", "apply", "-f", "-")
+	out, err := getApplyRunner().RunStdin(yaml, "kubectl", "apply", "-f", "-")
 	if err != nil {
 		// RunStdin returns combined stdout+stderr; surface it so callers don't
 		// just see "exit status 1".
@@ -1178,21 +1179,36 @@ func applyManifest(yaml string) error {
 	return err
 }
 
-// applyRunner is the Runner used by Apply. Set during tests.
-var applyRunner shell.Runner = shell.Real{}
+// The package shell-out runners are swapped by tests (SetApplyRunner /
+// SetPackageRunner) while background goroutines (e.g. async ApplyProxy from a
+// create handler) read them, so guard access with a mutex — otherwise `go test
+// -race` flags the read/write.
+var (
+	runnerMu             sync.RWMutex
+	applyRunner          shell.Runner = shell.Real{} // runner used by Apply
+	defaultPackageRunner shell.Runner = shell.Real{} // runner for package-level kubectl
+)
+
+func getApplyRunner() shell.Runner { runnerMu.RLock(); defer runnerMu.RUnlock(); return applyRunner }
+func getPackageRunner() shell.Runner {
+	runnerMu.RLock()
+	defer runnerMu.RUnlock()
+	return defaultPackageRunner
+}
 
 // SetApplyRunner overrides the runner for Apply (for unit tests).
-func SetApplyRunner(r shell.Runner) { applyRunner = r }
-
-// defaultPackageRunner is used by package-level functions that shell out directly.
-var defaultPackageRunner shell.Runner = shell.Real{}
+func SetApplyRunner(r shell.Runner) { runnerMu.Lock(); defer runnerMu.Unlock(); applyRunner = r }
 
 // SetPackageRunner overrides the runner for package-level kubectl calls (for unit tests).
-func SetPackageRunner(r shell.Runner) { defaultPackageRunner = r }
+func SetPackageRunner(r shell.Runner) {
+	runnerMu.Lock()
+	defer runnerMu.Unlock()
+	defaultPackageRunner = r
+}
 
 // runPkg is a helper for package-level functions to use the testable runner.
 func runPkg(name string, args ...string) ([]byte, error) {
-	return defaultPackageRunner.Run(name, args...)
+	return getPackageRunner().Run(name, args...)
 }
 
 // cpuSpec builds a hotplug-ready CPU topology: one core/thread per socket so
