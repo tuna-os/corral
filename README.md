@@ -42,8 +42,10 @@ VMs are cattle. Stop treating each one like a networking project.
   dashboard: datacenter → node → VM tree, live status, create wizard,
   start/stop/restart/pause, **one-click live migration** with a target-node
   picker, **multi-select bulk start/stop**, **tags** (chips + tree filter), a
-  per-VM **CPU usage sparkline**, disk **export** (qcow2 or raw.gz), and *real
-  consoles in the browser* — noVNC graphics and an xterm.js serial TTY. It also
+  per-VM **CPU usage sparkline**, disk **export** (qcow2 or raw.gz),
+  **your own image/ISO sources** alongside the built-in catalog (saved in a
+  ConfigMap), and *real consoles in the browser* — noVNC graphics and an
+  xterm.js serial TTY. It also
   runs **on the cluster itself** (`deploy/corral-web.yaml`), exposed to your
   tailnet by the Tailscale operator. CLI, TUI, and web all share the same state.
 - **One static Go binary.** No daemons, no controllers to install, no

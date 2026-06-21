@@ -236,6 +236,29 @@ The built-in OS image catalog — curated, ready-to-boot containerdisks.
 ]
 ```
 
+User-defined custom sources are appended, each flagged `"custom": true`.
+
+### `GET /api/sources`
+
+The user-defined custom sources only (for management UI). Same entry shape as
+`/api/images`, all `"custom": true`. Persisted in the `corral-sources`
+ConfigMap so they survive web-pod restarts.
+
+### `POST /api/sources`
+
+Add or replace a custom source (idempotent by name).
+
+```json
+{"name": "my-image", "kind": "containerDisk", "uri": "ghcr.io/me/img:tag", "description": "optional"}
+```
+
+`kind` is one of `containerDisk` (boots directly), `url` (qcow2/raw, CDI
+import), or `iso` (installer ISO). **Response**: `{"status": "ok", "name": "my-image"}`.
+
+### `DELETE /api/sources/{name}`
+
+Remove a custom source. **Response**: `{"status": "removed"}`.
+
 ### `GET /api/datavolumes`
 
 List imported images (CDI DataVolumes). These are ISO/qcow2/raw images
