@@ -403,6 +403,11 @@ func handleBootcRebuild(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if image == "" {
+		// The in-pod registry is lost on restart; fall back to the durable image
+		// annotation recorded on the VM at create time.
+		image = kubevirt.BootcImageOf(name, ns)
+	}
+	if image == "" {
 		errResp(w, http.StatusBadRequest,
 			fmt.Errorf("no recorded bootc image for %q — pass an image to switch to", name))
 		return

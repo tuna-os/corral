@@ -3,6 +3,7 @@ package kubevirt
 import (
 	"fmt"
 	"io"
+	"strings"
 )
 
 func errBootcUnavailable() error {
@@ -26,12 +27,24 @@ type BootcBuildResult struct {
 // Registered by bootc.go when the `bootc` build tag is set; nil otherwise.
 var (
 	bootcBuildFunc   func(name, namespace, imageURI, sshPublicKey, diskSize string, progress io.Writer) (*BootcBuildResult, error)
-	bootcVMFunc      func(name, namespace, pvcName, imageURI, mem string, cpu int, node string) map[string]any
+	bootcVMFunc      func(name, namespace, pvcName, imageURI, sshKey, mem string, cpu int, node string) map[string]any
 	bootcRebuildFunc func(name, namespace, imageURI, sshPublicKey, diskSize string, progress io.Writer) error
 )
 
 // BootcAvailable reports whether the bootc plugin is compiled into this binary.
 func BootcAvailable() bool { return bootcBuildFunc != nil }
+
+// BootcImageOf returns the image a bootc VM was built from, read from the
+// durable `corral.bootc/image` annotation (survives server-pod restarts, unlike
+// the in-pod registry). Empty if the VM/annotation is absent.
+func BootcImageOf(name, namespace string) string {
+	out, err := runPkg("kubectl", "get", "vm", name, "-n", namespace,
+		"-o", `jsonpath={.metadata.annotations.corral\.bootc/image}`)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
 
 // BootcBuildDisk runs the on-cluster bootc disk build. Errors if the plugin
 // isn't compiled in.
@@ -44,11 +57,11 @@ func BootcBuildDisk(name, namespace, imageURI, sshPublicKey, diskSize string, pr
 
 // GenerateBootcVM builds the final VM manifest that UEFI-boots a bootc-built
 // block disk PVC. Returns nil if the plugin isn't compiled in.
-func GenerateBootcVM(name, namespace, pvcName, imageURI, mem string, cpu int, node string) map[string]any {
+func GenerateBootcVM(name, namespace, pvcName, imageURI, sshKey, mem string, cpu int, node string) map[string]any {
 	if bootcVMFunc == nil {
 		return nil
 	}
-	return bootcVMFunc(name, namespace, pvcName, imageURI, mem, cpu, node)
+	return bootcVMFunc(name, namespace, pvcName, imageURI, sshKey, mem, cpu, node)
 }
 
 // BootcRebuild rebuilds an existing bootc VM's disk from imageURI (the same

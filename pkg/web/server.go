@@ -326,7 +326,7 @@ func handleCreateVM(w http.ResponseWriter, r *http.Request) {
 		go func() {
 			build, err := kubevirt.BootcBuildDisk(req.Name, ns, req.Bootc, sshKey, req.Disk, task)
 			if err == nil {
-				vm := kubevirt.GenerateBootcVM(req.Name, ns, build.PVCName, req.Bootc, req.Mem, req.CPU, req.Node)
+				vm := kubevirt.GenerateBootcVM(req.Name, ns, build.PVCName, req.Bootc, sshKey, req.Mem, req.CPU, req.Node)
 				err = kubevirt.Apply(vm)
 			}
 			if err == nil && store != nil {
