@@ -315,6 +315,17 @@ func handleMetrics(w http.ResponseWriter, r *http.Request) {
 	jsonResp(w, http.StatusOK, kubevirt.NewClient(ns).Metrics(name))
 }
 
+// GET /api/vms/{ns}/{name}/metrics/history — retained CPU samples (millicores)
+// for the summary sparkline. Empty array when metrics-server is absent.
+func handleMetricsHistory(w http.ResponseWriter, r *http.Request) {
+	ns, name := r.PathValue("ns"), r.PathValue("name")
+	samples := cpuHist.get(ns + "/" + name)
+	if samples == nil {
+		samples = []cpuSample{}
+	}
+	jsonResp(w, http.StatusOK, samples)
+}
+
 // POST /api/vms/{ns}/{name}/template  body: {on: bool}  — mark/unmark template
 func handleMarkTemplate(w http.ResponseWriter, r *http.Request) {
 	ns, name := r.PathValue("ns"), r.PathValue("name")

@@ -285,6 +285,20 @@ dl.props dd { margin: 0; word-break: break-all; }
 }
 .wiz-chip.active { border-color: var(--accent, #4a9eda); }
 
+/* CPU sparkline (RRD-style history on the Summary tab) */
+.spark {
+  width: 100%;
+  height: 80px;
+  display: block;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.spark-line { fill: none; stroke: var(--accent); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.spark-area { fill: var(--accent); opacity: .12; stroke: none; }
+.spark-cap { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; opacity: .6; }
+.spark-legend { margin-top: 6px; font-size: .82rem; }
+
 /* Inset panel section (snapshot schedule, etc.) */
 .panel-section {
   border: 1px solid var(--border);
