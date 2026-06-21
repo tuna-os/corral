@@ -26,7 +26,7 @@ type BootcBuildResult struct {
 // Registered by bootc.go when the `bootc` build tag is set; nil otherwise.
 var (
 	bootcBuildFunc   func(name, namespace, imageURI, sshPublicKey, diskSize string, progress io.Writer) (*BootcBuildResult, error)
-	bootcVMFunc      func(name, namespace, pvcName, imageURI, mem string, cpu int, node string) map[string]any
+	bootcVMFunc      func(name, namespace, pvcName, imageURI, sshKey, mem string, cpu int, node string) map[string]any
 	bootcRebuildFunc func(name, namespace, imageURI, sshPublicKey, diskSize string, progress io.Writer) error
 )
 
@@ -44,11 +44,11 @@ func BootcBuildDisk(name, namespace, imageURI, sshPublicKey, diskSize string, pr
 
 // GenerateBootcVM builds the final VM manifest that UEFI-boots a bootc-built
 // block disk PVC. Returns nil if the plugin isn't compiled in.
-func GenerateBootcVM(name, namespace, pvcName, imageURI, mem string, cpu int, node string) map[string]any {
+func GenerateBootcVM(name, namespace, pvcName, imageURI, sshKey, mem string, cpu int, node string) map[string]any {
 	if bootcVMFunc == nil {
 		return nil
 	}
-	return bootcVMFunc(name, namespace, pvcName, imageURI, mem, cpu, node)
+	return bootcVMFunc(name, namespace, pvcName, imageURI, sshKey, mem, cpu, node)
 }
 
 // BootcRebuild rebuilds an existing bootc VM's disk from imageURI (the same

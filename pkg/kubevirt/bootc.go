@@ -58,6 +58,19 @@ func bootcRebuild(name, namespace, imageURI, sshPublicKey, diskSize string, prog
 	c := NewClient(namespace)
 	pvc := name + "-bootc-disk"
 
+	// `--wipe` destroys the disk (incl. /var where the composefs SSH key lives),
+	// so rebuild must re-bake the key. Callers without one (the web server pod has
+	// no ~/.ssh) fall back to the key recorded on the VM at create time.
+	if strings.TrimSpace(sshPublicKey) == "" {
+		if out, err := runPkg("kubectl", "get", "vm", name, "-n", namespace,
+			"-o", `jsonpath={.metadata.annotations.corral\.bootc/ssh-key}`); err == nil {
+			sshPublicKey = strings.TrimSpace(string(out))
+		}
+	}
+	if strings.TrimSpace(sshPublicKey) == "" {
+		return fmt.Errorf("no SSH key for rebuild of %q (none provided and none recorded on the VM) — pass --ssh-key, or the rebuilt VM would be unreachable", name)
+	}
+
 	// Reuse the existing disk size unless the caller overrides it.
 	if diskSize == "" {
 		if out, err := runPkg("kubectl", "get", "pvc", pvc, "-n", namespace,
@@ -85,6 +98,9 @@ func bootcRebuild(name, namespace, imageURI, sshPublicKey, diskSize string, prog
 	if _, err := bootcBuildDisk(name, namespace, imageURI, sshPublicKey, diskSize, progress); err != nil {
 		return fmt.Errorf("rebuild: %w", err)
 	}
+
+	// Keep the recorded image current (switch points the VM at a new image).
+	c.patchVMMerge(name, fmt.Sprintf(`{"metadata":{"annotations":{"corral.bootc/image":%q}}}`, imageURI))
 
 	fmt.Fprintf(progress, "  Starting %s on the new disk...\n", name)
 	return c.StartVM(name)
@@ -477,7 +493,7 @@ func builderVMIPhase(name, namespace string) string {
 // generateBootcVM builds the final VM manifest: it boots the installed block-mode
 // disk PVC via UEFI firmware + the bootloader bootc installed (systemd-boot or
 // GRUB). No kernelBoot — the disk is fully self-bootable.
-func generateBootcVM(name, namespace, pvcName, imageURI, mem string, cpu int, node string) map[string]any {
+func generateBootcVM(name, namespace, pvcName, imageURI, sshKey, mem string, cpu int, node string) map[string]any {
 	if mem == "" {
 		mem = "4G"
 	}
@@ -535,6 +551,10 @@ func generateBootcVM(name, namespace, pvcName, imageURI, mem string, cpu int, no
 			"labels":    map[string]any{"corral": name, "corral-bootc-image": ""},
 			"annotations": map[string]any{
 				"corral.bootc/image": imageURI,
+				// Record the SSH key so `bootc rebuild/upgrade/switch` can re-bake
+				// it: --wipe destroys /var (where the composefs key lives), and the
+				// web server pod has no ~/.ssh to fall back on.
+				"corral.bootc/ssh-key": strings.TrimSpace(sshKey),
 			},
 		},
 		"spec": spec,
