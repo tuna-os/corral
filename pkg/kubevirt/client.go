@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -1024,24 +1025,33 @@ func ExposedPorts(name, ns string) []int {
 	return ports
 }
 
+// applyProxyManifest applies one proxy manifest with retries. The proxy Role
+// grants only vmi get + vnc get (both held by corral-web, so the RBAC
+// privilege-escalation check passes); retries cover transient apiserver/webhook
+// blips during the post-build churn.
+func applyProxyManifest(label, manifest string) error {
+	var err error
+	for attempt := 0; attempt < 12; attempt++ {
+		if err = applyManifest(manifest); err == nil {
+			return nil
+		}
+		time.Sleep(5 * time.Second)
+	}
+	return fmt.Errorf("proxy %s: %w", label, err)
+}
+
 // ApplyProxy creates/updates the proxy resources for a VM.
 func ApplyProxy(name, ns string, ports []int) error {
-	// RBAC
-	rbac := GenerateProxyRBAC(name, ns)
-	if err := applyManifest(rbac); err != nil {
-		return fmt.Errorf("proxy RBAC: %w", err)
+	if err := applyProxyManifest("RBAC", GenerateProxyRBAC(name, ns)); err != nil {
+		return err
 	}
-	// Service
-	svc := GenerateProxyService(name, ns, ports)
-	svcData, _ := json.Marshal(svc)
-	if err := applyManifest(string(svcData)); err != nil {
-		return fmt.Errorf("proxy service: %w", err)
+	svc, _ := json.Marshal(GenerateProxyService(name, ns, ports))
+	if err := applyProxyManifest("service", string(svc)); err != nil {
+		return err
 	}
-	// Deployment
-	deploy := GenerateProxyDeployment(name, ns, ports)
-	deployData, _ := json.Marshal(deploy)
-	if err := applyManifest(string(deployData)); err != nil {
-		return fmt.Errorf("proxy deployment: %w", err)
+	deploy, _ := json.Marshal(GenerateProxyDeployment(name, ns, ports))
+	if err := applyProxyManifest("deployment", string(deploy)); err != nil {
+		return err
 	}
 	return nil
 }
@@ -1078,9 +1088,6 @@ rules:
   - apiGroups: ["kubevirt.io"]
     resources: ["virtualmachineinstances"]
     verbs: ["get"]
-  - apiGroups: ["kubevirt.io"]
-    resources: ["virtualmachineinstances/portforward"]
-    verbs: ["create"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -1160,7 +1167,14 @@ func CreateVM(opts types.CreateOpts) error {
 
 // applyManifest pipes a YAML manifest string to kubectl apply.
 func applyManifest(yaml string) error {
-	_, err := applyRunner.RunStdin(yaml, "kubectl", "apply", "-f", "-")
+	out, err := applyRunner.RunStdin(yaml, "kubectl", "apply", "-f", "-")
+	if err != nil {
+		// RunStdin returns combined stdout+stderr; surface it so callers don't
+		// just see "exit status 1".
+		if msg := strings.TrimSpace(string(out)); msg != "" {
+			return fmt.Errorf("%w: %s", err, msg)
+		}
+	}
 	return err
 }
 

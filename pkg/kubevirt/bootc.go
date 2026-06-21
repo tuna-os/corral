@@ -6,12 +6,12 @@
 package kubevirt
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -23,12 +23,34 @@ func init() {
 	bootcRebuildFunc = bootcRebuild
 }
 
-// bootcRebuild rebuilds name's bootc disk from imageURI and re-points its
-// kernel boot at the result. Used by `corral bootc rebuild/switch/upgrade` and
-// the web Upgrade button. Steps: stop the VM (frees the RWO disk) → delete the
-// old disk PVC → build a fresh one from the image → patch the VM's kernelBoot
-// (image + kernel paths + root UUID) → start it. Everything else on the VM
-// (sizing, networks, node) is preserved.
+// The bootc disk is built inside a short-lived **builder VM**, not a pod. The
+// builder runs `bootc install to-disk` against a block-mode PVC attached as a
+// raw device, so the VM's full kernel does all the filesystem work. This is the
+// only way to install images whose root fs or initramfs the *node* kernel can't
+// handle — e.g. Universal Blue desktop images (bluefin/dakota) need btrfs +
+// composefs, which the Talos node kernel lacks. The finished disk is
+// self-bootable (GPT + ESP + bootloader), so the final VM boots it via UEFI
+// firmware — no kernelBoot, no kernel/initrd/cmdline capture.
+
+// bootcBuildTimeout bounds how long we wait for the builder VM to finish. The
+// in-VM image pull + `bootc install to-disk` (ostree checkout of a multi-GB
+// desktop image) can run well over half an hour on slow links. Override with
+// CORRAL_BOOTC_BUILD_TIMEOUT (minutes).
+func bootcBuildTimeout() time.Duration {
+	if v := os.Getenv("CORRAL_BOOTC_BUILD_TIMEOUT"); v != "" {
+		if m, err := strconv.Atoi(v); err == nil && m > 0 {
+			return time.Duration(m) * time.Minute
+		}
+	}
+	return 45 * time.Minute
+}
+
+// bootcRebuild rebuilds name's bootc disk from imageURI and restarts it. Used by
+// `corral bootc rebuild/switch/upgrade` and the web Upgrade button. Steps: stop
+// the VM (frees the RWO block disk) → delete the old disk PVC → build a fresh one
+// from the image → start. The final VM references the disk PVC by name and boots
+// it via UEFI, so no manifest patch is needed — the rebuilt disk just takes the
+// same name. Sizing/networks/node on the VM are preserved.
 func bootcRebuild(name, namespace, imageURI, sshPublicKey, diskSize string, progress io.Writer) error {
 	if progress == nil {
 		progress = os.Stderr
@@ -51,7 +73,6 @@ func bootcRebuild(name, namespace, imageURI, sshPublicKey, diskSize string, prog
 
 	fmt.Fprintf(progress, "  Removing the old disk (%s)...\n", pvc)
 	runPkg("kubectl", "delete", "pvc", pvc, "-n", namespace, "--ignore-not-found")
-	runPkg("kubectl", "delete", "datavolume", pvc, "-n", namespace, "--ignore-not-found")
 	// Wait for the PVC to actually disappear so the rebuild's fresh PVC isn't a
 	// no-op against a terminating one.
 	for i := 0; i < 60; i++ {
@@ -61,30 +82,18 @@ func bootcRebuild(name, namespace, imageURI, sshPublicKey, diskSize string, prog
 		time.Sleep(2 * time.Second)
 	}
 
-	build, err := bootcBuildDisk(name, namespace, imageURI, sshPublicKey, diskSize, progress)
-	if err != nil {
+	if _, err := bootcBuildDisk(name, namespace, imageURI, sshPublicKey, diskSize, progress); err != nil {
 		return fmt.Errorf("rebuild: %w", err)
-	}
-
-	// Re-point the kernel boot at the freshly built image/kernel/root. A merge
-	// patch keeps the rest of the VM (sizing, NICs, node) intact.
-	patch := fmt.Sprintf(
-		`{"spec":{"template":{"spec":{"domain":{"firmware":{"kernelBoot":{"container":{"image":%q,"kernelPath":%q,"initrdPath":%q},"kernelArgs":%q}}}}}}}`,
-		imageURI,
-		fmt.Sprintf("/usr/lib/modules/%s/vmlinuz", build.KernelVersion),
-		fmt.Sprintf("/usr/lib/modules/%s/initramfs.img", build.KernelVersion),
-		bootcKernelArgs(build.KernelArgs, build.RootUUID))
-	if err := c.patchVMMerge(name, patch); err != nil {
-		return fmt.Errorf("updating kernel boot: %w", err)
 	}
 
 	fmt.Fprintf(progress, "  Starting %s on the new disk...\n", name)
 	return c.StartVM(name)
 }
 
-// bootcBuildDisk orchestrates the on-cluster bootc disk build pipeline.
-// Progress and builder logs are written to progress (defaults to stderr),
-// so callers like the web UI can capture them per-task.
+// bootcBuildDisk orchestrates the on-cluster bootc disk build: it creates a
+// block-mode target PVC, runs a short-lived builder VM that installs imageURI
+// onto it via `bootc install to-disk`, waits for that VM to finish, then deletes
+// the builder (keeping the disk). Progress/builder logs go to progress.
 func bootcBuildDisk(name, namespace, imageURI, sshPublicKey, diskSize string, progress io.Writer) (*BootcBuildResult, error) {
 	if progress == nil {
 		progress = os.Stderr
@@ -94,317 +103,381 @@ func bootcBuildDisk(name, namespace, imageURI, sshPublicKey, diskSize string, pr
 	}
 
 	pvcName := name + "-bootc-disk"
-	jobName := name + "-bootc-builder"
+	builderName := name + "-bootc-builder"
 
 	fmt.Fprintf(progress, "Building bootc disk from %s\n", imageURI)
-	fmt.Fprintf(progress, "  PVC:    %s (%s)\n", pvcName, diskSize)
+	fmt.Fprintf(progress, "  Disk:   pvc/%s (%s, block mode)\n", pvcName, diskSize)
 
-	// Step 1: Create PVC
-	pvc := GeneratePVCWithClass(pvcName, namespace, diskSize, PreferredStorageClass())
+	// Step 1: block-mode target PVC the builder VM installs onto as a raw device.
+	pvc := generateBlockPVC(pvcName, namespace, diskSize, PreferredStorageClass())
 	data, err := json.Marshal(pvc)
 	if err != nil {
 		return nil, fmt.Errorf("marshaling PVC: %w", err)
 	}
 	if err := applyManifest(string(data)); err != nil {
-		return nil, fmt.Errorf("creating PVC: %w", err)
+		return nil, fmt.Errorf("creating disk PVC: %w", err)
 	}
 
-	// Step 2: Create and run the builder Job
-	sshKeyB64 := base64.StdEncoding.EncodeToString([]byte(sshPublicKey))
-	jobYAML := generateBootcJob(jobName, namespace, imageURI, pvcName, sshKeyB64, diskSize)
-	if err := applyManifest(jobYAML); err != nil {
-		return nil, fmt.Errorf("creating builder job: %w", err)
-	}
+	// Step 2: the builder VM. Clean up any stale one first so cloud-init re-runs.
+	exec.Command("kubectl", "delete", "vm", builderName, "-n", namespace, "--ignore-not-found").Run()
+	exec.Command("kubectl", "delete", "secret", builderName+"-cloudinit", "-n", namespace, "--ignore-not-found").Run()
+	c := NewClient(namespace)
+	c.waitStopped(builderName)
 
-	// Step 3: Wait for Job completion, tailing logs
-	fmt.Fprintf(progress, "  Waiting for builder pod...\n")
-	vars, err := waitForBootcJob(jobName, namespace, progress)
+	// The cloud-init script is larger than KubeVirt's 2 KB inline userData limit,
+	// so deliver it via a Secret the VM references with cloudInitNoCloud.secretRef.
+	secret := generateBuilderSecret(builderName+"-cloudinit", namespace, imageURI, sshPublicKey)
+	sdata, err := json.Marshal(secret)
 	if err != nil {
-		exec.Command("kubectl", "delete", "job", jobName, "-n", namespace, "--ignore-not-found").Run()
+		return nil, fmt.Errorf("marshaling builder secret: %w", err)
+	}
+	if err := applyManifest(string(sdata)); err != nil {
+		return nil, fmt.Errorf("creating builder secret: %w", err)
+	}
+
+	builder := generateBuilderVM(builderName, namespace, pvcName, builderName+"-cloudinit")
+	bdata, err := json.Marshal(builder)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling builder VM: %w", err)
+	}
+	if err := applyManifest(string(bdata)); err != nil {
+		return nil, fmt.Errorf("creating builder VM: %w", err)
+	}
+	if err := c.StartVM(builderName); err != nil {
+		exec.Command("kubectl", "delete", "vm", builderName, "-n", namespace, "--ignore-not-found").Run()
+		return nil, fmt.Errorf("starting builder VM: %w", err)
+	}
+
+	// Step 3: wait for the builder to install the disk (streaming its serial log).
+	fmt.Fprintf(progress, "  Builder VM started — installing (this can take 20-40 min)...\n")
+	if err := waitForBuilderVM(builderName, namespace, progress); err != nil {
+		exec.Command("kubectl", "delete", "vm", builderName, "-n", namespace, "--ignore-not-found").Run()
 		return nil, fmt.Errorf("bootc build failed: %w", err)
 	}
 
-	// Step 4: Clean up Job
-	exec.Command("kubectl", "delete", "job", jobName, "-n", namespace, "--ignore-not-found").Run()
+	// Step 4: delete the builder VM + its cloud-init secret (keeps the disk PVC).
+	exec.Command("kubectl", "delete", "vm", builderName, "-n", namespace, "--ignore-not-found").Run()
+	exec.Command("kubectl", "delete", "secret", builderName+"-cloudinit", "-n", namespace, "--ignore-not-found").Run()
 
-	res := &BootcBuildResult{
-		PVCName:       pvcName,
-		RootUUID:      vars["ROOT_UUID"],
-		KernelVersion: vars["KERNEL_VERSION"],
-		KernelArgs:    vars["KERNEL_ARGS"],
-	}
-	if res.RootUUID == "" {
-		return nil, fmt.Errorf("ROOT_UUID not found in builder logs")
-	}
-	if res.KernelVersion == "" {
-		return nil, fmt.Errorf("KERNEL_VERSION not found in builder logs")
-	}
-	fmt.Fprintf(progress, "  Disk ready: pvc/%s (root UUID: %s, kernel: %s)\n",
-		res.PVCName, res.RootUUID, res.KernelVersion)
-	return res, nil
+	fmt.Fprintf(progress, "  Disk ready: pvc/%s\n", pvcName)
+	return &BootcBuildResult{PVCName: pvcName}, nil
 }
 
-// generateBootcJob creates a Kubernetes Job that builds a bootc disk image
-// using bootc install to-filesystem on a raw XFS loopback device.
+// generateBlockPVC returns a block-mode PVC manifest. The builder VM attaches it
+// as a raw device so `bootc install to-disk` can partition and format it.
+func generateBlockPVC(name, namespace, size, storageClass string) map[string]any {
+	pvc := GeneratePVC(name, namespace, size)
+	spec := pvc["spec"].(map[string]any)
+	spec["volumeMode"] = "Block"
+	if storageClass != "" {
+		spec["storageClassName"] = storageClass
+	}
+	return pvc
+}
+
+// builderImage is the containerdisk the builder VM boots. It needs a full kernel
+// (btrfs/loop), podman, and cloud-init — a stock Fedora cloud image fits.
+func builderImage() string {
+	if v := strings.TrimSpace(os.Getenv("CORRAL_BOOTC_BUILDER_IMAGE")); v != "" {
+		return v
+	}
+	return "quay.io/containerdisks/fedora:42"
+}
+
+// generateBuilderVM builds the short-lived VM that installs imageURI onto the
+// block PVC. cloud-init runs `bootc install to-disk` and the post-install fixups,
+// then powers off; bootcBuildDisk watches the serial console for the result.
 //
-// The image file MUST be named disk.img: that's KubeVirt's convention for
-// filesystem-mode PVC disks — any other name and virt-handler ignores the
-// built system and tries to create a blank disk.img instead (which also
-// fails for space). And it must be sized below the PVC's usable capacity
-// (requested size minus filesystem overhead), or that blank-disk fallback
-// hits "not enough space".
-func generateBootcJob(name, namespace, imageURI, pvcName, sshKeyB64, diskSize string) string {
-	sizeVal := strings.TrimSuffix(strings.TrimSuffix(diskSize, "Gi"), "G")
-	if sizeVal == diskSize {
-		sizeVal = strings.TrimSuffix(strings.TrimSuffix(diskSize, "Mi"), "M")
-	}
-	if sizeVal == diskSize {
-		sizeVal = "50"
-	}
-	sizeGB, err := strconv.Atoi(sizeVal)
-	if err != nil || sizeGB < 1 {
-		sizeGB = 50
-	}
-	// 85% of the PVC leaves room for filesystem overhead on the PVC itself.
-	imgGB := sizeGB * 85 / 100
-	if imgGB < 1 {
-		imgGB = 1
-	}
-
-	return fmt.Sprintf(`apiVersion: batch/v1
-kind: Job
-metadata:
-  name: %s
-  namespace: %s
-  labels:
-    app: corral-bootc-builder
-spec:
-  backoffLimit: 1
-  ttlSecondsAfterFinished: 900
-  template:
-    metadata:
-      labels:
-        app: corral-bootc-builder
-    spec:
-      restartPolicy: Never
-      initContainers:
-        - name: create-disk
-          image: alpine:latest
-          command: ["sh", "-c", "rm -f /output/disk.img /output/disk.raw && truncate -s %dG /output/disk.img"]
-          volumeMounts:
-            - name: output
-              mountPath: /output
-      containers:
-        - name: builder
-          image: %s
-          command: ["/bin/bash", "-c"]
-          args:
-            - |
-              set -euo pipefail
-              echo "=== Bootc install: %s ==="
-              # Ensure loop device nodes exist before mounting disk.img: mount's
-              # auto-loop asks the kernel for a free index and the container's
-              # static /dev has no node for freshly-allocated ones, so the mount
-              # fails with ENOENT. Pre-creating the nodes makes it deterministic.
-              for n in $(seq 0 63); do [ -e /dev/loop$n ] || mknod /dev/loop$n b 7 $n; done
-              echo "$SSH_KEY" | base64 -d > /var/tmp/authorized_keys
-              echo "SSH key written"
-
-              KERNEL_VERSION=$(ls /usr/lib/modules | sort -V | tail -n1)
-              echo "KERNEL_VERSION=$KERNEL_VERSION"
-
-              # Format + mount the disk file directly — no loop device needed
-              # (pod security contexts often lack loop module access).
-              mkfs.xfs -f /output/disk.img 2>&1
-              mkdir -p /target
-              mount /output/disk.img /target
-
-              ROOT_UUID=$(blkid -s UUID -o value /output/disk.img)
-              echo "ROOT_UUID=$ROOT_UUID"
-
-              bootc install to-filesystem \
-                --source-imgref=docker://%s \
-                --root-ssh-authorized-keys=/var/tmp/authorized_keys \
-                --generic-image \
-                --bootloader none \
-                --karg=root=UUID=$ROOT_UUID \
-                /target 2>&1
-
-              # Capture the exact kernel cmdline bootc wrote to its BLS loader
-              # entry. It carries the ostree= deployment arg the initramfs needs
-              # to pivot to the real root; without it the guest hangs silently in
-              # early boot. KubeVirt kernelBoot pulls vmlinuz/initrd from the
-              # image but takes the cmdline from us, so we must reuse this one.
-              KERNEL_ARGS=$(grep -h '^options ' /target/boot/loader/entries/*.conf 2>/dev/null | head -n1 | sed 's/^options //')
-              echo "KERNEL_ARGS=$KERNEL_ARGS"
-
-              DEPLOY_ROOT=$(ls -d /target/ostree/deploy/*/deploy/*.0 2>/dev/null | head -n1 || true)
-              if [ -n "$DEPLOY_ROOT" ]; then
-                systemctl --root="$DEPLOY_ROOT" enable sshd.service \
-                  && echo "sshd enabled" || echo "WARNING: could not enable sshd"
-              else
-                echo "WARNING: no ostree deployment found, sshd not enabled"
-              fi
-
-              echo "=== INSTALL COMPLETE ==="
-          env:
-            - name: SSH_KEY
-              value: "%s"
-          securityContext:
-            privileged: true
-          volumeMounts:
-            - name: output
-              mountPath: /output
-      volumes:
-        - name: output
-          persistentVolumeClaim:
-            claimName: %s
-`, name, namespace, imgGB, imageURI, name, imageURI, sshKeyB64, pvcName)
+// The cloud-init script auto-detects the image's backend:
+//   - composefs (Universal Blue desktop: no bootupd) → `--composefs-backend
+//     --filesystem btrfs`, then re-extract the real kernel/initrd over bootc's
+//     EROFS-zero-filled copies on the ESP, and inject the root SSH key manually
+//     (--root-ssh-authorized-keys is a no-op on composefs).
+//   - ostree (server bootc: ships bootupd) → plain `bootc install to-disk` (xfs).
+//
+// Both paths add `console=ttyS0 systemd.wants=sshd.service` to the BLS entries —
+// desktop images ship sshd disabled, and corral reaches VMs over SSH.
+// builderScript returns the cloud-init the builder VM runs, with the image and
+// SSH key substituted in.
+func builderScript(imageURI, sshPublicKey string) string {
+	return strings.NewReplacer(
+		"__IMAGE__", imageURI,
+		"__SSHKEY__", strings.TrimSpace(sshPublicKey),
+	).Replace(builderCloudInit)
 }
 
-// waitForBootcJob waits for a Job to complete, streaming builder logs to
-// stderr, and returns the KEY=VALUE variables echoed by the build script.
-func waitForBootcJob(name, namespace string, progress io.Writer) (map[string]string, error) {
-	// The Job retries on failure with a *fresh* pod, so never latch onto one
-	// pod name — always resolve the newest pod for this job.
-	newestPod := func() string {
-		out, err := exec.Command("kubectl", "get", "pod", "-n", namespace,
-			"-l", "job-name="+name,
-			"--sort-by=.metadata.creationTimestamp",
-			"-o", "jsonpath={.items[-1:].metadata.name}").Output()
-		if err != nil {
-			return ""
+// generateBuilderSecret holds the cloud-init userData (too large for KubeVirt's
+// 2 KB inline limit) for the builder VM to reference via cloudInitNoCloud.secretRef.
+func generateBuilderSecret(name, namespace, imageURI, sshPublicKey string) map[string]any {
+	return map[string]any{
+		"apiVersion": "v1",
+		"kind":       "Secret",
+		"metadata": map[string]any{
+			"name":      name,
+			"namespace": namespace,
+			"labels":    map[string]any{"corral-bootc-builder": name},
+		},
+		"stringData": map[string]any{"userdata": builderScript(imageURI, sshPublicKey)},
+	}
+}
+
+func generateBuilderVM(name, namespace, pvcName, secretName string) map[string]any {
+	disk := func(n string, extra map[string]any) map[string]any {
+		d := map[string]any{"name": n, "disk": map[string]any{"bus": "virtio"}}
+		for k, v := range extra {
+			d[k] = v
 		}
-		return strings.TrimSpace(string(out))
+		return d
 	}
 
-	var podName string
-	for i := 0; i < 60 && podName == ""; i++ {
-		podName = newestPod()
-		if podName == "" {
+	return map[string]any{
+		"apiVersion": "kubevirt.io/v1",
+		"kind":       "VirtualMachine",
+		"metadata": map[string]any{
+			"name":      name,
+			"namespace": namespace,
+			"labels":    map[string]any{"corral-bootc-builder": name},
+		},
+		"spec": map[string]any{
+			"runStrategy": "Manual",
+			"template": map[string]any{
+				"metadata": map[string]any{"labels": map[string]any{"kubevirt.io/vm": name}},
+				"spec": map[string]any{
+					"domain": map[string]any{
+						"cpu":    cpuSpec(2),
+						"memory": memSpec(4096),
+						"devices": map[string]any{
+							"logSerialConsole": true,
+							"disks": []map[string]any{
+								disk("rootdisk", nil),
+								disk("scratch", map[string]any{"serial": "scratch"}),
+								disk("target", map[string]any{"serial": "target"}),
+								disk("cloudinit", nil),
+							},
+							"interfaces": []map[string]any{
+								{"name": "default", "masquerade": map[string]any{}},
+							},
+						},
+					},
+					"networks": []map[string]any{{"name": "default", "pod": map[string]any{}}},
+					"volumes": []map[string]any{
+						{"name": "rootdisk", "containerDisk": map[string]any{"image": builderImage()}},
+						{"name": "scratch", "emptyDisk": map[string]any{"capacity": "40Gi"}},
+						{"name": "target", "persistentVolumeClaim": map[string]any{"claimName": pvcName}},
+						{"name": "cloudinit", "cloudInitNoCloud": map[string]any{
+							"secretRef": map[string]any{"name": secretName},
+						}},
+					},
+				},
+			},
+		},
+	}
+}
+
+// builderCloudInit is the #cloud-config the builder VM runs. __IMAGE__ and
+// __SSHKEY__ are substituted by generateBuilderVM. Markers CORRAL_BUILD_OK /
+// CORRAL_BUILD_FAIL on the serial console signal the result to waitForBuilderVM.
+const builderCloudInit = `#cloud-config
+write_files:
+  - path: /root/buildkey.pub
+    content: "__SSHKEY__"
+  - path: /root/build.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      exec > >(tee /dev/ttyS0) 2>&1
+      set -x
+      echo CORRAL_BUILD_START
+      mkfs.xfs -f /dev/disk/by-id/virtio-scratch
+      mount /dev/disk/by-id/virtio-scratch /var/lib/containers
+      IMG=__IMAGE__
+      podman pull "$IMG" || { echo CORRAL_BUILD_FAIL pull; sync; poweroff; }
+      # Read the image to pick the bootc storage backend (per the bootc docs the
+      # composefs-rs backend requires systemd-boot and NO bootupd; traditional
+      # ostree images ship bootupd):
+      #   - bootupd present                       -> ostree backend  (xfs)
+      #   - else systemd-boot present, no bootupd -> composefs backend (btrfs)
+      #   - neither                               -> ostree backend  (xfs)
+      # Probe by inspecting the image FILESYSTEM with podman cp (no execution):
+      # UB desktop images ship Rust uutils, where /usr/bin/test is a symlink to a
+      # multicall binary that podman --entrypoint can't dispatch (argv[0] breaks),
+      # so any "run a binary in the image" probe misdetects them. The same CTR is
+      # reused for the composefs kernel/initrd extraction below. The backend also
+      # drives the root fs: composefs images ship a btrfs-only initramfs, ostree xfs.
+      CTR=$(podman create "$IMG")
+      imghas() { podman cp "$CTR:$1" - >/dev/null 2>&1; }
+      if imghas /usr/sbin/bootupctl || imghas /usr/bin/bootupctl; then
+        BACKEND_KIND=ostree
+      elif imghas /usr/lib/systemd/boot/efi/systemd-bootx64.efi \
+        || imghas /usr/lib/systemd/boot/efi/systemd-bootaa64.efi; then
+        BACKEND_KIND=composefs
+      else
+        BACKEND_KIND=ostree
+      fi
+      echo "CORRAL_BACKEND=$BACKEND_KIND"
+      if [ "$BACKEND_KIND" = composefs ]; then
+        # composefs backend installs systemd-boot to the ESP removable path itself.
+        COMPOSEFS=1; FS=btrfs; BACKEND=--composefs-backend
+      else
+        # ostree backend installs the bootloader via bootupd, which by default
+        # only writes EFI/<vendor>/ + an efibootmgr NVRAM entry. A fresh VM has
+        # empty NVRAM, so it needs the removable fallback path EFI/BOOT/BOOTX64.EFI
+        # — that's exactly what --generic-image adds (and it skips firmware changes).
+        COMPOSEFS=0; FS=xfs; BACKEND=--generic-image
+      fi
+      echo "CORRAL_COMPOSEFS=$COMPOSEFS FS=$FS"
+      podman run --rm --privileged --pid=host --security-opt label=type:unconfined_t \
+        -v /var/lib/containers:/var/lib/containers -v /dev:/dev -v /root/buildkey.pub:/buildkey.pub:ro \
+        "$IMG" bootc install to-disk $BACKEND --filesystem "$FS" --wipe \
+        --root-ssh-authorized-keys /buildkey.pub /dev/disk/by-id/virtio-target \
+        || { echo CORRAL_BUILD_FAIL install; sync; poweroff; }
+      udevadm settle
+      mkdir -p /mnt/esp; mount /dev/disk/by-id/virtio-target-part2 /mnt/esp \
+        || { echo CORRAL_BUILD_FAIL espmount; sync; poweroff; }
+      if [ "$COMPOSEFS" = 1 ]; then
+        # bootc's composefs backend writes the ESP kernel/initrd from the EROFS
+        # store, which zero-fills large files past the inline threshold (corrupt
+        # 200MB initrd -> "Volume corrupt" at boot). Re-extract the real bytes
+        # from $CTR (created for detection above).
+        podman cp "$CTR":/usr/lib/modules /scratch_mods
+        KVER=$(ls /scratch_mods | head -1)
+        D=$(ls -d /mnt/esp/EFI/Linux/bootc_composefs-* | head -1)
+        cp -f /scratch_mods/$KVER/vmlinuz "$D/vmlinuz"
+        cp -f /scratch_mods/$KVER/initramfs.img "$D/initrd"
+        # --root-ssh-authorized-keys is a no-op on composefs; /root -> /var/roothome
+        # and /var comes from state/os/default/var. Write the key where it lands.
+        mkdir -p /mnt/root; mount /dev/disk/by-id/virtio-target-part3 /mnt/root
+        SSHDIR=/mnt/root/state/os/default/var/roothome/.ssh
+        mkdir -p "$SSHDIR"; chmod 700 "$SSHDIR"
+        cp /root/buildkey.pub "$SSHDIR/authorized_keys"; chmod 600 "$SSHDIR/authorized_keys"; chown -R 0:0 "$SSHDIR"
+        sync; umount /mnt/root
+      fi
+      # console + sshd on the BLS entries (composefs: on ESP).
+      for E in /mnt/esp/loader/entries/*.conf; do
+        [ -f "$E" ] && (grep -q 'systemd.wants=sshd.service' "$E" \
+          || sed -i 's#^options #options console=ttyS0 systemd.wants=sshd.service #' "$E")
+      done
+      sync; umount /mnt/esp
+      if [ "$COMPOSEFS" != 1 ]; then
+        # ostree keeps BLS under the root /boot.
+        mkdir -p /mnt/root; mount /dev/disk/by-id/virtio-target-part3 /mnt/root 2>/dev/null
+        for E in /mnt/root/boot/loader/entries/*.conf; do
+          [ -f "$E" ] && (grep -q 'systemd.wants=sshd.service' "$E" \
+            || sed -i 's#^options #options console=ttyS0 systemd.wants=sshd.service #' "$E")
+        done
+        sync; umount /mnt/root 2>/dev/null
+      fi
+      echo CORRAL_BUILD_OK
+      sync; poweroff
+runcmd:
+  - [ bash, -c, "nohup /root/build.sh &" ]
+`
+
+// builderProgressRe selects the meaningful build lines worth streaming to the
+// caller from the (very verbose) serial console.
+var builderProgressRe = regexp.MustCompile(`CORRAL_|bootc install|Installing|Initializing|Creating root|Bootloader|systemd-boot|Finalizing|podman pull|KVER=|error|[Ff]ail`)
+
+var ansiRe = regexp.MustCompile(`\x1b\[[0-9;:]*[a-zA-Z]`)
+
+// waitForBuilderVM polls the builder VM's serial console (via the virt-launcher
+// pod's guest-console-log) until it prints CORRAL_BUILD_OK or CORRAL_BUILD_FAIL,
+// or the VMI ends, streaming relevant lines to progress. Times out per
+// bootcBuildTimeout.
+func waitForBuilderVM(name, namespace string, progress io.Writer) error {
+	deadline := time.Now().Add(bootcBuildTimeout())
+	seen := map[string]bool{}
+	var lastFail string
+
+	emit := func(log string) (ok, fail bool) {
+		for _, line := range strings.Split(log, "\n") {
+			clean := strings.TrimRight(ansiRe.ReplaceAllString(line, ""), "\r")
+			if strings.Contains(clean, "CORRAL_BUILD_OK") {
+				ok = true
+			}
+			if i := strings.Index(clean, "CORRAL_BUILD_FAIL"); i >= 0 {
+				lastFail = strings.TrimSpace(clean[i:])
+				fail = true
+			}
+			if builderProgressRe.MatchString(clean) && !seen[clean] {
+				seen[clean] = true
+				fmt.Fprintf(progress, "  %s\n", strings.TrimSpace(clean))
+			}
+		}
+		return
+	}
+
+	for time.Now().Before(deadline) {
+		log := builderSerialLog(name, namespace)
+		if log != "" {
+			ok, fail := emit(log)
+			if ok {
+				return nil
+			}
+			if fail {
+				return fmt.Errorf("builder reported failure (%s)", lastFail)
+			}
+		}
+		// If the VMI has ended (guest powered off) do a final read, then decide.
+		if phase := builderVMIPhase(name, namespace); phase == "Succeeded" || phase == "Failed" {
 			time.Sleep(2 * time.Second)
-		}
-	}
-	if podName == "" {
-		return nil, fmt.Errorf("builder pod not found after 2 minutes")
-	}
-
-	// Wait for the builder container to start. The bootc image pull dominates
-	// this phase and can take 10+ minutes for multi-GB images on home links,
-	// so wait generously and report state changes (not a spam line per poll).
-	lastReason, started := "", false
-	for i := 0; i < 450 && !started; i++ {
-		if p := newestPod(); p != "" && p != podName {
-			fmt.Fprintf(progress, "  Builder pod retried: %s → %s\n", podName, p)
-			podName = p
-			lastReason = ""
-		}
-		ready, _ := exec.Command("kubectl", "get", "pod", podName, "-n", namespace,
-			"-o", "jsonpath={.status.containerStatuses[?(@.name==\"builder\")].started}").Output()
-		started = strings.TrimSpace(string(ready)) == "true"
-		if started {
-			break
-		}
-		reason, _ := exec.Command("kubectl", "get", "pod", podName, "-n", namespace,
-			"-o", "jsonpath={.status.containerStatuses[?(@.name==\"builder\")].state.waiting.reason}").Output()
-		if r := strings.TrimSpace(string(reason)); r != "" && r != lastReason {
-			fmt.Fprintf(progress, "  Pod initializing: builder (%s)\n", r)
-			lastReason = r
-		} else if i > 0 && i%30 == 0 {
-			fmt.Fprintf(progress, "  Still waiting for the builder container (%s, %dm — large bootc images take a while to pull)\n",
-				lastReason, i/30)
-		}
-		time.Sleep(2 * time.Second)
-	}
-	if !started {
-		return nil, fmt.Errorf("builder container did not start within 15 minutes (image pull too slow or stuck) — check: kubectl describe pod %s -n %s", podName, namespace)
-	}
-
-	// Capture build output in a buffer alongside streaming to progress,
-	// so we can parse ROOT_UUID/KERNEL_VERSION without a second kubectl
-	// logs call (which often fails when the pod is being torn down).
-	var logBuf strings.Builder
-	logWriter := io.MultiWriter(progress, &logBuf)
-
-	fmt.Fprintf(progress, "  Builder running — streaming logs...\n")
-	stream := exec.Command("kubectl", "logs", "-f", podName, "-n", namespace, "-c", "builder")
-	stream.Stdout = logWriter
-	stream.Stderr = logWriter
-	stream.Start()
-	defer func() {
-		if stream.Process != nil {
-			stream.Process.Kill()
-			stream.Wait()
-		}
-	}()
-
-	// Poll for job completion (up to 15 minutes)
-	for i := 0; i < 450; i++ {
-		cond, _ := exec.Command("kubectl", "get", "job", name, "-n", namespace,
-			"-o", "jsonpath={.status.conditions[?(@.type==\"Complete\")].status}").Output()
-		if strings.TrimSpace(string(cond)) == "True" {
-			// The builder container has exited; wait for the log stream
-			// to drain completely before parsing.
-			if stream.Process != nil {
-				stream.Process.Kill()
-				stream.Wait()
+			ok, fail := emit(builderSerialLog(name, namespace))
+			if ok {
+				return nil
 			}
-			time.Sleep(1 * time.Second)
-			return parseBuildVarsFromLog(logBuf.String())
-		}
-		failed, _ := exec.Command("kubectl", "get", "job", name, "-n", namespace,
-			"-o", "jsonpath={.status.conditions[?(@.type==\"Failed\")].status}").Output()
-		if strings.TrimSpace(string(failed)) == "True" {
-			return nil, fmt.Errorf("builder job failed — check logs: kubectl logs -n %s job/%s", namespace, name)
-		}
-		time.Sleep(2 * time.Second)
-	}
-	return nil, fmt.Errorf("timeout waiting for bootc build (15 minutes)")
-}
-
-// parseBuildVarsFromLog extracts KEY=VALUE lines (ROOT_UUID, KERNEL_VERSION) from
-// the captured log output — no second kubectl logs call needed.
-func parseBuildVarsFromLog(log string) (map[string]string, error) {
-	vars := make(map[string]string)
-	for _, line := range strings.Split(log, "\n") {
-		for _, key := range []string{"ROOT_UUID", "KERNEL_VERSION", "KERNEL_ARGS"} {
-			if strings.HasPrefix(line, key+"=") {
-				vars[key] = strings.TrimSpace(strings.TrimPrefix(line, key+"="))
+			if fail {
+				return fmt.Errorf("builder reported failure (%s)", lastFail)
 			}
+			return fmt.Errorf("builder VM ended (%s) without success — check: kubectl logs <virt-launcher-%s-*> -c guest-console-log -n %s", phase, name, namespace)
 		}
+		time.Sleep(5 * time.Second)
 	}
-	if vars["ROOT_UUID"] == "" || vars["KERNEL_VERSION"] == "" || vars["KERNEL_ARGS"] == "" {
-		// Include the last 500 chars of captured output for diagnostics.
-		tail := log
-		if len(tail) > 500 {
-			tail = "..." + tail[len(tail)-500:]
-		}
-		return nil, fmt.Errorf("ROOT_UUID or KERNEL_VERSION not found in build output (captured %d bytes, tail: %s)", len(log), tail)
-	}
-	return vars, nil
+	return fmt.Errorf("timeout waiting for bootc build (%d minutes)", int(bootcBuildTimeout()/time.Minute))
 }
 
-// bootcKernelArgs returns the kernel command line to boot a bootc disk with.
-// It prefers the captured `options` line bootc wrote to its BLS loader entry
-// (which carries the essential `ostree=<deployment>` arg), and ensures a serial
-// console is wired up for log capture. If the build couldn't capture it, it
-// falls back to a synthesized line keyed off the root UUID.
-func bootcKernelArgs(captured, rootUUID string) string {
-	args := strings.TrimSpace(captured)
-	if args == "" {
-		args = fmt.Sprintf("root=UUID=%s ro", rootUUID)
+// builderSerialLog returns the captured serial console of the builder VM, read
+// from its virt-launcher pod's guest-console-log container. Empty if not ready.
+func builderSerialLog(name, namespace string) string {
+	pod := builderLauncherPod(name, namespace)
+	if pod == "" {
+		return ""
 	}
-	if !strings.Contains(args, "console=") {
-		args += " console=ttyS0"
+	out, err := exec.Command("kubectl", "logs", pod, "-c", "guest-console-log", "-n", namespace).Output()
+	if err != nil {
+		return ""
 	}
-	return args
+	return string(out)
 }
 
-// generateBootcVM creates a KubeVirt VirtualMachine manifest for a bootc-built disk.
-// Uses kernel boot (vmlinuz+initrd pulled from the bootc image at the detected
-// kernel version) since GRUB can't install on loopback devices with this
-// cluster's kernel.
-func generateBootcVM(name, namespace, pvcName, imageURI, rootUUID, kernelVersion, kernelArgs, mem string, cpu int, node, tailscaleAuthKey string) map[string]any {
+func builderLauncherPod(name, namespace string) string {
+	out, err := exec.Command("kubectl", "get", "pod", "-n", namespace,
+		"-l", "kubevirt.io/created-by",
+		"--field-selector=status.phase!=Failed",
+		"-o", "jsonpath={range .items[*]}{.metadata.name}{\"\\n\"}{end}").Output()
+	if err != nil {
+		return ""
+	}
+	want := "virt-launcher-" + name + "-"
+	for _, p := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if strings.HasPrefix(p, want) {
+			return p
+		}
+	}
+	return ""
+}
+
+func builderVMIPhase(name, namespace string) string {
+	out, err := exec.Command("kubectl", "get", "vmi", name, "-n", namespace,
+		"-o", "jsonpath={.status.phase}").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// generateBootcVM builds the final VM manifest: it boots the installed block-mode
+// disk PVC via UEFI firmware + the bootloader bootc installed (systemd-boot or
+// GRUB). No kernelBoot — the disk is fully self-bootable.
+func generateBootcVM(name, namespace, pvcName, imageURI, mem string, cpu int, node string) map[string]any {
 	if mem == "" {
 		mem = "4G"
 	}
@@ -412,61 +485,26 @@ func generateBootcVM(name, namespace, pvcName, imageURI, rootUUID, kernelVersion
 		cpu = 2
 	}
 
-	memMib := parseMem(mem)
-	// Prefer the exact cmdline bootc wrote to its BLS entry (it carries the
-	// ostree= deployment arg the initramfs needs). Fall back to a synthesized
-	// line only if the build couldn't capture it — that path can hang in early
-	// boot, but it's better than no args at all.
-	kernelArgs = bootcKernelArgs(kernelArgs, rootUUID)
-
-	volumes := []map[string]any{
-		{
-			"name":                  "rootdisk",
-			"persistentVolumeClaim": map[string]any{"claimName": pvcName},
-		},
-	}
-
-	// Bootc VMs don't have cloud-init by default (SSH key is baked into the
-	// disk during bootc install). Add a cloudinitdisk only when Tailscale is
-	// configured so the VM auto-joins the tailnet on first boot.
-	if tailscaleAuthKey != "" {
-		runcmd := fmt.Sprintf(`runcmd:
-  - ['sh', '-c', 'command -v tailscale >/dev/null 2>&1 || curl -fsSL https://tailscale.com/install.sh | sh']
-  - ['tailscale', 'up', '--auth-key=%s', '--hostname=%s']
-`, tailscaleAuthKey, name)
-		volumes = append(volumes, map[string]any{
-			"name": "cloudinitdisk",
-			"cloudInitNoCloud": map[string]any{
-				"userData": runcmd,
-			},
-		})
-	}
-
 	spec := map[string]any{
 		"running": false,
 		"template": map[string]any{
-			"metadata": map[string]any{
-				"labels": map[string]any{"kubevirt.io/vm": name},
-			},
+			"metadata": map[string]any{"labels": map[string]any{"kubevirt.io/vm": name}},
 			"spec": map[string]any{
 				"domain": map[string]any{
-					"cpu":    cpuSpec(cpu),
-					"memory": memSpec(memMib),
+					"cpu":     cpuSpec(cpu),
+					"memory":  memSpec(parseMem(mem)),
+					"machine": map[string]any{"type": "q35"},
 					"firmware": map[string]any{
-						"kernelBoot": map[string]any{
-							"container": map[string]any{
-								"image":      imageURI,
-								"kernelPath": fmt.Sprintf("/usr/lib/modules/%s/vmlinuz", kernelVersion),
-								"initrdPath": fmt.Sprintf("/usr/lib/modules/%s/initramfs.img", kernelVersion),
-							},
-							"kernelArgs": kernelArgs,
+						"bootloader": map[string]any{
+							"efi": map[string]any{"secureBoot": false},
 						},
 					},
 					"devices": map[string]any{
 						"disks": []map[string]any{
 							{
-								"name": "rootdisk",
-								"disk": map[string]any{"bus": "virtio"},
+								"name":      "rootdisk",
+								"disk":      map[string]any{"bus": "virtio"},
+								"bootOrder": 1,
 							},
 						},
 						"interfaces": []map[string]any{
@@ -474,10 +512,10 @@ func generateBootcVM(name, namespace, pvcName, imageURI, rootUUID, kernelVersion
 						},
 					},
 				},
-				"networks": []map[string]any{
-					{"name": "default", "pod": map[string]any{}},
+				"networks": []map[string]any{{"name": "default", "pod": map[string]any{}}},
+				"volumes": []map[string]any{
+					{"name": "rootdisk", "persistentVolumeClaim": map[string]any{"claimName": pvcName}},
 				},
-				"volumes": volumes,
 			},
 		},
 	}
@@ -494,7 +532,10 @@ func generateBootcVM(name, namespace, pvcName, imageURI, rootUUID, kernelVersion
 		"metadata": map[string]any{
 			"name":      name,
 			"namespace": namespace,
-			"labels":    map[string]any{"corral": name},
+			"labels":    map[string]any{"corral": name, "corral-bootc-image": ""},
+			"annotations": map[string]any{
+				"corral.bootc/image": imageURI,
+			},
 		},
 		"spec": spec,
 	}

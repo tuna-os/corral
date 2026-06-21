@@ -319,8 +319,7 @@ func handleCreateVM(w http.ResponseWriter, r *http.Request) {
 		go func() {
 			build, err := kubevirt.BootcBuildDisk(req.Name, ns, req.Bootc, sshKey, req.Disk, task)
 			if err == nil {
-				vm := kubevirt.GenerateBootcVM(req.Name, ns, build.PVCName, req.Bootc,
-					build.RootUUID, build.KernelVersion, build.KernelArgs, req.Mem, req.CPU, req.Node, config.AuthKey())
+				vm := kubevirt.GenerateBootcVM(req.Name, ns, build.PVCName, req.Bootc, req.Mem, req.CPU, req.Node)
 				err = kubevirt.Apply(vm)
 			}
 			if err == nil && store != nil {
@@ -330,8 +329,18 @@ func handleCreateVM(w http.ResponseWriter, r *http.Request) {
 					Extra:     map[string]string{"bootc_image": req.Bootc},
 				})
 			}
+			// The build is done once the VM exists — finish the task on that.
 			task.finish(err)
 			done(err)
+			// Expose SSH/VNC on the tailnet via the Tailscale operator proxy
+			// (bootc guests have no in-guest tailscale, only baked sshd on :22).
+			// Best-effort and separate: a flaky proxy apply must not mark a
+			// successful build as failed — the VM is already up and reachable
+			// via virtctl port-forward.
+			if err == nil {
+				dp := taskBegin("tailnet expose", ns+"/"+req.Name)
+				dp(kubevirt.ApplyProxy(req.Name, ns, []int{22, 5900}))
+			}
 		}()
 		jsonResp(w, http.StatusAccepted, map[string]string{"task": id})
 		return
@@ -406,7 +415,6 @@ func handleCreateVM(w http.ResponseWriter, r *http.Request) {
 		InstanceType:     req.InstanceType,
 		Preference:       req.Preference,
 		SSHPublicKey:     sshKey,
-		TailscaleAuthKey: config.AuthKey(),
 	}
 	done := taskBegin("create", ns+"/"+req.Name)
 	if err := kubevirt.CreateVM(opts); err != nil {
@@ -415,12 +423,6 @@ func handleCreateVM(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	done(nil)
-	// Tailnet-by-default: expose SSH/VNC/RDP as a tailscale device via the
-	// operator, so fresh VMs are reachable with zero in-guest setup.
-	if config.TailnetExpose() {
-		dp := taskBegin("tailnet expose", ns+"/"+req.Name)
-		dp(kubevirt.ApplyProxy(req.Name, ns, []int{22, 5900, 3389}))
-	}
 	if store != nil {
 		store.Set(req.Name, types.RegistryEntry{
 			Backend:   "kubevirt",
@@ -429,6 +431,13 @@ func handleCreateVM(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	jsonResp(w, http.StatusCreated, map[string]string{"name": req.Name, "namespace": ns})
+	// Tailnet-by-default: expose SSH/VNC/RDP on the tailnet via the Tailscale
+	// operator proxy. Best-effort and async — ApplyProxy retries for up to a
+	// minute on transient RBAC flakes, which must not block the create response.
+	go func() {
+		dp := taskBegin("tailnet expose", ns+"/"+req.Name)
+		dp(kubevirt.ApplyProxy(req.Name, ns, []int{22, 5900, 3389}))
+	}()
 }
 
 func handleVMAction(w http.ResponseWriter, r *http.Request) {

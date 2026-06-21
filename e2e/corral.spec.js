@@ -1,15 +1,22 @@
 // @ts-check
-// Corral web UI end-to-end suite. Runs against a LIVE cluster (production is
-// fine): every resource it creates is prefixed "e2e-" and torn down in
-// afterEach, verified gone. Point it anywhere with CORRAL_URL.
+// Corral web UI end-to-end suite. Every resource it creates is prefixed "e2e-"
+// and torn down in afterEach, verified gone.
+//
+// The @live-only tier (bootc builds, SSH, consoles, snapshots…) creates real
+// VMs, so run it against the **isolated e2e instance** — NOT production. The
+// corral-vms namespace is production; deploy/corral-web-e2e.yaml runs a separate
+// corral-web defaulting to the corral-e2e namespace, reachable at
+// corral-e2e.manatee-basking.ts.net:
+//   cd e2e && CORRAL_URL=https://corral-e2e.manatee-basking.ts.net \
+//     CORRAL_NS=corral-e2e ./node_modules/.bin/playwright test
 const { test, expect } = require('@playwright/test');
-const { execSync, spawn } = require('child_process');
+const { execSync, execFileSync, spawn } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
 const CORRAL_URL = process.env.CORRAL_URL || 'http://localhost:8006';
-const NS = process.env.CORRAL_NS || 'corral';
+const NS = process.env.CORRAL_NS || 'corral-vms';
 
 // Small, fast-importing disk images for CDI flows.
 const CIRROS_QCOW = 'https://download.cirros-cloud.net/0.6.2/cirros-0.6.2-x86_64-disk.img';
@@ -25,11 +32,21 @@ const CTR_IMAGE = process.env.E2E_CONTAINERDISK || 'quay.io/containerdisks/fedor
 // ── shell + API helpers ─────────────────────────────────────────────
 
 function kubectl(cmd, timeout = 30000) {
-  try { return execSync(cmd, { timeout, encoding: 'utf8' }).trim(); }
-  catch { return ''; }
+  const args = cmd.trim().split(/\s+/).slice(1);
+  try { return execFileSync('kubectl', args, { timeout, encoding: 'utf8' }).trim(); }
+  catch (e) { return ''; }
 }
-const vmExists = (n) => kubectl(`kubectl get vm ${n} -n ${NS} -o name --ignore-not-found`) !== '';
-const dvExists = (n) => kubectl(`kubectl get dv ${n} -n ${NS} -o name --ignore-not-found`) !== '';
+// kubectl --ignore-not-found with a specific resource name is unreliable
+// in the Playwright worker (kubectl v1.36.1 returns empty even for existing
+// resources).  List all and match in-process instead.
+const vmExists = (n) => {
+  const all = kubectl(`kubectl get vm -n ${NS} -o name`);
+  return all.split('\n').some(line => line.endsWith('/' + n));
+};
+const dvExists = (n) => {
+  const all = kubectl(`kubectl get dv -n ${NS} -o name`);
+  return all.split('\n').some(line => line.endsWith('/' + n));
+};
 const vmStatus = (n) => kubectl(`kubectl get vm ${n} -n ${NS} -o jsonpath='{.status.printableStatus}'`).replace(/'/g, '');
 const dvPhase = (n) => kubectl(`kubectl get dv ${n} -n ${NS} -o jsonpath='{.status.phase}'`).replace(/'/g, '');
 const vmiPhase = (n) => kubectl(`kubectl get vmi ${n} -n ${NS} -o jsonpath='{.status.phase}' --ignore-not-found`).replace(/'/g, '');
@@ -681,8 +698,8 @@ test.describe('Corral web UI', () => {
     const pub = fs.readFileSync(`${key}.pub`, 'utf8').trim();
 
     try {
-      // The server's TS_AUTHKEY env var bakes Tailscale into cloud-init.
-      // Create via API so the server-side key resolution kicks in.
+      // Tailnet access comes from the Tailscale operator proxy (ApplyProxy),
+      // which exposes the VM as a `<vm>-vm` device — no in-guest tailscale.
       await createVM(page, { name: vm, sourceType: 'containerDisk',
         source: CTR_IMAGE, cpu: 1, mem: '2G', sshKey: pub });
       expect(await waitFor(() => vmExists(vm), 30_000, 2000, `vm ${vm}`)).toBe(true);
@@ -691,17 +708,18 @@ test.describe('Corral web UI', () => {
       expect(await waitFor(() => vmStatus(vm) === 'Running', 300_000, 4000, `${vm} Running`)).toBe(true);
       assertVMHealthy(expect, vm);
 
-      // Tailscale hostname is the VM name (set by cloud-init --hostname).
-      const tsHost = `${vm}.manatee-basking.ts.net`;
+      // The operator proxy registers the VM on the tailnet as `<vm>-vm`.
+      const tsDevice = `${vm}-vm`;
+      const tsHost = `${tsDevice}.manatee-basking.ts.net`;
 
-      // Wait for the VM to appear on the tailnet (may take a couple of
-      // minutes — cloud-init installs Tailscale, then it registers).
+      // Wait for the proxy device to appear on the tailnet (the operator must
+      // provision the ingress and the proxy pod must come up).
       // `tailscale status` lists hostnames without the MagicDNS suffix.
       const tsOnline = () => {
         try {
           const out = execSync(`tailscale status`, { timeout: 5000, encoding: 'utf8' });
           // Match the hostname as a whole word at the start of a line.
-          return new RegExp(`^\\S+\\s+${vm}\\s`, 'm').test(out);
+          return new RegExp(`^\\S+\\s+${tsDevice}\\s`, 'm').test(out);
         } catch { return false; }
       };
       const onTailnet = await waitFor(tsOnline, 300_000, 10_000, `tailscale ${tsHost}`);
@@ -712,17 +730,17 @@ test.describe('Corral web UI', () => {
       }
       expect(onTailnet, `${tsHost} appears on the tailnet`).toBe(true);
 
-      // Resolve the VM's Tailscale IP from the hostname (not FQDN).
+      // Resolve the proxy device's Tailscale IP from the hostname (not FQDN).
       let vmIP = '';
       try {
         const status = execSync('tailscale status', { timeout: 5000, encoding: 'utf8' });
-        const m = status.match(new RegExp(`^(\\S+)\\s+${vm}\\s`, 'm'));
+        const m = status.match(new RegExp(`^(\\S+)\\s+${tsDevice}\\s`, 'm'));
         if (m) vmIP = m[1];
       } catch {}
-      expect(vmIP, `tailscale IP for ${vm}`).toBeTruthy();
+      expect(vmIP, `tailscale IP for ${tsDevice}`).toBeTruthy();
 
-      // SSH directly over Tailscale — no port-forward, no proxy, using the
-      // Tailscale IP (avoids MagicDNS resolver issues on the runner).
+      // SSH over Tailscale through the operator proxy device — socat forwards
+      // :22 to the guest, so we log in as the guest user (fedora).
       let lastErr = '';
       const trySSH = () => {
         try {
@@ -751,10 +769,11 @@ test.describe('Corral web UI', () => {
   // ── 13. Bootc: build from the curated bootc catalog ────────────────
 
   test('bootc VM from catalog, boots and accepts SSH @live-only', async ({ page }) => {
-    // Budget reality: the builder pod pull + bootc's own in-pod image pull
-    // (~1.3 GB via the registry, not the node cache) + install + first boot
-    // + the ~10-14 min status-reporting lag (see below).
-    test.setTimeout(2_700_000);
+    // Budget reality: a short-lived builder VM pulls the image + runs
+    // `bootc install to-disk` (ostree/composefs checkout of a multi-GB desktop
+    // image). On a slow link that's 30-40 min, so the server allows 45 min
+    // (CORRAL_BOOTC_BUILD_TIMEOUT); we wait a touch longer, plus post-build boot.
+    test.setTimeout(4_800_000); // 80 min
 
     const { body: caps } = await api('/api/capabilities');
     test.skip(!caps.bootc, 'bootc plugin not enabled on this server');
@@ -773,46 +792,36 @@ test.describe('Corral web UI', () => {
     const { body: createRes } = await api('/api/vms', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: vm, bootc: 'quay.io/centos-bootc/centos-bootc:stream9',
-        cpu: 2, mem: '4G', disk: '20G', sshKey: pub }),
+      body: JSON.stringify({ name: vm, bootc: 'ghcr.io/projectbluefin/dakota:testing',
+        cpu: 2, mem: '4G', disk: '30G', sshKey: pub }),
     });
     expect(createRes.task, 'bootc API returned task ID').toBeTruthy();
 
-    // The bootc build runs as a Kubernetes Job.  Wait for it to appear and
-    // complete before checking for the VM (kubectl gives us the exit status
-    // whether the task API or build dialog work or not).
-    const builderJob = `${vm}-bootc-builder`;
-    const jobDone = () => {
-      const status = kubectl(`kubectl get job ${builderJob} -n ${NS} -o jsonpath='{.status.conditions[?(@.type=="Complete")].status}' --ignore-not-found`).replace(/'/g, '');
-      if (status === 'True') return 'done';
-      const failed = kubectl(`kubectl get job ${builderJob} -n ${NS} -o jsonpath='{.status.conditions[?(@.type=="Failed")].status}' --ignore-not-found`).replace(/'/g, '');
-      if (failed === 'True') return 'failed';
-      return '';
-    };
-    let jobResult = '';
-    let waited = 0;
-    while (!jobResult && waited < 600) {
-      jobResult = jobDone();
-      if (!jobResult) { await delay(5000); waited += 5; }
-    }
-    // If the job completed but the VM hasn't materialised yet, wait for it.
-    if (jobResult === 'done') {
-      const built = await waitFor(() => vmExists(vm), 120_000, 3000, `vm ${vm}`);
-      expect(built, `bootc build produced VM ${vm}`).toBe(true);
-    } else if (jobResult === 'failed') {
-      // Grab the builder pod logs for diagnostics.
-      const pod = kubectl(`kubectl get pod -n ${NS} -l job-name=${builderJob} -o jsonpath='{.items[0].metadata.name}' --ignore-not-found`).replace(/'/g, '');
-      const log = pod ? kubectl(`kubectl logs ${pod} -n ${NS} --tail=50`) : '(no pod)';
-      console.log(`bootc builder failed — log tail:\n${log}`);
-      throw new Error(`bootc build job ${builderJob} failed`);
-    } else {
-      throw new Error(`bootc builder job ${builderJob} did not complete within 10 minutes`);
+    // The build runs in a short-lived builder VM (`<vm>-bootc-builder`) that
+    // installs the disk via `bootc install to-disk`. The API creates the final
+    // VM only after the builder finishes, so waiting for the VM to appear covers
+    // both the build and the VM creation in one step.
+    const builderVM = `${vm}-bootc-builder`;
+    // Give the API a moment to create the PVC and builder VM before anything else.
+    await delay(15000);
+    // Wait for the VM — the API applies it once the build succeeds. Allow a bit
+    // more than the server's 45m build cap so its own error/VM-apply can land.
+    const built = await waitFor(() => vmExists(vm), 3_000_000, 10_000, `vm ${vm} after bootc build`);
+    if (!built) {
+      // Diagnostic: tail the builder VM's serial console.
+      const pod = kubectl(`kubectl get pod -n ${NS} -o jsonpath='{range .items[*]}{.metadata.name}{"\\n"}{end}' --ignore-not-found`)
+        .split('\n').find((p) => p.startsWith(`virt-launcher-${builderVM}-`)) || '';
+      const log = pod ? kubectl(`kubectl logs ${pod} -c guest-console-log -n ${NS} --tail=60`) : '(no builder pod)';
+      console.log(`bootc builder diagnostics — serial tail:\n${log}`);
+      throw new Error(`bootc build did not produce VM ${vm} within 50 minutes`);
     }
 
-    // The manifest must carry the bootc signature: kernel boot + the built disk PVC.
+    // The final VM boots the installed block disk PVC via UEFI firmware (no
+    // kernelBoot — the disk is self-bootable).
     const manifest = kubectl(`kubectl get vm ${vm} -n ${NS} -o json`);
     expect(manifest, 'VM boots from the built bootc disk').toContain(`${vm}-bootc-disk`);
-    expect(manifest, 'VM uses kernel boot').toContain('kernelBoot');
+    expect(manifest, 'VM boots via UEFI firmware').toContain('efi');
+    expect(manifest, 'VM must not use kernelBoot').not.toContain('kernelBoot');
 
     // The real proof the user cares about: the built disk actually boots.
     // NOTE: stock KubeVirt ≤1.8.x + k8s 1.36 flaps the reported status forever
@@ -836,8 +845,10 @@ test.describe('Corral web UI', () => {
     expect(await waitFor(ttyCheck, 120_000, 15_000, 'bootc guest serial output'),
       'bootc guest answers on the serial console').toBe(true);
 
-    // SSH into the bootc VM via virtctl port-forward. Bootc images bake the
-    // key into the disk during the build — no cloud-init wait needed.
+    // SSH into the bootc VM via virtctl port-forward. The key is baked in at
+    // build time and sshd is forced on via the kernel cmdline
+    // (systemd.wants=sshd.service), but a desktop image's first boot is slow —
+    // allow generously for sshd (and its host-key generation) to come up.
     try {
       let lastErr = '';
       const tryLogin = () => new Promise((resolve) => {
@@ -862,34 +873,37 @@ test.describe('Corral web UI', () => {
           resolve(false);
         }, 4000);
       });
-      const sshOk = await waitFor(tryLogin, 180_000, 10_000, 'bootc SSH login');
+      const sshOk = await waitFor(tryLogin, 360_000, 10_000, 'bootc SSH login');
       if (!sshOk) console.log(`bootc ssh diagnostics — last error: ${lastErr}`);
       expect(sshOk, `bootc SSH login with the injected key (last: ${lastErr})`).toBe(true);
 
-      // The bootc VM should also be on the tailnet — the TS_AUTHKEY on the
-      // server bakes Tailscale into the cloud-init. Wait for it and SSH.
+      // The bootc VM is also reachable on the tailnet via the Tailscale
+      // operator proxy, which registers it as a `<vm>-vm` device. No in-guest
+      // tailscale — composefs images seal /etc, so the proxy handles tailnet.
+      const tsDevice = `${vm}-vm`;
       const tsOnline = () => {
         try {
           const out = execSync('tailscale status', { timeout: 5000, encoding: 'utf8' });
-          return new RegExp(`^\\S+\\s+${vm}\\s`, 'm').test(out);
+          return new RegExp(`^\\S+\\s+${tsDevice}\\s`, 'm').test(out);
         } catch { return false; }
       };
-      const onTailnet = await waitFor(tsOnline, 300_000, 10_000, `tailscale ${vm}`);
+      const onTailnet = await waitFor(tsOnline, 600_000, 15_000, `tailscale ${tsDevice}`);
       if (!onTailnet) {
         try { console.log('tailscale status:', execSync('tailscale status', { timeout: 5000, encoding: 'utf8' })); }
         catch (e) { console.log('tailscale status failed:', e.message); }
       }
-      expect(onTailnet, `${vm} appears on the tailnet`).toBe(true);
+      expect(onTailnet, `${tsDevice} appears on the tailnet`).toBe(true);
 
       let vmIP = '';
       try {
         const status = execSync('tailscale status', { timeout: 5000, encoding: 'utf8' });
-        const m = status.match(new RegExp(`^(\\S+)\\s+${vm}\\s`, 'm'));
+        const m = status.match(new RegExp(`^(\\S+)\\s+${tsDevice}\\s`, 'm'));
         if (m) vmIP = m[1];
       } catch {}
-      expect(vmIP, `tailscale IP for ${vm}`).toBeTruthy();
+      expect(vmIP, `tailscale IP for ${tsDevice}`).toBeTruthy();
 
-      // SSH over Tailscale (root user — bootc images bake the key for root).
+      // SSH over Tailscale through the proxy device (root user — bootc images
+      // bake the key for root).
       let tsLastErr = '';
       const tryTsSSH = () => {
         try {
@@ -904,9 +918,9 @@ test.describe('Corral web UI', () => {
         }
         return false;
       };
-      const tsSshOk = await waitFor(tryTsSSH, 120_000, 10_000, `ssh root@${vmIP}`);
+      const tsSshOk = await waitFor(tryTsSSH, 180_000, 15_000, `ssh root@${vmIP}`);
       if (!tsSshOk) console.log(`bootc tailscale ssh diagnostics — last error: ${tsLastErr}`);
-      expect(tsSshOk, `bootc SSH over Tailscale to ${vm} (${vmIP}) (last: ${tsLastErr})`).toBe(true);
+      expect(tsSshOk, `bootc SSH over Tailscale to ${tsDevice} (${vmIP}) (last: ${tsLastErr})`).toBe(true);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
