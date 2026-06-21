@@ -170,6 +170,21 @@ th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--bor
 th { color: var(--muted); font-weight: 500; font-size: .78rem; text-transform: uppercase; letter-spacing: .04em; }
 tbody tr { cursor: pointer; }
 tbody tr:hover { background: var(--panel-2); }
+th.check, td.check { width: 1px; padding-right: 0; cursor: default; }
+td.check input, th.check input { cursor: pointer; vertical-align: middle; }
+
+/* Bulk-action toolbar — appears above the VM table once rows are selected. */
+.bulkbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 6px 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.bulkbar-count { color: var(--muted); font-size: .82rem; margin-right: 4px; }
 
 dl.props {
   display: grid;
