@@ -1387,20 +1387,30 @@ function wizardRenderCards() {
   const grid = $('#wiz-cards');
   const shown = wizImages.filter((i) =>
     wizFilter === 'all' || i.variant === wizFilter);
-  grid.innerHTML = shown.map((i, n) => `
+  const cards = shown.map((i, n) => `
     <div class="wiz-card" data-wiz="${n}">
+      ${i.custom ? `<button class="chip-x wiz-rmsrc" data-rmsrc="${esc(i.name)}" title="Remove custom source">×</button>` : ''}
       ${wizLogo(i)}
       <strong>${esc(i.name)}</strong>
-      <span class="muted">${esc(i.description)}</span>
-      ${i.variant === 'bootc' ? '<span class="pill mid">bootc</span>'
+      <span class="muted">${esc(i.description || '')}</span>
+      ${i.custom ? '<span class="pill">custom</span>'
+        : i.variant === 'bootc' ? '<span class="pill mid">bootc</span>'
         : i.iso ? '<span class="pill">installer</span>' : ''}
-    </div>`).join('') || '<p class="muted">No images for this filter.</p>';
+    </div>`).join('');
+  // An always-present "add your own" card.
+  const addCard = `<div class="wiz-card wiz-add" id="wiz-add-src">
+      <span class="wiz-add-plus">${icon('plus')}</span>
+      <strong>Add source</strong>
+      <span class="muted">your own image or ISO URL</span>
+    </div>`;
+  grid.innerHTML = cards + addCard;
   wizBindLogoFallbacks(grid);
   grid.querySelectorAll('[data-wiz]').forEach((card) => {
-    card.onclick = () => {
+    card.onclick = (e) => {
+      if (e.target.closest('.wiz-rmsrc')) return; // handled below
       wizSelected = shown[parseInt(card.dataset.wiz, 10)];
       $('#wiz-selected').innerHTML = `${wizLogo(wizSelected)} <strong>${esc(wizSelected.name)}</strong>
-        <span class="muted">${esc(wizSelected.description)}</span>`;
+        <span class="muted">${esc(wizSelected.description || '')}</span>`;
       wizBindLogoFallbacks($('#wiz-selected'));
       $('#wiz-step-1').hidden = true;
       $('#wiz-step-2').hidden = false;
@@ -1408,6 +1418,71 @@ function wizardRenderCards() {
       $('#wiz-create').hidden = false;
       $('#wiz-name').focus();
     };
+  });
+  grid.querySelectorAll('[data-rmsrc]').forEach((b) => {
+    b.onclick = async (e) => {
+      e.stopPropagation();
+      if (!confirm(`Remove custom source "${b.dataset.rmsrc}"?`)) return;
+      try { await api(`/api/sources/${encodeURIComponent(b.dataset.rmsrc)}`, { method: 'DELETE' }); }
+      catch (err) { toast(err.message); return; }
+      wizardLoad();
+    };
+  });
+  $('#wiz-add-src').onclick = addCustomSource;
+}
+
+// addCustomSource prompts for a name/kind/URI, persists it (ConfigMap), and
+// reloads the wizard so the new card appears alongside the catalog.
+async function addCustomSource() {
+  const src = await sourceDialog();
+  if (!src) return;
+  try {
+    await api('/api/sources', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(src),
+    });
+  } catch (e) { toast(e.message); return; }
+  toast(`Added source "${src.name}"`);
+  wizardLoad();
+}
+
+function sourceDialog() {
+  return new Promise((resolve) => {
+    const dlg = document.createElement('dialog');
+    dlg.className = 'pick-dialog';
+    dlg.innerHTML = `
+      <h3>Add a custom source</h3>
+      <label>Name <input id="src-name" placeholder="my-image" autofocus></label>
+      <label>Kind
+        <select id="src-kind">
+          <option value="containerDisk">Container image (boots directly)</option>
+          <option value="url">Disk image URL (qcow2/raw, imported)</option>
+          <option value="iso">Installer ISO URL</option>
+        </select>
+      </label>
+      <label id="src-uri-l">URI <input id="src-uri" placeholder="ghcr.io/me/image:tag"></label>
+      <label>Description <input id="src-desc" placeholder="optional"></label>
+      <div class="pick-actions">
+        <button class="btn" value="cancel">Cancel</button>
+        <button class="btn primary" id="src-go">${icon('plus')} Add</button>
+      </div>`;
+    document.body.appendChild(dlg);
+    const finish = (val) => { dlg.close(); dlg.remove(); resolve(val); };
+    const ph = { containerDisk: 'ghcr.io/me/image:tag', url: 'https://…/disk.qcow2', iso: 'https://…/installer.iso' };
+    dlg.querySelector('#src-kind').onchange = (e) => { dlg.querySelector('#src-uri').placeholder = ph[e.target.value]; };
+    dlg.querySelector('[value="cancel"]').onclick = () => finish(null);
+    dlg.querySelector('#src-go').onclick = () => {
+      const name = dlg.querySelector('#src-name').value.trim();
+      const uri = dlg.querySelector('#src-uri').value.trim();
+      if (!name || !uri) { toast('Name and URI are required'); return; }
+      finish({
+        name, uri,
+        kind: dlg.querySelector('#src-kind').value,
+        description: dlg.querySelector('#src-desc').value.trim(),
+      });
+    };
+    dlg.addEventListener('cancel', () => finish(null));
+    dlg.showModal();
   });
 }
 

@@ -8,6 +8,7 @@ import (
 	"github.com/hanthor/corral/pkg/kubevirt"
 	"github.com/hanthor/corral/pkg/registry"
 	"github.com/hanthor/corral/pkg/shell"
+	"github.com/hanthor/corral/pkg/sources"
 )
 
 // TestFixture holds a test server and its fake runner for handler tests.
@@ -41,6 +42,7 @@ func NewTestFixture() *TestFixture {
 	// Wire into the doctor package (for /api/doctor and /api/doctor/fix) —
 	// without this, doctor handlers would shell out to the real kubectl.
 	doctor.SetRunner(runner)
+	sources.SetRunner(runner)
 
 	// Create a temp registry store so create/delete handlers don't panic
 	tmpDir, _ := os.MkdirTemp("", "corral-test-*")
@@ -77,4 +79,5 @@ func (f *TestFixture) Reset() {
 	kubevirt.SetPackageRunner(f.Runner)
 	defaultRunner = f.Runner
 	doctor.SetRunner(f.Runner)
+	sources.SetRunner(f.Runner)
 }
