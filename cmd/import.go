@@ -48,6 +48,7 @@ qcow2 and raw images work as-is. Convert other formats first:
 }
 
 func runImport(name, ns, source, disk, mem string, cpu int) error {
+	name = strings.ToLower(name)
 	if ns == "" {
 		ns = kubevirt.DefaultNamespace
 	}

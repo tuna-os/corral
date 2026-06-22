@@ -56,7 +56,7 @@ func bootcRebuild(name, namespace, imageURI, sshPublicKey, diskSize string, prog
 		progress = os.Stderr
 	}
 	c := NewClient(namespace)
-	pvc := name + "-bootc-disk"
+	pvc := strings.ToLower(name) + "-bootc-disk"
 
 	// `--wipe` destroys the disk (incl. /var where the composefs SSH key lives),
 	// so rebuild must re-bake the key. Callers without one (the web server pod has
@@ -114,6 +114,7 @@ func bootcBuildDisk(name, namespace, imageURI, sshPublicKey, diskSize string, pr
 	if progress == nil {
 		progress = os.Stderr
 	}
+	name = strings.ToLower(name)
 	if diskSize == "" {
 		diskSize = "50Gi"
 	}

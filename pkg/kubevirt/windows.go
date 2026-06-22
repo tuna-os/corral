@@ -1,6 +1,9 @@
 package kubevirt
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // Windows VM support, shared by the corral-windows plugin (CLI) and the web
 // server (GUI create flow). A Windows guest needs q35 + UEFI + TPM + Hyper-V
@@ -106,6 +109,7 @@ func GenerateWindowsVM(name, ns, mem string, cpu int) map[string]any {
 // applies the Windows-tuned VM. When rdp is true it also exposes RDP (3389)
 // through the corral tailnet proxy. disk/mem default to 64Gi/8Gi, cpu to 4.
 func CreateWindowsVM(name, ns, iso, disk, mem string, cpu int, rdp bool) error {
+	name = strings.ToLower(name)
 	if ns == "" {
 		ns = DefaultNamespace
 	}

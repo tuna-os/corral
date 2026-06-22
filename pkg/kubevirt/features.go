@@ -321,6 +321,7 @@ func (c *Client) waitStopped(name string) {
 // AddVolume creates a new PVC and hotplugs it onto the running VM. Returns the
 // PVC name. The PVC is labeled for cleanup on VM delete.
 func (c *Client) AddVolume(name, size string) (string, error) {
+	name = strings.ToLower(name)
 	virtctl, err := c.ensureVirtctl()
 	if err != nil {
 		return "", err

@@ -142,6 +142,7 @@ func (c *Client) VMExists(name string) bool {
 
 // DataVolumeStatus returns the import progress for a VM's ISO DataVolume.
 func DataVolumeStatus(name, ns string) string {
+	name = strings.ToLower(name)
 	out, err := runPkg("kubectl", "get", "datavolume", name+"-iso", "-n", ns, "-o", "json")
 	if err != nil {
 		return ""
@@ -455,6 +456,7 @@ func (c *Client) StopVM(name string) error {
 
 // DeleteVM deletes a KubeVirt VM and its PVCs/DataVolumes/proxy resources.
 func (c *Client) DeleteVM(name string) error {
+	name = strings.ToLower(name)
 	// Stop first
 	virtctl, _ := c.ensureVirtctl()
 	if virtctl != "" {
@@ -604,7 +606,7 @@ func (c *Client) ensureVirtctl() (string, error) {
 
 // GenerateVM creates a KubeVirt VirtualMachine manifest.
 func GenerateVM(opts types.CreateOpts) map[string]any {
-	name := opts.Name
+	name := strings.ToLower(opts.Name)
 	ns := opts.Namespace
 	if ns == "" {
 		ns = "default"
@@ -1151,6 +1153,7 @@ func CreateVM(opts types.CreateOpts) error {
 	}
 	EnsureNamespace(ns)
 
+	opts.Name = strings.ToLower(opts.Name)
 	name := opts.Name
 	hasISO := opts.ISO != ""
 	hasContainer := opts.ContainerDisk != ""
