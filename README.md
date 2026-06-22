@@ -55,7 +55,7 @@ VMs are cattle. Stop treating each one like a networking project.
 ## Install
 
 ```bash
-git clone https://github.com/hanthor/corral
+git clone https://github.com/tuna-os/corral
 cd corral
 go build -o corral .
 install corral ~/.local/bin/
