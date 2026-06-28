@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"github.com/hanthor/corral/pkg/web"
+	"github.com/tuna-os/corral/pkg/web"
 	"github.com/spf13/cobra"
 )
 

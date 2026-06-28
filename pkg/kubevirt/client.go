@@ -14,8 +14,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/hanthor/corral/pkg/shell"
-	"github.com/hanthor/corral/pkg/types"
+	"github.com/tuna-os/corral/pkg/shell"
+	"github.com/tuna-os/corral/pkg/types"
 )
 
 // LastPassword holds the cloud-init password from the most recent GenerateVM call.

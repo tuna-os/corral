@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hanthor/corral/pkg/kubevirt"
-	"github.com/hanthor/corral/pkg/shell"
-	"github.com/hanthor/corral/pkg/types"
+	"github.com/tuna-os/corral/pkg/kubevirt"
+	"github.com/tuna-os/corral/pkg/shell"
+	"github.com/tuna-os/corral/pkg/types"
 )
 
 // server translates Proxmox-shaped requests onto the corral KubeVirt backend.

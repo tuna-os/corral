@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/hanthor/corral/pkg/registry"
-	"github.com/hanthor/corral/pkg/types"
+	"github.com/tuna-os/corral/pkg/registry"
+	"github.com/tuna-os/corral/pkg/types"
 )
 
 func TestResolveBackend_Registry(t *testing.T) {

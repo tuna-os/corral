@@ -1,4 +1,4 @@
-module github.com/hanthor/corral
+module github.com/tuna-os/corral
 
 go 1.26.3
 

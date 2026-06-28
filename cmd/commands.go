@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/hanthor/corral/pkg/kubevirt"
-	"github.com/hanthor/corral/pkg/qemu"
+	"github.com/tuna-os/corral/pkg/kubevirt"
+	"github.com/tuna-os/corral/pkg/qemu"
 	"github.com/spf13/cobra"
 )
 

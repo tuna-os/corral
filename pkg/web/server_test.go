@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hanthor/corral/pkg/kubevirt"
+	"github.com/tuna-os/corral/pkg/kubevirt"
 )
 
 // TestStaticServed verifies the embedded SPA (index.html + assets) is served.

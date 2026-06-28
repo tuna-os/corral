@@ -18,8 +18,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/hanthor/corral/pkg/kubevirt"
-	"github.com/hanthor/corral/pkg/proxmox"
+	"github.com/tuna-os/corral/pkg/kubevirt"
+	"github.com/tuna-os/corral/pkg/proxmox"
 	"github.com/spf13/cobra"
 )
 

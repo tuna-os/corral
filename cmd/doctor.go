@@ -3,7 +3,7 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/hanthor/corral/pkg/doctor"
+	"github.com/tuna-os/corral/pkg/doctor"
 	"github.com/spf13/cobra"
 )
 

@@ -5,8 +5,8 @@ import (
 	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/hanthor/corral/pkg/plugin"
-	"github.com/hanthor/corral/pkg/registry"
+	"github.com/tuna-os/corral/pkg/plugin"
+	"github.com/tuna-os/corral/pkg/registry"
 	"github.com/spf13/cobra"
 )
 

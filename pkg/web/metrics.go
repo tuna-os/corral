@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hanthor/corral/pkg/kubevirt"
+	"github.com/tuna-os/corral/pkg/kubevirt"
 )
 
 // cpuSample is one CPU reading for a VM: epoch-millis timestamp + millicores.

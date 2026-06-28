@@ -1,6 +1,6 @@
 package kubevirt
 
-import "github.com/hanthor/corral/pkg/types"
+import "github.com/tuna-os/corral/pkg/types"
 
 // VMLifecycle is the minimal interface for VM CRUD and lifecycle operations.
 // Callers that only need to list, start, stop, or delete VMs should depend

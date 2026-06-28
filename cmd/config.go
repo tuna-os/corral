@@ -3,7 +3,7 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/hanthor/corral/pkg/config"
+	"github.com/tuna-os/corral/pkg/config"
 	"github.com/spf13/cobra"
 )
 
