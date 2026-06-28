@@ -5,7 +5,7 @@ import (
 	"hash/crc32"
 	"strings"
 
-	"github.com/hanthor/corral/pkg/types"
+	"github.com/tuna-os/corral/pkg/types"
 )
 
 // ── translate: Proxmox ↔ KubeVirt shape mapping ──────────────────

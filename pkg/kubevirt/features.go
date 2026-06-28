@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hanthor/corral/pkg/types"
+	"github.com/tuna-os/corral/pkg/types"
 )
 
 // This file holds the "Proxmox-parity" VM operations layered on top of the

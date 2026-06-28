@@ -7,12 +7,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hanthor/corral/pkg/catalog"
-	"github.com/hanthor/corral/pkg/doctor"
-	"github.com/hanthor/corral/pkg/kubevirt"
-	"github.com/hanthor/corral/pkg/plugin"
-	"github.com/hanthor/corral/pkg/sources"
-	"github.com/hanthor/corral/pkg/types"
+	"github.com/tuna-os/corral/pkg/catalog"
+	"github.com/tuna-os/corral/pkg/doctor"
+	"github.com/tuna-os/corral/pkg/kubevirt"
+	"github.com/tuna-os/corral/pkg/plugin"
+	"github.com/tuna-os/corral/pkg/sources"
+	"github.com/tuna-os/corral/pkg/types"
 )
 
 // ── Doctor (cluster diagnostics) ──────────────────────────────────

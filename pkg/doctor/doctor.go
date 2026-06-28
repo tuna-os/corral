@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/hanthor/corral/pkg/shell"
+	"github.com/tuna-os/corral/pkg/shell"
 )
 
 // Check is one diagnostic result.

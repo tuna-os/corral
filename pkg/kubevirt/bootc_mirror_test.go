@@ -10,7 +10,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/hanthor/corral/pkg/shell"
+	"github.com/tuna-os/corral/pkg/shell"
 )
 
 // The deploy manifest and detectRegistryCache() must agree on the Service name,

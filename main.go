@@ -1,6 +1,6 @@
 package main
 
-import "github.com/hanthor/corral/cmd"
+import "github.com/tuna-os/corral/cmd"
 
 func main() {
 	cmd.Execute()

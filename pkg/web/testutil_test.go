@@ -4,11 +4,11 @@ import (
 	"net/http/httptest"
 	"os"
 
-	"github.com/hanthor/corral/pkg/doctor"
-	"github.com/hanthor/corral/pkg/kubevirt"
-	"github.com/hanthor/corral/pkg/registry"
-	"github.com/hanthor/corral/pkg/shell"
-	"github.com/hanthor/corral/pkg/sources"
+	"github.com/tuna-os/corral/pkg/doctor"
+	"github.com/tuna-os/corral/pkg/kubevirt"
+	"github.com/tuna-os/corral/pkg/registry"
+	"github.com/tuna-os/corral/pkg/shell"
+	"github.com/tuna-os/corral/pkg/sources"
 )
 
 // TestFixture holds a test server and its fake runner for handler tests.
