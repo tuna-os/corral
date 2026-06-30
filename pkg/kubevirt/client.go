@@ -2,6 +2,7 @@ package kubevirt
 
 import (
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"math/big"
@@ -1187,10 +1188,77 @@ func CreateVM(opts types.CreateOpts) error {
 		}
 	}
 
-	if err := Apply(GenerateVM(opts)); err != nil {
+	vm := GenerateVM(opts)
+
+	// KubeVirt limits inline cloud-init userData to 2048 bytes.  When
+	// provisioning scripts (from Lima --file) exceed that, store the
+	// userData in a Secret and reference it via userDataSecretRef.
+	if userData, ok := extractUserData(volumesFromVM(vm)); ok && len(userData) > 2048 {
+		secretName := name + "-cloudinit"
+		if err := createCloudInitSecret(secretName, ns, userData); err != nil {
+			return fmt.Errorf("creating cloud-init Secret: %w", err)
+		}
+		replaceUserDataWithSecret(volumesFromVM(vm), secretName)
+	}
+
+	if err := Apply(vm); err != nil {
 		return fmt.Errorf("creating VM: %w", err)
 	}
 	return nil
+}
+
+// volumesFromVM extracts the volumes slice from a GenerateVM manifest.
+func volumesFromVM(vm map[string]any) []map[string]any {
+	spec, _ := vm["spec"].(map[string]any)
+	tmpl, _ := spec["template"].(map[string]any)
+	tmplSpec, _ := tmpl["spec"].(map[string]any)
+	vols, _ := tmplSpec["volumes"].([]map[string]any)
+	return vols
+}
+
+// extractUserData returns the inline userData string from the cloudInitNoCloud
+// volume, if present.
+func extractUserData(volumes []map[string]any) (string, bool) {
+	for _, v := range volumes {
+		ci, ok := v["cloudInitNoCloud"].(map[string]any)
+		if !ok {
+			continue
+		}
+		if ud, ok := ci["userData"].(string); ok && ud != "" {
+			return ud, true
+		}
+	}
+	return "", false
+}
+
+// replaceUserDataWithSecret swaps cloudInitNoCloud.userData for
+// secretRef to avoid KubeVirt's 2048-byte inline limit.
+func replaceUserDataWithSecret(volumes []map[string]any, secretName string) {
+	for _, v := range volumes {
+		ci, ok := v["cloudInitNoCloud"].(map[string]any)
+		if !ok {
+			continue
+		}
+		delete(ci, "userData")
+		ci["secretRef"] = map[string]any{"name": secretName}
+		return
+	}
+}
+
+// createCloudInitSecret creates a Secret containing the cloud-init userData.
+func createCloudInitSecret(name, ns, userData string) error {
+	secret := map[string]any{
+		"apiVersion": "v1",
+		"kind":       "Secret",
+		"metadata": map[string]any{
+			"name":      name,
+			"namespace": ns,
+		},
+		"data": map[string]any{
+			"userData": base64.StdEncoding.EncodeToString([]byte(userData)),
+		},
+	}
+	return Apply(secret)
 }
 
 // applyManifest pipes a YAML manifest string to kubectl apply.

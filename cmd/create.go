@@ -3,6 +3,9 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"strings"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/tuna-os/corral/pkg/catalog"
 	"github.com/tuna-os/corral/pkg/kubevirt"
@@ -29,7 +32,136 @@ var (
 	createCloudInit         string
 	createInstanceType      string
 	createPreference        string
+	createFile              string
 )
+
+// limaFile is the Lima YAML format — corral reads Lima files natively.
+// Only the subset of fields that map to KubeVirt are parsed; the rest
+// (mounts, networks, etc.) are ignored with a warning where applicable.
+type limaFile struct {
+	Images []limaImage `yaml:"images"`
+	CPUs   int         `yaml:"cpus"`
+	Memory string      `yaml:"memory"`
+	Disk   string      `yaml:"disk"`
+	Provision []limaProvision `yaml:"provision"`
+}
+
+type limaImage struct {
+	Location string `yaml:"location"`
+	Arch     string `yaml:"arch"`
+}
+
+type limaProvision struct {
+	Mode   string `yaml:"mode"`
+	Script string `yaml:"script"`
+}
+
+func loadLimaFile(path string) (*limaFile, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", path, err)
+	}
+	var spec limaFile
+	if err := yaml.Unmarshal(data, &spec); err != nil {
+		return nil, fmt.Errorf("parsing %s: %w", path, err)
+	}
+	return &spec, nil
+}
+
+// parseLimaMemory converts Lima-formatted memory strings ("16GiB", "8G", "4096")
+// to the corral format ("16G", "8G", "4096M").
+func parseLimaMemory(s string) string {
+	s = strings.TrimSuffix(s, "iB")
+	s = strings.TrimSuffix(s, "B")
+	// If it's just a number, treat as MiB
+	if _, err := fmt.Sscanf(s, "%d", new(int)); err == nil && !strings.ContainsAny(s, "GMK") {
+		return s + "M"
+	}
+	return s
+}
+
+// parseLimaDisk converts Lima-formatted disk strings ("60GiB", "40G") to
+// corral format ("60G", "40G").
+func parseLimaDisk(s string) string {
+	return parseLimaMemory(s)
+}
+
+// limaScriptToCloudInit converts a shell provisioning script to a cloud-init
+// runcmd entry. The entire script runs as a single sh invocation so that
+// multi-line constructs (if/fi, loops, backslash continuations) work.
+func limaScriptToCloudInit(script string) string {
+	script = strings.TrimSpace(script)
+	// Strip the shebang line — cloud-init runs via sh -c.
+	if strings.HasPrefix(script, "#!") {
+		idx := strings.Index(script, "\n")
+		if idx >= 0 {
+			script = strings.TrimSpace(script[idx+1:])
+		}
+	}
+	if script == "" {
+		return ""
+	}
+	// YAML literal block scalar (|) keeps newlines intact inside cloud-init.
+	return "runcmd:\n  - |\n" + indentLines(script, "    ")
+}
+
+// indentLines prepends prefix to every line of s.
+func indentLines(s, prefix string) string {
+	lines := strings.Split(s, "\n")
+	for i, l := range lines {
+		lines[i] = prefix + l
+	}
+	return strings.Join(lines, "\n")
+}
+
+// applyLimaFile applies Lima YAML fields to the corral create flags.  Returns
+// the effective VM name (from positional arg, unchanged by Lima — Lima files
+// don't have a name field).
+func applyLimaFile(spec *limaFile) {
+	if spec.CPUs != 0 && createCPU == 2 {
+		createCPU = spec.CPUs
+	}
+	if spec.Memory != "" && createMem == "4G" {
+		createMem = parseLimaMemory(spec.Memory)
+	}
+	if spec.Disk != "" && createDisk == "" {
+		createDisk = parseLimaDisk(spec.Disk)
+	}
+
+	// Resolve the first image as the boot source.
+	if len(spec.Images) > 0 && createContainerDisk == "" && createImage == "" && createISO == "" && createImport == "" {
+		loc := spec.Images[0].Location
+		switch {
+		case strings.HasSuffix(loc, ".iso") || strings.HasPrefix(loc, "https://") && strings.Contains(loc, ".iso"):
+			createISO = loc
+		case strings.HasSuffix(loc, ".qcow2") || strings.HasSuffix(loc, ".raw") || strings.HasSuffix(loc, ".img"):
+			createImport = loc
+		case strings.Contains(loc, "/") && strings.Contains(loc, ":"):
+			// OCI image reference (e.g. quay.io/containerdisks/fedora:44)
+			createContainerDisk = loc
+		default:
+			// Bare name — try catalog lookup
+			createImage = loc
+		}
+	}
+
+	// Convert provision scripts to cloud-init.
+	if createCloudInit == "" {
+		var parts []string
+		for _, p := range spec.Provision {
+			if p.Script == "" {
+				continue
+			}
+			ci := limaScriptToCloudInit(p.Script)
+			if ci != "" {
+				parts = append(parts, ci)
+			}
+		}
+		if len(parts) > 0 {
+			createCloudInit = "#cloud-config\n" + strings.Join(parts, "\n")
+		}
+	}
+}
 
 var createCmd = &cobra.Command{
 	Use:   "create [name]",
@@ -53,6 +185,16 @@ Boot a container image as a VM? Install the bootc extension:
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
+
+		// --file reads a Lima YAML file — same format limactl uses.
+		if createFile != "" {
+			spec, err := loadLimaFile(createFile)
+			if err != nil {
+				return err
+			}
+			applyLimaFile(spec)
+			createKubevirt = true
+		}
 
 		if existing := resolveBackend(name); existing != "" && !createForce {
 			return fmt.Errorf("VM %q already exists (backend: %s). Use --force to overwrite", name, existing)
@@ -84,6 +226,7 @@ func init() {
 	createCmd.Flags().StringVar(&createCloudInit, "cloud-init", "", "[kubevirt] Extra cloud-init user-data YAML")
 	createCmd.Flags().StringVar(&createInstanceType, "instancetype", "", "[kubevirt] Cluster instancetype for sizing (overrides --cpu/--mem)")
 	createCmd.Flags().StringVar(&createPreference, "preference", "", "[kubevirt] Cluster preference (guest device/firmware defaults)")
+	createCmd.Flags().StringVarP(&createFile, "file", "f", "", "Lima YAML file (corral reads Lima format natively)")
 }
 
 func runKubevirtCreate(name string) error {
