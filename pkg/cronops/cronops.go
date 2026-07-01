@@ -9,7 +9,9 @@ import "fmt"
 
 // KubectlImage runs the CronJob pods. bitnami/kubectl is multi-arch and ships
 // a shell, which the snapshot-prune pipeline needs.
-const KubectlImage = "docker.io/bitnami/kubectl:latest"
+// KubectlImage runs the CronJob pods. Pinned to a specific digest to avoid
+// supply-chain risk from mutable :latest tags.
+const KubectlImage = "docker.io/bitnami/kubectl@sha256:5d4034684c0edacc9d51a6555dd2a62d3b250bc994e742a7ce463e1c1cb09c80"
 
 // ManagedLabel marks every object the scheduled-ops plugins create.
 const ManagedLabel = "corral.dev/scheduled-op"

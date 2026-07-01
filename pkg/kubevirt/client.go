@@ -932,7 +932,7 @@ func GenerateProxyDeployment(name, namespace string, ports []int) map[string]any
 	if hasVNC {
 		initContainers = append(initContainers, map[string]any{
 			"name":  "install-tools",
-			"image": "alpine:latest",
+			"image": "alpine:3.23",
 			"securityContext": map[string]any{
 				"allowPrivilegeEscalation": false,
 				"capabilities":             map[string]any{"drop": []string{"ALL"}},
@@ -980,7 +980,7 @@ func GenerateProxyDeployment(name, namespace string, ports []int) map[string]any
 					"containers": []map[string]any{
 						{
 							"name":  "proxy",
-							"image": "alpine:latest",
+							"image": "alpine:3.23",
 							"securityContext": map[string]any{
 								"allowPrivilegeEscalation": false,
 								"capabilities":             map[string]any{"drop": []string{"ALL"}},
