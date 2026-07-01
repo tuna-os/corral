@@ -1011,6 +1011,8 @@ func ClusterCapabilities() types.Capabilities {
 		expand[it.Metadata.Name] = it.AllowVolumeExpansion != nil && *it.AllowVolumeExpansion
 		if it.Metadata.Name == "local-path" {
 			preferred = "local-path"
+		} else if (strings.Contains(it.Metadata.Name, "topolvm") || it.Metadata.Name == "topolvm") && preferred != "local-path" {
+			preferred = it.Metadata.Name
 		}
 		if it.Metadata.Annotations["storageclass.kubernetes.io/is-default-class"] == "true" {
 			def = it.Metadata.Name
@@ -1021,7 +1023,7 @@ func ClusterCapabilities() types.Capabilities {
 		effective = def
 	}
 	return types.Capabilities{
-		StorageClass: preferred,
+		StorageClass: effective,
 		CanExpand:    expand[effective],
 		CanSnapshot:  hasSnapshotClass(),
 	}
