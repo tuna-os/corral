@@ -89,6 +89,99 @@ func VMEntry(vm *types.VM, vmid int, node string) map[string]any {
 	}
 }
 
+// ── Nodes ─────────────────────────────────────────────────────────
+
+// NodeStatus maps a K8s node's Ready condition to Proxmox's online/offline
+// vocabulary.
+func NodeStatus(ready bool) string {
+	if ready {
+		return "online"
+	}
+	return "offline"
+}
+
+// NodeEntry builds a full Proxmox node row, as returned by GET /nodes.
+func NodeEntry(n NodeInfo) map[string]any {
+	return map[string]any{
+		"node":            n.Name,
+		"id":              "node/" + n.Name,
+		"type":            "node",
+		"status":          NodeStatus(n.Ready),
+		"maxcpu":          n.CPU,
+		"maxmem":          MemBytes(n.MemRaw),
+		"ssl_fingerprint": "",
+		"uptime":          0,
+		"cpu":             0.0,
+		"mem":             0,
+		"maxdisk":         0,
+		"disk":            0,
+		"level":           "",
+	}
+}
+
+// NodeResourceEntry builds the abbreviated node row used by
+// GET /cluster/resources?type=node — a subset of NodeEntry's fields.
+func NodeResourceEntry(n NodeInfo) map[string]any {
+	return map[string]any{
+		"id": "node/" + n.Name, "node": n.Name, "type": "node",
+		"status": NodeStatus(n.Ready), "maxcpu": n.CPU, "maxmem": MemBytes(n.MemRaw),
+	}
+}
+
+// ── Storage ───────────────────────────────────────────────────────
+
+// ProxmoxStorageEntry builds a Proxmox storage row from a K8s StorageClass,
+// as returned by GET /nodes/{node}/storage.
+func ProxmoxStorageEntry(sc StorageEntry, node string) map[string]any {
+	return map[string]any{
+		"storage": sc.Name,
+		"node":    node,
+		"type":    sc.Type,
+		"content": "images,rootdir",
+		"active":  1,
+		"enabled": 1,
+		"shared":  0,
+		"avail":   0,
+		"total":   0,
+		"used":    0,
+	}
+}
+
+// ── Access control users/groups ──────────────────────────────────
+
+// RBACUsersToProxmox maps K8s RBAC users onto Proxmox user rows, as returned
+// by GET /access/users. See docs/adr/0001-k8s-rbac-to-proxmox-privileges.md.
+func RBACUsersToProxmox(users []RBACUser) []map[string]any {
+	var out []map[string]any
+	for _, u := range users {
+		out = append(out, map[string]any{
+			"userid":    u.UserID,
+			"enable":    1,
+			"expire":    0,
+			"email":     "",
+			"comment":   u.Comment,
+			"firstname": "",
+			"lastname":  "",
+			"tokens":    []any{},
+		})
+	}
+	return out
+}
+
+// RBACGroupsToProxmox maps K8s RBAC groups onto Proxmox group rows, as
+// returned by GET /access/groups.
+func RBACGroupsToProxmox(groups []RBACGroup) []map[string]any {
+	var out []map[string]any
+	for _, g := range groups {
+		out = append(out, map[string]any{
+			"groupid": g.GroupID,
+			"comment": "",
+			"members": []any{},
+		})
+	}
+	return out
+}
+
 // ── Access control roles ─────────────────────────────────────────
 
 // k8sRolesToProxmox returns a fixed set of Proxmox roles mapped from

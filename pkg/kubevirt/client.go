@@ -521,24 +521,10 @@ func (c *Client) SSH(name, username, identityFile, command string, port int, pas
 	args = append(args, "vm/"+name)
 
 	if password != "" {
-		return runWithSSHPass(password, virtctl, args...)
+		return shell.RunWithSSHPass(password, virtctl, args...)
 	}
 
 	cmd := exec.Command(virtctl, args...)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
-}
-
-// runWithSSHPass runs a command with sshpass for password-based auth.
-func runWithSSHPass(password, bin string, args ...string) error {
-	sshpass, err := exec.LookPath("sshpass")
-	if err != nil {
-		return fmt.Errorf("sshpass not found (needed for password auth) — install: brew install sshpass")
-	}
-	allArgs := append([]string{"-p", password, bin}, args...)
-	cmd := exec.Command(sshpass, allArgs...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -1054,6 +1040,13 @@ func applyProxyManifest(label, manifest string) error {
 	return fmt.Errorf("proxy %s: %w", label, err)
 }
 
+// ConsolePorts are the ports exposed on the tailnet proxy for any kubevirt
+// VM: SSH, VNC, RDP. Opening a port nobody's listening on is harmless (the
+// tailnet is already the auth boundary — see ADR-0003); this is the uniform
+// list every VM-creation path should pass to ApplyProxy, regardless of guest
+// OS, so console access doesn't silently vary by which flow created the VM.
+var ConsolePorts = []int{22, 5900, 3389}
+
 // ApplyProxy creates/updates the proxy resources for a VM.
 func ApplyProxy(name, ns string, ports []int) error {
 	// The proxy Service is only useful if the Tailscale K8s operator is there to
@@ -1161,7 +1154,10 @@ func CreateVM(opts types.CreateOpts) error {
 	if diskSize == "" {
 		diskSize = "20G"
 	}
-	sc := PreferredStorageClass()
+	sc := opts.StorageClass
+	if sc == "" {
+		sc = PreferredStorageClass()
+	}
 
 	if hasISO {
 		if err := Apply(GenerateDataVolume(name+"-iso", ns, opts.ISO)); err != nil {
@@ -1308,7 +1304,8 @@ func runPkg(name string, args ...string) ([]byte, error) {
 
 // cpuSpec builds a hotplug-ready CPU topology: one core/thread per socket so
 // that live CPU updates (which scale `sockets`) map 1:1 to vCPUs, with
-// maxSockets headroom for hotplug. Harmless without LiveUpdate enabled.
+// maxSockets headroom for hotplug. Uses host-passthrough CPU model so that
+// nested KVM (SVM/VMX) is available inside the guest for e2e testing.
 func cpuSpec(cpu int) map[string]any {
 	if cpu < 1 {
 		cpu = 1
@@ -1322,6 +1319,7 @@ func cpuSpec(cpu int) map[string]any {
 		"cores":      1,
 		"threads":    1,
 		"maxSockets": max,
+		"model":      "host-passthrough",
 	}
 }
 

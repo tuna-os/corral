@@ -30,21 +30,18 @@ func generateWindowsVM(name, ns, mem string, cpu int) map[string]any {
 }
 
 // createWindowsVM imports the installer ISO, provisions the boot disk, and
-// applies the Windows-tuned VM (optionally exposing RDP), then records it in
-// the local registry and prints next steps.
-func createWindowsVM(name, ns, iso, disk, mem string, cpu int, rdp bool) error {
+// applies the Windows-tuned VM (exposing SSH/VNC/RDP via the tailnet proxy),
+// then records it in the local registry and prints next steps.
+func createWindowsVM(name, ns, iso, disk, mem string, cpu int) error {
 	fmt.Fprintf(os.Stderr, "installer ISO importing: %s-iso ← %s\n", name, iso)
-	if err := kubevirt.CreateWindowsVM(name, ns, iso, disk, mem, cpu, rdp); err != nil {
+	if err := kubevirt.CreateWindowsVM(name, ns, iso, disk, mem, cpu); err != nil {
 		return err
 	}
-	if rdp {
-		fmt.Fprintf(os.Stderr, "RDP exposed via proxy service %s-proxy (port 3389)\n", name)
-	}
+	fmt.Fprintf(os.Stderr, "SSH/VNC/RDP exposed via proxy service %s-proxy\n", name)
 	if store, err := registry.NewStore(); err == nil {
 		store.Set(name, types.RegistryEntry{
 			Backend:   "kubevirt",
 			Namespace: ns,
-			Extra:     map[string]string{"os": "windows"},
 		})
 	}
 	fmt.Fprintf(os.Stderr, `VM %q created (stopped). Next steps:
@@ -76,7 +73,6 @@ func main() {
 	var (
 		namespace, iso, disk, mem string
 		cpu                       int
-		rdp                       bool
 	)
 
 	create := &cobra.Command{
@@ -87,14 +83,13 @@ func main() {
 			if iso == "" {
 				return fmt.Errorf("--iso is required (HTTP(S) URL to a Windows installer ISO)")
 			}
-			return createWindowsVM(args[0], namespace, iso, disk, mem, cpu, rdp)
+			return createWindowsVM(args[0], namespace, iso, disk, mem, cpu)
 		},
 	}
 	create.Flags().StringVar(&iso, "iso", "", "Windows installer ISO URL (imported via CDI)")
 	create.Flags().StringVar(&disk, "disk", "64Gi", "Boot disk size")
 	create.Flags().StringVar(&mem, "mem", "8Gi", "Memory")
 	create.Flags().IntVar(&cpu, "cpu", 4, "vCPU cores")
-	create.Flags().BoolVar(&rdp, "rdp", false, "Expose RDP (3389) through the corral proxy")
 
 	drivers := &cobra.Command{
 		Use:   "drivers <vm>",

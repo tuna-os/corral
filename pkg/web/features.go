@@ -398,14 +398,10 @@ func handleBootcRebuild(w http.ResponseWriter, r *http.Request) {
 	}
 	json.NewDecoder(r.Body).Decode(&b)
 	image := catalog.ResolveBootc(b.Image)
-	if image == "" && store != nil {
-		if e, ok := store.Get(name); ok {
-			image = e.Extra["bootc_image"]
-		}
-	}
 	if image == "" {
-		// The in-pod registry is lost on restart; fall back to the durable image
-		// annotation recorded on the VM at create time.
+		// The durable corral.bootc/image annotation on the VM, not the local
+		// registry (which is lost on server-pod restart and not the source
+		// of truth for this — see kubevirt.BootcImageOf).
 		image = kubevirt.BootcImageOf(name, ns)
 	}
 	if image == "" {
@@ -416,16 +412,13 @@ func handleBootcRebuild(w http.ResponseWriter, r *http.Request) {
 	sshKey := kubevirt.LoadSSHPublicKey()
 
 	id := fmt.Sprintf("bootc-rebuild-%s-%d", name, time.Now().UnixNano())
-	task := &buildTask{status: "running"}
+	task := newBuildTask()
 	tasks.Store(id, task)
 	done := taskBegin("bootc rebuild", ns+"/"+name)
 	go func() {
 		err := kubevirt.BootcRebuild(name, ns, image, sshKey, "", task)
 		if err == nil && store != nil {
-			store.Set(name, types.RegistryEntry{
-				Backend: "kubevirt", Namespace: ns,
-				Extra: map[string]string{"bootc_image": image},
-			})
+			store.Set(name, types.RegistryEntry{Backend: "kubevirt", Namespace: ns})
 		}
 		task.finish(err)
 		done(err)

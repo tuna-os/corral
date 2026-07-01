@@ -33,6 +33,7 @@ var (
 	createInstanceType      string
 	createPreference        string
 	createFile              string
+	createStorageClass      string
 )
 
 // limaFile is the Lima YAML format — corral reads Lima files natively.
@@ -227,6 +228,7 @@ func init() {
 	createCmd.Flags().StringVar(&createInstanceType, "instancetype", "", "[kubevirt] Cluster instancetype for sizing (overrides --cpu/--mem)")
 	createCmd.Flags().StringVar(&createPreference, "preference", "", "[kubevirt] Cluster preference (guest device/firmware defaults)")
 	createCmd.Flags().StringVarP(&createFile, "file", "f", "", "Lima YAML file (corral reads Lima format natively)")
+	createCmd.Flags().StringVarP(&createStorageClass, "storage-class", "s", "", "[kubevirt] StorageClass for new disks (default: cluster preference)")
 }
 
 func runKubevirtCreate(name string) error {
@@ -271,6 +273,7 @@ func runKubevirtCreate(name string) error {
 		InstanceType:      createInstanceType,
 		Preference:        createPreference,
 		SSHPublicKey:      kubevirt.LoadSSHPublicKey(),
+		StorageClass:      createStorageClass,
 	}
 	if err := kubevirt.CreateVM(opts); err != nil {
 		return err

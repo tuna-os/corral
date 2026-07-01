@@ -211,7 +211,7 @@ go build -o corral .          # core binary (no bootc)
 go build -tags bootc -o corral .  # with bootc pipeline
 
 # Container image (for on-cluster deployment)
-docker build -t ghcr.io/hanthor/corral .
+docker build -t ghcr.io/tuna-os/corral .
 # → Alpine + corral + kubectl + virtctl
 
 # CI (.github/workflows/ci.yml)
@@ -224,7 +224,7 @@ The `deploy/corral-web.yaml` manifest:
 1. Creates the `tailvm` namespace (privileged pod-security)
 2. ServiceAccount + scoped ClusterRole (VM lifecycle, subresources,
    snapshots, CDI, PVCs, nodes, events, metrics, instancetypes, etc.)
-3. Deployment (ghcr.io/hanthor/corral:latest, port 8006)
+3. Deployment (ghcr.io/tuna-os/corral:latest, port 8006)
 4. ClusterIP Service (port 80 → 8006)
 5. Tailscale Ingress (`ingressClassName: tailscale`) → TLS at
    `corral.<tailnet>.ts.net`

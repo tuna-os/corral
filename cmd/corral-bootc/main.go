@@ -18,10 +18,36 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// finishVM applies the final VM from a completed build's disk PVC, exposes
+// it on the tailnet, and records it in the registry — the part of `create`
+// that's shared between a fresh build and a resumed one (--resume).
+func finishVM(name, ns, pvcName, image, key, mem string, cpu int, node string) error {
+	vm := kubevirt.GenerateBootcVM(name, ns, pvcName, image, key, mem, cpu, node)
+	if vm == nil {
+		return fmt.Errorf("bootc VM manifest unavailable")
+	}
+	if err := kubevirt.Apply(vm); err != nil {
+		return fmt.Errorf("creating VM: %w", err)
+	}
+	// Expose SSH/VNC/RDP on the tailnet via the Tailscale operator proxy.
+	if err := kubevirt.ApplyProxy(name, ns, kubevirt.ConsolePorts); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: tailnet expose failed: %v\n", err)
+	}
+	if store, err := registry.NewStore(); err == nil {
+		store.Set(name, types.RegistryEntry{
+			Backend:   "kubevirt",
+			Namespace: ns,
+		})
+	}
+	fmt.Fprintf(os.Stderr, "VM %q created in ns/%s — start: corral start %s\n", name, ns, name)
+	return nil
+}
+
 func main() {
 	var (
-		namespace, disk, mem, sshKey, node string
-		cpu                                int
+		namespace, disk, mem, sshKey, node, storageClass string
+		cpu                                              int
+		resume                                           bool
 	)
 
 	create := &cobra.Command{
@@ -29,11 +55,6 @@ func main() {
 		Short: "Build a bootc container image into a VM and create it",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			image, _ := cmd.Flags().GetString("image")
-			if image == "" {
-				return fmt.Errorf("--image is required — a catalog name (see `corral bootc images`) or an OCI ref like quay.io/centos-bootc/centos-bootc:stream9")
-			}
-			image = catalog.ResolveBootc(image)
 			name := args[0]
 			ns := namespace
 			if ns == "" {
@@ -48,6 +69,31 @@ func main() {
 			if key == "" {
 				key = kubevirt.LoadSSHPublicKey()
 			}
+
+			// --resume picks up an interrupted build: a builder VM that
+			// finished installing but never got its final VM created because
+			// the CLI died mid-wait (Ctrl+C, SSH drop) — see
+			// kubevirt.BootcResumeState. Skips the build step entirely.
+			if resume {
+				image, pvcName, ready, failed := kubevirt.BootcResumeState(name, ns)
+				if failed {
+					return fmt.Errorf("the previous build for %q failed — rerun without --resume to start a fresh build", name)
+				}
+				if !ready {
+					return fmt.Errorf("no resumable build found for %q (no completed builder + disk PVC)", name)
+				}
+				if err := finishVM(name, ns, pvcName, image, key, mem, cpu, node); err != nil {
+					return err
+				}
+				kubevirt.BootcCleanupBuilder(name+"-bootc-builder", ns)
+				return nil
+			}
+
+			image, _ := cmd.Flags().GetString("image")
+			if image == "" {
+				return fmt.Errorf("--image is required — a catalog name (see `corral bootc images`) or an OCI ref like quay.io/centos-bootc/centos-bootc:stream9")
+			}
+			image = catalog.ResolveBootc(image)
 			if key == "" {
 				return fmt.Errorf("no SSH public key (--ssh-key or ~/.ssh/*.pub) — needed for bootc VM access")
 			}
@@ -56,30 +102,11 @@ func main() {
 				size = "50Gi"
 			}
 
-			build, err := kubevirt.BootcBuildDisk(name, ns, image, key, size, os.Stderr)
+			build, err := kubevirt.BootcBuildDisk(name, ns, image, key, size, storageClass, os.Stderr)
 			if err != nil {
-				return fmt.Errorf("bootc build: %w", err)
+				return fmt.Errorf("bootc build: %w — if the builder actually finished after this failed, retry with --resume", err)
 			}
-			vm := kubevirt.GenerateBootcVM(name, ns, build.PVCName, image, key, mem, cpu, node)
-			if vm == nil {
-				return fmt.Errorf("bootc VM manifest unavailable")
-			}
-			if err := kubevirt.Apply(vm); err != nil {
-				return fmt.Errorf("creating VM: %w", err)
-			}
-			// Expose SSH/VNC on the tailnet via the Tailscale operator proxy.
-			if err := kubevirt.ApplyProxy(name, ns, []int{22, 5900}); err != nil {
-				fmt.Fprintf(os.Stderr, "warning: tailnet expose failed: %v\n", err)
-			}
-			if store, err := registry.NewStore(); err == nil {
-				store.Set(name, types.RegistryEntry{
-					Backend:   "kubevirt",
-					Namespace: ns,
-					Extra:     map[string]string{"bootc_image": image},
-				})
-			}
-			fmt.Fprintf(os.Stderr, "VM %q created in ns/%s — start: corral start %s\n", name, ns, name)
-			return nil
+			return finishVM(name, ns, build.PVCName, image, key, mem, cpu, node)
 		},
 	}
 	create.Flags().String("image", "", "Bootc container image — catalog name or OCI ref")
@@ -88,6 +115,8 @@ func main() {
 	create.Flags().IntVar(&cpu, "cpu", 2, "vCPUs")
 	create.Flags().StringVar(&node, "node", "", "Schedule on a specific node")
 	create.Flags().StringVar(&sshKey, "ssh-key", "", "SSH public key (default: ~/.ssh/*.pub)")
+	create.Flags().StringVarP(&storageClass, "storage-class", "s", "", "StorageClass for the disk PVC (default: cluster preference)")
+	create.Flags().BoolVar(&resume, "resume", false, "Finish a build that completed after a previous `create` was interrupted")
 
 	images := &cobra.Command{
 		Use:   "images",
@@ -105,17 +134,6 @@ Universal Blue. Use a catalog name directly:
 		},
 	}
 
-	// recordedImage returns the bootc image a VM was built from (registry).
-	recordedImage := func(name string) string {
-		store, err := registry.NewStore()
-		if err != nil {
-			return ""
-		}
-		if e, ok := store.Get(name); ok {
-			return e.Extra["bootc_image"]
-		}
-		return ""
-	}
 	// rebuild reruns the on-cluster build and re-points the VM. newImage "" =
 	// keep the recorded image (an upgrade — pull the latest of the same tag).
 	rebuild := func(name, newImage string) error {
@@ -128,7 +146,7 @@ Universal Blue. Use a catalog name directly:
 		}
 		image := catalog.ResolveBootc(newImage)
 		if image == "" {
-			image = recordedImage(name)
+			image = kubevirt.BootcImageOf(name, ns)
 		}
 		if image == "" {
 			return fmt.Errorf("no image recorded for %q — pass --image <ref>", name)
@@ -141,10 +159,7 @@ Universal Blue. Use a catalog name directly:
 			return err
 		}
 		if store, err := registry.NewStore(); err == nil {
-			store.Set(name, types.RegistryEntry{
-				Backend: "kubevirt", Namespace: ns,
-				Extra: map[string]string{"bootc_image": image},
-			})
+			store.Set(name, types.RegistryEntry{Backend: "kubevirt", Namespace: ns})
 		}
 		fmt.Fprintf(os.Stderr, "VM %q rebuilt from %s and restarted\n", name, image)
 		return nil
@@ -194,19 +209,20 @@ preserved. Use this to apply image updates.`,
 		Use:   "status",
 		Short: "List bootc VMs and the image each was built from",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			store, err := registry.NewStore()
+			vms, err := kubevirt.NewClient(namespace).ListVMs()
 			if err != nil {
 				return err
 			}
 			fmt.Printf("%-24s %-12s %s\n", "VM", "NAMESPACE", "BOOTC IMAGE")
-			for name, e := range store.All() {
-				if img := e.Extra["bootc_image"]; img != "" {
-					ns := e.Namespace
-					if ns == "" {
-						ns = kubevirt.DefaultNamespace
-					}
-					fmt.Printf("%-24s %-12s %s\n", name, ns, img)
+			for _, vm := range vms {
+				if !vm.Bootc {
+					continue
 				}
+				ns := vm.Namespace
+				if ns == "" {
+					ns = kubevirt.DefaultNamespace
+				}
+				fmt.Printf("%-24s %-12s %s\n", vm.Name, ns, kubevirt.BootcImageOf(vm.Name, ns))
 			}
 			return nil
 		},

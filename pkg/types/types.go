@@ -1,5 +1,24 @@
 package types
 
+// Backend is the seam between corral's two compute backends (qemu, kubevirt):
+// the operations both genuinely implement today. It's deliberately smaller
+// than either backend's full capability set — kubevirt.Client has migrate/
+// snapshot/scale/GPU operations qemu has no counterpart for, and qemu has no
+// restart/pause/unpause plumbing kubevirt does. Those stay reachable through
+// the concrete types directly; this interface only covers what both sides
+// can promise.
+type Backend interface {
+	ListVMs() ([]VM, error)
+	VMExists(name string) bool
+	StartVM(name string) error
+	StopVM(name string) error
+	DeleteVM(name string) error
+	VMInfo(name string) ([]byte, error)
+	SSH(name, username, identityFile, command string, port int, password string) error
+	Viewer(name string) error
+	Logs(name string) error
+}
+
 // VM represents a virtual machine from either backend.
 type VM struct {
 	Name    string `json:"name"`
@@ -35,10 +54,9 @@ type Capabilities struct {
 
 // RegistryEntry persists backend choice per VM.
 type RegistryEntry struct {
-	Backend   string            `json:"backend"`
-	Namespace string            `json:"namespace,omitempty"`
-	Password  string            `json:"password,omitempty"`
-	Extra     map[string]string `json:"extra,omitempty"`
+	Backend   string `json:"backend"`
+	Namespace string `json:"namespace,omitempty"`
+	Password  string `json:"password,omitempty"`
 }
 
 // CreateOpts holds all VM creation options.
@@ -61,6 +79,7 @@ type CreateOpts struct {
 	SSHPublicKey      string
 	InstanceType      string // KubeVirt cluster instancetype (sets CPU/mem); overrides CPU/Mem
 	Preference        string // KubeVirt cluster preference (devices/firmware defaults)
+	StorageClass      string // overrides PreferredStorageClass() for this VM's disks; "" = default
 }
 
 // PortMap maps protocol names to port numbers.

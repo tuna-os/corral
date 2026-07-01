@@ -291,7 +291,7 @@ restart, pause/unpause, live-migrate, delete. Responsive — usable on mobile,
 consoles included.
 
 Runs locally (`corral web`, default `127.0.0.1:8006`) or **on the cluster**:
-`Containerfile` builds `ghcr.io/hanthor/corral` (alpine + corral +
+`Containerfile` builds `ghcr.io/tuna-os/corral` (alpine + corral +
 kubectl + virtctl, published by the repo CI), deployed by
 `talos-k8s/corral-web.yaml` with a scoped ClusterRole and a Service exposed
 to the tailnet by the Tailscale operator (`corral.<tailnet>.ts.net`). The web

@@ -608,6 +608,52 @@ func TestCreateVM_ContainerDiskWithDataDisk(t *testing.T) {
 	}
 }
 
+func TestCreateVM_StorageClassOverride(t *testing.T) {
+	r := createVMFake(t)
+
+	err := CreateVM(types.CreateOpts{
+		Name: "web", ContainerDisk: "quay.io/containerdisks/fedora:41", Disk: "20G",
+		StorageClass: "topolvm-ssd",
+	})
+	if err != nil {
+		t.Fatalf("CreateVM: %v", err)
+	}
+	if !sawStorageClass(r, "topolvm-ssd") {
+		t.Error("expected the data PVC to use the explicit StorageClass override")
+	}
+}
+
+func TestCreateVM_StorageClassDefault(t *testing.T) {
+	r := createVMFake(t)
+	// A "local-path" StorageClass is present — PreferredStorageClass() should
+	// pick it when opts.StorageClass is unset.
+	r.Reset()
+	r.AddResponseKV("kubectl", []string{"get", "sc", "-o", "json"},
+		`{"items":[{"metadata":{"name":"local-path"}}]}`, nil)
+	applyOK(r)
+
+	err := CreateVM(types.CreateOpts{
+		Name: "web", ContainerDisk: "quay.io/containerdisks/fedora:41", Disk: "20G"})
+	if err != nil {
+		t.Fatalf("CreateVM: %v", err)
+	}
+	if !sawStorageClass(r, "local-path") {
+		t.Error("expected the data PVC to fall back to PreferredStorageClass() (local-path)")
+	}
+}
+
+// sawStorageClass reports whether any applied manifest's stdin references
+// the given StorageClass name.
+func sawStorageClass(r *shell.Fake, name string) bool {
+	for _, call := range r.Calls() {
+		if call.Name == "kubectl" && len(call.Args) > 0 && call.Args[0] == "apply" &&
+			strings.Contains(call.Stdin, `"storageClassName":"`+name+`"`) {
+			return true
+		}
+	}
+	return false
+}
+
 func TestCreateVM_ISO(t *testing.T) {
 	r := createVMFake(t)
 

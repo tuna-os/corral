@@ -69,7 +69,7 @@ func TestCreateWindowsVM_AppliesAllManifests(t *testing.T) {
 	t.Setenv("HOME", t.TempDir()) // registry write goes to a scratch HOME
 
 	if err := createWindowsVM("win11", "tailvm", "https://example.com/win11.iso",
-		"64Gi", "8Gi", 4, false); err != nil {
+		"64Gi", "8Gi", 4); err != nil {
 		t.Fatalf("createWindowsVM: %v", err)
 	}
 	applies := 0
@@ -78,12 +78,14 @@ func TestCreateWindowsVM_AppliesAllManifests(t *testing.T) {
 			applies++
 		}
 	}
-	if applies != 3 { // ISO DataVolume + boot PVC + VM
+	// No Tailscale operator fake registered, so ApplyProxy skips early:
+	// just ISO DataVolume + boot PVC + VM.
+	if applies != 3 {
 		t.Errorf("applied %d manifests, want 3", applies)
 	}
 }
 
-func TestCreateWindowsVM_WithRDP(t *testing.T) {
+func TestCreateWindowsVM_ExposesConsolePorts(t *testing.T) {
 	fake := shell.NewFake()
 	fake.AddResponseKV("kubectl", []string{"apply", "-f", "-"}, "applied", nil)
 	fake.AddResponseKV("kubectl", []string{"get", "sc", "-o", "json"}, `{"items":[]}`, nil)
@@ -100,24 +102,30 @@ func TestCreateWindowsVM_WithRDP(t *testing.T) {
 	fake.AddResponseKV("kubectl", []string{"get", "ingressclass", "tailscale"}, "tailscale", nil)
 
 	if err := createWindowsVM("win11", "tailvm", "https://example.com/win11.iso",
-		"64Gi", "8Gi", 4, true); err != nil {
-		t.Fatalf("createWindowsVM --rdp: %v", err)
+		"64Gi", "8Gi", 4); err != nil {
+		t.Fatalf("createWindowsVM: %v", err)
 	}
 	// ISO DV + boot PVC + VM + proxy RBAC + proxy Service + proxy Deployment
-	applies, sawRDPPort := 0, false
+	applies, sawSSH, sawVNC, sawRDP := 0, false, false, false
 	for _, c := range fake.Calls() {
 		if len(c.Args) > 0 && c.Args[0] == "apply" {
 			applies++
+			if strings.Contains(c.Stdin, "port-22") {
+				sawSSH = true
+			}
+			if strings.Contains(c.Stdin, "5900") {
+				sawVNC = true
+			}
 			if strings.Contains(c.Stdin, "3389") {
-				sawRDPPort = true
+				sawRDP = true
 			}
 		}
 	}
 	if applies < 6 {
 		t.Errorf("applied %d manifests, want >= 6 (VM trio + proxy trio)", applies)
 	}
-	if !sawRDPPort {
-		t.Error("no applied manifest exposes port 3389")
+	if !sawSSH || !sawVNC || !sawRDP {
+		t.Errorf("expected proxy to expose SSH+VNC+RDP unconditionally, got ssh=%v vnc=%v rdp=%v", sawSSH, sawVNC, sawRDP)
 	}
 }
 

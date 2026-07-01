@@ -14,7 +14,7 @@ import (
 // manual composefs key injection, and the console/sshd kargs).
 func TestRenderBuilderVM(t *testing.T) {
 	vm := generateBuilderVM("e2e-x-bootc-builder", "corral-vms",
-		"e2e-x-bootc-disk", "e2e-x-bootc-builder-cloudinit")
+		"e2e-x-bootc-disk", "e2e-x-bootc-builder-cloudinit", "quay.io/centos-bootc/centos-bootc:stream9")
 
 	data, err := json.Marshal(vm)
 	if err != nil {

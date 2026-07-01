@@ -688,7 +688,7 @@ func TestHandleTaskStatus_Existing(t *testing.T) {
 	defer fx.Close()
 
 	// Insert a completed build task directly into the package-level tasks map
-	task := &buildTask{}
+	task := newBuildTask()
 	task.finish(nil) // status = "done"
 	tasks.Store("test-task-1", task)
 	defer tasks.Delete("test-task-1")

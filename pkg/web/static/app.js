@@ -1593,8 +1593,6 @@ function updateSourceFields() {
   $('#catalog-field').hidden = type !== 'catalog';
   $('#source-field').hidden = type === 'catalog';
   $('#create-hint').textContent = CREATE_HINTS[type] || DEFAULT_HINT;
-  const rdp = $('#rdp-field');
-  if (rdp) rdp.hidden = type !== 'windows'; // RDP toggle is Windows-only here
   const src = document.querySelector('[name=source]');
   if (src) {
     src.placeholder = SOURCE_HINTS[type] || '';
@@ -1628,7 +1626,7 @@ $('#create-form').onsubmit = async (e) => {
   else if (type === 'import') body.import = src;
   else if (type === 'iso') body.iso = src;
   else if (type === 'bootc') body.bootc = src;
-  else if (type === 'windows') { body.windows = true; body.iso = src; body.rdp = !!f.get('rdp'); }
+  else if (type === 'windows') { body.windows = true; body.iso = src; }
   else body.pvc = src;
 
   try {
@@ -1675,43 +1673,45 @@ function watchBuild(taskID, vmName, opts = {}) {
   }, 2000);
 }
 
-// ── Task panel (Proxmox-style activity log) ───────────────────────
+// ── Task panel (Proxmox-style activity log) ────────────────────────
+// First Alpine.js island — see docs/adr/0004-web-ui-alpinejs-no-build.md.
+// The poll loop stays a plain setInterval (Alpine is for render, not
+// fetching); only the DOM sync (row templating, collapse toggle) moved to
+// x-data/x-for/x-show, replacing the old innerHTML-string templating.
+//
+// Registered via Alpine.data() inside an alpine:init listener, not a bare
+// `window.taskPanel = ...` assignment — Alpine (a deferred classic script)
+// can start scanning the DOM before this module script finishes running,
+// so a plain global isn't reliably defined in time. alpine:init only fires
+// when Alpine.start() actually runs (after all deferred/module scripts have
+// executed), so listening for it is timing-safe regardless of script order.
+document.addEventListener('alpine:init', () => {
+  Alpine.data('taskPanel', () => ({
+    collapsed: true,
+    tasks: [],
+    summary: '',
+    _lastFp: '',
 
-let taskLog = [];
-let lastTaskLogFp = '';
+    start() {
+      this.refresh();
+      setInterval(() => this.refresh(), 5000);
+    },
 
-async function refreshTaskLog() {
-  try { taskLog = await api('/api/tasklog'); } catch { return; }
-  const fp = JSON.stringify(taskLog);
-  if (fp === lastTaskLogFp) return; // unchanged — don't reset panel scroll
-  lastTaskLogFp = fp;
-  const rows = $('#task-rows');
-  const summary = $('#task-panel-summary');
-  if (!rows) return;
-  const running = taskLog.filter((t) => t.status === 'running').length;
-  const errors = taskLog.filter((t) => t.status === 'error').length;
-  summary.textContent = taskLog.length
-    ? `${running ? `${running} running · ` : ''}${errors ? `${errors} failed · ` : ''}${taskLog.length} total`
-    : '';
-  const statusPill = (t) => t.status === 'running' ? '<span class="pill mid">running</span>'
-    : t.status === 'error' ? `<span class="pill off" title="${esc(t.error || '')}">error</span>`
-    : '<span class="pill on">OK</span>';
-  rows.innerHTML = taskLog.length
-    ? taskLog.slice(0, 50).map((t) => `<tr${t.status === 'error' ? ` title="${esc(t.error || '')}"` : ''}>
-        <td>${esc(new Date(t.started).toLocaleTimeString())}</td>
-        <td>${esc(t.action)}</td>
-        <td>${esc(t.target)}</td>
-        <td>${esc(t.duration || '…')}</td>
-        <td>${statusPill(t)}</td>
-      </tr>`).join('')
-    : `<tr><td colspan="5" class="muted">No tasks yet.</td></tr>`;
-}
-
-$('#task-panel-head').onclick = () => {
-  const panel = $('#task-panel');
-  panel.classList.toggle('collapsed');
-  $('#task-panel-chevron').textContent = panel.classList.contains('collapsed') ? '▴' : '▾';
-};
+    async refresh() {
+      let log;
+      try { log = await api('/api/tasklog'); } catch { return; }
+      const fp = JSON.stringify(log);
+      if (fp === this._lastFp) return; // unchanged — don't reset panel scroll
+      this._lastFp = fp;
+      this.tasks = log;
+      const running = log.filter((t) => t.status === 'running').length;
+      const errors = log.filter((t) => t.status === 'error').length;
+      this.summary = log.length
+        ? `${running ? `${running} running · ` : ''}${errors ? `${errors} failed · ` : ''}${log.length} total`
+        : '';
+    },
+  }));
+});
 
 // ── Mobile drawer ─────────────────────────────────────────────────
 
@@ -1727,6 +1727,5 @@ loadWhoami();
 loadCaps();
 loadInstanceTypes();
 refresh();
-refreshTaskLog();
 setInterval(refresh, 5000);
-setInterval(refreshTaskLog, 5000);
+// Task panel polling now lives in the taskPanel() Alpine component (x-init="start()").

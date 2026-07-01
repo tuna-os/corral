@@ -103,9 +103,10 @@ func GenerateWindowsVM(name, ns, mem string, cpu int) map[string]any {
 }
 
 // CreateWindowsVM imports the installer ISO, provisions the boot disk, and
-// applies the Windows-tuned VM. When rdp is true it also exposes RDP (3389)
-// through the corral tailnet proxy. disk/mem default to 64Gi/8Gi, cpu to 4.
-func CreateWindowsVM(name, ns, iso, disk, mem string, cpu int, rdp bool) error {
+// applies the Windows-tuned VM, then exposes ConsolePorts (SSH/VNC/RDP)
+// through the corral tailnet proxy — same as every other creation path.
+// disk/mem default to 64Gi/8Gi, cpu to 4.
+func CreateWindowsVM(name, ns, iso, disk, mem string, cpu int) error {
 	if ns == "" {
 		ns = DefaultNamespace
 	}
@@ -133,10 +134,8 @@ func CreateWindowsVM(name, ns, iso, disk, mem string, cpu int, rdp bool) error {
 	if err := Apply(GenerateWindowsVM(name, ns, mem, cpu)); err != nil {
 		return fmt.Errorf("creating VM: %w", err)
 	}
-	if rdp {
-		if err := ApplyProxy(name, ns, []int{3389}); err != nil {
-			return fmt.Errorf("exposing RDP: %w", err)
-		}
+	if err := ApplyProxy(name, ns, ConsolePorts); err != nil {
+		return fmt.Errorf("exposing console: %w", err)
 	}
 	return nil
 }

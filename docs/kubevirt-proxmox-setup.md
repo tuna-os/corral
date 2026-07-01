@@ -123,8 +123,40 @@ parameters: { type: snap }
 EOF
 ```
 
-Corral prefers a StorageClass named `longhorn` for new VM disks (falls back to
-the cluster default if absent).
+Corral prefers a StorageClass named `local-path` for new VM disks (local NVMe
+speed, no network IO) when present, falling back to the cluster default
+otherwise. Use `--storage-class` at create time to override per-VM.
+
+### 4c. TopoLVM on Talos: `dm_thin_pool` kernel module
+
+TopoLVM needs the `dm-thin-pool` kernel module for LVM thin provisioning. On
+Talos, that module is compiled as loadable (`CONFIG_DM_THIN_PROVISIONING=m`),
+and Talos blocks `modprobe`/`insmod` via seccomp even from privileged
+containers — so TopoLVM's `lvmd` DaemonSet pod can't load it itself:
+
+```
+# From any privileged container on the host
+insmod /lib/modules/dm-thin-pool.ko
+# → Operation not permitted (seccomp blocked)
+```
+
+Fix: add the modules to the Talos machine config so they load at boot, then
+reboot the affected nodes.
+
+```yaml
+machine:
+  kernel:
+    modules:
+      - name: dm_thin_pool
+      - name: dm_bio_prison
+      - name: dm_persistent_data
+      - name: dm_bufio
+```
+
+This is a Talos machine-config change, not something Corral or `just`
+recipes can apply for you — `corral doctor` doesn't currently detect it
+either (tracked as a possible future check, since the failure mode is a
+silently-stuck lvmd pod rather than a clear error).
 
 ## 5. Deploy Corral
 

@@ -45,7 +45,7 @@ composefs images. The operator has its own creds, so `TS_AUTHKEY` /
   **`ghcr.io/projectbluefin/dakota:testing`** (desktop, composefs), disk 30G.
 
 **Deployed:** amd64 `-tags bootc` binary built, image pushed
-`ghcr.io/hanthor/corral:latest`, `deploy/corral-web` rolled out 2026-06-19/20. Live
+`ghcr.io/tuna-os/corral:latest`, `deploy/corral-web` rolled out 2026-06-19/20. Live
 server reports `bootc:true`.
 
 **Root cause found on the first dakota e2e: server-side 15-min build cap.** The
@@ -397,8 +397,8 @@ emergency demands a root password (no `rd.shell`/`rd.break` passwordless shell).
 **Deploy loop:**
 ```bash
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags bootc -o build/corral .
-podman build --arch amd64 -t ghcr.io/hanthor/corral:latest -f Containerfile .
-podman push ghcr.io/hanthor/corral:latest   # gh auth token | podman login ghcr.io -u hanthor --password-stdin
+podman build --arch amd64 -t ghcr.io/tuna-os/corral:latest -f Containerfile .
+podman push ghcr.io/tuna-os/corral:latest   # gh auth token | podman login ghcr.io -u hanthor --password-stdin
 kubectl -n corral rollout restart deploy/corral-web && kubectl -n corral rollout status deploy/corral-web
 ```
 
@@ -589,7 +589,7 @@ Terraform providers and other Proxmox tools can manage VMs).
 | CDI | Running |
 | Tailscale operator | Ingress at `corral.manatee-basking.ts.net` |
 | Multus CNI | v4.2.2 (installed 2026-06-12, `deploy/multus/`), test NAD `corral-test-bridge` in tailvm |
-| Corral web pod | Running, 1 replica, `ghcr.io/hanthor/corral:latest` |
+| Corral web pod | Running, 1 replica, `ghcr.io/tuna-os/corral:latest` |
 
 ## File map (key files)
 
@@ -629,8 +629,8 @@ go build -o corral .                 # core binary
 go build -tags bootc -o corral .     # with bootc
 
 # Container image (on-cluster)
-docker build --platform linux/amd64 -t ghcr.io/hanthor/corral .
-docker push ghcr.io/hanthor/corral
+docker build --platform linux/amd64 -t ghcr.io/tuna-os/corral .
+docker push ghcr.io/tuna-os/corral
 
 # Deploy
 kubectl apply -f deploy/corral-web.yaml

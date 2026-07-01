@@ -967,7 +967,8 @@ func TestHandleRemovePlugin_Success(t *testing.T) {
 
 func TestHandleBootcCreate_ReturnsTask(t *testing.T) {
 	if kubevirt.BootcAvailable() {
-		t.Skip("bootc compiled — handler spawns goroutine that races with cleanup")
+		t.Skip("bootc compiled — this build's request would start a real build, not hit the " +
+			"400 path below; see TestCreateBootc_BuildFailure in create_bootc_bootc_test.go for the compiled-in case")
 	}
 
 	fx := NewTestFixture()
