@@ -28,6 +28,17 @@ Where a VM's compute resources live. Two backends:
   Talos cluster. Managed via `kubectl`/`virtctl`. Access through
   `virtctl` tunnels or port-proxy Service on the tailnet.
 
+### Console
+
+Remote access to a VM's display: **VNC** (noVNC, port 5900) and **RDP**
+(port 3389, guest-dependent — see ADR-0002). Bridged from the browser via a
+websocket that proxies to `virtctl port-forward` / `virtctl vnc
+--proxy-only` (`pkg/kubevirt.ConsoleDialer`). Exposed on the tailnet via
+`ApplyProxy` at VM-creation time regardless of guest OS — exposure doesn't
+imply the guest is listening; `GET /api/vms/{ns}/{name}/rdp` probes that
+separately. Serial console access (`virtctl console`, xterm.js) is a related
+but separate bridge, not yet folded into this concept.
+
 ### Registry
 
 The file `~/.local/share/tailvm/registry.json` (mode 0600). Maps VM names
@@ -88,6 +99,7 @@ GitHub Release assets.
 | vm | Virtual Machine |
 | vmid | Proxmox numeric VM identifier |
 | backend | qemu or kubevirt |
+| console | VNC/RDP bridge to a VM's display |
 | registry | `~/.local/share/tailvm/registry.json` |
 | plugin | krew-style corral-* binary |
 | proxmox api | `/api2/json/` compatibility layer |

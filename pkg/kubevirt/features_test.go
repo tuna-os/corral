@@ -475,7 +475,7 @@ func TestClient_Metrics_Unavailable(t *testing.T) {
 
 // ── Capabilities / namespace / misc ───────────────────────────────
 
-func TestClusterCapabilities_Longhorn(t *testing.T) {
+func TestClusterCapabilities_LocalPath(t *testing.T) {
 	_, r := newFeaturesFake(t)
 	r.AddResponseKV("kubectl", []string{"get", "sc", "-o", "json"}, `{
 	  "items": [
@@ -489,7 +489,7 @@ func TestClusterCapabilities_Longhorn(t *testing.T) {
 		"volumesnapshotclass.snapshot.storage.k8s.io/longhorn-snapshot\n", nil)
 
 	caps := ClusterCapabilities()
-	want := types.Capabilities{StorageClass: "longhorn", CanExpand: true, CanSnapshot: true}
+	want := types.Capabilities{StorageClass: "local-path", CanExpand: false, CanSnapshot: true}
 	if caps != want {
 		t.Errorf("ClusterCapabilities = %+v, want %+v", caps, want)
 	}

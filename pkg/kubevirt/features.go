@@ -980,7 +980,8 @@ func GeneratePVCWithClass(name, namespace, size, storageClass string) map[string
 }
 
 // PreferredStorageClass returns the StorageClass Corral prefers for new disks:
-// "longhorn" when present (RWX, snapshots, expansion), else "" (cluster default).
+// "local-path" when present (local NVMe speed — no network IO), else "" (cluster default).
+// Snapshot and expansion features are detected automatically from the cluster.
 func PreferredStorageClass() string {
 	return ClusterCapabilities().StorageClass
 }
@@ -1008,8 +1009,8 @@ func ClusterCapabilities() types.Capabilities {
 	var preferred, def string
 	for _, it := range res.Items {
 		expand[it.Metadata.Name] = it.AllowVolumeExpansion != nil && *it.AllowVolumeExpansion
-		if it.Metadata.Name == "longhorn" {
-			preferred = "longhorn"
+		if it.Metadata.Name == "local-path" {
+			preferred = "local-path"
 		}
 		if it.Metadata.Annotations["storageclass.kubernetes.io/is-default-class"] == "true" {
 			def = it.Metadata.Name
