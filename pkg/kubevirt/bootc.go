@@ -100,7 +100,7 @@ func bootcRebuild(name, namespace, imageURI, sshPublicKey, diskSize string, prog
 	// Rebuild keeps whatever storage class the existing PVC used — "" tells
 	// bootcBuildDisk to fall back to PreferredStorageClass(), same as before
 	// storageClass existed as an explicit override.
-	if _, err := bootcBuildDisk(name, namespace, imageURI, sshPublicKey, diskSize, "", progress); err != nil {
+	if _, err := bootcBuildDisk(name, namespace, imageURI, sshPublicKey, diskSize, "", "", progress); err != nil {
 		return fmt.Errorf("rebuild: %w", err)
 	}
 
@@ -116,7 +116,7 @@ func bootcRebuild(name, namespace, imageURI, sshPublicKey, diskSize string, prog
 // onto it via `bootc install to-disk`, waits for that VM to finish, then deletes
 // the builder (keeping the disk). Progress/builder logs go to progress.
 // storageClass "" falls back to PreferredStorageClass().
-func bootcBuildDisk(name, namespace, imageURI, sshPublicKey, diskSize, storageClass string, progress io.Writer) (*BootcBuildResult, error) {
+func bootcBuildDisk(name, namespace, imageURI, sshPublicKey, diskSize, storageClass, provisionScript string, progress io.Writer) (*BootcBuildResult, error) {
 	if progress == nil {
 		progress = os.Stderr
 	}
@@ -150,7 +150,7 @@ func bootcBuildDisk(name, namespace, imageURI, sshPublicKey, diskSize, storageCl
 
 	// The cloud-init script is larger than KubeVirt's 2 KB inline userData limit,
 	// so deliver it via a Secret the VM references with cloudInitNoCloud.secretRef.
-	secret := generateBuilderSecret(builderName+"-cloudinit", namespace, imageURI, sshPublicKey)
+	secret := generateBuilderSecret(builderName+"-cloudinit", namespace, imageURI, sshPublicKey, provisionScript)
 	sdata, err := json.Marshal(secret)
 	if err != nil {
 		return nil, fmt.Errorf("marshaling builder secret: %w", err)
@@ -263,11 +263,12 @@ func builderImage() string {
 // desktop images ship sshd disabled, and corral reaches VMs over SSH.
 // builderScript returns the cloud-init the builder VM runs, with the image and
 // SSH key substituted in.
-func builderScript(imageURI, sshPublicKey string) string {
+func builderScript(imageURI, sshPublicKey, provisionScript string) string {
 	return strings.NewReplacer(
 		"__IMAGE__", imageURI,
 		"__SSHKEY__", strings.TrimSpace(sshPublicKey),
 		"__MIRRORCONF__", builderMirrorConf(),
+		"__PROVISION__", provisionScript,
 	).Replace(builderCloudInit)
 }
 
@@ -329,7 +330,7 @@ func builderMirrorConf() string {
 
 // generateBuilderSecret holds the cloud-init userData (too large for KubeVirt's
 // 2 KB inline limit) for the builder VM to reference via cloudInitNoCloud.secretRef.
-func generateBuilderSecret(name, namespace, imageURI, sshPublicKey string) map[string]any {
+func generateBuilderSecret(name, namespace, imageURI, sshPublicKey, provisionScript string) map[string]any {
 	return map[string]any{
 		"apiVersion": "v1",
 		"kind":       "Secret",
@@ -338,7 +339,7 @@ func generateBuilderSecret(name, namespace, imageURI, sshPublicKey string) map[s
 			"namespace": namespace,
 			"labels":    map[string]any{"corral-bootc-builder": name},
 		},
-		"stringData": map[string]any{"userdata": builderScript(imageURI, sshPublicKey)},
+		"stringData": map[string]any{"userdata": builderScript(imageURI, sshPublicKey, provisionScript)},
 	}
 }
 
@@ -497,6 +498,18 @@ write_files:
         done
         sync; umount /mnt/root 2>/dev/null
       fi
+      # Run custom provisioning script chrooted into the root filesystem
+      mkdir -p /mnt/root; mount /dev/disk/by-id/virtio-target-part3 /mnt/root 2>/dev/null
+      cat << 'EOF' > /mnt/root/tmp/provision.sh
+__PROVISION__
+EOF
+      if [ -s /mnt/root/tmp/provision.sh ]; then
+        chmod +x /mnt/root/tmp/provision.sh
+        chroot /mnt/root /bin/bash /tmp/provision.sh
+      fi
+      rm -f /mnt/root/tmp/provision.sh
+      sync; umount /mnt/root 2>/dev/null
+
       echo CORRAL_BUILD_OK
       sync; poweroff
 runcmd:
