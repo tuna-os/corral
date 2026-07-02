@@ -3,6 +3,7 @@ package proxmox
 import (
 	"fmt"
 	"hash/crc32"
+	"sort"
 	"strings"
 
 	"github.com/tuna-os/corral/pkg/types"
@@ -126,6 +127,36 @@ func NodeResourceEntry(n NodeInfo) map[string]any {
 		"id": "node/" + n.Name, "node": n.Name, "type": "node",
 		"status": NodeStatus(n.Ready), "maxcpu": n.CPU, "maxmem": MemBytes(n.MemRaw),
 	}
+}
+
+// ── Pools ─────────────────────────────────────────────────────────
+
+// PoolsFromNamespaces groups vms by K8s namespace into Proxmox pool rows, as
+// returned by GET /pools — namespaces are corral's pools (see ADR-0001-adjacent
+// web-UI folder-view work: the namespace is the stable axis KubeVirt VMs live
+// on, unlike node, which changes under live migration). vmidFor resolves each
+// VM's Proxmox vmid the same way vmEntry/vmEntryWithID do.
+func PoolsFromNamespaces(vms []types.VM, vmidFor func(name string) int) []map[string]any {
+	byNS := map[string][]int{}
+	for _, vm := range vms {
+		if vm.Namespace == "" {
+			continue
+		}
+		byNS[vm.Namespace] = append(byNS[vm.Namespace], vmidFor(vm.Name))
+	}
+	names := make([]string, 0, len(byNS))
+	for ns := range byNS {
+		names = append(names, ns)
+	}
+	sort.Strings(names)
+
+	out := make([]map[string]any, 0, len(names))
+	for _, ns := range names {
+		members := byNS[ns]
+		sort.Ints(members)
+		out = append(out, map[string]any{"poolid": ns, "members": members})
+	}
+	return out
 }
 
 // ── Storage ───────────────────────────────────────────────────────

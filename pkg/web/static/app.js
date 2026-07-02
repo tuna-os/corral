@@ -6,6 +6,7 @@ import { icon } from './icons.js';
 const $ = (sel) => document.querySelector(sel);
 
 let vms = [];
+let cts = []; // Containers (#50) — pet pods, not KubeVirt VMs
 let nodes = [];
 let caps = { storageClass: '', canExpand: false, canSnapshot: false };
 // Authenticated tailnet identity + privilege (see /api/whoami). Defaults to
@@ -44,6 +45,8 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g,
 
 const vmKey = (vm) => `${vm.namespace}/${vm.name}`;
 const findVM = (key) => vms.find((v) => vmKey(v) === key);
+const ctKey = (c) => `${c.namespace}/${c.name}`;
+const findCT = (key) => cts.find((c) => ctKey(c) === key);
 
 // Tag the tree/list is filtered to, or null for "show all".
 let tagFilter = null;
@@ -89,7 +92,8 @@ async function refresh(force = false) {
     toast(`Refresh failed: ${e.message}`);
     return;
   }
-  const fp = JSON.stringify([vms, nodes, selected, tab]);
+  try { cts = await api('/api/cts'); } catch { cts = []; } // best-effort — don't fail the whole refresh over CTs
+  const fp = JSON.stringify([vms, cts, nodes, selected, tab]);
   if (!force && fp === lastRenderFp) return; // nothing changed — keep the DOM
   lastRenderFp = fp;
 
@@ -144,6 +148,18 @@ async function loadInstanceTypes() {
 }
 
 // ── Tree (sidebar) ────────────────────────────────────────────────
+// Two views over the same VM list, mirroring PVE's Server/Folder view
+// toggle (see docs/adr — namespace is the stable grouping axis for
+// KubeVirt: unlike node, it doesn't change under live migration).
+
+const TREE_VIEW_KEY = 'corral-tree-view';
+let treeView = localStorage.getItem(TREE_VIEW_KEY) === 'folder' ? 'folder' : 'server';
+
+function setTreeView(v) {
+  treeView = v;
+  localStorage.setItem(TREE_VIEW_KEY, v);
+  renderTree();
+}
 
 function treeRow({ lvl, icon, label, sub, sel, onclick, dot }) {
   const div = document.createElement('div');
@@ -154,9 +170,22 @@ function treeRow({ lvl, icon, label, sub, sel, onclick, dot }) {
   return div;
 }
 
+function treeViewToggle() {
+  const div = document.createElement('div');
+  div.className = 'tree-view-toggle';
+  div.innerHTML = `
+    <button type="button" class="btn sm${treeView === 'server' ? ' active' : ''}" data-view="server">Server View</button>
+    <button type="button" class="btn sm${treeView === 'folder' ? ' active' : ''}" data-view="folder">Folder View</button>`;
+  div.querySelectorAll('[data-view]').forEach((b) => {
+    b.onclick = () => setTreeView(b.dataset.view);
+  });
+  return div;
+}
+
 function renderTree() {
   const tree = $('#tree');
   tree.replaceChildren();
+  tree.appendChild(treeViewToggle());
 
   tree.appendChild(treeRow({
     lvl: 0, icon: icon('datacenter'), label: 'Datacenter',
@@ -183,6 +212,38 @@ function renderTree() {
     onclick: () => select({ type: 'multiview' }),
   }));
 
+  if (treeView === 'folder') renderTreeFolders(tree);
+  else renderTreeServer(tree);
+
+  // Containers (#50) — shown as their own top-level group in both views for
+  // this first slice, rather than fully replicating VM node/namespace
+  // grouping for a resource type that doesn't have a KubeVirt node concept
+  // the same way. "Alongside VMs" per the issue, not "grouped exactly like
+  // VMs" — that's a natural follow-up once CTs carry more tree-worthy state
+  // (e.g. which node they're scheduled on).
+  if (cts.length) {
+    tree.appendChild(treeRow({
+      lvl: 0, icon: icon('folder'), label: 'Containers',
+      sub: `${cts.length}`,
+      onclick: () => {},
+    }));
+    for (const c of cts) tree.appendChild(ctRow(c));
+  }
+}
+
+function ctRow(c) {
+  return treeRow({
+    lvl: 1, icon: icon('cube'), label: c.name,
+    sub: c.namespace,
+    dot: c.ready ? 'on' : c.phase === 'Stopped' ? 'off' : 'mid',
+    sel: selected.type === 'ct' && selected.key === ctKey(c),
+    onclick: () => select({ type: 'ct', key: ctKey(c) }),
+  });
+}
+
+// Server View: Datacenter → Node → VMs, grouped by v.node. VMs with no
+// placed node (stopped, unscheduled) render as top-level orphans.
+function renderTreeServer(tree) {
   const byNode = (nodeName) => vms.filter((v) => v.node === nodeName);
   const placed = new Set();
 
@@ -201,6 +262,28 @@ function renderTree() {
 
   const orphans = vms.filter((v) => !placed.has(vmKey(v)));
   for (const vm of orphans) tree.appendChild(vmRow(vm, 1));
+}
+
+// Folder View: Datacenter → Namespace → VMs/CTs (templates included — they're
+// still VMs in their namespace, just labeled differently by vmRow). Namespace
+// is stable across live migration, unlike node.
+function renderTreeFolders(tree) {
+  const byNS = new Map();
+  for (const vm of vms) {
+    const ns = vm.namespace || '(none)';
+    if (!byNS.has(ns)) byNS.set(ns, []);
+    byNS.get(ns).push(vm);
+  }
+  const namespaces = [...byNS.keys()].sort();
+
+  for (const ns of namespaces) {
+    tree.appendChild(treeRow({
+      lvl: 1, icon: icon('folder'), label: ns, sub: `${byNS.get(ns).length} VM${byNS.get(ns).length === 1 ? '' : 's'}`,
+      sel: selected.type === 'namespace' && selected.name === ns,
+      onclick: () => select({ type: 'namespace', name: ns }),
+    }));
+    for (const vm of byNS.get(ns)) tree.appendChild(vmRow(vm, 2));
+  }
 }
 
 function vmRow(vm, lvl) {
@@ -238,7 +321,13 @@ function renderContent() {
     if (!vm) { selected = { type: 'dc' }; }
     else return renderVM(main, vm);
   }
+  if (selected.type === 'ct') {
+    const c = findCT(selected.key);
+    if (!c) { selected = { type: 'dc' }; }
+    else return renderCT(main, c);
+  }
   if (selected.type === 'node') return renderNode(main, selected.name);
+  if (selected.type === 'namespace') return renderNamespace(main, selected.name);
   if (selected.type === 'extensions') return renderExtensions(main);
   if (selected.type === 'doctor') return renderDoctor(main);
   if (selected.type === 'multiview') return renderMultiview(main);
@@ -404,13 +493,24 @@ function renderDatacenter(main) {
     ${vmTable(shown)}
     <h2 class="section">${icon('disk')} Image library
       <button class="btn" id="dc-import">${icon('download')} Import image</button>
+      <button class="btn" id="dc-upload">${icon('download')} Upload ISO</button>
+      <input type="file" id="dc-upload-file" accept=".iso,.img,.qcow2,.raw" hidden>
     </h2>
-    <div id="dc-images"><p class="muted">loading…</p></div>`;
+    <div id="dc-images"><p class="muted">loading…</p></div>
+    <h2 class="section">${icon('template')} Templates</h2>
+    ${templateTable(vms.filter((v) => v.isTemplate))}`;
   bindVMTable(main);
+  bindTemplateTable(main);
   main.querySelectorAll('[data-tagfilter]').forEach((b) => {
     b.onclick = () => { tagFilter = b.dataset.tagfilter || null; renderDatacenter(main); markRendered(); };
   });
   $('#dc-import').onclick = importImage;
+  $('#dc-upload').onclick = () => $('#dc-upload-file').click();
+  $('#dc-upload-file').onchange = (e) => {
+    const file = e.target.files[0];
+    e.target.value = ''; // allow re-selecting the same file next time
+    if (file) uploadImage(file);
+  };
   loadImages();
 }
 
@@ -460,6 +560,36 @@ async function importImage() {
   } catch (e) { toast(e.message); }
 }
 
+// Uploads a local file straight to a new DataVolume via the CDI upload
+// proxy (server-side: pkg/kubevirt.UploadDataVolume, which shells out to
+// `virtctl image-upload` rather than reimplementing CDI's upload protocol).
+async function uploadImage(file) {
+  const guess = file.name.replace(/\.[^.]+$/, '').replace(/[^a-z0-9-]/gi, '-').toLowerCase().slice(0, 40) || 'image';
+  const name = prompt('Name for this image:', guess);
+  if (!name) return;
+  const sizeGuess = Math.ceil(file.size / (1024 ** 3)) + 1; // pad a bit over the raw file size
+  const size = prompt('DataVolume size (e.g. 10Gi) — must fit the uploaded file:', `${sizeGuess}Gi`) || `${sizeGuess}Gi`;
+
+  const qs = new URLSearchParams({ name, namespace: '', size });
+  let res;
+  try {
+    res = await api(`/api/datavolumes/upload?${qs}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: file,
+    });
+  } catch (e) { toast(`Upload failed: ${e.message}`); return; }
+
+  if (res.task) {
+    watchBuild(res.task, name, {
+      titleRun: `Uploading ${file.name}…`,
+      titleDone: `✅ ${name} uploaded`,
+      titleFail: `❌ Upload failed`,
+      onDone: loadImages,
+    });
+  }
+}
+
 function renderNode(main, name) {
   const n = nodes.find((x) => x.name === name);
   const nodeVMs = vms.filter((v) => v.node === name);
@@ -477,6 +607,86 @@ function renderNode(main, name) {
     <h2 style="font-size:1rem;margin:18px 0 8px">Virtual machines</h2>
     ${vmTable(nodeVMs)}`;
   bindVMTable(main);
+}
+
+// Folder View's namespace detail — same shape as renderNode, grouped by
+// namespace instead of node.
+function renderNamespace(main, name) {
+  const nsVMs = vms.filter((v) => (v.namespace || '(none)') === name);
+  main.innerHTML = `
+    <div class="page-head">
+      <h1>${icon('folder')} ${esc(name)}</h1>
+    </div>
+    <dl class="props">
+      <dt>VMs</dt><dd>${nsVMs.length}</dd>
+    </dl>
+    <h2 style="font-size:1rem;margin:18px 0 8px">Virtual machines</h2>
+    ${vmTable(nsVMs)}`;
+  bindVMTable(main);
+}
+
+// Container (CT) detail view (#50) — simpler than a VM's: no VNC/hardware/
+// snapshots, just Summary + Terminal (exec, not a serial console — see
+// ttyBridge's VM-vs-CT dispatch) and start/stop/delete.
+const CT_TABS = [['summary', 'Summary'], ['terminal', 'Terminal']];
+let ctTab = 'summary';
+
+function renderCT(main, c) {
+  const running = c.phase === 'Running';
+  main.innerHTML = `
+    <div class="page-head">
+      <h1>${icon('cube')} ${esc(c.name)}</h1>
+      <span class="pill ${c.ready ? 'on' : 'off'}">${esc(c.phase)}</span>
+      <div class="toolbar">
+        <button class="btn" data-ctact="start" ${running ? 'disabled' : ''}>${icon('play')} Start</button>
+        <button class="btn" data-ctact="stop" ${running ? '' : 'disabled'}>${icon('stop')} Stop</button>
+        <button class="btn danger" data-ctact="delete">${icon('trash')} Delete</button>
+      </div>
+    </div>
+    <div class="tabs">
+      ${CT_TABS.map(([id, label]) =>
+        `<div class="tab ${ctTab === id ? 'active' : ''}" data-cttab="${id}">${label}</div>`).join('')}
+    </div>
+    <div id="ct-tab-body"></div>`;
+
+  main.querySelectorAll('[data-ctact]').forEach((b) => {
+    b.onclick = () => ctAction(c, b.dataset.ctact);
+  });
+  main.querySelectorAll('[data-cttab]').forEach((t) => {
+    t.onclick = () => { disconnectConsoles(); ctTab = t.dataset.cttab; renderCT(main, c); markRendered(); };
+  });
+
+  const body = $('#ct-tab-body');
+  if (ctTab === 'summary') {
+    body.innerHTML = `<dl class="props">
+      <dt>Status</dt><dd>${esc(c.phase)}</dd>
+      <dt>Namespace</dt><dd>${esc(c.namespace)}</dd>
+      <dt>Image</dt><dd><code>${esc(c.image || '—')}</code></dd>
+      <dt>vCPUs</dt><dd>${c.cpu || '—'}</dd>
+      <dt>Memory</dt><dd>${esc(c.mem || '—')}</dd>
+      <dt>Privileged</dt><dd>${c.privileged ? 'yes' : 'no'}</dd>
+      <dt>Data volume</dt><dd><code>/data</code> (${esc(c.name)}-data PVC — everything else resets on stop/start)</dd>
+    </dl>`;
+  } else if (ctTab === 'terminal') {
+    connectTTY({ namespace: c.namespace, name: c.name, running }, body);
+  }
+}
+
+async function ctAction(c, act) {
+  if (act === 'delete') {
+    if (!confirm(`Delete container ${c.name}? This removes its data volume too.`)) return;
+    try {
+      await api(`/api/cts/${c.namespace}/${c.name}`, { method: 'DELETE' });
+      toast('Deleted');
+      select({ type: 'dc' });
+    } catch (e) { toast(e.message); }
+    return refresh(true);
+  }
+  try {
+    await api(`/api/cts/${c.namespace}/${c.name}/${act}`, { method: 'POST' });
+    toast(act === 'start' ? 'Starting…' : 'Stopped');
+  } catch (e) { toast(e.message); }
+  setTimeout(() => refresh(true), 600);
 }
 
 function vmTable(list) {
@@ -557,6 +767,39 @@ function bindVMTable(root) {
   update();
 }
 
+// Templates section of the Datacenter/library view (#49) — VMs already
+// marked via the "Make template" action (POST .../template) surfaced as a
+// managed list, per the issue's "surface those templates here" ask. Reuses
+// the same mark-template endpoint to unmark/remove from here.
+function templateTable(list) {
+  if (!list.length) return `<p class="muted">No templates. Mark a VM as a template from its detail page.</p>`;
+  return `<table><thead><tr><th>Name</th><th>Namespace</th><th>CPU</th><th>Mem</th><th></th></tr></thead><tbody>
+    ${list.map((v) => `<tr data-key="${esc(vmKey(v))}">
+      <td>${esc(v.name)}</td><td>${esc(v.namespace)}</td><td>${v.cpu}</td><td>${esc(v.mem)}</td>
+      <td><button class="btn sm danger" data-untemplate="${esc(vmKey(v))}">Unmark</button></td>
+    </tr>`).join('')}
+    </tbody></table>`;
+}
+
+function bindTemplateTable(root) {
+  root.querySelectorAll('[data-untemplate]').forEach((b) => {
+    b.onclick = async (e) => {
+      e.stopPropagation();
+      const vm = findVM(b.dataset.untemplate);
+      if (!vm) return;
+      try { await post(vm, '/template', { on: false }); toast('Template mark removed'); }
+      catch (err) { toast(err.message); }
+      setTimeout(refresh, 600);
+    };
+  });
+  root.querySelectorAll('tr[data-key]').forEach((tr) => {
+    tr.onclick = (e) => {
+      if (e.target.closest('button')) return;
+      select({ type: 'vm', key: tr.dataset.key });
+    };
+  });
+}
+
 // ── VM view ───────────────────────────────────────────────────────
 
 const TABS = [
@@ -564,6 +807,7 @@ const TABS = [
   ['console', 'Console'],
   ['terminal', 'Terminal'],
   ['hardware', 'Hardware'],
+  ['options', 'Options'],
   ['snapshots', 'Snapshots'],
   ['events', 'Events'],
   ['yaml', 'YAML'],
@@ -643,6 +887,7 @@ function renderTab(vm) {
     case 'console': connectVNC(vm, body); break;
     case 'terminal': connectTTY(vm, body); break;
     case 'hardware': renderHardware(vm, body); break;
+    case 'options': renderOptions(vm, body); break;
     case 'snapshots': renderSnapshots(vm, body); break;
     case 'events': renderEvents(vm, body); break;
     case 'yaml':
@@ -1048,6 +1293,119 @@ async function renderHardware(vm, body) {
   };
 }
 
+// Options tab (#48): fields that map honestly onto the KubeVirt VM spec —
+// start-on-boot (applies immediately, no VM restart), and boot
+// order/firmware/machine type (all read once at VMI startup, so they show
+// an "applies on next boot" badge instead of pretending to hot-apply).
+// Fields with no honest KubeVirt equivalent (PVE's "swap", BIOS-only knobs
+// KubeVirt doesn't expose) are simply absent, not stubbed.
+async function renderOptions(vm, body) {
+  body.innerHTML = `<pre class="yaml">loading…</pre>`;
+  let j;
+  try { j = await api(`/api/vms/${vm.namespace}/${vm.name}`); }
+  catch (e) { body.innerHTML = `<p class="console-msg">${esc(e.message)}</p>`; return; }
+
+  const spec = j.spec ?? {};
+  const tspec = spec.template?.spec ?? {};
+  const domain = tspec.domain ?? {};
+  const runStrategy = spec.runStrategy || (spec.running ? 'Always' : 'Manual');
+  const isBootc = !!domain.firmware?.kernelBoot;
+  const firmware = domain.firmware?.bootloader?.efi ? 'uefi'
+    : domain.firmware?.bootloader?.bios ? 'bios' : '';
+  const machineType = domain.machine?.type || '';
+
+  const disks = domain.devices?.disks ?? [];
+  const ifaces = domain.devices?.interfaces ?? [];
+  const bootDevices = [
+    ...disks.map((d) => ({ name: d.name, kind: 'disk', order: d.bootOrder })),
+    ...ifaces.map((i) => ({ name: i.name, kind: 'nic', order: i.bootOrder })),
+  ];
+
+  const restartBadge = `<span class="pill mid" title="Read once at VM startup — takes effect the next time the VM (re)starts">applies on next boot</span>`;
+  const liveBadge = `<span class="pill on" title="A controller-level setting, not part of the VM's boot template — takes effect immediately, no restart needed">applies immediately</span>`;
+
+  body.innerHTML = `
+    <h2 class="section">${icon('play')} Start on boot ${liveBadge}</h2>
+    <div class="hw-edit">
+      <label>Behavior
+        <select id="opt-runstrategy">
+          <option value="Always" ${runStrategy === 'Always' ? 'selected' : ''}>Always — auto-starts, stays running</option>
+          <option value="Manual" ${runStrategy === 'Manual' ? 'selected' : ''}>Manual — start/stop is up to you</option>
+        </select>
+      </label>
+      <button class="btn primary" id="opt-apply-runstrategy">Apply</button>
+    </div>
+
+    <h2 class="section">${icon('info')} Firmware &amp; machine type ${restartBadge}</h2>
+    ${isBootc
+      ? `<p class="muted">This VM boots a bootc-built disk via UEFI firmware set at build time — not editable here.</p>`
+      : `<div class="hw-edit">
+          <label>Firmware
+            <select id="opt-firmware">
+              <option value="bios" ${firmware === 'bios' || firmware === '' ? 'selected' : ''}>BIOS</option>
+              <option value="uefi" ${firmware === 'uefi' ? 'selected' : ''}>UEFI (OVMF)</option>
+            </select>
+          </label>
+          <label>Machine type <input id="opt-machine" value="${esc(machineType)}" placeholder="q35"></label>
+          <button class="btn primary" id="opt-apply-firmware">Apply</button>
+        </div>`}
+
+    <h2 class="section">${icon('expand')} Boot order ${restartBadge}</h2>
+    ${bootDevices.length
+      ? `<table><thead><tr><th>Device</th><th>Type</th><th>Order</th></tr></thead><tbody>
+          ${bootDevices.map((d) => `<tr>
+            <td>${esc(d.name)}</td><td>${d.kind}</td>
+            <td><input type="number" min="1" class="opt-bootorder" data-device="${esc(d.name)}"
+              value="${d.order ?? ''}" style="width:4em"></td>
+          </tr>`).join('')}
+        </tbody></table>
+        <div class="hw-edit"><button class="btn primary" id="opt-apply-bootorder">Apply</button>
+          <span class="muted">Leave blank for devices with no explicit order.</span></div>`
+      : `<p class="muted">No disks or interfaces to order.</p>`}
+
+    <h2 class="section">${icon('terminal')} Guest agent</h2>
+    <dl class="props">
+      <dt>Status</dt><dd>${vm.agentConnected ? 'connected' : 'not connected'}</dd>
+    </dl>
+    ${vm.agentConnected ? '' : `<p class="muted">No server-side toggle — qemu-guest-agent runs inside the guest.
+      Add it via cloud-init (<code>packages: [qemu-guest-agent]</code>,
+      <code>runcmd: [systemctl enable --now qemu-guest-agent]</code>) or bake it into a bootc image.</p>`}`;
+
+  $('#opt-apply-runstrategy').onclick = async () => {
+    const v = $('#opt-runstrategy').value;
+    if (v === runStrategy) { toast('No changes'); return; }
+    try { await post(vm, '/options', { runStrategy: v }); toast('Applied'); }
+    catch (e) { toast(e.message); }
+    setTimeout(() => renderOptions(vm, body), 800);
+  };
+
+  const applyFirmware = $('#opt-apply-firmware');
+  if (applyFirmware) applyFirmware.onclick = async () => {
+    const newFirmware = $('#opt-firmware').value;
+    const newMachine = $('#opt-machine').value.trim();
+    const payload = {};
+    if (newFirmware !== firmware) payload.firmware = newFirmware;
+    if (newMachine !== machineType) payload.machineType = newMachine;
+    if (!payload.firmware && !payload.machineType) { toast('No changes'); return; }
+    try { await post(vm, '/options', payload); toast('Applied — restart the VM for it to take effect'); }
+    catch (e) { toast(e.message); }
+    setTimeout(() => renderOptions(vm, body), 800);
+  };
+
+  const applyBootOrder = $('#opt-apply-bootorder');
+  if (applyBootOrder) applyBootOrder.onclick = async () => {
+    const bootOrder = {};
+    body.querySelectorAll('.opt-bootorder').forEach((inp) => {
+      const n = parseInt(inp.value, 10);
+      if (n) bootOrder[inp.dataset.device] = n;
+    });
+    if (!Object.keys(bootOrder).length) { toast('No boot order set'); return; }
+    try { await post(vm, '/options', { bootOrder }); toast('Applied — restart the VM for it to take effect'); }
+    catch (e) { toast(e.message); }
+    setTimeout(() => renderOptions(vm, body), 800);
+  };
+}
+
 function networkTable(spec, vm) {
   const ifaces = spec.domain?.devices?.interfaces ?? [];
   const nets = Object.fromEntries((spec.networks ?? []).map((n) => [n.name, n]));
@@ -1340,6 +1698,40 @@ $('#btn-create').onclick = () => {
 };
 $('#btn-cancel').onclick = () => $('#create-dialog').close();
 
+// ── Create CT dialog (#50) — a separate button + form, not a toggle on the
+// VM dialog, per PVE's own two-button Create VM / Create CT pattern. ──────
+
+$('#btn-create-ct').onclick = () => $('#ct-create-dialog').showModal();
+$('#ct-btn-cancel').onclick = () => $('#ct-create-dialog').close();
+
+$('#ct-create-form').onsubmit = async (e) => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  const body = {
+    name: f.get('name'),
+    image: f.get('image'),
+    namespace: f.get('namespace') || '',
+    storageClass: f.get('storageClass') || '',
+    cpu: parseInt(f.get('cpu'), 10) || 1,
+    mem: f.get('mem') || '512Mi',
+    disk: f.get('disk') || '5Gi',
+    privileged: !!f.get('privileged'),
+  };
+  try {
+    await api('/api/cts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    $('#ct-create-dialog').close();
+    e.target.reset();
+    toast(`Container ${body.name} created`);
+    refresh(true);
+  } catch (err) {
+    toast(`Create failed: ${err.message}`);
+  }
+};
+
 // ── Simple wizard: OS cards → name + size → create ────────────────
 
 const WIZ_SIZES = {
@@ -1591,7 +1983,8 @@ const DEFAULT_HINT = 'Cloud-init VMs get your SSH key and Tailscale auth key (if
 function updateSourceFields() {
   const type = document.querySelector('[name=sourceType]').value;
   $('#catalog-field').hidden = type !== 'catalog';
-  $('#source-field').hidden = type === 'catalog';
+  $('#source-field').hidden = type === 'catalog' || type === 'pvc';
+  $('#pvc-source-field').hidden = type !== 'pvc';
   $('#create-hint').textContent = CREATE_HINTS[type] || DEFAULT_HINT;
   const src = document.querySelector('[name=source]');
   if (src) {
@@ -1600,6 +1993,22 @@ function updateSourceFields() {
     if (type === 'bootc') src.setAttribute('list', 'bootc-catalog');
     else src.removeAttribute('list');
   }
+  if (type === 'pvc') loadPVCSources();
+}
+
+// Populates the "Existing PVC" dropdown from the DataVolume/ISO library
+// (#49) — includes uploaded ISOs and imported images, not just a free-text
+// PVC name. Ready-only (Succeeded) entries, since anything still importing
+// isn't bootable yet.
+async function loadPVCSources() {
+  const sel = document.querySelector('[name=pvcSource]');
+  if (!sel) return;
+  let dvs;
+  try { dvs = await api('/api/datavolumes'); } catch { dvs = []; }
+  const ready = dvs.filter((d) => d.phase === 'Succeeded');
+  sel.innerHTML = ready.length
+    ? ready.map((d) => `<option value="${esc(d.name)}">${esc(d.name)} (${esc(d.size || '?')}, ${esc(d.namespace)})</option>`).join('')
+    : `<option value="">— no ready images in the library, use Import/Upload first —</option>`;
 }
 
 document.querySelector('[name=sourceType]').onchange = updateSourceFields;
@@ -1627,7 +2036,7 @@ $('#create-form').onsubmit = async (e) => {
   else if (type === 'iso') body.iso = src;
   else if (type === 'bootc') body.bootc = src;
   else if (type === 'windows') { body.windows = true; body.iso = src; }
-  else body.pvc = src;
+  else body.pvc = f.get('pvcSource') || src; // pvc: prefer the library dropdown, fall back to free text
 
   try {
     const res = await api('/api/vms', {
@@ -1665,6 +2074,7 @@ function watchBuild(taskID, vmName, opts = {}) {
       clearInterval(timer);
       title.textContent = titleDone;
       refresh();
+      if (opts.onDone) opts.onDone();
     } else if (t.status === 'error') {
       clearInterval(timer);
       title.textContent = titleFail;

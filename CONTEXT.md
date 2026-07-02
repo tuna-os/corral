@@ -39,6 +39,35 @@ imply the guest is listening; `GET /api/vms/{ns}/{name}/rdp` probes that
 separately. Serial console access (`virtctl console`, xterm.js) is a related
 but separate bridge, not yet folded into this concept.
 
+### Container (CT)
+
+A Proxmox-style **Container**, backed by a plain Kubernetes pod rather than
+a KubeVirt VM — a "pet pod": a pod with a **PVC-backed persistent volume**,
+an init process, and sshd, presented in the Proxmox CT shape. Not a
+relabelled Deployment/cattle pod — it's meant to be long-lived and
+console-able like a VM, just without a hypervisor underneath. Lives in
+`pkg/ct` (a third backend alongside qemu/kubevirt, but never a KubeVirt
+resource). Full design: `docs/adr/0005-containers-as-pet-pods.md`.
+
+- **Privilege**: unprivileged by default, privileged opt-in — 1:1 with
+  PVE's "Privileged" checkbox.
+- **Images**: any OCI image with an init process + sshd; the curated
+  corral-owned `ct-*` catalog (with a `ct: true` capability flag riding the
+  existing catalog/sources plumbing) is a follow-up content task, not part
+  of the CT mechanism itself.
+- **Console**: no framebuffer → exec/attach → xterm, reusing `/api/tty`
+  (which now detects VM-vs-CT by name and dispatches to `virtctl console`
+  or `kubectl exec` accordingly).
+- **Networking**: reached via a plain K8s Service selecting the CT pod
+  directly (simpler than the VM port-proxy, which exists specifically to
+  work around KubeVirt VMs not having a stable pod selector — a CT's own
+  pod *is* the selector target).
+- **Resources**: cores → pod CPU limit, memory → pod memory limit. PVE
+  "swap" is dropped (no honest map).
+- Snapshot (VolumeSnapshot of the PVC) and migrate (reschedule to a node
+  that can mount the PVC) are later slices, not in the first CT
+  implementation.
+
 ### Registry
 
 The file `~/.local/share/tailvm/registry.json` (mode 0600). Maps VM names
@@ -99,6 +128,7 @@ GitHub Release assets.
 | vm | Virtual Machine |
 | vmid | Proxmox numeric VM identifier |
 | backend | qemu or kubevirt |
+| ct | Container — a pet pod, not a VM |
 | console | VNC/RDP bridge to a VM's display |
 | registry | `~/.local/share/tailvm/registry.json` |
 | plugin | krew-style corral-* binary |

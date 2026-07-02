@@ -200,9 +200,15 @@ func (s *Server) Mux() *http.ServeMux {
 		})
 	}))
 
-	// Pools — return empty list (no Proxmox pool support).
+	// Pools — namespaces-as-pools, matching the web UI's Folder View grouping.
 	mux.HandleFunc("GET /api2/json/pools", s.requireAuth(func(w http.ResponseWriter, r *http.Request) {
-		data(w, []any{})
+		vms, err := s.client("").ListVMs()
+		if err != nil {
+			data(w, []any{})
+			return
+		}
+		idMap := s.vmIDMap()
+		data(w, PoolsFromNamespaces(vms, func(name string) int { return s.vmIDFor(idMap, name) }))
 	}))
 
 	// ── Access control (K8s RBAC → Proxmox mapping) ────────────

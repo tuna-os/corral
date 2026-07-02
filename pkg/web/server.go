@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/creack/pty"
 	"golang.org/x/net/websocket"
 
 	"github.com/tuna-os/corral/pkg/config"
@@ -73,6 +74,10 @@ func newMux() (http.Handler, error) {
 	mux.HandleFunc("GET /api/whoami", handleWhoami)
 	mux.HandleFunc("GET /api/vms", handleListVMs)
 	mux.HandleFunc("POST /api/vms", handleCreateVM)
+	mux.HandleFunc("GET /api/cts", handleListCTs)
+	mux.HandleFunc("POST /api/cts", handleCreateCT)
+	mux.HandleFunc("POST /api/cts/{ns}/{name}/{action}", handleCTAction)
+	mux.HandleFunc("DELETE /api/cts/{ns}/{name}", handleDeleteCT)
 	mux.HandleFunc("GET /api/nodes", handleNodes)
 	mux.HandleFunc("GET /api/capabilities", handleCapabilities)
 	mux.HandleFunc("GET /api/images", handleImages)
@@ -93,6 +98,7 @@ func newMux() (http.Handler, error) {
 	mux.HandleFunc("POST /api/vms/{ns}/{name}/nics", handleAddNIC)
 	mux.HandleFunc("GET /api/datavolumes", handleListDataVolumes)
 	mux.HandleFunc("POST /api/datavolumes", handleImportDataVolume)
+	mux.HandleFunc("POST /api/datavolumes/upload", handleUploadDataVolume)
 	mux.HandleFunc("DELETE /api/datavolumes/{ns}/{name}", handleDeleteDataVolume)
 	mux.HandleFunc("GET /api/tasks/{id}", handleTaskStatus)
 	mux.HandleFunc("GET /api/tasklog", handleTaskLog)
@@ -107,6 +113,7 @@ func newMux() (http.Handler, error) {
 	mux.HandleFunc("POST /api/vms/{ns}/{name}/clone", handleClone)
 	mux.HandleFunc("POST /api/vms/{ns}/{name}/template", handleMarkTemplate)
 	mux.HandleFunc("POST /api/vms/{ns}/{name}/tags", handleSetTag)
+	mux.HandleFunc("POST /api/vms/{ns}/{name}/options", handleSetOptions)
 	mux.HandleFunc("GET /api/vms/{ns}/{name}/guestinfo", handleGuestInfo)
 	mux.HandleFunc("GET /api/vms/{ns}/{name}/rdp", handleRDPCheck)
 	mux.HandleFunc("POST /api/vms/{ns}/{name}/bootc/rebuild", handleBootcRebuild)
@@ -701,8 +708,11 @@ func vncBridge(ws *websocket.Conn) {
 	<-done
 }
 
-// ttyBridge proxies a binary websocket (xterm.js) to `virtctl console`,
-// giving a serial TTY in the browser.
+// ttyBridge proxies a binary websocket (xterm.js) to a terminal — `virtctl
+// console` for a VM, or `kubectl exec` for a CT (#50: CTs have no
+// framebuffer/serial console, only exec/attach). Tries the VM path first
+// since that's the common case; falls back to CT only when no VM by that
+// name exists.
 func ttyBridge(ws *websocket.Conn) {
 	defer ws.Close()
 	ns, name := ws.Request().PathValue("ns"), ws.Request().PathValue("name")
@@ -710,28 +720,64 @@ func ttyBridge(ws *websocket.Conn) {
 		return
 	}
 
-	console := exec.Command("virtctl", "console", name, "-n", ns)
-	stdin, err := console.StdinPipe()
+	isVM := kubevirt.NewClient(ns).VMExists(name)
+
+	ws.PayloadType = websocket.BinaryFrame
+	if isVM {
+		bridgeConsolePipes(ws, exec.Command("virtctl", "console", name, "-n", ns))
+		return
+	}
+	// kubectl exec's -t requires a real local TTY on its end — it checks
+	// isatty on this process's stdin, which a bare os/exec pipe fails (kubectl
+	// errors "Unable to use a TTY - input is not a terminal or the right kind
+	// of file"). virtctl console has no such check (it's not an exec session,
+	// it's a virtio-serial device), which is why the VM path above can use
+	// plain pipes but this one needs a real pty.
+	bridgeConsolePTY(ws, exec.Command("kubectl", "exec", "-i", "-t", name, "-n", ns, "--", "sh"))
+}
+
+// bridgeConsolePipes wires cmd's stdin/stdout to ws via plain OS pipes —
+// fine for commands (like virtctl console) that don't check isatty.
+func bridgeConsolePipes(ws *websocket.Conn, cmd *exec.Cmd) {
+	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return
 	}
-	stdout, err := console.StdoutPipe()
+	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return
 	}
-	console.Stderr = console.Stdout
-	if err := console.Start(); err != nil {
+	cmd.Stderr = cmd.Stdout
+	if err := cmd.Start(); err != nil {
 		return
 	}
 	defer func() {
-		console.Process.Kill()
-		console.Wait()
+		cmd.Process.Kill()
+		cmd.Wait()
 	}()
 
-	ws.PayloadType = websocket.BinaryFrame
 	done := make(chan struct{}, 2)
 	go func() { io.Copy(stdin, ws); done <- struct{}{} }()
 	go func() { io.Copy(ws, stdout); done <- struct{}{} }()
+	<-done
+}
+
+// bridgeConsolePTY wires cmd to a real pseudo-terminal — needed for
+// commands (like kubectl exec -t) that check isatty on their own stdin.
+func bridgeConsolePTY(ws *websocket.Conn, cmd *exec.Cmd) {
+	f, err := pty.Start(cmd)
+	if err != nil {
+		return
+	}
+	defer func() {
+		f.Close()
+		cmd.Process.Kill()
+		cmd.Wait()
+	}()
+
+	done := make(chan struct{}, 2)
+	go func() { io.Copy(f, ws); done <- struct{}{} }()
+	go func() { io.Copy(ws, f); done <- struct{}{} }()
 	<-done
 }
 

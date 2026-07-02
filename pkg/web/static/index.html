@@ -8,6 +8,10 @@
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
 <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+<!-- app.js (a module, deferred by spec) must run before Alpine's own deferred
+     script so its alpine:init listener is registered before Alpine auto-starts
+     — deferred/module scripts execute in document order, so order matters here. -->
+<script type="module" src="app.js"></script>
 <!-- Vendored, not CDN-loaded — see docs/adr/0004-web-ui-alpinejs-no-build.md -->
 <script defer src="alpine.min.js"></script>
 </head>
@@ -18,6 +22,7 @@
   <div class="spacer"></div>
   <span id="whoami" class="whoami"></span>
   <button id="btn-create" class="btn primary">Create VM</button>
+  <button id="btn-create-ct" class="btn">Create CT</button>
 </header>
 
 <div class="layout">
@@ -109,6 +114,9 @@
       <select name="catalogImage"></select>
     </label>
     <label id="source-field" hidden>Source <input name="source" placeholder="quay.io/containerdisks/fedora:42"></label>
+    <label id="pvc-source-field" hidden>Existing PVC / uploaded image
+      <select name="pvcSource"></select>
+    </label>
     <datalist id="bootc-catalog"></datalist>
     <div class="row">
       <label>CPU <input name="cpu" type="number" value="2" min="1"></label>
@@ -150,6 +158,29 @@
   </div>
 </dialog>
 
-<script type="module" src="app.js"></script>
+<dialog id="ct-create-dialog">
+  <form id="ct-create-form">
+    <h2>Create Container (CT)</h2>
+    <p class="hint">A pet pod: persistent <code>/data</code> volume, exec console — not a VM, no hypervisor.
+      See CONTEXT.md's Container (CT) entry for what does and doesn't persist.</p>
+    <label>Name <input name="name" required pattern="[a-z0-9][a-z0-9-]*" placeholder="myct"></label>
+    <label>Image <input name="image" required placeholder="docker.io/library/debian:bookworm"></label>
+    <div class="row">
+      <label>Namespace <input name="namespace" placeholder="(default)"></label>
+      <label>Storage class <input name="storageClass" placeholder="(cluster default)"></label>
+    </div>
+    <div class="row">
+      <label>CPU <input name="cpu" type="number" value="1" min="1"></label>
+      <label>Memory <input name="mem" value="512Mi"></label>
+      <label>Disk <input name="disk" value="5Gi"></label>
+    </div>
+    <label><input type="checkbox" name="privileged"> Privileged (PVE's "Privileged" checkbox — unprivileged is safer, leave off unless you need it)</label>
+    <div class="dialog-actions">
+      <span class="spacer" style="flex:1"></span>
+      <button type="button" class="btn" id="ct-btn-cancel">Cancel</button>
+      <button type="submit" class="btn primary">Create</button>
+    </div>
+  </form>
+</dialog>
 </body>
 </html>

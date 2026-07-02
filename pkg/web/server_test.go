@@ -23,7 +23,7 @@ func TestStaticServed(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	for _, path := range []string{"/", "/app.js", "/icons.js", "/style.css"} {
+	for _, path := range []string{"/", "/app.js", "/icons.js", "/style.css", "/alpine.min.js"} {
 		r, err := http.Get(srv.URL + path)
 		if err != nil {
 			t.Fatalf("GET %s: %v", path, err)

@@ -12,6 +12,7 @@ import (
 
 	"github.com/tuna-os/corral/pkg/kubevirt"
 	"github.com/tuna-os/corral/pkg/shell"
+	"github.com/tuna-os/corral/pkg/types"
 )
 
 const vmsJSON = `{
@@ -125,6 +126,57 @@ func TestVersion(t *testing.T) {
 	d := getData(t, ts.URL+"/api2/json/version").(map[string]any)
 	if d["version"] == "" {
 		t.Errorf("version = %v", d)
+	}
+}
+
+func TestPools_OnePoolPerNamespaceWithMembers(t *testing.T) {
+	ts, fake := newTestServer(t)
+	scriptCluster(fake)
+
+	d := getData(t, ts.URL+"/api2/json/pools").([]any)
+	if len(d) != 1 { // both fixture VMs are in namespace "tailvm"
+		t.Fatalf("pools = %v", d)
+	}
+	pool := d[0].(map[string]any)
+	if pool["poolid"] != "tailvm" {
+		t.Errorf("poolid = %v, want tailvm", pool["poolid"])
+	}
+	members, ok := pool["members"].([]any)
+	if !ok || len(members) != 2 {
+		t.Errorf("members = %v, want 2 vmids", pool["members"])
+	}
+}
+
+func TestPoolsFromNamespaces(t *testing.T) {
+	vms := []types.VM{
+		{Name: "web", Namespace: "tailvm"},
+		{Name: "db", Namespace: "tailvm"},
+		{Name: "orphan", Namespace: ""}, // no namespace — excluded, not its own pool
+		{Name: "ci-runner", Namespace: "ci"},
+	}
+	vmidFor := func(name string) int {
+		switch name {
+		case "web":
+			return 101
+		case "db":
+			return 102
+		case "ci-runner":
+			return 201
+		}
+		return 0
+	}
+
+	pools := PoolsFromNamespaces(vms, vmidFor)
+	if len(pools) != 2 {
+		t.Fatalf("pools = %v, want 2 (tailvm, ci)", pools)
+	}
+	// Sorted alphabetically: "ci" before "tailvm".
+	if pools[0]["poolid"] != "ci" || pools[1]["poolid"] != "tailvm" {
+		t.Errorf("pool order = %v", pools)
+	}
+	tailvmMembers := pools[1]["members"].([]int)
+	if len(tailvmMembers) != 2 || tailvmMembers[0] != 101 || tailvmMembers[1] != 102 {
+		t.Errorf("tailvm members = %v, want [101 102]", tailvmMembers)
 	}
 }
 

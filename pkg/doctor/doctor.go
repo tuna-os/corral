@@ -112,6 +112,23 @@ func Run() []Check {
 		Detail: detailIf(hasSnap, "persistent-VM snapshots available", "needs a CSI driver + external-snapshotter (setup guide)"),
 	})
 
+	// Advisory, not a pass/fail: Longhorn is network-replicated storage and
+	// measurably slower than local-path/topolvm for VM disk IO — corral's own
+	// PreferredStorageClass() already deprioritizes it for new disks. If it's
+	// still the *cluster* default, every VM created without an explicit
+	// --storage-class override still lands on it. No auto-fix — changing
+	// which SC is annotated default is an infra decision, not something
+	// corral should do unasked.
+	if defaultSC := defaultLonghornSC(scs); defaultSC != "" {
+		checks = append(checks, Check{
+			Name: "Default StorageClass performance",
+			OK:   false,
+			Detail: fmt.Sprintf("cluster default %q is Longhorn (network-replicated) — slower disk IO than "+
+				"local-path/topolvm; corral's own create flow already prefers a faster SC when one exists, "+
+				"but the cluster default still affects anything created with --storage-class unset elsewhere", defaultSC),
+		})
+	}
+
 	expProxy := ok("kubectl", "get", "deploy", "-A", "-l", "kubevirt.io=virt-exportproxy")
 	checks = append(checks, Check{
 		Name:   "Export proxy",
@@ -136,7 +153,93 @@ func Run() []Check {
 		Detail: detailIf(cache, "ghcr.io pulls cached on-cluster — faster bootc builds", "not deployed (optional) — kubectl apply -f deploy/registry-cache.yaml to speed bootc builds"),
 	})
 
+	// GPU/PCI passthrough — only checked if a device is actually permitted
+	// (corral gpu enable). Not auto-fixable: IOMMU is a per-node BIOS+kernel
+	// setting corral has no way to flip. Only signal available without a
+	// privileged per-node probe: does the device plugin report the resource
+	// as Allocatable on any node? It won't unless IOMMU + vfio-pci already
+	// work — KubeVirt's device plugin only advertises what it can actually
+	// bind, so "permitted but never allocatable anywhere" is the strongest
+	// symptom of a passthrough prerequisite (IOMMU off, vfio-pci not bound,
+	// or a wrong PCI vendor:device selector) that's checkable this way.
+	if resources := permittedGPUResourceNames(); len(resources) > 0 {
+		allocatable := nodeAllocatableResources()
+		var missing []string
+		for _, r := range resources {
+			if !allocatable[r] {
+				missing = append(missing, r)
+			}
+		}
+		ok := len(missing) == 0
+		checks = append(checks, Check{
+			Name: "GPU/PCI passthrough",
+			OK:   ok,
+			Detail: detailIf(ok, "all permitted devices are allocatable on at least one node",
+				fmt.Sprintf("permitted but not allocatable on any node: %s — check IOMMU is enabled "+
+					"(BIOS + intel_iommu=on/amd_iommu=on kernel params) and the device is bound to "+
+					"vfio-pci on the node that has it (see the setup guide)", strings.Join(missing, ", "))),
+		})
+	}
+
 	return checks
+}
+
+// permittedGPUResourceNames returns the resourceName of every PCI/mediated
+// device permitted in the KubeVirt CR (empty if none, or no CR yet).
+func permittedGPUResourceNames() []string {
+	out, err := run("kubectl", "get", "kubevirt", "kubevirt", "-n", "kubevirt", "-o", "json")
+	if err != nil {
+		return nil
+	}
+	var kv struct {
+		Spec struct {
+			Configuration struct {
+				PermittedHostDevices struct {
+					PCIHostDevices  []struct{ ResourceName string } `json:"pciHostDevices"`
+					MediatedDevices []struct{ ResourceName string } `json:"mediatedDevices"`
+				} `json:"permittedHostDevices"`
+			} `json:"configuration"`
+		} `json:"spec"`
+	}
+	if json.Unmarshal(out, &kv) != nil {
+		return nil
+	}
+	var names []string
+	for _, d := range kv.Spec.Configuration.PermittedHostDevices.PCIHostDevices {
+		names = append(names, d.ResourceName)
+	}
+	for _, d := range kv.Spec.Configuration.PermittedHostDevices.MediatedDevices {
+		names = append(names, d.ResourceName)
+	}
+	return names
+}
+
+// nodeAllocatableResources returns the set of resource names (standard and
+// extended, e.g. "amd.com/gpu") allocatable on at least one node.
+func nodeAllocatableResources() map[string]bool {
+	out, err := run("kubectl", "get", "nodes", "-o", "json")
+	if err != nil {
+		return nil
+	}
+	var res struct {
+		Items []struct {
+			Status struct {
+				Allocatable map[string]string `json:"allocatable"`
+			} `json:"status"`
+		} `json:"items"`
+	}
+	if json.Unmarshal(out, &res) != nil {
+		return nil
+	}
+	set := map[string]bool{}
+	for _, item := range res.Items {
+		for name, qty := range item.Status.Allocatable {
+			if qty != "0" {
+				set[name] = true
+			}
+		}
+	}
+	return set
 }
 
 // FixOne reconciles a single named fixable check.
@@ -296,8 +399,10 @@ func reconcileKubeVirt() error {
 // ── Storage helpers ───────────────────────────────────────────────
 
 type scInfo struct {
-	Default bool
-	Expand  bool
+	Name        string
+	Provisioner string
+	Default     bool
+	Expand      bool
 }
 
 func storageClasses() []scInfo {
@@ -308,9 +413,11 @@ func storageClasses() []scInfo {
 	var res struct {
 		Items []struct {
 			Metadata struct {
+				Name        string            `json:"name"`
 				Annotations map[string]string `json:"annotations"`
 			} `json:"metadata"`
-			AllowVolumeExpansion *bool `json:"allowVolumeExpansion"`
+			Provisioner          string `json:"provisioner"`
+			AllowVolumeExpansion *bool  `json:"allowVolumeExpansion"`
 		} `json:"items"`
 	}
 	if json.Unmarshal(out, &res) != nil {
@@ -319,11 +426,24 @@ func storageClasses() []scInfo {
 	var scs []scInfo
 	for _, it := range res.Items {
 		scs = append(scs, scInfo{
-			Default: it.Metadata.Annotations["storageclass.kubernetes.io/is-default-class"] == "true",
-			Expand:  it.AllowVolumeExpansion != nil && *it.AllowVolumeExpansion,
+			Name:        it.Metadata.Name,
+			Provisioner: it.Provisioner,
+			Default:     it.Metadata.Annotations["storageclass.kubernetes.io/is-default-class"] == "true",
+			Expand:      it.AllowVolumeExpansion != nil && *it.AllowVolumeExpansion,
 		})
 	}
 	return scs
+}
+
+// defaultLonghornSC returns the name of the cluster's default StorageClass
+// if it's Longhorn (driver.longhorn.io), "" otherwise.
+func defaultLonghornSC(scs []scInfo) string {
+	for _, sc := range scs {
+		if sc.Default && sc.Provisioner == "driver.longhorn.io" {
+			return sc.Name
+		}
+	}
+	return ""
 }
 
 func hasSnapshotClass() bool {
