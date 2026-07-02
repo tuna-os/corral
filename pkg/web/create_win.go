@@ -9,18 +9,26 @@ import (
 
 // createWindows runs the Windows guided-install flow synchronously:
 // UEFI+TPM+Hyper-V tuned VM with the installer ISO + virtio-win drivers.
+// Setup runs unattended (injected autounattend.xml, see
+// pkg/kubevirt/autounattend.go) — no interactive install clicks needed;
+// the generated Administrator password is saved to the registry the same
+// way cloud-init VM passwords already are.
 func createWindows(req createRequest, ns string) error {
 	if req.ISO == "" {
 		return badRequest(fmt.Errorf("a Windows installer ISO URL is required"))
 	}
 	done := taskBegin("create windows", ns+"/"+req.Name)
-	if err := kubevirt.CreateWindowsVM(req.Name, ns, req.ISO, req.Disk, req.Mem, req.CPU); err != nil {
+	password, err := kubevirt.CreateWindowsVM(req.Name, ns, req.ISO, req.Disk, req.Mem, req.CPU, true)
+	if err != nil {
 		done(err)
 		return err
 	}
 	done(nil)
 	if store != nil {
-		store.Set(req.Name, types.RegistryEntry{Backend: "kubevirt", Namespace: ns})
+		store.Set(req.Name, types.RegistryEntry{
+			Backend: "kubevirt", Namespace: ns,
+			Username: "Administrator", Password: password,
+		})
 	}
 	return nil
 }

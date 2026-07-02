@@ -786,4 +786,3 @@ func bridgeConsolePTY(ws *websocket.Conn, cmd *exec.Cmd) {
 	go func() { io.Copy(ws, f); done <- struct{}{} }()
 	<-done
 }
-

@@ -3,8 +3,8 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/tuna-os/corral/pkg/doctor"
 	"github.com/spf13/cobra"
+	"github.com/tuna-os/corral/pkg/doctor"
 )
 
 var doctorFix bool
