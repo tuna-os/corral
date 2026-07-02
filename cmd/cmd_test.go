@@ -153,7 +153,7 @@ func TestRootCommand_HasExpectedSubcommands(t *testing.T) {
 	expected := []string{
 		"create", "list", "start", "stop", "delete",
 		"ssh", "viewer", "logs", "info",
-		"config", "images", "plugin", "doctor", "web",
+		"config", "images", "plugin", "doctor", "web", "ct",
 	}
 
 	for _, name := range expected {
