@@ -45,7 +45,7 @@ pkg/              Library code (importable)
         ├── icons.js      inline Heroicon SVGs
         └── style.css     dark theme, responsive, dialog/modals, cards, tables
 
-marketplace/      Plugin registry (hosted at hanthor/corral)
+marketplace/      Plugin registry (hosted at tuna-os/corral)
 └── index.json    plugin entries (name, description, version, platform download URLs)
 
 deploy/           On-cluster manifests

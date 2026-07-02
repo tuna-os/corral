@@ -2,7 +2,7 @@
 
 **Version:** 1.0 (2026-06-10)
 **Binary:** `corral`
-**Module:** `github.com/hanthor/corral`
+**Module:** `github.com/tuna-os/corral`
 
 > **Naming:** Corral is the Go rewrite of the legacy Python `tailvm`. The
 > command is `corral`; on-disk and in-cluster identifiers deliberately keep

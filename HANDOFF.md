@@ -1,6 +1,6 @@
 # Corral handoff — 2026-06-11 (active section updated 2026-06-14)
 
-> Project: **Corral** (`corral` binary, `github.com/hanthor/corral`, public repo)
+> Project: **Corral** (`corral` binary, `github.com/tuna-os/corral`, public repo)
 > Live: `https://corral-1.manatee-basking.ts.net` (cluster deployment, ns `corral`)
 > Docs: [README.md](README.md), [SPEC.md](SPEC.md), [WEBUI-PLAN.md](WEBUI-PLAN.md),
 > [docs/api.md](docs/api.md), [docs/architecture.md](docs/architecture.md),
