@@ -380,18 +380,6 @@ func TestVmidFor_StableAndInRange(t *testing.T) {
 	}
 }
 
-func TestMemBytes(t *testing.T) {
-	tests := map[string]int64{
-		"4G":    4 << 30,
-		"4Gi":   4 << 30,
-		"4096M": 4 << 30,
-		"512Mi": 512 << 20,
-		"32Gi":  32 << 30,
-		"":      0,
-	}
-	for in, want := range tests {
-		if got := MemBytes(in); got != want {
-			t.Errorf("memBytes(%q) = %d, want %d", in, got, want)
-		}
-	}
-}
+// MemBytes coverage lives in translate_test.go's TestMemBytes — a superset
+// of what was here (whitespace, fractional GiB, no-unit default, invalid
+// input, in addition to the same suffix cases).
