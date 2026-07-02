@@ -10,7 +10,17 @@ import "fmt"
 // VirtioWinImage is KubeVirt's containerdisk build of the virtio-win driver
 // ISO — digest-pinned (see #66) against supply-chain tampering on the
 // mutable :latest tag.
-const VirtioWinImage = "quay.io/kubevirt/virtio-container-disk:latest@sha256:e7cffd65dfc89f0ddbf197ba0f2a42a7e299ff21955511d05ab3567ef80c623e"
+//
+// NOT pinned to the :latest tag's own digest: quay.io/kubevirt's :latest
+// tag is stale, still pointing at a legacy Docker Schema v1 manifest
+// (content-type application/vnd.docker.distribution.manifest.v1+prettyjws)
+// that modern containerd (v2.1+) refuses to pull at all — "media type ...
+// is no longer supported". Found live: a real Windows VM create got stuck
+// in ImagePullBackOff on this exact image. Pinned instead to the latest
+// dated build tag (quay.io publishes these daily, in modern OCI image
+// index format) as of 2026-07-02 — re-verify periodically since dated
+// tags are, deliberately, not moving targets.
+const VirtioWinImage = "quay.io/kubevirt/virtio-container-disk:20260702_54ce361f5b@sha256:3925a851dd92aafdd0999c2133ae4aaaed67c20a7c124fc5d454bdab2fa1f13c"
 
 // GenerateWindowsVM builds the Windows-tuned VirtualMachine manifest. Boot
 // order is disk(1) → installer ISO(2): the empty disk falls through to the ISO
