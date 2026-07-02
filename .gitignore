@@ -27,7 +27,15 @@ e2e/test-results/
 
 # Agent runtime state — belongs in the agent's working directory, not the repo
 .pi/goals/
-.claude/scheduled_tasks.lock
+.claude/
+.gemini/
+.antigravitycli/
+
+# Agent-generated docs (not project content)
+HANDOFF.md
+CONTEXT.md
+AGENTS.md
+WEBUI-PLAN.md
 
 # Scratch / transcript dumps — never commit (may contain secrets)
 corral.txt
