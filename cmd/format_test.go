@@ -1,30 +1,18 @@
 package cmd
 
 import (
-	"bytes"
-	"os"
 	"strings"
 	"testing"
 
-	"github.com/hanthor/corral/pkg/catalog"
-	"github.com/hanthor/corral/pkg/types"
+	"github.com/tuna-os/corral/pkg/catalog"
+	"github.com/tuna-os/corral/pkg/types"
 )
 
-// captureStdout runs f and returns everything written to stdout.
-func captureStdout(f func()) string {
-	old := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-	f()
-	w.Close()
-	var buf bytes.Buffer
-	buf.ReadFrom(r)
-	os.Stdout = old
-	return buf.String()
-}
+// captureStdout is defined in output_test.go — reused here rather than
+// duplicated (this file originated as a separate PR against an older base).
 
-func TestPrintCatalog_Empty(t *testing.T) {
-	out := captureStdout(func() {
+func TestPrintCatalog_EmptyHasHeaderColumns(t *testing.T) {
+	out := captureStdout(t, func() {
 		printCatalog(nil)
 	})
 	// Should print at least the header row.
@@ -41,7 +29,7 @@ func TestPrintCatalog_SingleImage(t *testing.T) {
 		URL:         "https://example.com/fedora.qcow2",
 		Source:      "fedoraproject.org",
 	}
-	out := captureStdout(func() {
+	out := captureStdout(t, func() {
 		printCatalog([]catalog.Image{img})
 	})
 	if !strings.Contains(out, "fedora") {
@@ -69,7 +57,7 @@ func TestPrintCatalog_MultipleImages(t *testing.T) {
 			Source:      "debian.org",
 		},
 	}
-	out := captureStdout(func() {
+	out := captureStdout(t, func() {
 		printCatalog(images)
 	})
 	if !strings.Contains(out, "ubuntu") {
@@ -88,7 +76,7 @@ func TestPrintCatalog_ContainerDisk(t *testing.T) {
 		ContainerDisk: "quay.io/containerdisks/arch:latest",
 		Source:        "archlinux.org",
 	}
-	out := captureStdout(func() {
+	out := captureStdout(t, func() {
 		printCatalog([]catalog.Image{img})
 	})
 	if !strings.Contains(out, "arch") {
@@ -101,7 +89,7 @@ func TestPrintCatalog_ContainerDisk(t *testing.T) {
 }
 
 func TestPrintVMList_Empty(t *testing.T) {
-	out := captureStdout(func() {
+	out := captureStdout(t, func() {
 		printVMList(nil)
 	})
 	// Should print header row.
@@ -124,7 +112,7 @@ func TestPrintVMList_SingleVM(t *testing.T) {
 			Node:      "worker-1",
 		},
 	}
-	out := captureStdout(func() {
+	out := captureStdout(t, func() {
 		printVMList(vms)
 	})
 	if !strings.Contains(out, "test-vm") {
@@ -148,7 +136,7 @@ func TestPrintVMList_StoppedVM(t *testing.T) {
 			Namespace: "default",
 		},
 	}
-	out := captureStdout(func() {
+	out := captureStdout(t, func() {
 		printVMList(vms)
 	})
 	if !strings.Contains(out, "stopped-vm") {
@@ -165,7 +153,7 @@ func TestPrintVMList_MultiVM_Sorted(t *testing.T) {
 		{Name: "alpha-vm", Backend: "qemu", Namespace: "ns2"},
 		{Name: "beta-vm", Backend: "kubevirt", Namespace: "ns3"},
 	}
-	out := captureStdout(func() {
+	out := captureStdout(t, func() {
 		printVMList(vms)
 	})
 	// Verify output contains all VM names.
@@ -189,7 +177,7 @@ func TestPrintVMList_EmptyNamespace(t *testing.T) {
 			Mem:     "1Gi",
 		},
 	}
-	out := captureStdout(func() {
+	out := captureStdout(t, func() {
 		printVMList(vms)
 	})
 	if !strings.Contains(out, "no-ns") {
