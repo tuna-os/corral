@@ -1987,7 +1987,7 @@ const SOURCE_HINTS = {
   import: 'https://cloud-images.example/jammy.qcow2',
   iso: 'https://example.com/installer.iso',
   bootc: 'quay.io/centos-bootc/centos-bootc:stream9',
-  windows: 'https://example.com/Win11_x64.iso',
+  windows: 'https://example.com/Win11_x64.iso (or pick a preset ↓)',
   pvc: 'existing-pvc-name',
 };
 
@@ -2025,8 +2025,9 @@ function updateSourceFields() {
   const src = document.querySelector('[name=source]');
   if (src) {
     src.placeholder = SOURCE_HINTS[type] || '';
-    // Bootc gets catalog suggestions; other types are free-form.
+    // Bootc and Windows get catalog suggestions; other types are free-form.
     if (type === 'bootc') src.setAttribute('list', 'bootc-catalog');
+    else if (type === 'windows') src.setAttribute('list', 'windows-iso-catalog');
     else src.removeAttribute('list');
   }
   if (type === 'pvc') loadPVCSources();
