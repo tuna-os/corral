@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"sync"
 
 	"github.com/tuna-os/corral/pkg/shell"
 )
@@ -103,15 +104,31 @@ func rootfsExecCommand() []string {
 	return []string{"chroot", rootfsMountPath, "/bin/sh", "-c", "exec bash 2>/dev/null || exec sh"}
 }
 
-var runner shell.Runner = shell.Real{}
+var (
+	runnerMu sync.RWMutex
+	runner   shell.Runner = shell.Real{}
+)
 
-// SetRunner overrides the command runner (for unit tests).
-func SetRunner(r shell.Runner) { runner = r }
+// SetRunner overrides the command runner (for unit tests). Guarded by a
+// mutex: handleCreateCT fires ApplyProxy in a background goroutine that
+// outlives the request, so a following test's SetRunner call can otherwise
+// race with that goroutine's still-in-flight reads.
+func SetRunner(r shell.Runner) {
+	runnerMu.Lock()
+	defer runnerMu.Unlock()
+	runner = r
+}
 
-func run(name string, args ...string) ([]byte, error) { return runner.Run(name, args...) }
+func getRunner() shell.Runner {
+	runnerMu.RLock()
+	defer runnerMu.RUnlock()
+	return runner
+}
+
+func run(name string, args ...string) ([]byte, error) { return getRunner().Run(name, args...) }
 
 func runStdin(stdin, name string, args ...string) ([]byte, error) {
-	return runner.RunStdin(stdin, name, args...)
+	return getRunner().RunStdin(stdin, name, args...)
 }
 
 func apply(obj map[string]any) error {
