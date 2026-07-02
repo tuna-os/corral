@@ -9,11 +9,11 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/spf13/cobra"
 	"github.com/tuna-os/corral/pkg/catalog"
 	"github.com/tuna-os/corral/pkg/kubevirt"
 	"github.com/tuna-os/corral/pkg/qemu"
 	"github.com/tuna-os/corral/pkg/types"
-	"github.com/spf13/cobra"
 )
 
 var (
@@ -403,7 +403,7 @@ func runLocalBootcCreate(name string) error {
 	if err != nil {
 		return fmt.Errorf("losetup failed: %s: %w", string(out), err)
 	}
-	
+
 	out, err = exec.Command("sudo", "losetup", "-a").CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("listing loop devices: %s: %w", string(out), err)

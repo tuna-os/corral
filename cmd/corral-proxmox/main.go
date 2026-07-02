@@ -18,9 +18,9 @@ import (
 	"os"
 	"strings"
 
+	"github.com/spf13/cobra"
 	"github.com/tuna-os/corral/pkg/kubevirt"
 	"github.com/tuna-os/corral/pkg/proxmox"
-	"github.com/spf13/cobra"
 )
 
 func displayAddr(addr string) string {

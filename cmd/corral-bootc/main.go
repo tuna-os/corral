@@ -11,11 +11,11 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/spf13/cobra"
 	"github.com/tuna-os/corral/pkg/catalog"
 	"github.com/tuna-os/corral/pkg/kubevirt"
 	"github.com/tuna-os/corral/pkg/registry"
 	"github.com/tuna-os/corral/pkg/types"
-	"github.com/spf13/cobra"
 )
 
 // finishVM applies the final VM from a completed build's disk PVC, exposes

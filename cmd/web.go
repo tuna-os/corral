@@ -1,8 +1,8 @@
 package cmd
 
 import (
-	"github.com/tuna-os/corral/pkg/web"
 	"github.com/spf13/cobra"
+	"github.com/tuna-os/corral/pkg/web"
 )
 
 var webAddr string
