@@ -211,6 +211,54 @@ No broker, no self-serve web page, no idle reclaim yet (see the RFC and
 — pool membership and assignment are plain K8s labels on the VM objects,
 nothing more.
 
+## Bootc images as a CI boot gate
+
+`corral create --bootc` runs entirely on local QEMU — no cluster, no
+tailnet — which makes it a one-command boot gate for bootc images on any
+KVM-capable runner. `--wait-ssh` turns the exit code into the verdict:
+
+```bash
+corral create gate --bootc ghcr.io/tuna-os/yellowfin:gnome-testing \
+  --wait-ssh --timeout 900
+# exit 0  → image booted and answers SSH (key injected for root at install)
+# exit ≠0 → it didn't; fail the pipeline
+corral delete gate
+```
+
+The same thing, declaratively (corral reads Lima-style YAML natively):
+
+```yaml
+# verify.yaml
+bootc: ghcr.io/tuna-os/yellowfin:gnome-testing
+cpus: 4
+memory: 4GiB
+disk: 30GiB
+provision:
+  - mode: system
+    script: |
+      #!/bin/sh
+      systemctl enable sshd
+```
+
+```bash
+corral create gate -f verify.yaml --wait-ssh --timeout 900
+```
+
+`provision` scripts are chrooted into the installed disk **before first
+boot**, so they can enable services, drop test users, or plant readiness
+markers without touching the published image. The disk is installed with
+`bootc install to-disk --generic-image`, so it boots under plain
+SeaBIOS/OVMF anywhere.
+
+On GitHub-hosted runners, enable KVM first:
+
+```yaml
+- run: |
+    echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+      | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+    sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+```
+
 ## Configuration
 
 ```yaml
