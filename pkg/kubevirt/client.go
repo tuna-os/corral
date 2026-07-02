@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -799,8 +800,51 @@ func GeneratePVC(name, namespace, size string) map[string]any {
 	}
 }
 
+// isoSizeFallbackGi is used when DetectISOSize can't determine the real
+// size (HEAD blocked, no Content-Length). Deliberately generous — CDI
+// crash-loops forever on an undersized PVC rather than failing fast (see
+// DetectISOSize's doc comment for the incident that found this), so a
+// too-big guess is far cheaper than a too-small one.
+const isoSizeFallbackGi = 12
+
+// DetectISOSize does a best-effort HTTP HEAD on isoURL to size its PVC
+// correctly. GenerateDataVolume used to hardcode "6Gi" for every ISO
+// regardless of actual size — harmless for small Linux install ISOs, but a
+// real Windows 11 ISO (~7.2GB) blew straight through it: CDI's importer
+// doesn't fail fast on an undersized target, it crash-loops (exit 1,
+// restart, retry, repeat) forever, silently burning hours before anyone
+// notices the DataVolume is stuck. Found and fixed after a live Windows
+// VM creation sat crash-looping for 5+ hours undetected.
+//
+// Rounds the detected size up to the next GiB plus a 1GiB safety margin.
+// Falls back to isoSizeFallbackGi on any failure (network error, HEAD not
+// supported, no Content-Length) — best-effort, not a hard requirement.
+func DetectISOSize(isoURL string) string {
+	resp, err := http.Head(isoURL)
+	if err != nil {
+		return fmt.Sprintf("%dGi", isoSizeFallbackGi)
+	}
+	defer resp.Body.Close()
+	if resp.ContentLength <= 0 {
+		return fmt.Sprintf("%dGi", isoSizeFallbackGi)
+	}
+	const gib = 1 << 30
+	const minSizeGi = 2 // a real ISO smaller than this is unusual; floor rather than provision a suspiciously tiny PVC
+	sizeGi := int((resp.ContentLength+gib-1)/gib) + 1 // round up + 1GiB margin
+	if sizeGi < minSizeGi {
+		sizeGi = minSizeGi
+	}
+	return fmt.Sprintf("%dGi", sizeGi)
+}
+
 // GenerateDataVolume creates a CDI DataVolume to import an ISO from URL.
-func GenerateDataVolume(name, namespace, isoURL string) map[string]any {
+// size should come from DetectISOSize (or an explicit override) — an
+// undersized PVC doesn't fail fast, it crash-loops forever (see
+// DetectISOSize's doc comment).
+func GenerateDataVolume(name, namespace, isoURL, size string) map[string]any {
+	if size == "" {
+		size = fmt.Sprintf("%dGi", isoSizeFallbackGi)
+	}
 	return map[string]any{
 		"apiVersion": "cdi.kubevirt.io/v1beta1",
 		"kind":       "DataVolume",
@@ -822,7 +866,7 @@ func GenerateDataVolume(name, namespace, isoURL string) map[string]any {
 			"pvc": map[string]any{
 				"accessModes": []string{"ReadWriteOnce"},
 				"resources": map[string]any{
-					"requests": map[string]any{"storage": "6Gi"},
+					"requests": map[string]any{"storage": size},
 				},
 			},
 		},
@@ -835,11 +879,9 @@ func GenerateBootDataVolume(name, namespace, url, size, storageClass string) map
 	if size == "" {
 		size = "20G"
 	}
-	dv := GenerateDataVolume(name, namespace, url)
-	pvc := dv["spec"].(map[string]any)["pvc"].(map[string]any)
-	pvc["resources"].(map[string]any)["requests"].(map[string]any)["storage"] = size
+	dv := GenerateDataVolume(name, namespace, url, size)
 	if storageClass != "" {
-		pvc["storageClassName"] = storageClass
+		dv["spec"].(map[string]any)["pvc"].(map[string]any)["storageClassName"] = storageClass
 	}
 	return dv
 }
@@ -1165,7 +1207,7 @@ func CreateVM(opts types.CreateOpts) error {
 	}
 
 	if hasISO {
-		if err := Apply(GenerateDataVolume(name+"-iso", ns, opts.ISO)); err != nil {
+		if err := Apply(GenerateDataVolume(name+"-iso", ns, opts.ISO, DetectISOSize(opts.ISO))); err != nil {
 			return fmt.Errorf("creating ISO DataVolume: %w", err)
 		}
 		fmt.Fprintf(os.Stderr, "ISO DataVolume: %s-iso (importing from %s)\n", name, opts.ISO)

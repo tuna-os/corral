@@ -815,11 +815,10 @@ func ImportDataVolume(name, namespace, url, size string) error {
 		namespace = DefaultNamespace
 	}
 	if size == "" {
-		size = "10Gi"
+		size = DetectISOSize(url)
 	}
 	EnsureNamespace(namespace)
-	dv := GenerateDataVolume(name, namespace, url)
-	dv["spec"].(map[string]any)["pvc"].(map[string]any)["resources"].(map[string]any)["requests"].(map[string]any)["storage"] = size
+	dv := GenerateDataVolume(name, namespace, url, size)
 	if sc := PreferredStorageClass(); sc != "" {
 		dv["spec"].(map[string]any)["pvc"].(map[string]any)["storageClassName"] = sc
 	}

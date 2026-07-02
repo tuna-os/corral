@@ -127,7 +127,7 @@ func CreateWindowsVM(name, ns, iso, disk, mem string, cpu int) error {
 	EnsureNamespace(ns)
 	sc := PreferredStorageClass()
 
-	if err := Apply(GenerateDataVolume(name+"-iso", ns, iso)); err != nil {
+	if err := Apply(GenerateDataVolume(name+"-iso", ns, iso, DetectISOSize(iso))); err != nil {
 		return fmt.Errorf("creating ISO DataVolume: %w", err)
 	}
 	if err := Apply(GeneratePVCWithClass(name+"-disk", ns, disk, sc)); err != nil {
