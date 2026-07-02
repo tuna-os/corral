@@ -36,7 +36,7 @@ func TestRenderBuilderVM(t *testing.T) {
 
 	// The recipe lives in the Secret's userdata.
 	sec := generateBuilderSecret("e2e-x-bootc-builder-cloudinit", "corral-vms",
-		"ghcr.io/projectbluefin/dakota:testing", "ssh-ed25519 AAAATESTKEY user@host")
+		"ghcr.io/projectbluefin/dakota:testing", "ssh-ed25519 AAAATESTKEY user@host", "")
 	script := sec["stringData"].(map[string]any)["userdata"].(string)
 	for _, want := range []string{
 		"ghcr.io/projectbluefin/dakota:testing", // image substituted
