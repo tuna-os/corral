@@ -162,11 +162,17 @@ integration seam.
   ADR-0002** — ship it before layering VDI-specific work on top, and treat
   its still-unstarted status as a real signal about effort, not a
   formality to wave through.
-- **Phase 3's GPU story is hardware-constrained, not KubeVirt-constrained.**
-  `karnataka`'s AMD Strix Halo APU does exclusive full-GPU passthrough to
-  one VM at a time — no vGPU/SR-IOV time-slicing the way datacenter NVIDIA
-  cards support. Fine for "one nice accelerated desktop," not a
-  GPU-accelerated multi-user pool, on this hardware.
+- **Phase 3's GPU story is constrained by AMD's current driver/firmware
+  support, not by KubeVirt.** Verified directly against AMD's GIM/SR-IOV
+  driver release notes (2026-07): officially supported hardware is
+  exclusively MI-series Instinct datacenter accelerators plus one Radeon
+  PRO workstation card — no APUs, no consumer/integrated GPUs, at all.
+  `karnataka`'s AMD Strix Halo APU is a full-GPU-passthrough-to-one-VM
+  device today, not a multi-tenant vGPU one. An AMD engineer has said
+  client-GPU SR-IOV is "in the roadmap," no committed timeline — worth
+  rechecking before committing to Phase 3, not assuming permanently
+  impossible. Fine for "one nice accelerated desktop" today either way,
+  not a GPU-accelerated multi-user pool on this hardware.
 - **Overall scope**: this is realistically a personal/small-team VDI, not
   an oVirt/Kasm/Leostream competitor — the phased plan is sized for what
   one person plus Corral's existing components can actually ship, not for
