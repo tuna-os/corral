@@ -3,9 +3,9 @@ package cmd
 import (
 	"fmt"
 
+	"github.com/spf13/cobra"
 	"github.com/tuna-os/corral/pkg/kubevirt"
 	"github.com/tuna-os/corral/pkg/qemu"
-	"github.com/spf13/cobra"
 )
 
 // Advanced KubeVirt operations mirrored from the web UI: restart, pause,

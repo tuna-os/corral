@@ -829,7 +829,7 @@ func DetectISOSize(isoURL string) string {
 		return fmt.Sprintf("%dGi", isoSizeFallbackGi)
 	}
 	const gib = 1 << 30
-	const minSizeGi = 2 // a real ISO smaller than this is unusual; floor rather than provision a suspiciously tiny PVC
+	const minSizeGi = 2                               // a real ISO smaller than this is unusual; floor rather than provision a suspiciously tiny PVC
 	sizeGi := int((resp.ContentLength+gib-1)/gib) + 1 // round up + 1GiB margin
 	if sizeGi < minSizeGi {
 		sizeGi = minSizeGi
