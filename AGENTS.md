@@ -2,7 +2,7 @@
 
 ### Issue tracker
 
-GitHub Issues on `hanthor/corral` via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+GitHub Issues on `tuna-os/corral` via the `gh` CLI. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 

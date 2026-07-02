@@ -129,7 +129,7 @@ func TestBootcRegistryMirror_AutoDetect(t *testing.T) {
 func TestBuilderScript_MirrorWiring(t *testing.T) {
 	// Always writes the drop-in path so podman picks it up.
 	t.Setenv("CORRAL_REGISTRY_MIRROR", "off")
-	off := builderScript("ghcr.io/x/y:tag", "ssh-ed25519 AAAA")
+	off := builderScript("ghcr.io/x/y:tag", "ssh-ed25519 AAAA", "")
 	if !strings.Contains(off, "/etc/containers/registries.conf.d/corral-mirror.conf") {
 		t.Error("builder cloud-init should always include the mirror drop-in path")
 	}
@@ -138,7 +138,7 @@ func TestBuilderScript_MirrorWiring(t *testing.T) {
 	}
 
 	t.Setenv("CORRAL_REGISTRY_MIRROR", "cache:5000")
-	on := builderScript("ghcr.io/x/y:tag", "ssh-ed25519 AAAA")
+	on := builderScript("ghcr.io/x/y:tag", "ssh-ed25519 AAAA", "")
 	if !strings.Contains(on, `location = "cache:5000"`) || !strings.Contains(on, `prefix = "ghcr.io"`) {
 		t.Errorf("enabled mirror should inject the ghcr.io→cache stanza:\n%s", on)
 	}

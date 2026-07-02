@@ -7,10 +7,10 @@ package web
 import (
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -20,10 +20,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/creack/pty"
 	"golang.org/x/net/websocket"
 
-	"github.com/tuna-os/corral/pkg/catalog"
 	"github.com/tuna-os/corral/pkg/config"
+	"github.com/tuna-os/corral/pkg/ct"
 	"github.com/tuna-os/corral/pkg/kubevirt"
 	"github.com/tuna-os/corral/pkg/proxmox"
 	"github.com/tuna-os/corral/pkg/registry"
@@ -74,6 +75,10 @@ func newMux() (http.Handler, error) {
 	mux.HandleFunc("GET /api/whoami", handleWhoami)
 	mux.HandleFunc("GET /api/vms", handleListVMs)
 	mux.HandleFunc("POST /api/vms", handleCreateVM)
+	mux.HandleFunc("GET /api/cts", handleListCTs)
+	mux.HandleFunc("POST /api/cts", handleCreateCT)
+	mux.HandleFunc("POST /api/cts/{ns}/{name}/{action}", handleCTAction)
+	mux.HandleFunc("DELETE /api/cts/{ns}/{name}", handleDeleteCT)
 	mux.HandleFunc("GET /api/nodes", handleNodes)
 	mux.HandleFunc("GET /api/capabilities", handleCapabilities)
 	mux.HandleFunc("GET /api/images", handleImages)
@@ -94,6 +99,7 @@ func newMux() (http.Handler, error) {
 	mux.HandleFunc("POST /api/vms/{ns}/{name}/nics", handleAddNIC)
 	mux.HandleFunc("GET /api/datavolumes", handleListDataVolumes)
 	mux.HandleFunc("POST /api/datavolumes", handleImportDataVolume)
+	mux.HandleFunc("POST /api/datavolumes/upload", handleUploadDataVolume)
 	mux.HandleFunc("DELETE /api/datavolumes/{ns}/{name}", handleDeleteDataVolume)
 	mux.HandleFunc("GET /api/tasks/{id}", handleTaskStatus)
 	mux.HandleFunc("GET /api/tasklog", handleTaskLog)
@@ -108,6 +114,7 @@ func newMux() (http.Handler, error) {
 	mux.HandleFunc("POST /api/vms/{ns}/{name}/clone", handleClone)
 	mux.HandleFunc("POST /api/vms/{ns}/{name}/template", handleMarkTemplate)
 	mux.HandleFunc("POST /api/vms/{ns}/{name}/tags", handleSetTag)
+	mux.HandleFunc("POST /api/vms/{ns}/{name}/options", handleSetOptions)
 	mux.HandleFunc("GET /api/vms/{ns}/{name}/guestinfo", handleGuestInfo)
 	mux.HandleFunc("GET /api/vms/{ns}/{name}/rdp", handleRDPCheck)
 	mux.HandleFunc("POST /api/vms/{ns}/{name}/bootc/rebuild", handleBootcRebuild)
@@ -152,6 +159,29 @@ func jsonResp(w http.ResponseWriter, code int, v any) {
 
 func errResp(w http.ResponseWriter, code int, err error) {
 	jsonResp(w, code, map[string]string{"error": err.Error()})
+}
+
+// httpError lets a function that doesn't touch http.ResponseWriter (e.g. the
+// createBootc/createWindows/createGeneric strategy functions) still signal
+// which status a validation failure should map to. Plain errors default to
+// 500 — see statusFor.
+type httpError struct {
+	status int
+	err    error
+}
+
+func (e *httpError) Error() string { return e.err.Error() }
+func (e *httpError) Unwrap() error { return e.err }
+
+func badRequest(err error) error { return &httpError{status: http.StatusBadRequest, err: err} }
+
+// statusFor returns the HTTP status a strategy-function error maps to.
+func statusFor(err error) int {
+	var he *httpError
+	if errors.As(err, &he) {
+		return he.status
+	}
+	return http.StatusInternalServerError
 }
 
 // ── VM list ───────────────────────────────────────────────────────
@@ -239,8 +269,8 @@ type createRequest struct {
 	CloudInit     string `json:"cloudInit"`
 	InstanceType  string `json:"instancetype"`
 	Preference    string `json:"preference"`
-	Windows       bool   `json:"windows"` // Windows installer flow (windows plugin)
-	RDP           bool   `json:"rdp"`     // expose RDP via the tailnet proxy
+	Windows       bool   `json:"windows"`      // Windows installer flow (windows plugin)
+	StorageClass  string `json:"storageClass"` // overrides the cluster-preferred StorageClass
 }
 
 // buildTask tracks a long-running bootc build kicked off from the UI.
@@ -249,6 +279,13 @@ type buildTask struct {
 	log    strings.Builder
 	status string // "running", "done", "error"
 	errMsg string
+	done   chan struct{}
+}
+
+// newBuildTask creates a running task. Always use this over a bare struct
+// literal — done must be initialized or wait() blocks forever.
+func newBuildTask() *buildTask {
+	return &buildTask{status: "running", done: make(chan struct{})}
 }
 
 func (t *buildTask) Write(p []byte) (int, error) {
@@ -259,13 +296,20 @@ func (t *buildTask) Write(p []byte) (int, error) {
 
 func (t *buildTask) finish(err error) {
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	if err != nil {
 		t.status = "error"
 		t.errMsg = err.Error()
 	} else {
 		t.status = "done"
 	}
+	t.mu.Unlock()
+	close(t.done)
+}
+
+// wait blocks until finish has been called — lets tests synchronize on a
+// background task instead of racing its goroutine.
+func (t *buildTask) wait() {
+	<-t.done
 }
 
 func (t *buildTask) snapshot() map[string]string {
@@ -285,6 +329,13 @@ func handleTaskStatus(w http.ResponseWriter, r *http.Request) {
 	jsonResp(w, http.StatusOK, v.(*buildTask).snapshot())
 }
 
+// handleCreateVM dispatches to the strategy matching the request shape —
+// bootc build, Windows guided install, or everything else (catalog images,
+// container disks, import URLs, ISO installs, PVC-backed) — and translates
+// the result into the right HTTP response. The strategies themselves
+// (createBootc/createWindows/createGeneric) don't touch http.ResponseWriter,
+// so tests can call them directly instead of racing a goroutine through a
+// full HTTP round-trip.
 func handleCreateVM(w http.ResponseWriter, r *http.Request) {
 	var req createRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -301,154 +352,29 @@ func handleCreateVM(w http.ResponseWriter, r *http.Request) {
 		ns = kubevirt.DefaultNamespace
 	}
 
-	// Bootc builds run as background tasks — the disk build takes minutes.
-	if req.Bootc != "" {
-		req.Bootc = catalog.ResolveBootc(req.Bootc)
-		if !kubevirt.BootcAvailable() {
-			errResp(w, http.StatusBadRequest,
-				fmt.Errorf("bootc support is not enabled on this server (optional plugin — run the corral:bootc image)"))
-			return
-		}
-		sshKey, err := resolveSSHKey(req.SSHKey)
+	switch {
+	case req.Bootc != "":
+		id, _, err := createBootc(req, ns)
 		if err != nil {
-			errResp(w, http.StatusBadRequest, err)
+			errResp(w, statusFor(err), err)
 			return
 		}
-		if sshKey == "" {
-			sshKey = kubevirt.LoadSSHPublicKey()
-		}
-		if sshKey == "" {
-			errResp(w, http.StatusBadRequest,
-				fmt.Errorf("sshKey is required for bootc VMs (no key on the server)"))
-			return
-		}
-		id := fmt.Sprintf("bootc-%s-%d", req.Name, time.Now().UnixNano())
-		task := &buildTask{status: "running"}
-		tasks.Store(id, task)
-		done := taskBegin("bootc build", ns+"/"+req.Name)
-
-		go func() {
-			build, err := kubevirt.BootcBuildDisk(req.Name, ns, req.Bootc, sshKey, req.Disk, task)
-			if err == nil {
-				vm := kubevirt.GenerateBootcVM(req.Name, ns, build.PVCName, req.Bootc, sshKey, req.Mem, req.CPU, req.Node)
-				err = kubevirt.Apply(vm)
-			}
-			if err == nil && store != nil {
-				store.Set(req.Name, types.RegistryEntry{
-					Backend:   "kubevirt",
-					Namespace: ns,
-					Extra:     map[string]string{"bootc_image": req.Bootc},
-				})
-			}
-			// The build is done once the VM exists — finish the task on that.
-			task.finish(err)
-			done(err)
-			// Expose SSH/VNC on the tailnet via the Tailscale operator proxy
-			// (bootc guests have no in-guest tailscale, only baked sshd on :22).
-			// Best-effort and separate: a flaky proxy apply must not mark a
-			// successful build as failed — the VM is already up and reachable
-			// via virtctl port-forward.
-			if err == nil {
-				dp := taskBegin("tailnet expose", ns+"/"+req.Name)
-				dp(kubevirt.ApplyProxy(req.Name, ns, []int{22, 5900}))
-			}
-		}()
 		jsonResp(w, http.StatusAccepted, map[string]string{"task": id})
-		return
-	}
 
-	// Windows guided flow (windows plugin): UEFI+TPM+Hyper-V tuned VM with the
-	// installer ISO + virtio-win drivers. Needs an installer ISO URL.
-	if req.Windows {
-		if req.ISO == "" {
-			errResp(w, http.StatusBadRequest, fmt.Errorf("a Windows installer ISO URL is required"))
+	case req.Windows:
+		if err := createWindows(req, ns); err != nil {
+			errResp(w, statusFor(err), err)
 			return
-		}
-		done := taskBegin("create windows", ns+"/"+req.Name)
-		if err := kubevirt.CreateWindowsVM(req.Name, ns, req.ISO, req.Disk, req.Mem, req.CPU, req.RDP); err != nil {
-			done(err)
-			errResp(w, http.StatusInternalServerError, err)
-			return
-		}
-		done(nil)
-		if store != nil {
-			store.Set(req.Name, types.RegistryEntry{
-				Backend: "kubevirt", Namespace: ns,
-				Extra: map[string]string{"os": "windows"},
-			})
 		}
 		jsonResp(w, http.StatusCreated, map[string]string{"name": req.Name, "namespace": ns})
-		return
-	}
 
-	containerDisk := req.ContainerDisk
-	if req.Image != "" {
-		img := catalog.Find(req.Image)
-		if img == nil {
-			errResp(w, http.StatusBadRequest, fmt.Errorf("unknown image %q", req.Image))
+	default:
+		if err := createGeneric(req, ns); err != nil {
+			errResp(w, statusFor(err), err)
 			return
 		}
-		// Catalog entries boot three ways: containerdisks directly, official
-		// cloud images via CDI import, installer ISOs via the ISO path.
-		switch img.Kind() {
-		case "containerDisk":
-			containerDisk = img.ContainerDisk
-		case "import":
-			req.Import = img.URL
-		case "iso":
-			req.ISO = img.ISO
-		}
+		jsonResp(w, http.StatusCreated, map[string]string{"name": req.Name, "namespace": ns})
 	}
-
-	// The wizard's SSH key box takes a literal key or a GitHub username;
-	// it overrides the server's own key when set.
-	sshKey, err := resolveSSHKey(req.SSHKey)
-	if err != nil {
-		errResp(w, http.StatusBadRequest, err)
-		return
-	}
-	if sshKey == "" {
-		sshKey = kubevirt.LoadSSHPublicKey()
-	}
-
-	opts := types.CreateOpts{
-		Name:           req.Name,
-		Namespace:      ns,
-		CPU:            req.CPU,
-		Mem:            req.Mem,
-		Disk:           req.Disk,
-		ContainerDisk:  containerDisk,
-		ImportURL:      req.Import,
-		ISO:            req.ISO,
-		PVC:            req.PVC,
-		Node:           req.Node,
-		CloudInitExtra: req.CloudInit,
-		InstanceType:   req.InstanceType,
-		Preference:     req.Preference,
-		SSHPublicKey:   sshKey,
-	}
-	done := taskBegin("create", ns+"/"+req.Name)
-	if err := kubevirt.CreateVM(opts); err != nil {
-		done(err)
-		errResp(w, http.StatusInternalServerError, err)
-		return
-	}
-	done(nil)
-	if store != nil {
-		store.Set(req.Name, types.RegistryEntry{
-			Backend:   "kubevirt",
-			Namespace: ns,
-			Password:  kubevirt.LastPassword,
-		})
-	}
-	jsonResp(w, http.StatusCreated, map[string]string{"name": req.Name, "namespace": ns})
-	// Tailnet-by-default: expose SSH/VNC/RDP on the tailnet via the Tailscale
-	// operator proxy. Best-effort and async — ApplyProxy retries for up to a
-	// minute on transient RBAC flakes, which must not block the create response.
-	go func() {
-		dp := taskBegin("tailnet expose", ns+"/"+req.Name)
-		dp(kubevirt.ApplyProxy(req.Name, ns, []int{22, 5900, 3389}))
-	}()
 }
 
 func handleVMAction(w http.ResponseWriter, r *http.Request) {
@@ -506,7 +432,7 @@ func handleMigrate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := fmt.Sprintf("migrate-%s-%d", name, time.Now().UnixNano())
-	task := &buildTask{status: "running"}
+	task := newBuildTask()
 	tasks.Store(id, task)
 	done := taskBegin("migrate", ns+"/"+name)
 	if b.TargetNode != "" {
@@ -532,7 +458,7 @@ var (
 
 // watchMigration polls a VM's migrationState, writing a line on each phase
 // change, until it completes (nil), fails, or times out.
-func watchMigration(c *kubevirt.Client, name string, w io.Writer) error {
+func watchMigration(c kubevirt.VMAdvanced, name string, w io.Writer) error {
 	time.Sleep(migrationSettle) // avoid reading a stale state from a prior migration
 	deadline := time.Now().Add(migrationTimeout)
 	last := ""
@@ -758,7 +684,11 @@ func handleNodes(w http.ResponseWriter, r *http.Request) {
 
 // ── Consoles ──────────────────────────────────────────────────────
 
-// vncBridge proxies a binary websocket (noVNC) to `virtctl vnc --proxy-only`.
+// consoleDialer is the seam vncBridge/rdpBridge open their connections
+// through — swapped for a fake in tests.
+var consoleDialer kubevirt.ConsoleDialer = kubevirt.RealConsoleDialer{}
+
+// vncBridge proxies a binary websocket (noVNC) to the VM's VNC console.
 func vncBridge(ws *websocket.Conn) {
 	defer ws.Close()
 	ns, name := ws.Request().PathValue("ns"), ws.Request().PathValue("name")
@@ -766,31 +696,8 @@ func vncBridge(ws *websocket.Conn) {
 		return
 	}
 
-	port, err := freePort()
+	conn, err := consoleDialer.Dial(ns, name, kubevirt.VNC)
 	if err != nil {
-		return
-	}
-	proxy := exec.Command("virtctl", "vnc", name, "-n", ns,
-		"--proxy-only", "--port", strconv.Itoa(port))
-	proxy.Stdout = io.Discard
-	proxy.Stderr = io.Discard
-	if err := proxy.Start(); err != nil {
-		return
-	}
-	defer func() {
-		proxy.Process.Kill()
-		proxy.Wait()
-	}()
-
-	var conn net.Conn
-	for i := 0; i < 50; i++ {
-		conn, err = net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port))
-		if err == nil {
-			break
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
-	if conn == nil {
 		return
 	}
 	defer conn.Close()
@@ -802,8 +709,11 @@ func vncBridge(ws *websocket.Conn) {
 	<-done
 }
 
-// ttyBridge proxies a binary websocket (xterm.js) to `virtctl console`,
-// giving a serial TTY in the browser.
+// ttyBridge proxies a binary websocket (xterm.js) to a terminal — `virtctl
+// console` for a VM, or `kubectl exec` for a CT (#50: CTs have no
+// framebuffer/serial console, only exec/attach). Tries the VM path first
+// since that's the common case; falls back to CT only when no VM by that
+// name exists.
 func ttyBridge(ws *websocket.Conn) {
 	defer ws.Close()
 	ns, name := ws.Request().PathValue("ns"), ws.Request().PathValue("name")
@@ -811,36 +721,69 @@ func ttyBridge(ws *websocket.Conn) {
 		return
 	}
 
-	console := exec.Command("virtctl", "console", name, "-n", ns)
-	stdin, err := console.StdinPipe()
+	isVM := kubevirt.NewClient(ns).VMExists(name)
+
+	ws.PayloadType = websocket.BinaryFrame
+	if isVM {
+		bridgeConsolePipes(ws, exec.Command("virtctl", "console", name, "-n", ns))
+		return
+	}
+	// kubectl exec's -t requires a real local TTY on its end — it checks
+	// isatty on this process's stdin, which a bare os/exec pipe fails (kubectl
+	// errors "Unable to use a TTY - input is not a terminal or the right kind
+	// of file"). virtctl console has no such check (it's not an exec session,
+	// it's a virtio-serial device), which is why the VM path above can use
+	// plain pipes but this one needs a real pty.
+	shellCmd, err := ct.ExecCommand(name, ns)
 	if err != nil {
 		return
 	}
-	stdout, err := console.StdoutPipe()
+	args := append([]string{"exec", "-i", "-t", name, "-n", ns, "--"}, shellCmd...)
+	bridgeConsolePTY(ws, exec.Command("kubectl", args...))
+}
+
+// bridgeConsolePipes wires cmd's stdin/stdout to ws via plain OS pipes —
+// fine for commands (like virtctl console) that don't check isatty.
+func bridgeConsolePipes(ws *websocket.Conn, cmd *exec.Cmd) {
+	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return
 	}
-	console.Stderr = console.Stdout
-	if err := console.Start(); err != nil {
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return
+	}
+	cmd.Stderr = cmd.Stdout
+	if err := cmd.Start(); err != nil {
 		return
 	}
 	defer func() {
-		console.Process.Kill()
-		console.Wait()
+		cmd.Process.Kill()
+		cmd.Wait()
 	}()
 
-	ws.PayloadType = websocket.BinaryFrame
 	done := make(chan struct{}, 2)
 	go func() { io.Copy(stdin, ws); done <- struct{}{} }()
 	go func() { io.Copy(ws, stdout); done <- struct{}{} }()
 	<-done
 }
 
-func freePort() (int, error) {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+// bridgeConsolePTY wires cmd to a real pseudo-terminal — needed for
+// commands (like kubectl exec -t) that check isatty on their own stdin.
+func bridgeConsolePTY(ws *websocket.Conn, cmd *exec.Cmd) {
+	f, err := pty.Start(cmd)
 	if err != nil {
-		return 0, err
+		return
 	}
-	defer l.Close()
-	return l.Addr().(*net.TCPAddr).Port, nil
+	defer func() {
+		f.Close()
+		cmd.Process.Kill()
+		cmd.Wait()
+	}()
+
+	done := make(chan struct{}, 2)
+	go func() { io.Copy(f, ws); done <- struct{}{} }()
+	go func() { io.Copy(ws, f); done <- struct{}{} }()
+	<-done
 }
+

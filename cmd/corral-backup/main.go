@@ -7,15 +7,17 @@
 package main
 
 import (
+	"encoding/base64"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/spf13/cobra"
+	"github.com/tuna-os/corral/pkg/cronops"
 	"github.com/tuna-os/corral/pkg/kubevirt"
 	"github.com/tuna-os/corral/pkg/shell"
-	"github.com/spf13/cobra"
 )
 
 // runner shells out to rclone/virtctl; swapped in tests.
@@ -46,7 +48,7 @@ func rootCmd() *cobra.Command {
 			"`<remote>:<bucket>/<path>`.",
 	}
 	root.PersistentFlags().StringVarP(&flagNamespace, "namespace", "n", "", "VM namespace (default: corral's default)")
-	root.AddCommand(createCmd(), restoreCmd(), listCmd())
+	root.AddCommand(createCmd(), restoreCmd(), listCmd(), scheduleCmd(), unscheduleCmd(), schedulesCmd())
 	return root
 }
 
@@ -177,4 +179,164 @@ func ensureRclone() error {
 		return fmt.Errorf("rclone not found or not configured — install it and run `rclone config` for your S3/R2 remote")
 	}
 	return nil
+}
+
+// ── Scheduled backups (CronJobs) ───────────────────────────────────
+
+const rcloneMountPath = "/root/.config/rclone"
+
+func cronJobName(vm string) string { return "corral-backup-" + vm }
+func secretName(vm string) string  { return "corral-backup-rclone-" + vm }
+func scheduleLabelKey() string     { return "corral.dev/backupsched" }
+
+// rcloneConfigPath resolves the local rclone config file the same way
+// rclone itself does: $RCLONE_CONFIG if set, else ~/.config/rclone/rclone.conf.
+func rcloneConfigPath() (string, error) {
+	if p := os.Getenv("RCLONE_CONFIG"); p != "" {
+		return p, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".config", "rclone", "rclone.conf"), nil
+}
+
+// applyRcloneSecret mirrors the caller's local rclone config (which holds
+// the remote's credentials) into a namespaced Secret the CronJob pod mounts
+// — the CronJob runs in-cluster with no access to the machine that ran
+// `schedule`, so the credentials have to travel with it.
+func applyRcloneSecret(name, ns string) error {
+	path, err := rcloneConfigPath()
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("reading local rclone config (%s) — configure your remote first with `rclone config`: %w", path, err)
+	}
+	secret := map[string]any{
+		"apiVersion": "v1",
+		"kind":       "Secret",
+		"metadata":   map[string]any{"name": name, "namespace": ns},
+		"data":       map[string]any{"rclone.conf": base64.StdEncoding.EncodeToString(data)},
+	}
+	return kubevirt.Apply(secret)
+}
+
+func addSchedule(vm, ns, cron, dest string, keep int) error {
+	sec := secretName(vm)
+	if err := applyRcloneSecret(sec, ns); err != nil {
+		return err
+	}
+	for _, obj := range []map[string]any{
+		cronops.ServiceAccount(ns),
+		cronops.Role(ns),
+		cronops.RoleBinding(ns),
+		cronops.CronJobWithSecret(cronJobName(vm), ns, cron,
+			cronops.BackupScript(vm, ns, dest, keep),
+			map[string]string{scheduleLabelKey(): vm}, sec, rcloneMountPath),
+	} {
+		if err := kubevirt.Apply(obj); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func scheduleCmd() *cobra.Command {
+	var every, dest string
+	var keep int
+	c := &cobra.Command{
+		Use:   "schedule <vm>",
+		Short: "Schedule periodic backups for a VM (with retention pruning) as an in-cluster CronJob",
+		Long: "Creates a CronJob that runs entirely in-cluster (no workstation needs to be\n" +
+			"online) — it fetches virtctl + rclone at runtime, exports the VM's disk,\n" +
+			"uploads it to the remote, and prunes backups for this VM beyond --keep.\n\n" +
+			"Your local rclone config (with the remote's credentials) is copied into a\n" +
+			"namespaced Secret the CronJob mounts — run `rclone config` locally first.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			vm := args[0]
+			cron, err := cronExpr(every)
+			if err != nil {
+				return err
+			}
+			if keep < 1 {
+				return fmt.Errorf("--keep must be >= 1")
+			}
+			if dest == "" {
+				return fmt.Errorf("--to is required, e.g. --to r2:backups/corral")
+			}
+			if err := addSchedule(vm, ns(), cron, dest, keep); err != nil {
+				return err
+			}
+			fmt.Fprintf(os.Stderr, "backup schedule for %s: %q → %s, keeping %d (CronJob %s/%s)\n",
+				vm, cron, dest, keep, ns(), cronJobName(vm))
+			return nil
+		},
+	}
+	c.Flags().StringVar(&every, "every", "24h", "Interval (30m, 1h, 6h, 12h, 24h) or a 5-field cron expression")
+	c.Flags().StringVar(&dest, "to", "", "rclone destination dir, e.g. r2:backups/corral (required)")
+	c.Flags().IntVar(&keep, "keep", 7, "Backups to retain per VM")
+	return c
+}
+
+func unscheduleCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "unschedule <vm>",
+		Short: "Remove a VM's backup schedule (existing backups on the remote are kept)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			vm := args[0]
+			out, err := runner.Run("kubectl", "delete", "cronjob", cronJobName(vm), "-n", ns(), "--ignore-not-found")
+			if err != nil {
+				return fmt.Errorf("%s", strings.TrimSpace(string(out)))
+			}
+			out, err = runner.Run("kubectl", "delete", "secret", secretName(vm), "-n", ns(), "--ignore-not-found")
+			if err != nil {
+				return fmt.Errorf("%s", strings.TrimSpace(string(out)))
+			}
+			return nil
+		},
+	}
+}
+
+func schedulesCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "schedules",
+		Short: "List backup schedules",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			out, err := runner.Run("kubectl", "get", "cronjobs", "-n", ns(),
+				"-l", scheduleLabelKey(), "-o",
+				"custom-columns=VM:.metadata.labels.corral\\.dev/backupsched,SCHEDULE:.spec.schedule,SUSPENDED:.spec.suspend,LAST:.status.lastScheduleTime")
+			if err != nil {
+				return fmt.Errorf("%s", strings.TrimSpace(string(out)))
+			}
+			fmt.Print(string(out))
+			return nil
+		},
+	}
+}
+
+// cronExpr accepts either a supported interval shorthand or a 5-field cron
+// expression and returns the cron expression. Matches corral-snapsched's
+// convention exactly, for a consistent --every UX across scheduled-op plugins.
+func cronExpr(every string) (string, error) {
+	switch every {
+	case "30m":
+		return "*/30 * * * *", nil
+	case "1h":
+		return "0 * * * *", nil
+	case "6h":
+		return "0 */6 * * *", nil
+	case "12h":
+		return "0 */12 * * *", nil
+	case "24h":
+		return "0 3 * * *", nil // daily at 03:00
+	}
+	if len(strings.Fields(every)) == 5 {
+		return every, nil
+	}
+	return "", fmt.Errorf("--every must be one of 30m/1h/6h/12h/24h or a 5-field cron expression, got %q", every)
 }

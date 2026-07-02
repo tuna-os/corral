@@ -3,6 +3,7 @@ package proxmox
 import (
 	"fmt"
 	"hash/crc32"
+	"sort"
 	"strings"
 
 	"github.com/tuna-os/corral/pkg/types"
@@ -87,6 +88,129 @@ func VMEntry(vm *types.VM, vmid int, node string) map[string]any {
 		"uptime":   0,
 		"template": 0,
 	}
+}
+
+// ── Nodes ─────────────────────────────────────────────────────────
+
+// NodeStatus maps a K8s node's Ready condition to Proxmox's online/offline
+// vocabulary.
+func NodeStatus(ready bool) string {
+	if ready {
+		return "online"
+	}
+	return "offline"
+}
+
+// NodeEntry builds a full Proxmox node row, as returned by GET /nodes.
+func NodeEntry(n NodeInfo) map[string]any {
+	return map[string]any{
+		"node":            n.Name,
+		"id":              "node/" + n.Name,
+		"type":            "node",
+		"status":          NodeStatus(n.Ready),
+		"maxcpu":          n.CPU,
+		"maxmem":          MemBytes(n.MemRaw),
+		"ssl_fingerprint": "",
+		"uptime":          0,
+		"cpu":             0.0,
+		"mem":             0,
+		"maxdisk":         0,
+		"disk":            0,
+		"level":           "",
+	}
+}
+
+// NodeResourceEntry builds the abbreviated node row used by
+// GET /cluster/resources?type=node — a subset of NodeEntry's fields.
+func NodeResourceEntry(n NodeInfo) map[string]any {
+	return map[string]any{
+		"id": "node/" + n.Name, "node": n.Name, "type": "node",
+		"status": NodeStatus(n.Ready), "maxcpu": n.CPU, "maxmem": MemBytes(n.MemRaw),
+	}
+}
+
+// ── Pools ─────────────────────────────────────────────────────────
+
+// PoolsFromNamespaces groups vms by K8s namespace into Proxmox pool rows, as
+// returned by GET /pools — namespaces are corral's pools (see ADR-0001-adjacent
+// web-UI folder-view work: the namespace is the stable axis KubeVirt VMs live
+// on, unlike node, which changes under live migration). vmidFor resolves each
+// VM's Proxmox vmid the same way vmEntry/vmEntryWithID do.
+func PoolsFromNamespaces(vms []types.VM, vmidFor func(name string) int) []map[string]any {
+	byNS := map[string][]int{}
+	for _, vm := range vms {
+		if vm.Namespace == "" {
+			continue
+		}
+		byNS[vm.Namespace] = append(byNS[vm.Namespace], vmidFor(vm.Name))
+	}
+	names := make([]string, 0, len(byNS))
+	for ns := range byNS {
+		names = append(names, ns)
+	}
+	sort.Strings(names)
+
+	out := make([]map[string]any, 0, len(names))
+	for _, ns := range names {
+		members := byNS[ns]
+		sort.Ints(members)
+		out = append(out, map[string]any{"poolid": ns, "members": members})
+	}
+	return out
+}
+
+// ── Storage ───────────────────────────────────────────────────────
+
+// ProxmoxStorageEntry builds a Proxmox storage row from a K8s StorageClass,
+// as returned by GET /nodes/{node}/storage.
+func ProxmoxStorageEntry(sc StorageEntry, node string) map[string]any {
+	return map[string]any{
+		"storage": sc.Name,
+		"node":    node,
+		"type":    sc.Type,
+		"content": "images,rootdir",
+		"active":  1,
+		"enabled": 1,
+		"shared":  0,
+		"avail":   0,
+		"total":   0,
+		"used":    0,
+	}
+}
+
+// ── Access control users/groups ──────────────────────────────────
+
+// RBACUsersToProxmox maps K8s RBAC users onto Proxmox user rows, as returned
+// by GET /access/users. See docs/adr/0001-k8s-rbac-to-proxmox-privileges.md.
+func RBACUsersToProxmox(users []RBACUser) []map[string]any {
+	var out []map[string]any
+	for _, u := range users {
+		out = append(out, map[string]any{
+			"userid":    u.UserID,
+			"enable":    1,
+			"expire":    0,
+			"email":     "",
+			"comment":   u.Comment,
+			"firstname": "",
+			"lastname":  "",
+			"tokens":    []any{},
+		})
+	}
+	return out
+}
+
+// RBACGroupsToProxmox maps K8s RBAC groups onto Proxmox group rows, as
+// returned by GET /access/groups.
+func RBACGroupsToProxmox(groups []RBACGroup) []map[string]any {
+	var out []map[string]any
+	for _, g := range groups {
+		out = append(out, map[string]any{
+			"groupid": g.GroupID,
+			"comment": "",
+			"members": []any{},
+		})
+	}
+	return out
 }
 
 // ── Access control roles ─────────────────────────────────────────

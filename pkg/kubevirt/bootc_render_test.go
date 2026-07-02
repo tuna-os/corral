@@ -14,7 +14,7 @@ import (
 // manual composefs key injection, and the console/sshd kargs).
 func TestRenderBuilderVM(t *testing.T) {
 	vm := generateBuilderVM("e2e-x-bootc-builder", "corral-vms",
-		"e2e-x-bootc-disk", "e2e-x-bootc-builder-cloudinit")
+		"e2e-x-bootc-disk", "e2e-x-bootc-builder-cloudinit", "quay.io/centos-bootc/centos-bootc:stream9")
 
 	data, err := json.Marshal(vm)
 	if err != nil {
@@ -36,7 +36,7 @@ func TestRenderBuilderVM(t *testing.T) {
 
 	// The recipe lives in the Secret's userdata.
 	sec := generateBuilderSecret("e2e-x-bootc-builder-cloudinit", "corral-vms",
-		"ghcr.io/projectbluefin/dakota:testing", "ssh-ed25519 AAAATESTKEY user@host")
+		"ghcr.io/projectbluefin/dakota:testing", "ssh-ed25519 AAAATESTKEY user@host", "")
 	script := sec["stringData"].(map[string]any)["userdata"].(string)
 	for _, want := range []string{
 		"ghcr.io/projectbluefin/dakota:testing", // image substituted

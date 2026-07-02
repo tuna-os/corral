@@ -21,6 +21,8 @@ func init() {
 	bootcBuildFunc = bootcBuildDisk
 	bootcVMFunc = generateBootcVM
 	bootcRebuildFunc = bootcRebuild
+	bootcResumeFunc = bootcResumeState
+	bootcCleanupFunc = cleanupBuilder
 }
 
 // The bootc disk is built inside a short-lived **builder VM**, not a pod. The
@@ -95,7 +97,10 @@ func bootcRebuild(name, namespace, imageURI, sshPublicKey, diskSize string, prog
 		time.Sleep(2 * time.Second)
 	}
 
-	if _, err := bootcBuildDisk(name, namespace, imageURI, sshPublicKey, diskSize, progress); err != nil {
+	// Rebuild keeps whatever storage class the existing PVC used — "" tells
+	// bootcBuildDisk to fall back to PreferredStorageClass(), same as before
+	// storageClass existed as an explicit override.
+	if _, err := bootcBuildDisk(name, namespace, imageURI, sshPublicKey, diskSize, "", "", progress); err != nil {
 		return fmt.Errorf("rebuild: %w", err)
 	}
 
@@ -110,12 +115,16 @@ func bootcRebuild(name, namespace, imageURI, sshPublicKey, diskSize string, prog
 // block-mode target PVC, runs a short-lived builder VM that installs imageURI
 // onto it via `bootc install to-disk`, waits for that VM to finish, then deletes
 // the builder (keeping the disk). Progress/builder logs go to progress.
-func bootcBuildDisk(name, namespace, imageURI, sshPublicKey, diskSize string, progress io.Writer) (*BootcBuildResult, error) {
+// storageClass "" falls back to PreferredStorageClass().
+func bootcBuildDisk(name, namespace, imageURI, sshPublicKey, diskSize, storageClass, provisionScript string, progress io.Writer) (*BootcBuildResult, error) {
 	if progress == nil {
 		progress = os.Stderr
 	}
 	if diskSize == "" {
 		diskSize = "50Gi"
+	}
+	if storageClass == "" {
+		storageClass = PreferredStorageClass()
 	}
 
 	pvcName := name + "-bootc-disk"
@@ -125,7 +134,7 @@ func bootcBuildDisk(name, namespace, imageURI, sshPublicKey, diskSize string, pr
 	fmt.Fprintf(progress, "  Disk:   pvc/%s (%s, block mode)\n", pvcName, diskSize)
 
 	// Step 1: block-mode target PVC the builder VM installs onto as a raw device.
-	pvc := generateBlockPVC(pvcName, namespace, diskSize, PreferredStorageClass())
+	pvc := generateBlockPVC(pvcName, namespace, diskSize, storageClass)
 	data, err := json.Marshal(pvc)
 	if err != nil {
 		return nil, fmt.Errorf("marshaling PVC: %w", err)
@@ -135,14 +144,13 @@ func bootcBuildDisk(name, namespace, imageURI, sshPublicKey, diskSize string, pr
 	}
 
 	// Step 2: the builder VM. Clean up any stale one first so cloud-init re-runs.
-	exec.Command("kubectl", "delete", "vm", builderName, "-n", namespace, "--ignore-not-found").Run()
-	exec.Command("kubectl", "delete", "secret", builderName+"-cloudinit", "-n", namespace, "--ignore-not-found").Run()
+	cleanupBuilder(builderName, namespace)
 	c := NewClient(namespace)
 	c.waitStopped(builderName)
 
 	// The cloud-init script is larger than KubeVirt's 2 KB inline userData limit,
 	// so deliver it via a Secret the VM references with cloudInitNoCloud.secretRef.
-	secret := generateBuilderSecret(builderName+"-cloudinit", namespace, imageURI, sshPublicKey)
+	secret := generateBuilderSecret(builderName+"-cloudinit", namespace, imageURI, sshPublicKey, provisionScript)
 	sdata, err := json.Marshal(secret)
 	if err != nil {
 		return nil, fmt.Errorf("marshaling builder secret: %w", err)
@@ -151,7 +159,7 @@ func bootcBuildDisk(name, namespace, imageURI, sshPublicKey, diskSize string, pr
 		return nil, fmt.Errorf("creating builder secret: %w", err)
 	}
 
-	builder := generateBuilderVM(builderName, namespace, pvcName, builderName+"-cloudinit")
+	builder := generateBuilderVM(builderName, namespace, pvcName, builderName+"-cloudinit", imageURI)
 	bdata, err := json.Marshal(builder)
 	if err != nil {
 		return nil, fmt.Errorf("marshaling builder VM: %w", err)
@@ -165,6 +173,9 @@ func bootcBuildDisk(name, namespace, imageURI, sshPublicKey, diskSize string, pr
 	}
 
 	// Step 3: wait for the builder to install the disk (streaming its serial log).
+	// If this process gets interrupted here (Ctrl+C, SSH drop), the builder VM
+	// keeps running/finishes independently — see bootcResumeState, which lets a
+	// later `corral bootc create --resume` pick up from here instead of Step 4.
 	fmt.Fprintf(progress, "  Builder VM started — installing (this can take 20-40 min)...\n")
 	if err := waitForBuilderVM(builderName, namespace, progress); err != nil {
 		exec.Command("kubectl", "delete", "vm", builderName, "-n", namespace, "--ignore-not-found").Run()
@@ -172,11 +183,48 @@ func bootcBuildDisk(name, namespace, imageURI, sshPublicKey, diskSize string, pr
 	}
 
 	// Step 4: delete the builder VM + its cloud-init secret (keeps the disk PVC).
-	exec.Command("kubectl", "delete", "vm", builderName, "-n", namespace, "--ignore-not-found").Run()
-	exec.Command("kubectl", "delete", "secret", builderName+"-cloudinit", "-n", namespace, "--ignore-not-found").Run()
+	cleanupBuilder(builderName, namespace)
 
 	fmt.Fprintf(progress, "  Disk ready: pvc/%s\n", pvcName)
 	return &BootcBuildResult{PVCName: pvcName}, nil
+}
+
+// cleanupBuilder deletes the builder VM and its cloud-init secret, leaving
+// the disk PVC (which the final VM boots from) untouched.
+func cleanupBuilder(builderName, namespace string) {
+	exec.Command("kubectl", "delete", "vm", builderName, "-n", namespace, "--ignore-not-found").Run()
+	exec.Command("kubectl", "delete", "secret", builderName+"-cloudinit", "-n", namespace, "--ignore-not-found").Run()
+}
+
+// bootcResumeState checks whether name has a completed-but-unfinished bootc
+// build: a builder VM that reports "Succeeded" (the guest shut itself down
+// after `bootc install to-disk`, the only path that reaches CORRAL_BUILD_OK)
+// and a disk PVC that exists — the state left behind when the CLI that
+// started the build is interrupted (Ctrl+C, SSH drop) before it can run
+// Step 4/create the final VM. imageURI is read back from the annotation
+// generateBuilderVM records. ready=false means there's nothing to resume;
+// failed=true means a builder exists but didn't succeed (don't resume, the
+// caller should report the failure and let the user retry a fresh build).
+func bootcResumeState(name, namespace string) (imageURI, pvcName string, ready, failed bool) {
+	builderName := name + "-bootc-builder"
+	pvcName = name + "-bootc-disk"
+
+	out, err := exec.Command("kubectl", "get", "vm", builderName, "-n", namespace,
+		"-o", `jsonpath={.metadata.annotations.corral\.bootc/image}`).Output()
+	if err != nil || strings.TrimSpace(string(out)) == "" {
+		return "", pvcName, false, false // no builder (or no annotation) — nothing to resume
+	}
+	imageURI = strings.TrimSpace(string(out))
+
+	phase := builderVMIPhase(builderName, namespace)
+	if phase != "Succeeded" {
+		return imageURI, pvcName, false, phase == "Failed"
+	}
+
+	if err := exec.Command("kubectl", "get", "pvc", pvcName, "-n", namespace).Run(); err != nil {
+		return imageURI, pvcName, false, false // builder succeeded but the disk is gone — can't resume
+	}
+	return imageURI, pvcName, true, false
 }
 
 // generateBlockPVC returns a block-mode PVC manifest. The builder VM attaches it
@@ -215,11 +263,12 @@ func builderImage() string {
 // desktop images ship sshd disabled, and corral reaches VMs over SSH.
 // builderScript returns the cloud-init the builder VM runs, with the image and
 // SSH key substituted in.
-func builderScript(imageURI, sshPublicKey string) string {
+func builderScript(imageURI, sshPublicKey, provisionScript string) string {
 	return strings.NewReplacer(
 		"__IMAGE__", imageURI,
 		"__SSHKEY__", strings.TrimSpace(sshPublicKey),
 		"__MIRRORCONF__", builderMirrorConf(),
+		"__PROVISION__", provisionScript,
 	).Replace(builderCloudInit)
 }
 
@@ -281,7 +330,7 @@ func builderMirrorConf() string {
 
 // generateBuilderSecret holds the cloud-init userData (too large for KubeVirt's
 // 2 KB inline limit) for the builder VM to reference via cloudInitNoCloud.secretRef.
-func generateBuilderSecret(name, namespace, imageURI, sshPublicKey string) map[string]any {
+func generateBuilderSecret(name, namespace, imageURI, sshPublicKey, provisionScript string) map[string]any {
 	return map[string]any{
 		"apiVersion": "v1",
 		"kind":       "Secret",
@@ -290,11 +339,16 @@ func generateBuilderSecret(name, namespace, imageURI, sshPublicKey string) map[s
 			"namespace": namespace,
 			"labels":    map[string]any{"corral-bootc-builder": name},
 		},
-		"stringData": map[string]any{"userdata": builderScript(imageURI, sshPublicKey)},
+		"stringData": map[string]any{"userdata": builderScript(imageURI, sshPublicKey, provisionScript)},
 	}
 }
 
-func generateBuilderVM(name, namespace, pvcName, secretName string) map[string]any {
+// generateBuilderVM builds the short-lived builder VM manifest. imageURI is
+// recorded as an annotation — not used by the builder itself (it's baked
+// into the cloud-init secret instead) but read back by bootcResumeState if
+// the CLI that started the build gets interrupted before it can create the
+// final VM: the annotation is what lets a later `--resume` recover it.
+func generateBuilderVM(name, namespace, pvcName, secretName, imageURI string) map[string]any {
 	disk := func(n string, extra map[string]any) map[string]any {
 		d := map[string]any{"name": n, "disk": map[string]any{"bus": "virtio"}}
 		for k, v := range extra {
@@ -307,9 +361,10 @@ func generateBuilderVM(name, namespace, pvcName, secretName string) map[string]a
 		"apiVersion": "kubevirt.io/v1",
 		"kind":       "VirtualMachine",
 		"metadata": map[string]any{
-			"name":      name,
-			"namespace": namespace,
-			"labels":    map[string]any{"corral-bootc-builder": name},
+			"name":        name,
+			"namespace":   namespace,
+			"labels":      map[string]any{"corral-bootc-builder": name},
+			"annotations": map[string]any{"corral.bootc/image": imageURI},
 		},
 		"spec": map[string]any{
 			"runStrategy": "Manual",
@@ -443,6 +498,18 @@ write_files:
         done
         sync; umount /mnt/root 2>/dev/null
       fi
+      # Run custom provisioning script chrooted into the root filesystem
+      mkdir -p /mnt/root; mount /dev/disk/by-id/virtio-target-part3 /mnt/root 2>/dev/null
+      cat << 'EOF' > /mnt/root/tmp/provision.sh
+__PROVISION__
+EOF
+      if [ -s /mnt/root/tmp/provision.sh ]; then
+        chmod +x /mnt/root/tmp/provision.sh
+        chroot /mnt/root /bin/bash /tmp/provision.sh
+      fi
+      rm -f /mnt/root/tmp/provision.sh
+      sync; umount /mnt/root 2>/dev/null
+
       echo CORRAL_BUILD_OK
       sync; poweroff
 runcmd:

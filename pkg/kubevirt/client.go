@@ -2,9 +2,11 @@ package kubevirt
 
 import (
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"math/big"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,6 +22,11 @@ import (
 
 // LastPassword holds the cloud-init password from the most recent GenerateVM call.
 var LastPassword string
+
+// AlpineImage is the base for the VM port-proxy's init/main containers —
+// digest-pinned (see #66) so a supply-chain push to the mutable :latest tag
+// can't silently swap what runs with the proxy's in-cluster credentials.
+const AlpineImage = "alpine:latest@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b"
 
 // mergeCloudInit combines the generated #cloud-config user-data with the
 // user-supplied extra YAML. A raw string append produces duplicate top-level
@@ -520,24 +527,10 @@ func (c *Client) SSH(name, username, identityFile, command string, port int, pas
 	args = append(args, "vm/"+name)
 
 	if password != "" {
-		return runWithSSHPass(password, virtctl, args...)
+		return shell.RunWithSSHPass(password, virtctl, args...)
 	}
 
 	cmd := exec.Command(virtctl, args...)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
-}
-
-// runWithSSHPass runs a command with sshpass for password-based auth.
-func runWithSSHPass(password, bin string, args ...string) error {
-	sshpass, err := exec.LookPath("sshpass")
-	if err != nil {
-		return fmt.Errorf("sshpass not found (needed for password auth) — install: brew install sshpass")
-	}
-	allArgs := append([]string{"-p", password, bin}, args...)
-	cmd := exec.Command(sshpass, allArgs...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -807,8 +800,51 @@ func GeneratePVC(name, namespace, size string) map[string]any {
 	}
 }
 
+// isoSizeFallbackGi is used when DetectISOSize can't determine the real
+// size (HEAD blocked, no Content-Length). Deliberately generous — CDI
+// crash-loops forever on an undersized PVC rather than failing fast (see
+// DetectISOSize's doc comment for the incident that found this), so a
+// too-big guess is far cheaper than a too-small one.
+const isoSizeFallbackGi = 12
+
+// DetectISOSize does a best-effort HTTP HEAD on isoURL to size its PVC
+// correctly. GenerateDataVolume used to hardcode "6Gi" for every ISO
+// regardless of actual size — harmless for small Linux install ISOs, but a
+// real Windows 11 ISO (~7.2GB) blew straight through it: CDI's importer
+// doesn't fail fast on an undersized target, it crash-loops (exit 1,
+// restart, retry, repeat) forever, silently burning hours before anyone
+// notices the DataVolume is stuck. Found and fixed after a live Windows
+// VM creation sat crash-looping for 5+ hours undetected.
+//
+// Rounds the detected size up to the next GiB plus a 1GiB safety margin.
+// Falls back to isoSizeFallbackGi on any failure (network error, HEAD not
+// supported, no Content-Length) — best-effort, not a hard requirement.
+func DetectISOSize(isoURL string) string {
+	resp, err := http.Head(isoURL)
+	if err != nil {
+		return fmt.Sprintf("%dGi", isoSizeFallbackGi)
+	}
+	defer resp.Body.Close()
+	if resp.ContentLength <= 0 {
+		return fmt.Sprintf("%dGi", isoSizeFallbackGi)
+	}
+	const gib = 1 << 30
+	const minSizeGi = 2 // a real ISO smaller than this is unusual; floor rather than provision a suspiciously tiny PVC
+	sizeGi := int((resp.ContentLength+gib-1)/gib) + 1 // round up + 1GiB margin
+	if sizeGi < minSizeGi {
+		sizeGi = minSizeGi
+	}
+	return fmt.Sprintf("%dGi", sizeGi)
+}
+
 // GenerateDataVolume creates a CDI DataVolume to import an ISO from URL.
-func GenerateDataVolume(name, namespace, isoURL string) map[string]any {
+// size should come from DetectISOSize (or an explicit override) — an
+// undersized PVC doesn't fail fast, it crash-loops forever (see
+// DetectISOSize's doc comment).
+func GenerateDataVolume(name, namespace, isoURL, size string) map[string]any {
+	if size == "" {
+		size = fmt.Sprintf("%dGi", isoSizeFallbackGi)
+	}
 	return map[string]any{
 		"apiVersion": "cdi.kubevirt.io/v1beta1",
 		"kind":       "DataVolume",
@@ -830,7 +866,7 @@ func GenerateDataVolume(name, namespace, isoURL string) map[string]any {
 			"pvc": map[string]any{
 				"accessModes": []string{"ReadWriteOnce"},
 				"resources": map[string]any{
-					"requests": map[string]any{"storage": "6Gi"},
+					"requests": map[string]any{"storage": size},
 				},
 			},
 		},
@@ -843,11 +879,9 @@ func GenerateBootDataVolume(name, namespace, url, size, storageClass string) map
 	if size == "" {
 		size = "20G"
 	}
-	dv := GenerateDataVolume(name, namespace, url)
-	pvc := dv["spec"].(map[string]any)["pvc"].(map[string]any)
-	pvc["resources"].(map[string]any)["requests"].(map[string]any)["storage"] = size
+	dv := GenerateDataVolume(name, namespace, url, size)
 	if storageClass != "" {
-		pvc["storageClassName"] = storageClass
+		dv["spec"].(map[string]any)["pvc"].(map[string]any)["storageClassName"] = storageClass
 	}
 	return dv
 }
@@ -945,7 +979,7 @@ func GenerateProxyDeployment(name, namespace string, ports []int) map[string]any
 	if hasVNC {
 		initContainers = append(initContainers, map[string]any{
 			"name":  "install-tools",
-			"image": "alpine:latest",
+			"image": AlpineImage,
 			"securityContext": map[string]any{
 				"allowPrivilegeEscalation": false,
 				"capabilities":             map[string]any{"drop": []string{"ALL"}},
@@ -993,7 +1027,7 @@ func GenerateProxyDeployment(name, namespace string, ports []int) map[string]any
 					"containers": []map[string]any{
 						{
 							"name":  "proxy",
-							"image": "alpine:latest",
+							"image": AlpineImage,
 							"securityContext": map[string]any{
 								"allowPrivilegeEscalation": false,
 								"capabilities":             map[string]any{"drop": []string{"ALL"}},
@@ -1052,6 +1086,13 @@ func applyProxyManifest(label, manifest string) error {
 	}
 	return fmt.Errorf("proxy %s: %w", label, err)
 }
+
+// ConsolePorts are the ports exposed on the tailnet proxy for any kubevirt
+// VM: SSH, VNC, RDP. Opening a port nobody's listening on is harmless (the
+// tailnet is already the auth boundary — see ADR-0003); this is the uniform
+// list every VM-creation path should pass to ApplyProxy, regardless of guest
+// OS, so console access doesn't silently vary by which flow created the VM.
+var ConsolePorts = []int{22, 5900, 3389}
 
 // ApplyProxy creates/updates the proxy resources for a VM.
 func ApplyProxy(name, ns string, ports []int) error {
@@ -1160,10 +1201,13 @@ func CreateVM(opts types.CreateOpts) error {
 	if diskSize == "" {
 		diskSize = "20G"
 	}
-	sc := PreferredStorageClass()
+	sc := opts.StorageClass
+	if sc == "" {
+		sc = PreferredStorageClass()
+	}
 
 	if hasISO {
-		if err := Apply(GenerateDataVolume(name+"-iso", ns, opts.ISO)); err != nil {
+		if err := Apply(GenerateDataVolume(name+"-iso", ns, opts.ISO, DetectISOSize(opts.ISO))); err != nil {
 			return fmt.Errorf("creating ISO DataVolume: %w", err)
 		}
 		fmt.Fprintf(os.Stderr, "ISO DataVolume: %s-iso (importing from %s)\n", name, opts.ISO)
@@ -1187,10 +1231,77 @@ func CreateVM(opts types.CreateOpts) error {
 		}
 	}
 
-	if err := Apply(GenerateVM(opts)); err != nil {
+	vm := GenerateVM(opts)
+
+	// KubeVirt limits inline cloud-init userData to 2048 bytes.  When
+	// provisioning scripts (from Lima --file) exceed that, store the
+	// userData in a Secret and reference it via userDataSecretRef.
+	if userData, ok := extractUserData(volumesFromVM(vm)); ok && len(userData) > 2048 {
+		secretName := name + "-cloudinit"
+		if err := createCloudInitSecret(secretName, ns, userData); err != nil {
+			return fmt.Errorf("creating cloud-init Secret: %w", err)
+		}
+		replaceUserDataWithSecret(volumesFromVM(vm), secretName)
+	}
+
+	if err := Apply(vm); err != nil {
 		return fmt.Errorf("creating VM: %w", err)
 	}
 	return nil
+}
+
+// volumesFromVM extracts the volumes slice from a GenerateVM manifest.
+func volumesFromVM(vm map[string]any) []map[string]any {
+	spec, _ := vm["spec"].(map[string]any)
+	tmpl, _ := spec["template"].(map[string]any)
+	tmplSpec, _ := tmpl["spec"].(map[string]any)
+	vols, _ := tmplSpec["volumes"].([]map[string]any)
+	return vols
+}
+
+// extractUserData returns the inline userData string from the cloudInitNoCloud
+// volume, if present.
+func extractUserData(volumes []map[string]any) (string, bool) {
+	for _, v := range volumes {
+		ci, ok := v["cloudInitNoCloud"].(map[string]any)
+		if !ok {
+			continue
+		}
+		if ud, ok := ci["userData"].(string); ok && ud != "" {
+			return ud, true
+		}
+	}
+	return "", false
+}
+
+// replaceUserDataWithSecret swaps cloudInitNoCloud.userData for
+// secretRef to avoid KubeVirt's 2048-byte inline limit.
+func replaceUserDataWithSecret(volumes []map[string]any, secretName string) {
+	for _, v := range volumes {
+		ci, ok := v["cloudInitNoCloud"].(map[string]any)
+		if !ok {
+			continue
+		}
+		delete(ci, "userData")
+		ci["secretRef"] = map[string]any{"name": secretName}
+		return
+	}
+}
+
+// createCloudInitSecret creates a Secret containing the cloud-init userData.
+func createCloudInitSecret(name, ns, userData string) error {
+	secret := map[string]any{
+		"apiVersion": "v1",
+		"kind":       "Secret",
+		"metadata": map[string]any{
+			"name":      name,
+			"namespace": ns,
+		},
+		"data": map[string]any{
+			"userData": base64.StdEncoding.EncodeToString([]byte(userData)),
+		},
+	}
+	return Apply(secret)
 }
 
 // applyManifest pipes a YAML manifest string to kubectl apply.
@@ -1240,7 +1351,8 @@ func runPkg(name string, args ...string) ([]byte, error) {
 
 // cpuSpec builds a hotplug-ready CPU topology: one core/thread per socket so
 // that live CPU updates (which scale `sockets`) map 1:1 to vCPUs, with
-// maxSockets headroom for hotplug. Harmless without LiveUpdate enabled.
+// maxSockets headroom for hotplug. Uses host-passthrough CPU model so that
+// nested KVM (SVM/VMX) is available inside the guest for e2e testing.
 func cpuSpec(cpu int) map[string]any {
 	if cpu < 1 {
 		cpu = 1
@@ -1254,6 +1366,7 @@ func cpuSpec(cpu int) map[string]any {
 		"cores":      1,
 		"threads":    1,
 		"maxSockets": max,
+		"model":      "host-passthrough",
 	}
 }
 

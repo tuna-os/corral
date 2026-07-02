@@ -123,15 +123,85 @@ parameters: { type: snap }
 EOF
 ```
 
-Corral prefers a StorageClass named `longhorn` for new VM disks (falls back to
-the cluster default if absent).
+Corral prefers a StorageClass named `local-path` for new VM disks (local NVMe
+speed, no network IO) when present, falling back to the cluster default
+otherwise. Use `--storage-class` at create time to override per-VM.
+
+### 4c. TopoLVM on Talos: `dm_thin_pool` kernel module
+
+TopoLVM needs the `dm-thin-pool` kernel module for LVM thin provisioning. On
+Talos, that module is compiled as loadable (`CONFIG_DM_THIN_PROVISIONING=m`),
+and Talos blocks `modprobe`/`insmod` via seccomp even from privileged
+containers — so TopoLVM's `lvmd` DaemonSet pod can't load it itself:
+
+```
+# From any privileged container on the host
+insmod /lib/modules/dm-thin-pool.ko
+# → Operation not permitted (seccomp blocked)
+```
+
+Fix: add the modules to the Talos machine config so they load at boot, then
+reboot the affected nodes.
+
+```yaml
+machine:
+  kernel:
+    modules:
+      - name: dm_thin_pool
+      - name: dm_bio_prison
+      - name: dm_persistent_data
+      - name: dm_bufio
+```
+
+This is a Talos machine-config change, not something Corral or `just`
+recipes can apply for you — `corral doctor` doesn't currently detect it
+either (tracked as a possible future check, since the failure mode is a
+silently-stuck lvmd pod rather than a clear error).
+
+## 4d. GPU / PCI device passthrough (optional)
+
+The `gpu` extension (`corral gpu enable`) registers a PCI vendor:device
+selector in the KubeVirt CR so VMs can request it as a resource. That's the
+*Kubernetes* half — it assumes the **host** already has passthrough working:
+
+1. **IOMMU enabled** — in the BIOS/UEFI (`Intel VT-d` / `AMD-Vi`, sometimes
+   labeled "IOMMU") and on the kernel command line: `intel_iommu=on` (Intel)
+   or `amd_iommu=on` (AMD), plus `iommu=pt` is usually recommended. On Talos,
+   this is a kernel argument in the machine config:
+   ```yaml
+   machine:
+     install:
+       extraKernelArgs:
+         - intel_iommu=on   # or amd_iommu=on
+         - iommu=pt
+   ```
+2. **The device bound to `vfio-pci`**, not its normal driver (e.g. `nvidia`,
+   `amdgpu`) — otherwise the host kernel keeps it and KubeVirt's device
+   plugin never sees it as available. How you bind this depends on your
+   distro; Talos doesn't support arbitrary driver rebinding the way a
+   general-purpose Linux host does, so GPU passthrough on Talos specifically
+   needs the device to come up as `vfio-pci` from boot (via
+   `extraKernelArgs`, e.g. `vfio-pci.ids=10de:1234`, matched to the actual
+   PCI vendor:device ID from `lspci -nn`).
+
+`corral doctor` has a check for this — **GPU/PCI passthrough** — but it's an
+indirect signal, not a direct probe of IOMMU/vfio-pci (that would need a
+privileged pod/DaemonSet on the node, which none of Corral's other checks
+do). It runs only when a device is permitted (`corral gpu enable` has been
+used) and fails if that device is never reported **Allocatable** on any
+node — KubeVirt's device plugin only advertises devices it can actually
+bind, so "permitted but never allocatable anywhere" is the strongest
+symptom of a missing IOMMU/vfio-pci prerequisite that's checkable this way.
+It won't catch a *partially* working setup (e.g. allocatable on the wrong
+node) — check `kubectl describe node <name>` for the resource under
+`Allocatable` if passthrough isn't working the way you expect.
 
 ## 5. Deploy Corral
 
 ### Web UI (in-cluster)
 
 ```bash
-kubectl apply -f https://raw.githubusercontent.com/hanthor/corral/main/deploy/corral-web.yaml
+kubectl apply -f https://raw.githubusercontent.com/tuna-os/corral/main/deploy/corral-web.yaml
 ```
 
 `deploy/corral-web.yaml` creates a namespace (`tailvm`), a scoped
@@ -145,7 +215,7 @@ to your own Ingress/VPN.
 ### CLI / TUI
 
 ```bash
-go install github.com/hanthor/corral@latest      # or grab a release binary
+go install github.com/tuna-os/corral@latest      # or grab a release binary
 corral            # TUI
 corral web        # local web UI on 127.0.0.1:8006
 corral list

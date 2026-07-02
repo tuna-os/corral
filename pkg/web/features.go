@@ -3,7 +3,9 @@ package web
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -152,6 +154,37 @@ func handleScale(w http.ResponseWriter, r *http.Request) {
 	}
 	done := taskBegin("scale", ns+"/"+name)
 	if err := kubevirt.NewClient(ns).Scale(name, b.CPU, b.Mem); err != nil {
+		done(err)
+		errResp(w, http.StatusInternalServerError, err)
+		return
+	}
+	done(nil)
+	jsonResp(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// POST /api/vms/{ns}/{name}/options  body: {runStrategy?, firmware?, machineType?, bootOrder?}
+// Fields left unset (absent from the request body) are left unchanged — see
+// kubevirt.VMOptions for which fields apply live vs. need a restart.
+func handleSetOptions(w http.ResponseWriter, r *http.Request) {
+	ns, name := r.PathValue("ns"), r.PathValue("name")
+	var b struct {
+		RunStrategy *string        `json:"runStrategy"`
+		Firmware    *string        `json:"firmware"`
+		MachineType *string        `json:"machineType"`
+		BootOrder   map[string]int `json:"bootOrder"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
+		errResp(w, http.StatusBadRequest, err)
+		return
+	}
+	done := taskBegin("set options", ns+"/"+name)
+	opts := kubevirt.VMOptions{
+		RunStrategy: b.RunStrategy,
+		Firmware:    b.Firmware,
+		MachineType: b.MachineType,
+		BootOrder:   b.BootOrder,
+	}
+	if err := kubevirt.NewClient(ns).SetVMOptions(name, opts); err != nil {
 		done(err)
 		errResp(w, http.StatusInternalServerError, err)
 		return
@@ -398,14 +431,10 @@ func handleBootcRebuild(w http.ResponseWriter, r *http.Request) {
 	}
 	json.NewDecoder(r.Body).Decode(&b)
 	image := catalog.ResolveBootc(b.Image)
-	if image == "" && store != nil {
-		if e, ok := store.Get(name); ok {
-			image = e.Extra["bootc_image"]
-		}
-	}
 	if image == "" {
-		// The in-pod registry is lost on restart; fall back to the durable image
-		// annotation recorded on the VM at create time.
+		// The durable corral.bootc/image annotation on the VM, not the local
+		// registry (which is lost on server-pod restart and not the source
+		// of truth for this — see kubevirt.BootcImageOf).
 		image = kubevirt.BootcImageOf(name, ns)
 	}
 	if image == "" {
@@ -416,16 +445,13 @@ func handleBootcRebuild(w http.ResponseWriter, r *http.Request) {
 	sshKey := kubevirt.LoadSSHPublicKey()
 
 	id := fmt.Sprintf("bootc-rebuild-%s-%d", name, time.Now().UnixNano())
-	task := &buildTask{status: "running"}
+	task := newBuildTask()
 	tasks.Store(id, task)
 	done := taskBegin("bootc rebuild", ns+"/"+name)
 	go func() {
 		err := kubevirt.BootcRebuild(name, ns, image, sshKey, "", task)
 		if err == nil && store != nil {
-			store.Set(name, types.RegistryEntry{
-				Backend: "kubevirt", Namespace: ns,
-				Extra: map[string]string{"bootc_image": image},
-			})
+			store.Set(name, types.RegistryEntry{Backend: "kubevirt", Namespace: ns})
 		}
 		task.finish(err)
 		done(err)
@@ -544,6 +570,59 @@ func handleImportDataVolume(w http.ResponseWriter, r *http.Request) {
 	}
 	done(nil)
 	jsonResp(w, http.StatusOK, map[string]string{"name": b.Name})
+}
+
+// POST /api/datavolumes/upload?name=X&namespace=Y&size=Z&storageClass=W
+// Request body is the raw image bytes (fetch(url, {body: file}) from the
+// browser — no multipart parsing, the whole body is the file). Streams to a
+// temp file on this server's disk (io.Copy, not buffered in memory — images
+// are routinely multi-GB), then hands that path to virtctl image-upload as
+// a background task so the browser gets an immediate response and progress
+// shows in the task panel like a bootc build.
+func handleUploadDataVolume(w http.ResponseWriter, r *http.Request) {
+	name := r.URL.Query().Get("name")
+	ns := r.URL.Query().Get("namespace")
+	size := r.URL.Query().Get("size")
+	sc := r.URL.Query().Get("storageClass")
+	if name == "" || size == "" {
+		errResp(w, http.StatusBadRequest, fmt.Errorf("name and size are required"))
+		return
+	}
+	if ns == "" {
+		ns = kubevirt.DefaultNamespace
+	}
+
+	tmp, err := os.CreateTemp("", "corral-upload-*.img")
+	if err != nil {
+		errResp(w, http.StatusInternalServerError, err)
+		return
+	}
+	tmpPath := tmp.Name()
+	written, err := io.Copy(tmp, r.Body)
+	tmp.Close()
+	if err != nil {
+		os.Remove(tmpPath)
+		errResp(w, http.StatusBadRequest, fmt.Errorf("receiving upload: %w", err))
+		return
+	}
+	if written == 0 {
+		os.Remove(tmpPath)
+		errResp(w, http.StatusBadRequest, fmt.Errorf("empty upload"))
+		return
+	}
+
+	id := fmt.Sprintf("upload-%s-%d", name, time.Now().UnixNano())
+	task := newBuildTask()
+	tasks.Store(id, task)
+	done := taskBegin("upload image", ns+"/"+name)
+
+	go func() {
+		defer os.Remove(tmpPath)
+		err := kubevirt.UploadDataVolume(name, ns, tmpPath, size, sc, task)
+		task.finish(err)
+		done(err)
+	}()
+	jsonResp(w, http.StatusAccepted, map[string]string{"task": id})
 }
 
 // DELETE /api/datavolumes/{ns}/{name}

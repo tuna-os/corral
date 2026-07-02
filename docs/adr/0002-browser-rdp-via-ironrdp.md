@@ -67,3 +67,16 @@ IronRDP's web client:
 - Until phase 2 lands, browser users connect with a native RDP client via
   `virtctl port-forward` (or the windows plugin's `--rdp` proxy service);
   the UI says exactly that.
+
+## Update (2026-07-01)
+
+`rdpBridge` and `vncBridge` (pkg/web) currently shell out to `virtctl`
+directly with no seam and no tests — an architecture review flagged this
+alongside a concrete bug it caused (bootc VMs never got RDP exposed on the
+tailnet; the port lists at each VM-creation call site had drifted out of
+sync). The bridge is being deepened behind a `pkg/kubevirt.ConsoleDialer`
+seam (`Dial(ns, name, console) (net.Conn, error)`, real adapter wraps
+`virtctl`, fake adapter for tests). This doesn't change the phase 2 decision
+above — RDCleanPath, `ironrdp-web`, vendored WASM — it changes which
+internal seam that work sits on: phase 2 builds on `ConsoleDialer`, not on
+today's inline `exec.Command` calls.

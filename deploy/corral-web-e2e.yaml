@@ -38,7 +38,7 @@ spec:
       serviceAccountName: corral-web
       containers:
         - name: corral-web
-          image: ghcr.io/hanthor/corral:latest
+          image: ghcr.io/tuna-os/corral:latest
           imagePullPolicy: Always
           env:
             - name: CORRAL_NAMESPACE

@@ -32,7 +32,7 @@ the source of truth there.
 **Deployment modes:**
 1. **Local** — `corral web` (default `127.0.0.1:8006`; bind the Tailscale IP
    to share with the tailnet).
-2. **On-cluster** — `ghcr.io/hanthor/corral` image (alpine + corral +
+2. **On-cluster** — `ghcr.io/tuna-os/corral` image (alpine + corral +
    kubectl + virtctl), ServiceAccount with a scoped ClusterRole, Service
    annotated `tailscale.com/expose` → `corral.<tailnet>.ts.net`. Built and
    pushed by CI (`.github/workflows/ci.yml`).

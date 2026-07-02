@@ -1,14 +1,12 @@
 package web
 
 import (
-	"fmt"
 	"io"
 	"net"
 	"net/http"
-	"os/exec"
-	"strconv"
 	"time"
 
+	"github.com/tuna-os/corral/pkg/kubevirt"
 	"golang.org/x/net/websocket"
 )
 
@@ -40,10 +38,10 @@ func handleRDPCheck(w http.ResponseWriter, r *http.Request) {
 	jsonResp(w, http.StatusOK, map[string]any{"open": err == nil, "ip": info.IP})
 }
 
-// rdpBridge proxies a binary websocket to the VM's RDP port through
-// `virtctl port-forward`, the same pattern as the VNC bridge. This is a raw
-// RDP-over-websocket transport: anything that can speak RDP over a websocket
-// (an IronRDP-based client, a local wsproxy) can use it.
+// rdpBridge proxies a binary websocket to the VM's RDP console, the same
+// pattern as the VNC bridge. This is a raw RDP-over-websocket transport:
+// anything that can speak RDP over a websocket (an IronRDP-based client, a
+// local wsproxy) can use it.
 func rdpBridge(ws *websocket.Conn) {
 	defer ws.Close()
 	ns, name := ws.Request().PathValue("ns"), ws.Request().PathValue("name")
@@ -51,31 +49,8 @@ func rdpBridge(ws *websocket.Conn) {
 		return
 	}
 
-	port, err := freePort()
+	conn, err := consoleDialer.Dial(ns, name, kubevirt.RDP)
 	if err != nil {
-		return
-	}
-	proxy := exec.Command("virtctl", "port-forward", "vm/"+name,
-		fmt.Sprintf("%d:3389", port), "-n", ns)
-	proxy.Stdout = io.Discard
-	proxy.Stderr = io.Discard
-	if err := proxy.Start(); err != nil {
-		return
-	}
-	defer func() {
-		proxy.Process.Kill()
-		proxy.Wait()
-	}()
-
-	var conn net.Conn
-	for i := 0; i < 50; i++ {
-		conn, err = net.Dial("tcp", "127.0.0.1:"+strconv.Itoa(port))
-		if err == nil {
-			break
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
-	if conn == nil {
 		return
 	}
 	defer conn.Close()
