@@ -37,9 +37,10 @@ Design constraints:
 ## 2. Command reference
 
 ```
-corral                      # no args → interactive TUI
+corral                      # no args → interactive TUI (VMs and Containers side by side)
 corral list                 # unified table, both backends
 corral create <name> [flags]
+corral clone  <src> <dst>              # kubevirt: clone disk + config to a new VM
 corral start  <name>
 corral stop   <name>
 corral restart <name>                  # kubevirt: virtctl restart; qemu: stop+start
@@ -55,8 +56,12 @@ corral viewer <name>                   # VNC viewer via xdg-open
 corral ssh    <name> [-u user] [-i key] [-c cmd] [-p port] [--password p]
 corral logs   <name>                   # journalctl (qemu) / virt-launcher logs (kubevirt)
 corral config                          # show config + Tailscale auth key status
+corral doctor [--fix]                  # cluster health checks; --fix applies safe config-only fixes
 corral web [--addr host:port]          # Proxmox-style web UI (default 127.0.0.1:8006)
 corral completion <shell>              # cobra built-in
+
+corral ct create <name> --image <img> [--cpu 1] [--mem 512Mi] [--disk 5Gi] [--privileged]
+corral ct list|start|stop|delete|console <name>
 ```
 
 ### 2.0 KubeVirt operations & cluster requirements
@@ -92,6 +97,7 @@ cluster capabilities. Corral detects them and gates the UI rather than failing:
 | `--cloud-init-password` | kubevirt | password (default: random 12-char, stored in registry) |
 | `--cloud-init` | kubevirt | extra cloud-init user-data appended verbatim |
 | `--ts-authkey` | kubevirt | Tailscale auth key (default: config file / `TS_AUTHKEY`) |
+| `--storage-class, -s` | kubevirt | StorageClass for new disks (default: cluster preference) |
 | `--force` | both | overwrite existing VM |
 
 Name uniqueness is enforced across **both** backends before creation.
@@ -236,6 +242,36 @@ PVCs/DataVolumes (`-disk`, `-data`, `-iso`, `-bootc-disk`), and the proxy
 stack; `logs` → virt-launcher `compute` container logs by
 `vm.kubevirt.io/name` label.
 
+### 6.4 Containers (CT)
+
+`pkg/ct` — Proxmox-style Containers: plain pods, not KubeVirt VMs, and
+deliberately not a `types.Backend` peer (see `docs/adr/0005`). A CT's
+durable identity is its data PVC (`<name>-data`, labeled
+`corral.dev/ct=true`, annotated `corral.ct/spec` with the JSON spec so
+`Start` can recreate an identical pod after `Stop` deleted it).
+
+- **Unprivileged (default)**: PVC mounts at `/data`; the rest of the
+  filesystem is the image's own ephemeral layer and resets on every
+  Stop/Start.
+- **Privileged — distrobox on Kubernetes**: the pod's `command` is a
+  bootstrap script that, on first boot, seeds the PVC with a full copy of
+  the image's own root filesystem (`cp -a --one-file-system /. $PVC`),
+  `mount --rbind`s `/proc /sys /dev` into the copy, and `chroot`s into it —
+  so the PVC *is* the rootfs and package installs/dotfiles survive
+  Stop/Start. Needs `CAP_SYS_ADMIN`/`CAP_SYS_CHROOT` (hence gated behind
+  Privileged) and a real OS image (debian/ubuntu/fedora — has `chroot` +
+  coreutils' `cp -a`), not alpine/busybox.
+- **Console**: no framebuffer, so `/api/tty` and `corral ct console` exec
+  into the pod (`kubectl exec -it`) rather than a VNC/serial bridge. For a
+  privileged CT, the exec command re-`chroot`s into the persistent
+  rootfs — a fresh exec session starts from the pod's un-chrooted image
+  root, since `chroot` only changes the calling process's own apparent
+  root, not something a sibling exec session inherits (`ct.ExecCommand`).
+- **Networking**: a plain `Service` selecting the CT pod's own labels
+  directly — simpler than the VM proxy Deployment, which exists
+  specifically because a KubeVirt VM's virt-launcher pod isn't a stable
+  selector target across restarts.
+
 ## 7. bootc pipeline (`create --bootc <image>`)
 
 Builds a bootable-container OS disk **on the cluster** (no local
@@ -268,27 +304,41 @@ Tailscale into the image); the image must keep kernel+initramfs under
 
 ## 8. TUI
 
-State machine: `list` → (enter) → `actions` → `edit` (ports) /
-`confirmDelete` / immediate actions.
+State machine: `list` → (enter) → `actions` → `edit` (ports) / `cloneInput`
+/ `confirmDelete` / immediate actions.
 
-- **list**: all VMs, both backends; `enter` select, `q` quit.
-- **actions**: ▶ Start, ■ Stop, 🔑 SSH, 🖵 Viewer, ✎ Edit ports, ✕ Delete.
-  SSH/Viewer set `postQuitAction` and quit Bubble Tea first so the session
-  owns the terminal.
+- **list**: all VMs *and Containers*, both backends; `vmItem`/`ctItem` mix
+  freely in one `list.Model` (both satisfy `list.Item`); `enter` select,
+  `q` quit, `d` cluster health.
+- **actions** (VM): ▶ Start, ■ Stop, ↻ Restart, ⏸/▶ Pause/Resume,
+  ⇄ Migrate, ⧉ Clone, ✎ Edit CPU/RAM, 📷 Snapshot, ⇩ Export, 🔑 SSH,
+  🖵 Viewer, ✎ Edit ports, ✕ Delete. SSH/Viewer/Console set
+  `postQuitAction` and quit Bubble Tea first so the session owns the
+  terminal.
+- **actions** (CT) — a smaller set, since a pod has no hypervisor concepts:
+  ▶ Start, ■ Stop, ⌨ Console, ✕ Delete. Dispatched via `performCTAction`
+  rather than `performAction`'s VM/backend branching.
+- **cloneInput**: text input for the clone target name (pre-filled
+  `<name>-clone`), `runClone` mirrors `corral clone`'s own checks.
 - **edit**: toggle the default ports (22/80/443/3389/5900) or add custom
   ones; each toggle re-applies the proxy manifests immediately.
-- **confirmDelete**: `y` deletes (VM + disks + proxy + registry entry); any
-  other key cancels.
+- **confirmDelete**: `y` deletes (VM + disks + proxy + registry entry, or
+  CT + data volume); any other key cancels.
 
 ## 9. Web UI (`corral web`)
 
-A Proxmox-style dashboard for the KubeVirt backend, served from the binary
-(`pkg/web`, static SPA via `//go:embed` — no JS toolchain). REST API plus two
+A Proxmox-style dashboard for the KubeVirt backend (plus Containers), served
+from the binary (`pkg/web`, static SPA — Alpine.js islands + vanilla JS via
+`//go:embed`, no build step; see `docs/adr/0004`). REST API plus two
 websocket bridges: `/api/vnc/{ns}/{name}` ↔ `virtctl vnc --proxy-only`
-(noVNC in the browser) and `/api/tty/{ns}/{name}` ↔ `virtctl console`
-(xterm.js serial TTY). Actions: create (container-disk/ISO/PVC), start, stop,
-restart, pause/unpause, live-migrate, delete. Responsive — usable on mobile,
-consoles included.
+(noVNC in the browser) and `/api/tty/{ns}/{name}` ↔ `virtctl console` /
+`kubectl exec` (xterm.js — auto-detects VM vs CT by name). Actions: create
+(container-disk/ISO/PVC/CT), start, stop, restart, pause/unpause,
+live-migrate, clone, boot/options editing (run strategy, firmware, boot
+order), ISO/template upload, delete. Server View (per-node) and Folder View
+(per-namespace) both merge VMs and Containers into one tree, distinguished
+by icon — matching Proxmox's own single resource tree per node/pool.
+Responsive — usable on mobile, consoles included.
 
 Runs locally (`corral web`, default `127.0.0.1:8006`) or **on the cluster**:
 `Containerfile` builds `ghcr.io/tuna-os/corral` (alpine + corral +

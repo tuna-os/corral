@@ -10,23 +10,32 @@ cmd/              Cobra CLI (root, subcommands, TUI)
 ├── root.go       entrypoint, plugin dispatch, post-quit actions
 ├── commands.go   list, start, stop, ssh, viewer, logs, info, restart, pause, migrate, scale, adddisk, rmdisk, snapshot
 ├── create.go     corral create (all flags, both backends, CLI catalog/import/bootc)
+├── clone.go      corral clone (kubevirt VM disk + config clone)
+├── ct.go         corral ct (create/list/start/stop/delete/console — Containers, pkg/ct)
 ├── images.go     corral images (list catalog + imported datavolumes)
 ├── config.go     corral config (show, set auth key)
 ├── web.go        corral web (--addr, serve embedded SPA)
-├── tui.go        Bubble Tea TUI (list, start/stop/ssh/VNC/delete actions, scrollable menu)
+├── tui.go        Bubble Tea TUI (VMs + Containers side by side; VM and CT action menus, clone input state)
 ├── plugin.go     corral plugin (search, install, list, remove)
 ├── doctor.go     corral doctor (cluster diagnostics)
 ├── helpers.go    shared CLI helpers (flags, namespace resolution)
-└── corral-bootc/ plugin binary (built with -tags bootc, separate from core)
+├── corral-backup/  plugin: on-demand + scheduled (in-cluster CronJob) S3/R2 backups (built with -tags bootc-free, separate binary)
+├── corral-windows/ plugin: UEFI/TPM/virtio-tuned Windows VMs
+└── corral-bootc/   plugin binary (built with -tags bootc, separate from core)
 
 pkg/              Library code (importable)
 ├── catalog/      curated OS image catalog (containerdisks)
 ├── config/       ~/.config/tailvm/config.yaml reader (Tailscale auth key)
-├── doctor/       cluster diagnostics + auto-fix (namespace, CDI, KubeVirt, etc.)
+├── cronops/      shared CronJob/RBAC manifest builders for scheduled-op plugins (backup, snapsched, schedule)
+├── ct/           Containers (CT) — pet pods, not KubeVirt VMs; see docs/adr/0005
+│   └── ct.go       Create/Start/Stop/Delete/List/Exists, distrobox-style persistent-rootfs bootstrap for privileged CTs
+├── doctor/       cluster diagnostics + auto-fix (namespace, CDI, KubeVirt, GPU/PCI passthrough, StorageClass perf, etc.)
 ├── kubevirt/     KubeVirt backend (the heavy lifter)
 │   ├── client.go          VM CRUD, SSH via virtctl, cloud-init, registry
 │   ├── client_test.go     integration tests (need kubectl context)
 │   ├── features.go        scale, volumes, snapshots, clone, export, guest-info, metrics, capabilities, templates
+│   ├── options.go         boot options (run strategy, firmware, machine type, boot order) — read-modify-apply
+│   ├── upload.go          ISO/template upload via virtctl image-upload
 │   ├── bootc_core.go      bootc interface seam (always compiled — nil when tag absent)
 │   └── bootc.go           bootc implementation (//go:build bootc — Job + kernel-boot VM)
 ├── plugin/        extension system (krew-style, marketplace fetch, install/remove)
@@ -34,14 +43,16 @@ pkg/              Library code (importable)
 ├── registry/      ~/.local/share/tailvm/registry.json — VM name → backend/namespace/password
 ├── types/         shared types (VM, CreateOpts, RegistryEntry)
 └── web/           Proxmox-style web UI
-    ├── server.go         HTTP server, mux, VM list/create/action/delete/info/export, nodes, tasks, WS bridges
+    ├── server.go         HTTP server, mux, VM list/create/action/delete/info/export, nodes, tasks, WS bridges (VM VNC/serial + CT exec)
     ├── server_test.go
+    ├── ct.go             CT list/create/start-stop/delete HTTP handlers
     ├── features.go       capabilities, scale, volumes, expand, snapshots, clone, guest-info, events, metrics, templates,
-    │                     doctor, plugins, NADs, NICs, images, instancetypes, datavolumes
+    │                     doctor, plugins, NADs, NICs, images, instancetypes, datavolumes, boot options, ISO upload
     └── static/
-        ├── index.html    dark SPA shell, create dialog (6 source types), build dialog
-        ├── app.js        API client, tree, VM table, detail panels (Summary/Hardware/Snapshots/Events/Console),
-        │                 create wizard, image library + import, bootc build streaming, mobile drawer
+        ├── index.html    dark SPA shell, create dialog (6 source types), CT create dialog, build dialog
+        ├── app.js        API client, tree (Server View/Folder View, VMs+CTs merged), VM/CT detail panels
+        │                 (Summary/Hardware/Options/Snapshots/Events/Console/Terminal), create wizards,
+        │                 image library + import, bootc build streaming, mobile drawer
         ├── icons.js      inline Heroicon SVGs
         └── style.css     dark theme, responsive, dialog/modals, cards, tables
 
@@ -54,6 +65,7 @@ deploy/           On-cluster manifests
 docs/             Documentation
 ├── api.md           REST API reference
 ├── architecture.md  This file
+├── adr/             Architecture Decision Records (0001-0005)
 └── kubevirt-proxmox-setup.md  From-scratch cluster setup guide
 
 scripts/          CI and Docker helper scripts
