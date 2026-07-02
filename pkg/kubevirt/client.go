@@ -22,6 +22,11 @@ import (
 // LastPassword holds the cloud-init password from the most recent GenerateVM call.
 var LastPassword string
 
+// AlpineImage is the base for the VM port-proxy's init/main containers —
+// digest-pinned (see #66) so a supply-chain push to the mutable :latest tag
+// can't silently swap what runs with the proxy's in-cluster credentials.
+const AlpineImage = "alpine:latest@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b"
+
 // mergeCloudInit combines the generated #cloud-config user-data with the
 // user-supplied extra YAML. A raw string append produces duplicate top-level
 // keys (e.g. two ssh_authorized_keys:) — invalid cloud-config that cloud-init
@@ -932,7 +937,7 @@ func GenerateProxyDeployment(name, namespace string, ports []int) map[string]any
 	if hasVNC {
 		initContainers = append(initContainers, map[string]any{
 			"name":  "install-tools",
-			"image": "alpine:latest",
+			"image": AlpineImage,
 			"securityContext": map[string]any{
 				"allowPrivilegeEscalation": false,
 				"capabilities":             map[string]any{"drop": []string{"ALL"}},
@@ -980,7 +985,7 @@ func GenerateProxyDeployment(name, namespace string, ports []int) map[string]any
 					"containers": []map[string]any{
 						{
 							"name":  "proxy",
-							"image": "alpine:latest",
+							"image": AlpineImage,
 							"securityContext": map[string]any{
 								"allowPrivilegeEscalation": false,
 								"capabilities":             map[string]any{"drop": []string{"ALL"}},

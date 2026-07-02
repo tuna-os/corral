@@ -7,8 +7,10 @@ import "fmt"
 // enlightenments, the installer ISO as a CD-ROM, and the virtio-win driver
 // ISO as a second CD-ROM so Setup can load disk/network drivers.
 
-// VirtioWinImage is KubeVirt's containerdisk build of the virtio-win driver ISO.
-const VirtioWinImage = "quay.io/kubevirt/virtio-container-disk:latest"
+// VirtioWinImage is KubeVirt's containerdisk build of the virtio-win driver
+// ISO — digest-pinned (see #66) against supply-chain tampering on the
+// mutable :latest tag.
+const VirtioWinImage = "quay.io/kubevirt/virtio-container-disk:latest@sha256:e7cffd65dfc89f0ddbf197ba0f2a42a7e299ff21955511d05ab3567ef80c623e"
 
 // GenerateWindowsVM builds the Windows-tuned VirtualMachine manifest. Boot
 // order is disk(1) → installer ISO(2): the empty disk falls through to the ISO
