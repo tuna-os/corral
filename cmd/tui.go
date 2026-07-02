@@ -74,6 +74,7 @@ var actionsListItems = []actionItem{
 	{id: "pause", label: "Pause"},
 	{id: "unpause", label: "Resume"},
 	{id: "migrate", label: "Migrate"},
+	{id: "clone", label: "Clone"},
 	{id: "hardware", label: "Edit CPU / RAM"},
 	{id: "snapshot", label: "Snapshot"},
 	{id: "export", label: "Export (backup disk)"},
@@ -89,11 +90,13 @@ type tuiModel struct {
 	list        list.Model
 	actionsList list.Model
 	quitting    bool
-	state       string // "list", "actions", "edit", "hwedit", "confirmDelete", "doctor"
+	state       string // "list", "actions", "edit", "hwedit", "confirmDelete", "doctor", "cloneInput"
 	selected    types.VM
 	edit        editModel
 	hwEdit      hwEditModel
 	doctorRows  []doctor.Check
+	cloneInput  textinput.Model
+	cloneErr    string
 	width       int
 	height      int
 }
@@ -185,6 +188,33 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 
+		if m.state == "cloneInput" {
+			switch msg.String() {
+			case "esc":
+				m.state = "actions"
+				return m, nil
+			case "ctrl+c":
+				m.quitting = true
+				return m, tea.Quit
+			case "enter":
+				dst := strings.TrimSpace(m.cloneInput.Value())
+				if dst == "" {
+					m.cloneErr = "name can't be empty"
+					return m, nil
+				}
+				if err := runClone(m.selected, dst); err != nil {
+					m.cloneErr = err.Error()
+					return m, nil
+				}
+				m.refreshList()
+				m.state = "list"
+				return m, nil
+			}
+			var cmd tea.Cmd
+			m.cloneInput, cmd = m.cloneInput.Update(msg)
+			return m, cmd
+		}
+
 		if m.state == "confirmDelete" {
 			switch msg.String() {
 			case "y", "Y":
@@ -219,6 +249,11 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.state = "hwedit"
 						m.hwEdit = newHWEditModel(m.selected)
 						return m, m.hwEdit.Init()
+					case "clone":
+						m.state = "cloneInput"
+						m.cloneErr = ""
+						m.cloneInput = newCloneInput(m.selected.Name)
+						return m, m.cloneInput.Focus()
 					case "start", "stop", "restart", "pause", "unpause", "migrate", "snapshot":
 						m.performAction(item.id)
 						m.refreshList()
@@ -368,6 +403,43 @@ func (m *tuiModel) performAction(action string) {
 	}
 }
 
+// newCloneInput sets up the target-name text input for the Clone action,
+// pre-filled with a "-clone" suggestion off the source VM's name.
+func newCloneInput(sourceName string) textinput.Model {
+	ti := textinput.New()
+	ti.Placeholder = "target VM name"
+	ti.SetValue(sourceName + "-clone")
+	ti.CharLimit = 63
+	ti.Width = 30
+	return ti
+}
+
+// runClone mirrors cmd/clone.go's logic (kubevirt-only, registers the clone
+// in the local registry) so the TUI's Clone action behaves identically to
+// `corral clone` — same checks, same errors, just driven by a text input
+// instead of positional args.
+func runClone(src types.VM, dst string) error {
+	if src.Backend != "kubevirt" {
+		return fmt.Errorf("cloning is only supported on KubeVirt VMs (VM %q uses backend %q)", src.Name, src.Backend)
+	}
+	if existing := resolveBackend(dst); existing != "" {
+		return fmt.Errorf("target VM %q already exists (backend: %s)", dst, existing)
+	}
+	ns := src.Namespace
+	if ns == "" {
+		ns = kubevirt.DefaultNamespace
+	}
+	if err := kubevirt.NewClient(ns).Clone(src.Name, dst); err != nil {
+		return err
+	}
+	if registryStore != nil {
+		if err := registryStore.Set(dst, types.RegistryEntry{Backend: "kubevirt", Namespace: ns}); err != nil {
+			return fmt.Errorf("saving registry entry: %w", err)
+		}
+	}
+	return nil
+}
+
 func (m *tuiModel) refreshList() {
 	items := []list.Item{}
 	vms, _ := kubevirt.NewClient("").ListVMs()
@@ -392,6 +464,19 @@ func (m tuiModel) View() string {
 
 	if m.state == "hwedit" {
 		return m.hwEdit.View()
+	}
+
+	if m.state == "cloneInput" {
+		var sb strings.Builder
+		sb.WriteString(tuiTitle.Render(fmt.Sprintf(" Clone %s ", m.selected.Name)))
+		sb.WriteString("\n\n  Target name: ")
+		sb.WriteString(m.cloneInput.View())
+		sb.WriteString("\n")
+		if m.cloneErr != "" {
+			sb.WriteString("\n  " + tuiStopped.Render(m.cloneErr) + "\n")
+		}
+		sb.WriteString("\n" + tuiHelp.Render("  enter clone · esc cancel"))
+		return sb.String()
 	}
 
 	if m.state == "doctor" {

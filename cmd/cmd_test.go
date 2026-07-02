@@ -648,3 +648,46 @@ func TestWebCmd_Exists(t *testing.T) {
 		t.Error("webCmd should exist")
 	}
 }
+
+// ── TUI clone action ─────────────────────────────────────────────
+
+func TestNewCloneInput_SuggestsCloneSuffix(t *testing.T) {
+	ti := newCloneInput("web1")
+	if ti.Value() != "web1-clone" {
+		t.Errorf("expected suggested value web1-clone, got %q", ti.Value())
+	}
+}
+
+func TestRunClone_RejectsNonKubevirtBackend(t *testing.T) {
+	err := runClone(types.VM{Name: "web1", Backend: "qemu"}, "web1-clone")
+	if err == nil {
+		t.Error("expected an error cloning a non-kubevirt VM")
+	}
+}
+
+func TestRunClone_RejectsExistingTarget(t *testing.T) {
+	dir := t.TempDir()
+	s := registry.NewStoreAt(filepath.Join(dir, "registry.json"))
+	s.Set("taken", types.RegistryEntry{Backend: "kubevirt", Namespace: "default"})
+
+	oldStore := registryStore
+	registryStore = s
+	defer func() { registryStore = oldStore }()
+
+	err := runClone(types.VM{Name: "web1", Backend: "kubevirt", Namespace: "default"}, "taken")
+	if err == nil {
+		t.Error("expected an error cloning onto an existing VM name")
+	}
+}
+
+func TestActionsListItems_IncludesClone(t *testing.T) {
+	found := false
+	for _, a := range actionsListItems {
+		if a.id == "clone" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected a clone entry in the TUI actions list")
+	}
+}
