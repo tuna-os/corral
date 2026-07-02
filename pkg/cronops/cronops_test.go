@@ -67,6 +67,21 @@ func TestCronJob_Shape(t *testing.T) {
 	}
 }
 
+func TestCronJobWithSecret_MountsSecretReadOnly(t *testing.T) {
+	cj := CronJobWithSecret("corral-backup-web", "tailvm", "0 3 * * *", "echo hi",
+		nil, "corral-backup-rclone-config", "/root/.config/rclone")
+	s := marshal(t, cj)
+	for _, want := range []string{
+		`"secretName":"corral-backup-rclone-config"`,
+		`"mountPath":"/root/.config/rclone"`,
+		`"readOnly":true`,
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("CronJobWithSecret missing %q: %s", want, s)
+		}
+	}
+}
+
 func TestSnapshotScript(t *testing.T) {
 	s := SnapshotScript("web", "tailvm", 7)
 	for _, want := range []string{
@@ -80,6 +95,39 @@ func TestSnapshotScript(t *testing.T) {
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("SnapshotScript missing %q:\n%s", want, s)
+		}
+	}
+}
+
+func TestRole_CoversExportAndPortForward(t *testing.T) {
+	s := marshal(t, Role("tailvm"))
+	for _, want := range []string{
+		"export.kubevirt.io", "virtualmachineexports",
+		"pods/portforward",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("Role missing %q: %s", want, s)
+		}
+	}
+}
+
+func TestBackupScript(t *testing.T) {
+	s := BackupScript("web", "tailvm", "r2:backups/corral", 5)
+	for _, want := range []string{
+		"observedKubeVirtVersion",
+		"virtctl-${KV_VERSION}-linux-amd64",
+		"rclone.org/install.sh",
+		"kubectl get vm web -n tailvm",
+		"persistentVolumeClaim.claimName",
+		"virtctl vmexport download web-export",
+		"--namespace=tailvm", "--vm=web",
+		`rclone copyto /tmp/"$FNAME" "r2:backups/corral/$FNAME"`,
+		`grep "^web-"`,
+		"head -n -5",
+		"rclone deletefile",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("BackupScript missing %q:\n%s", want, s)
 		}
 	}
 }
