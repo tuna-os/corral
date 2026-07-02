@@ -21,6 +21,7 @@ cmd/              Cobra CLI (root, subcommands, TUI)
 ├── helpers.go    shared CLI helpers (flags, namespace resolution)
 ├── corral-backup/  plugin: on-demand + scheduled (in-cluster CronJob) S3/R2 backups (built with -tags bootc-free, separate binary)
 ├── corral-windows/ plugin: UEFI/TPM/virtio-tuned Windows VMs
+├── corral-vdi/     plugin: desktop pools (RFC-0001 phase 1) — pkg/vdi
 └── corral-bootc/   plugin binary (built with -tags bootc, separate from core)
 
 pkg/              Library code (importable)
@@ -41,6 +42,7 @@ pkg/              Library code (importable)
 ├── plugin/        extension system (krew-style, marketplace fetch, install/remove)
 ├── qemu/          QEMU backend (local VMs via systemd user service)
 ├── registry/      ~/.local/share/tailvm/registry.json — VM name → backend/namespace/password
+├── vdi/           desktop pools (RFC-0001 phase 1) — clone-based pool create, label-based assignment
 ├── types/         shared types (VM, CreateOpts, RegistryEntry)
 └── web/           Proxmox-style web UI
     ├── server.go         HTTP server, mux, VM list/create/action/delete/info/export, nodes, tasks, WS bridges (VM VNC/serial + CT exec)

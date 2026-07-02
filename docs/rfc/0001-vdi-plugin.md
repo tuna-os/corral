@@ -1,6 +1,8 @@
 # RFC-0001: VDI plugin — Windows/Linux desktop pools on Corral
 
-**Status:** draft, seeking review
+**Status:** Phase 1 implemented (`corral-vdi`, `pkg/vdi` — pool create/list/
+delete, assign/unassign, connect). Phases 0/2/3/4 still draft/seeking
+review. Setup guide: [docs/vdi.md](../vdi.md).
 **Date:** 2026-07-02
 **Author:** grilled out of a live session with James Reilly + Claude
 
@@ -116,13 +118,25 @@ below. A VDI product where Windows desktops require a native RDP client
 while Linux desktops are one-click-in-browser is a bad first impression —
 this is sequencing, not new scope.
 
-**Phase 1 — static pools, manual assignment (CLI/web, no broker yet).**
-`corral vdi pool create <name> --template <bootc-image|windows-iso|ct-image>
---size N`. Builds N desktops via existing `corral bootc`/`corral-windows`/
-`corral ct` machinery, labeled as pool members. `corral vdi assign <pool>
-<user>` hand-wires a claim (a K8s label/annotation, nothing fancier yet).
-Goal: prove the desktop-creation and connect-routing pieces work at all
-before building any brokering logic.
+**Phase 1 — static pools, manual assignment (CLI, no broker yet). Implemented.**
+`corral vdi pool create <name> --from <golden-vm> --size N` clones an
+*already-built* VM (built the normal way — `corral bootc`/`corral-windows`/
+`corral create` — then customized and stopped) N times via
+`kubevirt.Client.Clone`, labeled as pool members. `corral vdi assign <pool>
+<user>` hand-wires a claim (a K8s label/annotation, nothing fancier).
+`corral vdi connect <member>` prints the existing VNC/RDP/SSH paths for
+that member. Full setup guide: [docs/vdi.md](../vdi.md).
+
+Landed slightly differently than first drafted above: `--from <existing-vm>`
+(clone a golden VM) rather than `--template <image>` (build N from
+scratch) — cloning reuses `corral clone`'s already-tested primitive
+directly and matches how real VDI systems build pools (golden image once,
+clone many), instead of re-running a full bootc build or Windows ISO
+install N times. A real bug was found and fixed during live verification:
+`Clone()` returns as soon as the `VirtualMachineClone` CRD is applied, not
+once the target VM actually exists — `CreatePool` originally raced ahead
+and tried to label a VM that didn't exist yet on a real cluster. Fixed
+with a poll-wait (`waitForVM`, 2min timeout) between clone and label.
 
 **Phase 2 — self-serve claim + reclaim.**
 A minimal web page: authenticated user (Tailscale identity) hits "Get a
@@ -196,13 +210,11 @@ integration seam.
 4. **Licensing UX**: does Corral just document the Windows licensing
    constraint (current lean) or actively refuse to create pools above some
    size without an explicit `--i-have-licenses` flag?
-5. **Scope of "plugin"**: one `corral-vdi` binary covering pools+assignment
-   +connect-routing, or split (`corral-vdi-pool` for lifecycle,
-   `corral-vdi-broker` for assignment) matching the existing
-   backup/snapsched/schedule split in `pkg/cronops`? Leaning single binary
-   until proven otherwise — the existing scheduled-op plugins split because
-   they're genuinely independent features sharing infra, not because
-   splitting is the default.
+5. ~~**Scope of "plugin"**~~ — **resolved for Phase 1**: single
+   `corral-vdi` binary (`pool`/`assign`/`unassign`/`connect` subcommands),
+   as leaned toward above. Revisit if/when Phase 2's broker becomes a
+   genuinely separate long-running process (unlike Phase 1's one-shot CLI
+   commands) — that's a real reason to split, not just default caution.
 
 ## Sources
 

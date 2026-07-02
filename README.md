@@ -192,6 +192,25 @@ Hyper-V enlightenments and the virtio-win driver ISO attached as a second
 CD-ROM (so Setup can see the virtio disk/network), and attaches proper
 console access.
 
+### The VDI plugin
+
+`corral vdi` — desktop pools. Phase 1 of [RFC-0001](docs/rfc/0001-vdi-plugin.md):
+clone an already-built VM into a pool, hand members to users, connect,
+release, delete. **Full setup guide: [docs/vdi.md](docs/vdi.md).**
+
+```bash
+corral plugin install vdi
+corral vdi pool create devpool --from golden-desktop --size 3
+corral vdi assign devpool alice
+corral vdi connect devpool-1
+corral vdi unassign devpool-1
+```
+
+No broker, no self-serve web page, no idle reclaim yet (see the RFC and
+[issue #69](https://github.com/tuna-os/corral/issues/69) for what's next)
+— pool membership and assignment are plain K8s labels on the VM objects,
+nothing more.
+
 ## Configuration
 
 ```yaml
@@ -269,6 +288,12 @@ corral delete <name>    [-f] removes VM, disks, proxy, registry entry
 corral ct create <name>  --image … [--cpu 1] [--mem 512Mi] [--disk 5Gi]
                           [--privileged]  (distrobox-style persistent rootfs)
 corral ct list|start|stop|delete|console <name>
+
+corral vdi pool create <name> --from <golden-vm> --size N   (plugin, desktop pools)
+corral vdi pool list|delete <name>
+corral vdi assign <pool> <user>
+corral vdi unassign <member>
+corral vdi connect <member>
 ```
 
 ### KubeVirt feature support & cluster requirements
@@ -303,6 +328,8 @@ Full design document: [SPEC.md](SPEC.md).
 - **[docs/architecture.md](docs/architecture.md)** — package map, design decisions, data flow, build system
 - **[docs/kubevirt-proxmox-setup.md](docs/kubevirt-proxmox-setup.md)** — from-scratch KubeVirt + Longhorn + Corral setup guide
 - **[docs/testing.md](docs/testing.md)** — testing strategy & plan (unit, integration, E2E)
+- **[docs/vdi.md](docs/vdi.md)** — VDI plugin setup guide (desktop pools)
+- **[docs/rfc/0001-vdi-plugin.md](docs/rfc/0001-vdi-plugin.md)** — VDI plugin design + phased roadmap
 
 ## Requirements
 
