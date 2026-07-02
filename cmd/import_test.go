@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hanthor/corral/pkg/kubevirt"
-	"github.com/hanthor/corral/pkg/shell"
+	"github.com/tuna-os/corral/pkg/kubevirt"
+	"github.com/tuna-os/corral/pkg/shell"
 )
 
 func withImportFakes(t *testing.T) *shell.Fake {

@@ -3,8 +3,8 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/hanthor/corral/pkg/config"
 	"github.com/spf13/cobra"
+	"github.com/tuna-os/corral/pkg/config"
 )
 
 var configCmd = &cobra.Command{

@@ -12,10 +12,10 @@ import (
 	"os"
 	"strings"
 
-	"github.com/hanthor/corral/pkg/cronops"
-	"github.com/hanthor/corral/pkg/kubevirt"
-	"github.com/hanthor/corral/pkg/shell"
 	"github.com/spf13/cobra"
+	"github.com/tuna-os/corral/pkg/cronops"
+	"github.com/tuna-os/corral/pkg/kubevirt"
+	"github.com/tuna-os/corral/pkg/shell"
 )
 
 const scheduleLabel = "corral.dev/snapsched"

@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hanthor/corral/pkg/catalog"
-	"github.com/hanthor/corral/pkg/shell"
+	"github.com/tuna-os/corral/pkg/catalog"
+	"github.com/tuna-os/corral/pkg/shell"
 )
 
 func TestLoad_NoConfigMap(t *testing.T) {

@@ -26,9 +26,11 @@ type BootcBuildResult struct {
 
 // Registered by bootc.go when the `bootc` build tag is set; nil otherwise.
 var (
-	bootcBuildFunc   func(name, namespace, imageURI, sshPublicKey, diskSize string, progress io.Writer) (*BootcBuildResult, error)
+	bootcBuildFunc   func(name, namespace, imageURI, sshPublicKey, diskSize, storageClass, provisionScript string, progress io.Writer) (*BootcBuildResult, error)
 	bootcVMFunc      func(name, namespace, pvcName, imageURI, sshKey, mem string, cpu int, node string) map[string]any
 	bootcRebuildFunc func(name, namespace, imageURI, sshPublicKey, diskSize string, progress io.Writer) error
+	bootcResumeFunc  func(name, namespace string) (imageURI, pvcName string, ready, failed bool)
+	bootcCleanupFunc func(builderName, namespace string)
 )
 
 // BootcAvailable reports whether the bootc plugin is compiled into this binary.
@@ -46,13 +48,13 @@ func BootcImageOf(name, namespace string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// BootcBuildDisk runs the on-cluster bootc disk build. Errors if the plugin
-// isn't compiled in.
-func BootcBuildDisk(name, namespace, imageURI, sshPublicKey, diskSize string, progress io.Writer) (*BootcBuildResult, error) {
+// BootcBuildDisk runs the on-cluster bootc disk build. storageClass "" uses
+// PreferredStorageClass(). Errors if the plugin isn't compiled in.
+func BootcBuildDisk(name, namespace, imageURI, sshPublicKey, diskSize, storageClass, provisionScript string, progress io.Writer) (*BootcBuildResult, error) {
 	if bootcBuildFunc == nil {
 		return nil, errBootcUnavailable()
 	}
-	return bootcBuildFunc(name, namespace, imageURI, sshPublicKey, diskSize, progress)
+	return bootcBuildFunc(name, namespace, imageURI, sshPublicKey, diskSize, storageClass, provisionScript, progress)
 }
 
 // GenerateBootcVM builds the final VM manifest that UEFI-boots a bootc-built
@@ -74,4 +76,26 @@ func BootcRebuild(name, namespace, imageURI, sshPublicKey, diskSize string, prog
 		return errBootcUnavailable()
 	}
 	return bootcRebuildFunc(name, namespace, imageURI, sshPublicKey, diskSize, progress)
+}
+
+// BootcResumeState reports whether name has a completed-but-unfinished bootc
+// build left behind by an interrupted `corral bootc create` — see
+// bootcResumeState in bootc.go for the detection details. ready=true means
+// GenerateBootcVM(name, namespace, pvcName, imageURI, ...) can be applied
+// directly without rerunning the build. False (both ready and failed) if the
+// plugin isn't compiled in — there's nothing to resume without it.
+func BootcResumeState(name, namespace string) (imageURI, pvcName string, ready, failed bool) {
+	if bootcResumeFunc == nil {
+		return "", "", false, false
+	}
+	return bootcResumeFunc(name, namespace)
+}
+
+// BootcCleanupBuilder deletes a builder VM and its cloud-init secret after a
+// resumed build's final VM has been created. No-op if the plugin isn't
+// compiled in (there's no builder to clean up without it).
+func BootcCleanupBuilder(builderName, namespace string) {
+	if bootcCleanupFunc != nil {
+		bootcCleanupFunc(builderName, namespace)
+	}
 }

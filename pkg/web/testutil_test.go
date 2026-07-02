@@ -4,11 +4,12 @@ import (
 	"net/http/httptest"
 	"os"
 
-	"github.com/hanthor/corral/pkg/doctor"
-	"github.com/hanthor/corral/pkg/kubevirt"
-	"github.com/hanthor/corral/pkg/registry"
-	"github.com/hanthor/corral/pkg/shell"
-	"github.com/hanthor/corral/pkg/sources"
+	"github.com/tuna-os/corral/pkg/ct"
+	"github.com/tuna-os/corral/pkg/doctor"
+	"github.com/tuna-os/corral/pkg/kubevirt"
+	"github.com/tuna-os/corral/pkg/registry"
+	"github.com/tuna-os/corral/pkg/shell"
+	"github.com/tuna-os/corral/pkg/sources"
 )
 
 // TestFixture holds a test server and its fake runner for handler tests.
@@ -43,6 +44,7 @@ func NewTestFixture() *TestFixture {
 	// without this, doctor handlers would shell out to the real kubectl.
 	doctor.SetRunner(runner)
 	sources.SetRunner(runner)
+	ct.SetRunner(runner)
 
 	// Create a temp registry store so create/delete handlers don't panic
 	tmpDir, _ := os.MkdirTemp("", "corral-test-*")
@@ -80,4 +82,5 @@ func (f *TestFixture) Reset() {
 	defaultRunner = f.Runner
 	doctor.SetRunner(f.Runner)
 	sources.SetRunner(f.Runner)
+	ct.SetRunner(f.Runner)
 }

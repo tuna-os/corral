@@ -134,6 +134,60 @@ resources, and registry entry.
 
 ---
 
+## Containers (CT)
+
+Proxmox-style pet pods — plain Kubernetes pods, not KubeVirt VMs. See
+`docs/adr/0005-containers-as-pet-pods.md` for the design.
+
+### `GET /api/cts`
+
+List all Containers across every namespace.
+
+**Response**: `200`
+```json
+[{"name": "devbox", "namespace": "corral-vms", "node": "karnataka",
+  "phase": "Running", "ready": true, "image": "debian:bookworm",
+  "cpu": 2, "mem": "2Gi", "privileged": true}]
+```
+
+`phase` is the pod phase, or `"Stopped"` when no pod exists (the CT's
+durable identity is its data PVC, which survives Stop). `node` is empty
+when stopped/unscheduled.
+
+### `POST /api/cts`
+
+Create a Container.
+
+**Body**:
+```json
+{"name": "devbox", "namespace": "corral-vms", "image": "docker.io/library/debian:bookworm",
+ "cpu": 2, "mem": "2Gi", "disk": "10Gi", "storageClass": "", "privileged": true}
+```
+
+`privileged: true` seeds a persistent, mutable root filesystem onto the
+data volume and `chroot`s into it (distrobox-style — package installs and
+dotfiles survive Stop/Start). `false` (default) mounts the volume at
+`/data` only.
+
+**Response**: `201 {"name": "devbox", "namespace": "corral-vms"}`
+
+### `POST /api/cts/{ns}/{name}/{action}`
+
+`action` is `start` or `stop`. Stop deletes the pod but keeps the data
+volume; Start recreates the pod from the spec recorded on the volume's
+annotation.
+
+**Response**: `{"status": "ok"}`
+
+### `DELETE /api/cts/{ns}/{name}`
+
+Delete a Container: its pod, Service (if a tailnet proxy was applied), and
+data volume.
+
+**Response**: `{"status": "deleted"}`
+
+---
+
 ## Hardware operations
 
 ### `POST /api/vms/{ns}/{name}/scale`

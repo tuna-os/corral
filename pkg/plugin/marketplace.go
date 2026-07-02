@@ -16,7 +16,7 @@ import (
 // DefaultMarketplaceURL is the curated plugin index. Override with
 // CORRAL_MARKETPLACE_URL (e.g. a fork or a local file:// path isn't supported —
 // use a raw https URL).
-const DefaultMarketplaceURL = "https://raw.githubusercontent.com/hanthor/corral/main/marketplace/index.json"
+const DefaultMarketplaceURL = "https://raw.githubusercontent.com/tuna-os/corral/main/marketplace/index.json"
 
 // Build is one platform's binary for a plugin.
 type Build struct {

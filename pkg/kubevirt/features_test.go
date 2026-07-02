@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hanthor/corral/pkg/shell"
-	"github.com/hanthor/corral/pkg/types"
+	"github.com/tuna-os/corral/pkg/shell"
+	"github.com/tuna-os/corral/pkg/types"
 )
 
 // newFeaturesFake wires a single Fake into every runner seam (client,
@@ -475,7 +475,7 @@ func TestClient_Metrics_Unavailable(t *testing.T) {
 
 // ── Capabilities / namespace / misc ───────────────────────────────
 
-func TestClusterCapabilities_Longhorn(t *testing.T) {
+func TestClusterCapabilities_LocalPath(t *testing.T) {
 	_, r := newFeaturesFake(t)
 	r.AddResponseKV("kubectl", []string{"get", "sc", "-o", "json"}, `{
 	  "items": [
@@ -489,7 +489,7 @@ func TestClusterCapabilities_Longhorn(t *testing.T) {
 		"volumesnapshotclass.snapshot.storage.k8s.io/longhorn-snapshot\n", nil)
 
 	caps := ClusterCapabilities()
-	want := types.Capabilities{StorageClass: "longhorn", CanExpand: true, CanSnapshot: true}
+	want := types.Capabilities{StorageClass: "local-path", CanExpand: false, CanSnapshot: true}
 	if caps != want {
 		t.Errorf("ClusterCapabilities = %+v, want %+v", caps, want)
 	}
@@ -606,6 +606,52 @@ func TestCreateVM_ContainerDiskWithDataDisk(t *testing.T) {
 	if n := countApplies(r); n != 2 { // data PVC + VM
 		t.Errorf("container-disk+data create applied %d manifests, want 2", n)
 	}
+}
+
+func TestCreateVM_StorageClassOverride(t *testing.T) {
+	r := createVMFake(t)
+
+	err := CreateVM(types.CreateOpts{
+		Name: "web", ContainerDisk: "quay.io/containerdisks/fedora:41", Disk: "20G",
+		StorageClass: "topolvm-ssd",
+	})
+	if err != nil {
+		t.Fatalf("CreateVM: %v", err)
+	}
+	if !sawStorageClass(r, "topolvm-ssd") {
+		t.Error("expected the data PVC to use the explicit StorageClass override")
+	}
+}
+
+func TestCreateVM_StorageClassDefault(t *testing.T) {
+	r := createVMFake(t)
+	// A "local-path" StorageClass is present — PreferredStorageClass() should
+	// pick it when opts.StorageClass is unset.
+	r.Reset()
+	r.AddResponseKV("kubectl", []string{"get", "sc", "-o", "json"},
+		`{"items":[{"metadata":{"name":"local-path"}}]}`, nil)
+	applyOK(r)
+
+	err := CreateVM(types.CreateOpts{
+		Name: "web", ContainerDisk: "quay.io/containerdisks/fedora:41", Disk: "20G"})
+	if err != nil {
+		t.Fatalf("CreateVM: %v", err)
+	}
+	if !sawStorageClass(r, "local-path") {
+		t.Error("expected the data PVC to fall back to PreferredStorageClass() (local-path)")
+	}
+}
+
+// sawStorageClass reports whether any applied manifest's stdin references
+// the given StorageClass name.
+func sawStorageClass(r *shell.Fake, name string) bool {
+	for _, call := range r.Calls() {
+		if call.Name == "kubectl" && len(call.Args) > 0 && call.Args[0] == "apply" &&
+			strings.Contains(call.Stdin, `"storageClassName":"`+name+`"`) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestCreateVM_ISO(t *testing.T) {

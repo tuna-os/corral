@@ -28,3 +28,19 @@ func TestGenerateBootcVM_NoInGuestCloudInit(t *testing.T) {
 		t.Error("final bootc VM must boot via UEFI firmware, not kernelBoot")
 	}
 }
+
+func TestGenerateBlockPVC_StorageClass(t *testing.T) {
+	pvc := generateBlockPVC("myvm-bootc-disk", "myns", "50Gi", "topolvm-ssd")
+	spec := pvc["spec"].(map[string]any)
+	if spec["storageClassName"] != "topolvm-ssd" {
+		t.Errorf("storageClassName = %v, want topolvm-ssd", spec["storageClassName"])
+	}
+}
+
+func TestGenerateBlockPVC_EmptyStorageClass(t *testing.T) {
+	pvc := generateBlockPVC("myvm-bootc-disk", "myns", "50Gi", "")
+	spec := pvc["spec"].(map[string]any)
+	if _, ok := spec["storageClassName"]; ok {
+		t.Error("storageClassName should not be set when empty (cluster default applies)")
+	}
+}

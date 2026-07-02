@@ -4,9 +4,10 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/hanthor/corral/pkg/kubevirt"
-	"github.com/hanthor/corral/pkg/qemu"
 	"github.com/spf13/cobra"
+	"github.com/tuna-os/corral/pkg/kubevirt"
+	"github.com/tuna-os/corral/pkg/qemu"
+	"github.com/tuna-os/corral/pkg/types"
 )
 
 var (
@@ -148,6 +149,46 @@ var viewerCmd = &cobra.Command{
 	},
 }
 
+// resolveSSHCredentials resolves the username/password for `corral ssh
+// <name>`, checking (in order) the explicit flag, then whatever's
+// remembered in the registry, then $USER/"root" for username. If
+// flagUser was passed explicitly and differs from what's remembered, it's
+// saved back to the registry — so a user only needs `-u` once per host,
+// not on every `corral ssh` call.
+func resolveSSHCredentials(name, backend, flagUser, flagPassword string) (user, password string) {
+	var saved types.RegistryEntry
+	var hadEntry bool
+	if registryStore != nil {
+		saved, hadEntry = registryStore.Get(name)
+	}
+
+	user = flagUser
+	if user == "" {
+		user = saved.Username
+	}
+	if user == "" {
+		user = os.Getenv("USER")
+	}
+	if user == "" {
+		user = "root"
+	}
+
+	if flagUser != "" && flagUser != saved.Username && registryStore != nil {
+		updated := saved
+		updated.Username = flagUser
+		if !hadEntry {
+			updated.Backend = backend
+		}
+		registryStore.Set(name, updated)
+	}
+
+	password = flagPassword
+	if password == "" {
+		password = saved.Password
+	}
+	return user, password
+}
+
 var sshCmd = &cobra.Command{
 	Use:   "ssh [name]",
 	Short: "Open an SSH session to a VM",
@@ -172,20 +213,7 @@ Examples:
 			return err
 		}
 
-		user := sshUser
-		if user == "" {
-			user = os.Getenv("USER")
-			if user == "" {
-				user = "root"
-			}
-		}
-
-		password := sshPassword
-		if password == "" && registryStore != nil {
-			if entry, ok := registryStore.Get(name); ok {
-				password = entry.Password
-			}
-		}
+		user, password := resolveSSHCredentials(name, backend, sshUser, sshPassword)
 
 		if backend == "kubevirt" {
 			ns, _ := resolveNamespace(name)

@@ -2,12 +2,13 @@ package kubevirt
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/hanthor/corral/pkg/types"
+	"github.com/tuna-os/corral/pkg/types"
 )
 
 func TestGenerateVM_Basic(t *testing.T) {
@@ -166,7 +167,7 @@ func TestGeneratePVC(t *testing.T) {
 }
 
 func TestGenerateDataVolume(t *testing.T) {
-	dv := GenerateDataVolume("test-iso", "default", "https://example.com/test.iso")
+	dv := GenerateDataVolume("test-iso", "default", "https://example.com/test.iso", "8Gi")
 
 	if dv["kind"] != "DataVolume" {
 		t.Error("expected DataVolume")
@@ -176,6 +177,18 @@ func TestGenerateDataVolume(t *testing.T) {
 	httpSrc := source["http"].(map[string]any)
 	if httpSrc["url"] != "https://example.com/test.iso" {
 		t.Errorf("wrong URL: %s", httpSrc["url"])
+	}
+	storage := spec["pvc"].(map[string]any)["resources"].(map[string]any)["requests"].(map[string]any)["storage"]
+	if storage != "8Gi" {
+		t.Errorf("wrong storage size: %v", storage)
+	}
+}
+
+func TestGenerateDataVolume_DefaultSizeWhenEmpty(t *testing.T) {
+	dv := GenerateDataVolume("test-iso", "default", "https://example.com/test.iso", "")
+	storage := dv["spec"].(map[string]any)["pvc"].(map[string]any)["resources"].(map[string]any)["requests"].(map[string]any)["storage"]
+	if storage != "12Gi" {
+		t.Errorf("expected the %dGi fallback when size is empty, got %v", isoSizeFallbackGi, storage)
 	}
 }
 
@@ -763,7 +776,7 @@ func TestGeneratePVCSpec(t *testing.T) {
 }
 
 func TestGenerateDataVolume_Metadata(t *testing.T) {
-	dv := GenerateDataVolume("test-iso", "tailvm", "https://example.com/ubuntu.iso")
+	dv := GenerateDataVolume("test-iso", "tailvm", "https://example.com/ubuntu.iso", "6Gi")
 
 	meta := dv["metadata"].(map[string]any)
 	if meta["name"] != "test-iso" {
@@ -777,6 +790,30 @@ func TestGenerateDataVolume_Metadata(t *testing.T) {
 	ann, _ := meta["annotations"].(map[string]string)
 	if ann["cdi.kubevirt.io/storage.bind.immediate.requested"] != "true" {
 		t.Errorf("DataVolume must request immediate binding, got annotations %v", ann)
+	}
+}
+
+// TestDetectISOSize_RealURL is a regression test for the bug that caused a
+// real Windows VM import to crash-loop for 5+ hours: GenerateDataVolume
+// hardcoded 6Gi for every ISO, and a ~7.2GB Windows 11 ISO blew straight
+// through it. Hits a real, small, known-size file over the network — a
+// mock HTTP server wouldn't exercise the real thing being tested (whether
+// a real server's HEAD response actually carries a usable Content-Length).
+func TestDetectISOSize_RealURL(t *testing.T) {
+	// A tiny, stable, known-Content-Length file (GitHub raw content serves
+	// a real Content-Length on HEAD, unlike some dynamic endpoints) —
+	// verifies the floor kicks in rather than provisioning a suspiciously
+	// tiny PVC for a genuinely tiny file.
+	size := DetectISOSize("https://raw.githubusercontent.com/tuna-os/corral/main/go.mod")
+	if size != "2Gi" {
+		t.Errorf("expected the 2Gi floor for a tiny real file, got %s", size)
+	}
+}
+
+func TestDetectISOSize_FallsBackOnUnreachableURL(t *testing.T) {
+	size := DetectISOSize("http://this-host-does-not-exist.invalid/nope.iso")
+	if size != fmt.Sprintf("%dGi", isoSizeFallbackGi) {
+		t.Errorf("expected the %dGi fallback for an unreachable URL, got %s", isoSizeFallbackGi, size)
 	}
 }
 

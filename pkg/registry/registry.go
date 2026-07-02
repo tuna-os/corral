@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/hanthor/corral/pkg/types"
+	"github.com/tuna-os/corral/pkg/types"
 )
 
 // Store manages VM registry persistence.

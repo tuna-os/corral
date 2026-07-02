@@ -6,12 +6,13 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/hanthor/corral/pkg/shell"
+	"github.com/tuna-os/corral/pkg/kubevirt"
+	"github.com/tuna-os/corral/pkg/shell"
 )
 
 func TestRootCmd_Subcommands(t *testing.T) {
 	root := rootCmd()
-	for _, want := range []string{"create", "restore", "list"} {
+	for _, want := range []string{"create", "restore", "list", "schedule", "unschedule", "schedules"} {
 		c, _, err := root.Find([]string{want})
 		if err != nil || c == root {
 			t.Errorf("missing subcommand %q", want)
@@ -83,6 +84,98 @@ func TestRclone_RealCopytoRoundTrip(t *testing.T) {
 	if err != nil || string(got) != string(payload) {
 		t.Fatalf("round-trip mismatch: got %q err %v", got, err)
 	}
+}
+
+func TestCronExpr_Shorthands(t *testing.T) {
+	tests := map[string]string{
+		"30m": "*/30 * * * *",
+		"1h":  "0 * * * *",
+		"24h": "0 3 * * *",
+	}
+	for in, want := range tests {
+		got, err := cronExpr(in)
+		if err != nil || got != want {
+			t.Errorf("cronExpr(%q) = %q, %v; want %q", in, got, err, want)
+		}
+	}
+}
+
+func TestCronExpr_RawCronPassthrough(t *testing.T) {
+	got, err := cronExpr("15 2 * * 0")
+	if err != nil || got != "15 2 * * 0" {
+		t.Errorf("cronExpr raw = %q, %v", got, err)
+	}
+}
+
+func TestCronExpr_Invalid(t *testing.T) {
+	if _, err := cronExpr("bogus"); err == nil {
+		t.Error("expected an error for an invalid --every value")
+	}
+}
+
+func TestAddSchedule_AppliesSecretRBACAndCronJob(t *testing.T) {
+	orig := runner
+	defer func() { runner = orig }()
+	fake := shell.NewFake()
+	fake.AddResponseKV("kubectl", []string{"apply", "-f", "-"}, "applied", nil)
+	runner = fake
+	kubevirt.SetApplyRunner(fake)
+	defer kubevirt.SetApplyRunner(shell.Real{})
+
+	dir := t.TempDir()
+	confPath := filepath.Join(dir, "rclone.conf")
+	if err := os.WriteFile(confPath, []byte("[r2]\ntype = s3\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RCLONE_CONFIG", confPath)
+
+	if err := addSchedule("web", "tailvm", "0 3 * * *", "r2:backups/corral", 5); err != nil {
+		t.Fatalf("addSchedule: %v", err)
+	}
+
+	applies := 0
+	var sawSecret, sawCronJob bool
+	for _, c := range fake.Calls() {
+		if c.Name == "kubectl" && len(c.Args) > 0 && c.Args[0] == "apply" {
+			applies++
+			if want := `"kind":"Secret"`; contains(c.Stdin, want) {
+				sawSecret = true
+			}
+			if want := `"kind":"CronJob"`; contains(c.Stdin, want) {
+				sawCronJob = true
+			}
+		}
+	}
+	// Secret + ServiceAccount + Role + RoleBinding + CronJob
+	if applies != 5 {
+		t.Errorf("applied %d manifests, want 5", applies)
+	}
+	if !sawSecret {
+		t.Error("expected a Secret manifest (rclone config)")
+	}
+	if !sawCronJob {
+		t.Error("expected a CronJob manifest")
+	}
+}
+
+func TestAddSchedule_MissingRcloneConfig(t *testing.T) {
+	t.Setenv("RCLONE_CONFIG", filepath.Join(t.TempDir(), "does-not-exist.conf"))
+	if err := addSchedule("web", "tailvm", "0 3 * * *", "r2:backups/corral", 5); err == nil {
+		t.Error("expected an error when the local rclone config is missing")
+	}
+}
+
+func contains(s, sub string) bool {
+	return len(s) >= len(sub) && (s == sub || len(sub) == 0 || indexOf(s, sub) >= 0)
+}
+
+func indexOf(s, sub string) int {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return i
+		}
+	}
+	return -1
 }
 
 func TestListCmd_InvokesRcloneLsf(t *testing.T) {
