@@ -25,16 +25,22 @@ var runner shell.Runner = shell.Real{}
 const VirtioWinImage = kubevirt.VirtioWinImage
 
 // generateWindowsVM delegates to the shared package.
-func generateWindowsVM(name, ns, mem string, cpu int) map[string]any {
-	return kubevirt.GenerateWindowsVM(name, ns, mem, cpu)
+func generateWindowsVM(name, ns, mem string, cpu int, unattended bool) map[string]any {
+	return kubevirt.GenerateWindowsVM(name, ns, mem, cpu, unattended)
 }
 
 // createWindowsVM imports the installer ISO, provisions the boot disk, and
 // applies the Windows-tuned VM (exposing SSH/VNC/RDP via the tailnet proxy),
-// then records it in the local registry and prints next steps.
-func createWindowsVM(name, ns, iso, disk, mem string, cpu int) error {
+// then records it in the local registry and prints next steps. With
+// unattended (the default), Setup runs with zero interactive prompts via
+// an injected autounattend.xml — see pkg/kubevirt/autounattend.go — and
+// the generated Administrator password is saved to the registry the same
+// way cloud-init VM passwords already are, so `corral ssh`/RDP just work
+// once install finishes.
+func createWindowsVM(name, ns, iso, disk, mem string, cpu int, unattended bool) error {
 	fmt.Fprintf(os.Stderr, "installer ISO importing: %s-iso ← %s\n", name, iso)
-	if err := kubevirt.CreateWindowsVM(name, ns, iso, disk, mem, cpu); err != nil {
+	password, err := kubevirt.CreateWindowsVM(name, ns, iso, disk, mem, cpu, unattended)
+	if err != nil {
 		return err
 	}
 	fmt.Fprintf(os.Stderr, "SSH/VNC/RDP exposed via proxy service %s-proxy\n", name)
@@ -42,7 +48,19 @@ func createWindowsVM(name, ns, iso, disk, mem string, cpu int) error {
 		store.Set(name, types.RegistryEntry{
 			Backend:   "kubevirt",
 			Namespace: ns,
+			Username:  "Administrator",
+			Password:  password,
 		})
+	}
+	if unattended {
+		fmt.Fprintf(os.Stderr, `VM %q created (stopped). Setup will run unattended — no interactive
+clicks needed. Next steps:
+  1. wait for the ISO import:   corral images
+  2. start it:                  corral start %s
+  3. Administrator password:    %s  (saved — corral ssh/RDP will use it automatically)
+  4. once Setup finishes rebooting, connect:  corral web → Console, or corral vdi connect %s
+`, name, name, password, name)
+		return nil
 	}
 	fmt.Fprintf(os.Stderr, `VM %q created (stopped). Next steps:
   1. wait for the ISO import:   corral images
@@ -73,6 +91,7 @@ func main() {
 	var (
 		namespace, iso, disk, mem string
 		cpu                       int
+		unattended                bool
 	)
 
 	create := &cobra.Command{
@@ -83,13 +102,14 @@ func main() {
 			if iso == "" {
 				return fmt.Errorf("--iso is required (HTTP(S) URL to a Windows installer ISO)")
 			}
-			return createWindowsVM(args[0], namespace, iso, disk, mem, cpu)
+			return createWindowsVM(args[0], namespace, iso, disk, mem, cpu, unattended)
 		},
 	}
 	create.Flags().StringVar(&iso, "iso", "", "Windows installer ISO URL (imported via CDI)")
 	create.Flags().StringVar(&disk, "disk", "64Gi", "Boot disk size")
 	create.Flags().StringVar(&mem, "mem", "8Gi", "Memory")
 	create.Flags().IntVar(&cpu, "cpu", 4, "vCPU cores")
+	create.Flags().BoolVar(&unattended, "unattended", true, "Run Windows Setup unattended via an injected autounattend.xml (no interactive prompts)")
 
 	drivers := &cobra.Command{
 		Use:   "drivers <vm>",

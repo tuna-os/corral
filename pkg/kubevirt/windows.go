@@ -25,7 +25,10 @@ const VirtioWinImage = "quay.io/kubevirt/virtio-container-disk:20260702_54ce361f
 // GenerateWindowsVM builds the Windows-tuned VirtualMachine manifest. Boot
 // order is disk(1) → installer ISO(2): the empty disk falls through to the ISO
 // on first boot, and Windows boots from disk directly once installed.
-func GenerateWindowsVM(name, ns, mem string, cpu int) map[string]any {
+// When unattended is true, a fourth CD-ROM (the ConfigMap-backed
+// autounattend.xml ISO — see autounattend.go) is attached so Windows
+// Setup runs with zero interactive prompts.
+func GenerateWindowsVM(name, ns, mem string, cpu int, unattended bool) map[string]any {
 	disks := []map[string]any{
 		{"name": "rootdisk", "bootOrder": 1, "disk": map[string]any{"bus": "virtio"}},
 		{"name": "windows-iso", "bootOrder": 2, "cdrom": map[string]any{"bus": "sata"}},
@@ -35,6 +38,10 @@ func GenerateWindowsVM(name, ns, mem string, cpu int) map[string]any {
 		{"name": "rootdisk", "persistentVolumeClaim": map[string]any{"claimName": name + "-disk"}},
 		{"name": "windows-iso", "persistentVolumeClaim": map[string]any{"claimName": name + "-iso"}},
 		{"name": "virtio-drivers", "containerDisk": map[string]any{"image": VirtioWinImage}},
+	}
+	if unattended {
+		disks = append(disks, map[string]any{"name": "autounattend", "cdrom": map[string]any{"bus": "sata"}})
+		volumes = append(volumes, map[string]any{"name": "autounattend", "configMap": map[string]any{"name": AutounattendConfigMapName(name)}})
 	}
 	return map[string]any{
 		"apiVersion": "kubevirt.io/v1",
@@ -118,7 +125,16 @@ func GenerateWindowsVM(name, ns, mem string, cpu int) map[string]any {
 // applies the Windows-tuned VM, then exposes ConsolePorts (SSH/VNC/RDP)
 // through the corral tailnet proxy — same as every other creation path.
 // disk/mem default to 64Gi/8Gi, cpu to 4.
-func CreateWindowsVM(name, ns, iso, disk, mem string, cpu int) error {
+//
+// When unattended is true (the recommended default), also generates a
+// random Administrator password meeting Windows' complexity policy,
+// applies an autounattend.xml ConfigMap/CD-ROM built from it (see
+// autounattend.go), and returns the password — the caller (CLI/web) is
+// responsible for surfacing/saving it, the same way cloud-init VM
+// passwords are handled. Returns "" when unattended is false, since
+// there's then no way for corral to know what account/password ends up
+// on the guest — the operator drives Setup manually.
+func CreateWindowsVM(name, ns, iso, disk, mem string, cpu int, unattended bool) (password string, err error) {
 	if ns == "" {
 		ns = DefaultNamespace
 	}
@@ -132,22 +148,29 @@ func CreateWindowsVM(name, ns, iso, disk, mem string, cpu int) error {
 		cpu = 4
 	}
 	if iso == "" {
-		return fmt.Errorf("a Windows installer ISO URL is required")
+		return "", fmt.Errorf("a Windows installer ISO URL is required")
 	}
 	EnsureNamespace(ns)
 	sc := PreferredStorageClass()
 
 	if err := Apply(GenerateDataVolume(name+"-iso", ns, iso, DetectISOSize(iso))); err != nil {
-		return fmt.Errorf("creating ISO DataVolume: %w", err)
+		return "", fmt.Errorf("creating ISO DataVolume: %w", err)
 	}
 	if err := Apply(GeneratePVCWithClass(name+"-disk", ns, disk, sc)); err != nil {
-		return fmt.Errorf("creating boot disk PVC: %w", err)
+		return "", fmt.Errorf("creating boot disk PVC: %w", err)
 	}
-	if err := Apply(GenerateWindowsVM(name, ns, mem, cpu)); err != nil {
-		return fmt.Errorf("creating VM: %w", err)
+	if unattended {
+		password = randomWindowsPassword()
+		xml := AutounattendXML(name, password)
+		if err := Apply(GenerateAutounattendConfigMap(name, ns, xml)); err != nil {
+			return "", fmt.Errorf("creating autounattend ConfigMap: %w", err)
+		}
+	}
+	if err := Apply(GenerateWindowsVM(name, ns, mem, cpu, unattended)); err != nil {
+		return "", fmt.Errorf("creating VM: %w", err)
 	}
 	if err := ApplyProxy(name, ns, ConsolePorts); err != nil {
-		return fmt.Errorf("exposing console: %w", err)
+		return "", fmt.Errorf("exposing console: %w", err)
 	}
-	return nil
+	return password, nil
 }
