@@ -1,10 +1,11 @@
 package proxmox
 
 import (
+	"fmt"
 	"math"
 	"testing"
 
-	"github.com/hanthor/corral/pkg/types"
+	"github.com/tuna-os/corral/pkg/types"
 )
 
 // ── VmidFor tests ────────────────────────────────────────────────────────────
@@ -83,11 +84,11 @@ func TestMemBytes(t *testing.T) {
 		{"1k", 1 << 10},
 		{"4G", 4 * (1 << 30)},
 		{"4096M", 4096 * (1 << 20)},
-		{" 2G ", 2 * (1 << 30)},          // whitespace trimmed
+		{" 2G ", 2 * (1 << 30)}, // whitespace trimmed
 		{"0.5G", int64(0.5 * float64(1<<30))},
 		{"1.5G", int64(1.5 * float64(1<<30))},
-		{"100", 100 * (1 << 20)},          // no unit = MiB
-		{"abc", 0},                        // invalid input
+		{"100", 100 * (1 << 20)}, // no unit = MiB
+		{"abc", 0},               // invalid input
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
@@ -107,9 +108,9 @@ func TestMemBytes_RoundTrip(t *testing.T) {
 		var s string
 		switch {
 		case v >= 1<<30 && v%(1<<30) == 0:
-			s = string(rune('0'+v/(1<<30))) + "G"
+			s = fmt.Sprintf("%dG", v/(1<<30))
 		case v >= 1<<20 && v%(1<<20) == 0:
-			s = string(rune('0'+v/(1<<20))) + "M"
+			s = fmt.Sprintf("%dM", v/(1<<20))
 		default:
 			continue
 		}
