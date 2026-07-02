@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/tuna-os/corral/pkg/shell"
 	"github.com/tuna-os/corral/pkg/types"
@@ -117,11 +118,32 @@ func Create(opts types.CreateOpts) error {
 		diskSize = "20G"
 	}
 
-	// Create disk
+	// Create disk. Three sources, in precedence order:
+	//   ExistingDisk — a prepared disk.qcow2 already sits in the VM dir
+	//                  (bootc-built); booting it as-is is the whole point,
+	//                  so never touch it.
+	//   QCOW         — copy a template image and grow it to diskSize.
+	//   default      — fresh empty disk.
 	diskPath := filepath.Join(vmDir, "disk.qcow2")
-	createDisk := exec.Command(qemuImgPath, "create", "-f", "qcow2", diskPath, diskSize)
-	if out, err := createDisk.CombinedOutput(); err != nil {
-		return fmt.Errorf("creating disk: %s: %w", string(out), err)
+	switch {
+	case opts.ExistingDisk:
+		if _, err := os.Stat(diskPath); err != nil {
+			return fmt.Errorf("ExistingDisk set but %s is missing: %w", diskPath, err)
+		}
+	case opts.QCOW != "":
+		if out, err := exec.Command(qemuImgPath, "convert", "-O", "qcow2", opts.QCOW, diskPath).CombinedOutput(); err != nil {
+			return fmt.Errorf("copying template %s: %s: %w", opts.QCOW, string(out), err)
+		}
+		if opts.Disk != "" {
+			// Grow to the requested size (shrinking is refused by qemu-img).
+			if out, err := exec.Command(qemuImgPath, "resize", diskPath, diskSize).CombinedOutput(); err != nil {
+				return fmt.Errorf("resizing disk to %s: %s: %w", diskSize, string(out), err)
+			}
+		}
+	default:
+		if out, err := exec.Command(qemuImgPath, "create", "-f", "qcow2", diskPath, diskSize).CombinedOutput(); err != nil {
+			return fmt.Errorf("creating disk: %s: %w", string(out), err)
+		}
 	}
 
 	// Resolve ISO
@@ -304,6 +326,50 @@ func SSH(name, username, identityFile, command string, port int, password string
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+// WaitSSH polls the VM's forwarded SSH port until a non-interactive login
+// succeeds or timeout elapses. Unlike SSH() it tolerates the 127.0.0.1
+// fallback host — CI runners have no tailnet, and the hostfwd is bound to
+// loopback there, which is exactly where we probe. Returns nil as soon as
+// `ssh user@host true` exits 0.
+func WaitSSH(name, username string, timeout time.Duration) error {
+	meta, err := readMetadata(name)
+	if err != nil {
+		return fmt.Errorf("VM %q not found: %w", name, err)
+	}
+	if meta.SSHPort == 0 {
+		return fmt.Errorf("VM %q has no forwarded SSH port — recreate it with this corral version", name)
+	}
+	host := meta.Tailscale
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	sshBin, _ := exec.LookPath("ssh")
+	if sshBin == "" {
+		return fmt.Errorf("ssh not found in PATH")
+	}
+
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		probe := exec.Command(sshBin,
+			"-o", "BatchMode=yes",
+			"-o", "StrictHostKeyChecking=no",
+			"-o", "UserKnownHostsFile=/dev/null",
+			"-o", "ConnectTimeout=5",
+			"-p", fmt.Sprintf("%d", meta.SSHPort),
+			fmt.Sprintf("%s@%s", username, host),
+			"true")
+		if out, err := probe.CombinedOutput(); err == nil {
+			fmt.Fprintf(os.Stderr, "VM %q is reachable over SSH (%s@%s:%d).\n", name, username, host, meta.SSHPort)
+			return nil
+		} else {
+			lastErr = fmt.Errorf("%s: %w", strings.TrimSpace(string(out)), err)
+		}
+		time.Sleep(5 * time.Second)
+	}
+	return fmt.Errorf("VM %q not SSH-reachable within %s (last error: %v)", name, timeout, lastErr)
 }
 
 // vmMetadata is the on-disk metadata.json schema.
