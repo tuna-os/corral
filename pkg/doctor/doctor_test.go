@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hanthor/corral/pkg/shell"
+	"github.com/tuna-os/corral/pkg/shell"
 )
 
 // withFake installs a fake runner for the duration of the test.
@@ -220,6 +220,86 @@ func TestRun_StorageGaps(t *testing.T) {
 		if c := checkByName(t, checks, name); c.OK {
 			t.Errorf("%q OK despite storage gaps", name)
 		}
+	}
+}
+
+func TestRun_LonghornDefault_Flagged(t *testing.T) {
+	fake := withFake(t)
+	scriptHealthyCluster(fake)
+	fake.AddResponse("kubectl get sc -o json", `{"items":[
+		{"metadata":{"name":"longhorn","annotations":{"storageclass.kubernetes.io/is-default-class":"true"}},
+		 "provisioner":"driver.longhorn.io","allowVolumeExpansion":true}]}`, nil)
+
+	checks := Run()
+	c := checkByName(t, checks, "Default StorageClass performance")
+	if c.OK {
+		t.Error("expected the Longhorn-default check to fail")
+	}
+	if !strings.Contains(c.Detail, "longhorn") {
+		t.Errorf("detail should name the SC: %s", c.Detail)
+	}
+}
+
+func TestRun_LocalPathDefault_NoLonghornCheck(t *testing.T) {
+	fake := withFake(t)
+	scriptHealthyCluster(fake) // default fixture's SC has no provisioner set (not Longhorn)
+
+	checks := Run()
+	for _, c := range checks {
+		if c.Name == "Default StorageClass performance" {
+			t.Errorf("Longhorn-perf check should be absent when the default SC isn't Longhorn, got: %+v", c)
+		}
+	}
+}
+
+func TestRun_GPUPassthrough_NotPermitted_CheckAbsent(t *testing.T) {
+	fake := withFake(t)
+	scriptHealthyCluster(fake) // healthyKubeVirtJSON has no permittedHostDevices
+
+	checks := Run()
+	for _, c := range checks {
+		if c.Name == "GPU/PCI passthrough" {
+			t.Errorf("GPU check should be absent when no device is permitted, got: %+v", c)
+		}
+	}
+}
+
+func TestRun_GPUPassthrough_PermittedButNotAllocatable_Fails(t *testing.T) {
+	fake := withFake(t)
+	scriptHealthyCluster(fake)
+	fake.AddResponse("kubectl get kubevirt kubevirt -n kubevirt -o json", `{
+		"spec":{"configuration":{
+			"vmRolloutStrategy":"LiveUpdate",
+			"developerConfiguration":{"featureGates":["Snapshot","HotplugVolumes","VMExport"]},
+			"permittedHostDevices":{"pciHostDevices":[{"resourceName":"amd.com/gpu","pciVendorSelector":"1002:744c"}]}
+		},"workloadUpdateStrategy":{"workloadUpdateMethods":["LiveMigrate"]}}}`, nil)
+	fake.AddResponse("kubectl get nodes -o json", `{"items":[{"status":{"allocatable":{"cpu":"8"}}}]}`, nil)
+
+	checks := Run()
+	c := checkByName(t, checks, "GPU/PCI passthrough")
+	if c.OK {
+		t.Error("expected the check to fail — resource permitted but not allocatable on any node")
+	}
+	if !strings.Contains(c.Detail, "amd.com/gpu") {
+		t.Errorf("detail should name the missing resource: %s", c.Detail)
+	}
+}
+
+func TestRun_GPUPassthrough_Allocatable_OK(t *testing.T) {
+	fake := withFake(t)
+	scriptHealthyCluster(fake)
+	fake.AddResponse("kubectl get kubevirt kubevirt -n kubevirt -o json", `{
+		"spec":{"configuration":{
+			"vmRolloutStrategy":"LiveUpdate",
+			"developerConfiguration":{"featureGates":["Snapshot","HotplugVolumes","VMExport"]},
+			"permittedHostDevices":{"pciHostDevices":[{"resourceName":"amd.com/gpu","pciVendorSelector":"1002:744c"}]}
+		},"workloadUpdateStrategy":{"workloadUpdateMethods":["LiveMigrate"]}}}`, nil)
+	fake.AddResponse("kubectl get nodes -o json", `{"items":[{"status":{"allocatable":{"amd.com/gpu":"1"}}}]}`, nil)
+
+	checks := Run()
+	c := checkByName(t, checks, "GPU/PCI passthrough")
+	if !c.OK {
+		t.Errorf("expected the check to pass: %s", c.Detail)
 	}
 }
 

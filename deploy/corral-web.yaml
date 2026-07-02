@@ -1,6 +1,6 @@
 # Corral web UI — Proxmox-style dashboard for KubeVirt, served in-cluster.
 # Image: built from the corral repo Containerfile, pushed to
-# ghcr.io/hanthor/corral (public — no pull secret needed).
+# ghcr.io/tuna-os/corral (public — no pull secret needed).
 # Reachable at https://corral.<tailnet>.ts.net via the Tailscale operator
 # (Ingress with ingressClassName: tailscale terminates HTTPS).
 ---
@@ -150,7 +150,7 @@ spec:
       serviceAccountName: corral-web
       containers:
         - name: corral-web
-          image: ghcr.io/hanthor/corral:latest
+          image: ghcr.io/tuna-os/corral:latest
           imagePullPolicy: Always
           env:
             # Default VM namespace (code default is corral-vms).

@@ -5,10 +5,10 @@ import (
 	"os"
 	"strings"
 
-	"github.com/hanthor/corral/pkg/kubevirt"
-	"github.com/hanthor/corral/pkg/shell"
-	"github.com/hanthor/corral/pkg/types"
 	"github.com/spf13/cobra"
+	"github.com/tuna-os/corral/pkg/kubevirt"
+	"github.com/tuna-os/corral/pkg/shell"
+	"github.com/tuna-os/corral/pkg/types"
 )
 
 // corral import — bring an existing disk image into KubeVirt and boot it as a

@@ -8,7 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/hanthor/corral/pkg/types"
+	"github.com/tuna-os/corral/pkg/shell"
+	"github.com/tuna-os/corral/pkg/types"
 )
 
 // VMHome returns the QEMU VM directory.
@@ -295,24 +296,10 @@ func SSH(name, username, identityFile, command string, port int, password string
 	}
 
 	if password != "" {
-		return runWithSSHPassQemu(password, sshBin, args...)
+		return shell.RunWithSSHPass(password, sshBin, args...)
 	}
 
 	cmd := exec.Command(sshBin, args...)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
-}
-
-// runWithSSHPassQemu runs an ssh command with sshpass.
-func runWithSSHPassQemu(password, bin string, args ...string) error {
-	sshpass, err := exec.LookPath("sshpass")
-	if err != nil {
-		return fmt.Errorf("sshpass not found (needed for password auth) — install: brew install sshpass")
-	}
-	allArgs := append([]string{"-p", password, bin}, args...)
-	cmd := exec.Command(sshpass, allArgs...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

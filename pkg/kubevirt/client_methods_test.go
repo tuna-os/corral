@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/hanthor/corral/pkg/shell"
+	"github.com/tuna-os/corral/pkg/shell"
 )
 
 func newFakeClient() (*Client, *shell.Fake) {

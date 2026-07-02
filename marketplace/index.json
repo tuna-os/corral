@@ -2,72 +2,82 @@
   "plugins": [
     {
       "name": "backup",
-      "description": "On-demand VM disk backup to S3/R2 and restore — exports a stopped VM's disk, uploads it to any rclone remote, and restores via CDI image-upload. Run `corral backup create <vm> --dest r2:bucket/path` and `corral backup restore <name> --src … --size 20Gi`.",
-      "version": "0.1.0",
-      "homepage": "https://github.com/hanthor/corral/tree/main/cmd/corral-backup",
+      "description": "On-demand and scheduled VM disk backup to S3/R2 — exports a stopped VM's disk, uploads it to any rclone remote, restores via CDI image-upload. Scheduled backups run entirely in-cluster via CronJobs. Run `corral backup create <vm> --dest r2:bucket/path` or `corral backup schedule <vm> --every 24h --keep 7 --to r2:bucket/path`.",
+      "version": "0.2.0",
+      "homepage": "https://github.com/tuna-os/corral/tree/main/cmd/corral-backup",
       "platforms": {
-        "linux/amd64": { "url": "https://github.com/hanthor/corral/releases/download/plugins/corral-backup-linux-amd64" },
-        "linux/arm64": { "url": "https://github.com/hanthor/corral/releases/download/plugins/corral-backup-linux-arm64" }
+        "linux/amd64": { "url": "https://github.com/tuna-os/corral/releases/download/plugins/corral-backup-linux-amd64" },
+        "linux/arm64": { "url": "https://github.com/tuna-os/corral/releases/download/plugins/corral-backup-linux-arm64" }
       }
     },
     {
       "name": "bootc",
       "description": "Boot a bootable container image as a VM — bootc install runs on-cluster, then the VM kernel-boots from the image. create / images / rebuild / upgrade / switch / status. Run `corral bootc create <name> --image ...`.",
       "version": "0.2.0",
-      "homepage": "https://github.com/hanthor/corral/tree/main/cmd/corral-bootc",
+      "homepage": "https://github.com/tuna-os/corral/tree/main/cmd/corral-bootc",
       "platforms": {
-        "linux/amd64": { "url": "https://github.com/hanthor/corral/releases/download/plugins/corral-bootc-linux-amd64" },
-        "linux/arm64": { "url": "https://github.com/hanthor/corral/releases/download/plugins/corral-bootc-linux-arm64" }
+        "linux/amd64": { "url": "https://github.com/tuna-os/corral/releases/download/plugins/corral-bootc-linux-amd64" },
+        "linux/arm64": { "url": "https://github.com/tuna-os/corral/releases/download/plugins/corral-bootc-linux-arm64" }
       }
     },
     {
       "name": "snapsched",
       "description": "Scheduled VM snapshots with retention — a CronJob snapshots the VM per tick and prunes beyond --keep. Run `corral snapsched add <vm> --every 6h --keep 12`.",
       "version": "0.1.0",
-      "homepage": "https://github.com/hanthor/corral/tree/main/cmd/corral-snapsched",
+      "homepage": "https://github.com/tuna-os/corral/tree/main/cmd/corral-snapsched",
       "platforms": {
-        "linux/amd64": { "url": "https://github.com/hanthor/corral/releases/download/plugins/corral-snapsched-linux-amd64" },
-        "linux/arm64": { "url": "https://github.com/hanthor/corral/releases/download/plugins/corral-snapsched-linux-arm64" }
+        "linux/amd64": { "url": "https://github.com/tuna-os/corral/releases/download/plugins/corral-snapsched-linux-amd64" },
+        "linux/arm64": { "url": "https://github.com/tuna-os/corral/releases/download/plugins/corral-snapsched-linux-arm64" }
       }
     },
     {
       "name": "schedule",
       "description": "VM autostart/shutdown windows — CronJobs flip the VM's runStrategy on cron schedules. Run `corral schedule add <vm> --start \"0 9 * * 1-5\" --stop \"0 18 * * 1-5\"`.",
       "version": "0.1.0",
-      "homepage": "https://github.com/hanthor/corral/tree/main/cmd/corral-schedule",
+      "homepage": "https://github.com/tuna-os/corral/tree/main/cmd/corral-schedule",
       "platforms": {
-        "linux/amd64": { "url": "https://github.com/hanthor/corral/releases/download/plugins/corral-schedule-linux-amd64" },
-        "linux/arm64": { "url": "https://github.com/hanthor/corral/releases/download/plugins/corral-schedule-linux-arm64" }
+        "linux/amd64": { "url": "https://github.com/tuna-os/corral/releases/download/plugins/corral-schedule-linux-amd64" },
+        "linux/arm64": { "url": "https://github.com/tuna-os/corral/releases/download/plugins/corral-schedule-linux-arm64" }
       }
     },
     {
       "name": "gpu",
       "description": "GPU/PCI passthrough — discover device-plugin resources, permit them in the KubeVirt CR, attach to VMs. Run `corral gpu list`, `corral gpu attach <vm> --device amd.com/gpu`.",
       "version": "0.1.0",
-      "homepage": "https://github.com/hanthor/corral/tree/main/cmd/corral-gpu",
+      "homepage": "https://github.com/tuna-os/corral/tree/main/cmd/corral-gpu",
       "platforms": {
-        "linux/amd64": { "url": "https://github.com/hanthor/corral/releases/download/plugins/corral-gpu-linux-amd64" },
-        "linux/arm64": { "url": "https://github.com/hanthor/corral/releases/download/plugins/corral-gpu-linux-arm64" }
+        "linux/amd64": { "url": "https://github.com/tuna-os/corral/releases/download/plugins/corral-gpu-linux-amd64" },
+        "linux/arm64": { "url": "https://github.com/tuna-os/corral/releases/download/plugins/corral-gpu-linux-arm64" }
       }
     },
     {
       "name": "windows",
       "description": "First-class Windows VMs — UEFI + TPM + Hyper-V enlightenments, installer ISO via CDI, virtio-win driver CD-ROM, optional RDP. Run `corral windows create <name> --iso <url>`.",
       "version": "0.1.0",
-      "homepage": "https://github.com/hanthor/corral/tree/main/cmd/corral-windows",
+      "homepage": "https://github.com/tuna-os/corral/tree/main/cmd/corral-windows",
       "platforms": {
-        "linux/amd64": { "url": "https://github.com/hanthor/corral/releases/download/plugins/corral-windows-linux-amd64" },
-        "linux/arm64": { "url": "https://github.com/hanthor/corral/releases/download/plugins/corral-windows-linux-arm64" }
+        "linux/amd64": { "url": "https://github.com/tuna-os/corral/releases/download/plugins/corral-windows-linux-amd64" },
+        "linux/arm64": { "url": "https://github.com/tuna-os/corral/releases/download/plugins/corral-windows-linux-arm64" }
       }
     },
     {
       "name": "proxmox",
       "description": "Proxmox VE API compatibility layer — serve a /api2/json subset backed by KubeVirt, so Terraform providers and other Proxmox ecosystem tools can manage your VMs. Run `corral proxmox serve [--addr :8006]`.",
       "version": "0.1.0",
-      "homepage": "https://github.com/hanthor/corral/tree/main/cmd/corral-proxmox",
+      "homepage": "https://github.com/tuna-os/corral/tree/main/cmd/corral-proxmox",
       "platforms": {
-        "linux/amd64": { "url": "https://github.com/hanthor/corral/releases/download/plugins/corral-proxmox-linux-amd64" },
-        "linux/arm64": { "url": "https://github.com/hanthor/corral/releases/download/plugins/corral-proxmox-linux-arm64" }
+        "linux/amd64": { "url": "https://github.com/tuna-os/corral/releases/download/plugins/corral-proxmox-linux-amd64" },
+        "linux/arm64": { "url": "https://github.com/tuna-os/corral/releases/download/plugins/corral-proxmox-linux-arm64" }
+      }
+    },
+    {
+      "name": "vdi",
+      "description": "Desktop pools (RFC-0001, Phase 1) — clone an already-built VM into a pool, assign members to users, connect. Run `corral vdi pool create <name> --from <golden-vm> --size N`, `corral vdi assign <pool> <user>`, `corral vdi connect <member>`. See docs/vdi.md for the full setup guide.",
+      "version": "0.1.0",
+      "homepage": "https://github.com/tuna-os/corral/tree/main/cmd/corral-vdi",
+      "platforms": {
+        "linux/amd64": { "url": "https://github.com/tuna-os/corral/releases/download/plugins/corral-vdi-linux-amd64" },
+        "linux/arm64": { "url": "https://github.com/tuna-os/corral/releases/download/plugins/corral-vdi-linux-arm64" }
       }
     }
   ]

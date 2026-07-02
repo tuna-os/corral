@@ -53,6 +53,16 @@ header {
   padding: 10px 8px;
 }
 
+.tree-view-toggle {
+  display: flex;
+  gap: 6px;
+  padding: 0 2px 10px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+.tree-view-toggle .btn { flex: 1; }
+.tree-view-toggle .btn.active { background: var(--accent); border-color: var(--accent); color: #14100b; font-weight: 600; }
+
 .tree-item {
   display: flex;
   align-items: center;

@@ -4,7 +4,7 @@
 #   curl -fsSLo build/kubectl https://dl.k8s.io/release/v1.36.1/bin/linux/amd64/kubectl
 #   curl -fsSLo build/virtctl https://github.com/kubevirt/kubevirt/releases/download/v1.8.2/virtctl-v1.8.2-linux-amd64
 # Builds on amd64 (CI) with no emulation; for a local cross-arch build use
-#   podman build --arch amd64 -t ghcr.io/hanthor/corral:latest -f Containerfile .
+#   podman build --arch amd64 -t ghcr.io/tuna-os/corral:latest -f Containerfile .
 FROM docker.io/library/alpine:3.21
 
 # qemu-img powers compressed qcow2 disk exports (the default raw.gz export

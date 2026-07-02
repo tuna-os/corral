@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hanthor/corral/pkg/kubevirt"
-	"github.com/hanthor/corral/pkg/shell"
-	"github.com/hanthor/corral/pkg/types"
+	"github.com/tuna-os/corral/pkg/kubevirt"
+	"github.com/tuna-os/corral/pkg/shell"
+	"github.com/tuna-os/corral/pkg/types"
 )
 
 // server translates Proxmox-shaped requests onto the corral KubeVirt backend.
@@ -200,9 +200,15 @@ func (s *Server) Mux() *http.ServeMux {
 		})
 	}))
 
-	// Pools — return empty list (no Proxmox pool support).
+	// Pools — namespaces-as-pools, matching the web UI's Folder View grouping.
 	mux.HandleFunc("GET /api2/json/pools", s.requireAuth(func(w http.ResponseWriter, r *http.Request) {
-		data(w, []any{})
+		vms, err := s.client("").ListVMs()
+		if err != nil {
+			data(w, []any{})
+			return
+		}
+		idMap := s.vmIDMap()
+		data(w, PoolsFromNamespaces(vms, func(name string) int { return s.vmIDFor(idMap, name) }))
 	}))
 
 	// ── Access control (K8s RBAC → Proxmox mapping) ────────────
@@ -293,25 +299,7 @@ func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
 	}
 	var out []map[string]any
 	for _, n := range nodes {
-		status := "offline"
-		if n.Ready {
-			status = "online"
-		}
-		out = append(out, map[string]any{
-			"node":            n.Name,
-			"id":              "node/" + n.Name,
-			"type":            "node",
-			"status":          status,
-			"maxcpu":          n.CPU,
-			"maxmem":          MemBytes(n.MemRaw),
-			"ssl_fingerprint": "",
-			"uptime":          0,
-			"cpu":             0.0,
-			"mem":             0,
-			"maxdisk":         0,
-			"disk":            0,
-			"level":           "",
-		})
+		out = append(out, NodeEntry(n))
 	}
 	data(w, out)
 }
@@ -377,14 +365,7 @@ func (s *Server) handleClusterResources(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		for _, n := range nodes {
-			status := "offline"
-			if n.Ready {
-				status = "online"
-			}
-			out = append(out, map[string]any{
-				"id": "node/" + n.Name, "node": n.Name, "type": "node",
-				"status": status, "maxcpu": n.CPU, "maxmem": MemBytes(n.MemRaw),
-			})
+			out = append(out, NodeResourceEntry(n))
 		}
 	}
 	data(w, out)
@@ -507,35 +488,19 @@ func (s *Server) handleDeleteQemu(w http.ResponseWriter, r *http.Request) {
 
 // ── Access control handlers (K8s RBAC → Proxmox) ───────────────
 
-// k8sSubjects delegates to RBACQuery for ClusterRoleBinding extraction.
+// k8sSubjects queries ClusterRoleBinding subjects and translates them to
+// Proxmox user/group shapes. Falls back to a minimal root@pam-only user list
+// when the RBAC query itself fails — see ADR-0001 — so ecosystem tools that
+// expect at least one user don't break; the shape translation itself lives
+// in translate.go alongside K8sRolesToProxmox.
 func (s *Server) k8sSubjects() (users []map[string]any, groups []map[string]any) {
 	rbacUsers, rbacGroups := (&RBACQuery{runner: s.runner}).Subjects()
 	if rbacUsers == nil {
-		// Fallback: minimal list so tools don't break.
 		return []map[string]any{{
 			"userid": "root@pam", "enable": 1, "expire": 0,
 		}}, nil
 	}
-	for _, u := range rbacUsers {
-		users = append(users, map[string]any{
-			"userid":    u.UserID,
-			"enable":    1,
-			"expire":    0,
-			"email":     "",
-			"comment":   u.Comment,
-			"firstname": "",
-			"lastname":  "",
-			"tokens":    []any{},
-		})
-	}
-	for _, g := range rbacGroups {
-		groups = append(groups, map[string]any{
-			"groupid": g.GroupID,
-			"comment": "",
-			"members": []any{},
-		})
-	}
-	return users, groups
+	return RBACUsersToProxmox(rbacUsers), RBACGroupsToProxmox(rbacGroups)
 }
 
 // k8sRoles maps K8s ClusterRoles to Proxmox privilege strings.
@@ -608,18 +573,7 @@ func (s *Server) handleNodeStorage(w http.ResponseWriter, r *http.Request) {
 	nodeName := r.PathValue("node")
 	var outList []map[string]any
 	for _, sc := range entries {
-		outList = append(outList, map[string]any{
-			"storage": sc.Name,
-			"node":    nodeName,
-			"type":    sc.Type,
-			"content": "images,rootdir",
-			"active":  1,
-			"enabled": 1,
-			"shared":  0,
-			"avail":   0,
-			"total":   0,
-			"used":    0,
-		})
+		outList = append(outList, ProxmoxStorageEntry(sc, nodeName))
 	}
 	data(w, outList)
 }

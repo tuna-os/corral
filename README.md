@@ -1,6 +1,6 @@
 # 🤠 Corral
 
-**Herd your VMs into your tailnet.**
+**Herd your VMs — and containers — into your tailnet.**
 
 You have VMs in two places: quick ones on your laptop, big ones on the
 Kubernetes cluster in the closet. Two sets of tooling, two networking
@@ -18,9 +18,16 @@ VMs are cattle. Stop treating each one like a networking project.
 
 ## Why you'll like it
 
-- **Same five commands everywhere.** `create` / `start` / `ssh` / `viewer` /
-  `delete` work identically whether the VM is local QEMU/KVM or KubeVirt on
-  your cluster. Corral remembers which is which — you never specify it again.
+- **Same commands everywhere.** `create` / `start` / `ssh` / `viewer` /
+  `clone` / `delete` work identically whether the VM is local QEMU/KVM or
+  KubeVirt on your cluster. Corral remembers which is which — you never
+  specify it again.
+- **Containers (CT) — distrobox on Kubernetes.** Proxmox-style pet pods
+  alongside VMs (`corral ct create`). A privileged CT seeds a full root
+  filesystem onto its own volume and `chroot`s into it on boot — `apt` /
+  `dnf` / `apk` installs and dotfiles survive Stop/Start, the same way a
+  real distrobox container survives being stopped and re-entered.
+  Unprivileged (default) CTs get a simple `/data`-only mount instead.
 - **SSH that just works.** Your public key is injected at create time, a
   fallback password is generated and stored locally, and `corral ssh` picks
   the right path: a Kubernetes API tunnel for cluster VMs, a Tailscale-bound
@@ -92,6 +99,10 @@ corral start dev && corral ssh dev -u root
 
 # Everything, both backends, one table
 corral list
+
+# Container (CT) — distrobox-style persistent rootfs
+corral ct create devbox --image docker.io/library/debian:bookworm --privileged
+corral ct console devbox
 ```
 
 ## How VMs are reached
@@ -147,15 +158,58 @@ automatically — no config. Disable with `CORRAL_REGISTRY_MIRROR=off`.
 
 ### The backup plugin
 
-`corral backup` ships VM disk backups to any S3/R2 bucket via rclone:
+`corral backup` ships VM disk backups to any S3/R2 bucket via rclone —
+on-demand or scheduled entirely in-cluster (no workstation required):
 
 ```bash
 corral backup create web --dest r2:backups/corral      # export + upload
 corral backup restore web-restored --src r2:backups/corral/web-….img.gz --size 20Gi
 corral backup list --dest r2:backups/corral
+
+corral backup schedule web --every 24h --keep 7 --to r2:backups/corral  # in-cluster CronJob
+corral backup schedules                                                # list schedules
+corral backup unschedule web
 ```
 
 Needs `rclone` configured for your remote (`rclone config`) and `virtctl`.
+Scheduled backups fetch `virtctl`/`rclone` inside the CronJob pod at
+runtime and mirror your local rclone config into a namespaced Secret — no
+bespoke image required.
+
+### The Windows plugin
+
+`corral windows` sets up UEFI/TPM/virtio for a first-class Windows guest —
+KubeVirt VMs default to a Linux-tuned devices set that Windows Setup
+can't boot from without extra help:
+
+```bash
+corral plugin install windows
+corral windows create win11 --iso https://example/Win11.iso --cpu 4 --mem 8Gi
+```
+
+Imports the installer ISO via CDI, provisions a UEFI+TPM+q35 VM with
+Hyper-V enlightenments and the virtio-win driver ISO attached as a second
+CD-ROM (so Setup can see the virtio disk/network), and attaches proper
+console access.
+
+### The VDI plugin
+
+`corral vdi` — desktop pools. Phase 1 of [RFC-0001](docs/rfc/0001-vdi-plugin.md):
+clone an already-built VM into a pool, hand members to users, connect,
+release, delete. **Full setup guide: [docs/vdi.md](docs/vdi.md).**
+
+```bash
+corral plugin install vdi
+corral vdi pool create devpool --from golden-desktop --size 3
+corral vdi assign devpool alice
+corral vdi connect devpool-1
+corral vdi unassign devpool-1
+```
+
+No broker, no self-serve web page, no idle reclaim yet (see the RFC and
+[issue #69](https://github.com/tuna-os/corral/issues/69) for what's next)
+— pool membership and assignment are plain K8s labels on the VM objects,
+nothing more.
 
 ## Configuration
 
@@ -185,7 +239,7 @@ corral web                                  # http://127.0.0.1:8006
 corral web --addr "$(tailscale ip -4):8006" # share with your tailnet
 ```
 
-Or serve it from the cluster (public image built by CI to `ghcr.io/hanthor/corral`):
+Or serve it from the cluster (public image built by CI to `ghcr.io/tuna-os/corral`):
 
 ```bash
 kubectl apply -f deploy/corral-web.yaml
@@ -207,12 +261,15 @@ Identity comes from the Tailscale ingress headers — see
 ## Command reference
 
 ```
-corral                  TUI
+corral                  TUI (VMs and Containers side by side)
 corral web              Proxmox-style web UI [--addr host:port]
+corral doctor           cluster health checks, --fix for safe auto-fixes
 corral list             all VMs, both backends
 corral create <name>    --kubevirt | (default: local qemu)
                         --mem 4G --cpu 2 --disk 20G --iso … --container-disk …
                         --pvc … --node … --cloud-init … --instancetype … --ts-authkey …
+                        --storage-class …
+corral clone <src> <dst>  [kubevirt] clone a VM's disk + config to a new name
 corral plugin           search | install <name> | list | remove <name>   (extensions)
 corral start|stop <name>
 corral restart <name>   restart a VM
@@ -227,6 +284,16 @@ corral viewer <name>    VNC via xdg-open
 corral logs <name>      journald (local) / virt-launcher (cluster)
 corral info <name>      raw JSON
 corral delete <name>    [-f] removes VM, disks, proxy, registry entry
+
+corral ct create <name>  --image … [--cpu 1] [--mem 512Mi] [--disk 5Gi]
+                          [--privileged]  (distrobox-style persistent rootfs)
+corral ct list|start|stop|delete|console <name>
+
+corral vdi pool create <name> --from <golden-vm> --size N   (plugin, desktop pools)
+corral vdi pool list|delete <name>
+corral vdi assign <pool> <user>
+corral vdi unassign <member>
+corral vdi connect <member>
 ```
 
 ### KubeVirt feature support & cluster requirements
@@ -261,6 +328,8 @@ Full design document: [SPEC.md](SPEC.md).
 - **[docs/architecture.md](docs/architecture.md)** — package map, design decisions, data flow, build system
 - **[docs/kubevirt-proxmox-setup.md](docs/kubevirt-proxmox-setup.md)** — from-scratch KubeVirt + Longhorn + Corral setup guide
 - **[docs/testing.md](docs/testing.md)** — testing strategy & plan (unit, integration, E2E)
+- **[docs/vdi.md](docs/vdi.md)** — VDI plugin setup guide (desktop pools)
+- **[docs/rfc/0001-vdi-plugin.md](docs/rfc/0001-vdi-plugin.md)** — VDI plugin design + phased roadmap
 
 ## Requirements
 

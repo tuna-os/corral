@@ -8,6 +8,12 @@
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
 <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+<!-- app.js (a module, deferred by spec) must run before Alpine's own deferred
+     script so its alpine:init listener is registered before Alpine auto-starts
+     — deferred/module scripts execute in document order, so order matters here. -->
+<script type="module" src="app.js"></script>
+<!-- Vendored, not CDN-loaded — see docs/adr/0004-web-ui-alpinejs-no-build.md -->
+<script defer src="alpine.min.js"></script>
 </head>
 <body>
 <header>
@@ -16,6 +22,7 @@
   <div class="spacer"></div>
   <span id="whoami" class="whoami"></span>
   <button id="btn-create" class="btn primary">Create VM</button>
+  <button id="btn-create-ct" class="btn">Create CT</button>
 </header>
 
 <div class="layout">
@@ -23,18 +30,34 @@
   <main id="content"></main>
 </div>
 
-<!-- Proxmox-style task panel: recent/running server operations -->
-<div id="task-panel" class="collapsed">
-  <div id="task-panel-head">
+<!-- Proxmox-style task panel: recent/running server operations.
+     First Alpine.js island — see docs/adr/0004-web-ui-alpinejs-no-build.md. -->
+<div id="task-panel" x-data="taskPanel()" x-init="start()" :class="{ collapsed: collapsed }">
+  <div id="task-panel-head" @click="collapsed = !collapsed">
     <span id="task-panel-title">Tasks</span>
-    <span id="task-panel-summary" class="muted"></span>
+    <span id="task-panel-summary" class="muted" x-text="summary"></span>
     <span class="spacer"></span>
-    <span id="task-panel-chevron">▴</span>
+    <span id="task-panel-chevron" x-text="collapsed ? '▴' : '▾'"></span>
   </div>
   <div id="task-panel-body">
     <table>
       <thead><tr><th>Started</th><th>Action</th><th>Target</th><th>Duration</th><th>Status</th></tr></thead>
-      <tbody id="task-rows"><tr><td colspan="5" class="muted">No tasks yet.</td></tr></tbody>
+      <tbody id="task-rows">
+        <tr x-show="tasks.length === 0"><td colspan="5" class="muted">No tasks yet.</td></tr>
+        <template x-for="t in tasks.slice(0, 50)" :key="t.id">
+          <tr :title="t.status === 'error' ? (t.error || '') : ''">
+            <td x-text="new Date(t.started).toLocaleTimeString()"></td>
+            <td x-text="t.action"></td>
+            <td x-text="t.target"></td>
+            <td x-text="t.duration || '…'"></td>
+            <td>
+              <span class="pill mid" x-show="t.status === 'running'">running</span>
+              <span class="pill off" x-show="t.status === 'error'" :title="t.error || ''">error</span>
+              <span class="pill on" x-show="t.status !== 'running' && t.status !== 'error'">OK</span>
+            </td>
+          </tr>
+        </template>
+      </tbody>
     </table>
   </div>
 </div>
@@ -87,11 +110,19 @@
         <option value="pvc">Existing PVC</option>
       </select>
     </label>
-    <label id="rdp-field" hidden><input type="checkbox" name="rdp"> Expose RDP (3389) on the tailnet</label>
     <label id="catalog-field">Image
       <select name="catalogImage"></select>
     </label>
-    <label id="source-field" hidden>Source <input name="source" placeholder="quay.io/containerdisks/fedora:42"></label>
+    <label id="source-field" hidden>Source <input name="source" placeholder="quay.io/containerdisks/fedora:42" list=""></label>
+    <datalist id="windows-iso-catalog">
+      <option value="https://archive.org/download/W11x64_26200.6584/26200.6584.250915-1905.25h2_ge_release_svc_refresh_CLIENT_CONSUMER_x64FRE_en-us.iso" label="Windows 11 (official, build 26200.6584)"></option>
+      <option value="https://archive.org/download/tiny-10-23-h2/tiny10%20x64%2023h2.iso" label="tiny10 (Windows 10, debloated, ~3.8GB)"></option>
+      <option value="https://archive.org/download/tiny11_25H2/tiny11_25H2_Oct25.iso" label="tiny11 (Windows 11, debloated, ~5.5GB)"></option>
+      <option value="https://archive.org/download/tiny11_25H2/tiny11core_25H2_Oct25.iso" label="core11 (Windows 11, minimal, ~3.2GB)"></option>
+    </datalist>
+    <label id="pvc-source-field" hidden>Existing PVC / uploaded image
+      <select name="pvcSource"></select>
+    </label>
     <datalist id="bootc-catalog"></datalist>
     <div class="row">
       <label>CPU <input name="cpu" type="number" value="2" min="1"></label>
@@ -133,6 +164,31 @@
   </div>
 </dialog>
 
-<script type="module" src="app.js"></script>
+<dialog id="ct-create-dialog">
+  <form id="ct-create-form">
+    <h2>Create Container (CT)</h2>
+    <p class="hint">A pet pod, not a VM — no hypervisor. Unprivileged (default): image runs as-is,
+      only <code>/data</code> persists. Privileged: a full, mutable root filesystem seeded onto the
+      volume and chrooted into — distrobox-style, package installs and dotfiles survive Stop/Start.</p>
+    <label>Name <input name="name" required pattern="[a-z0-9][a-z0-9-]*" placeholder="myct"></label>
+    <label>Image <input name="image" required placeholder="docker.io/library/debian:bookworm"></label>
+    <div class="row">
+      <label>Namespace <input name="namespace" placeholder="(default)"></label>
+      <label>Storage class <input name="storageClass" placeholder="(cluster default)"></label>
+    </div>
+    <div class="row">
+      <label>CPU <input name="cpu" type="number" value="1" min="1"></label>
+      <label>Memory <input name="mem" value="512Mi"></label>
+      <label>Disk <input name="disk" value="5Gi"></label>
+    </div>
+    <label><input type="checkbox" name="privileged"> Privileged — persistent full rootfs (distrobox-style).
+      Needs a full OS image (debian/ubuntu/fedora — has chroot + coreutils), not alpine/busybox.</label>
+    <div class="dialog-actions">
+      <span class="spacer" style="flex:1"></span>
+      <button type="button" class="btn" id="ct-btn-cancel">Cancel</button>
+      <button type="submit" class="btn primary">Create</button>
+    </div>
+  </form>
+</dialog>
 </body>
 </html>

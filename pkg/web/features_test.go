@@ -6,9 +6,10 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
-	"github.com/hanthor/corral/pkg/catalog"
-	"github.com/hanthor/corral/pkg/kubevirt"
+	"github.com/tuna-os/corral/pkg/catalog"
+	"github.com/tuna-os/corral/pkg/kubevirt"
 )
 
 // errSimulated is a sentinel error used in error-path tests.
@@ -259,6 +260,61 @@ func TestHandleScale_Success(t *testing.T) {
 	}
 }
 
+func TestHandleSetOptions_Success(t *testing.T) {
+	fx := NewTestFixture()
+	defer fx.Server.Close()
+
+	fx.Runner.AddResponseKV("kubectl", []string{
+		"get", "vm", "testvm", "-n", "tailvm", "-o", "json",
+	}, `{
+		"metadata":{"name":"testvm","namespace":"tailvm"},
+		"spec":{"running":true,"template":{"spec":{"domain":{"devices":{"disks":[{"name":"rootdisk"}]}}}}}
+	}`, nil)
+	fx.Runner.AddResponseKV("kubectl", []string{"apply", "-f", "-"}, "applied", nil)
+
+	body := strings.NewReader(`{"runStrategy":"Manual"}`)
+	resp, err := http.Post(fx.Server.URL+"/api/vms/tailvm/testvm/options",
+		"application/json", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var sawApply bool
+	for _, c := range fx.Runner.Calls() {
+		if c.Name == "kubectl" && len(c.Args) > 0 && c.Args[0] == "apply" {
+			sawApply = true
+			if !strings.Contains(c.Stdin, `"runStrategy":"Manual"`) {
+				t.Errorf("applied manifest missing runStrategy: %s", c.Stdin)
+			}
+		}
+	}
+	if !sawApply {
+		t.Error("expected a kubectl apply call")
+	}
+}
+
+func TestHandleSetOptions_MalformedJSON(t *testing.T) {
+	fx := NewTestFixture()
+	defer fx.Server.Close()
+
+	body := strings.NewReader(`not json`)
+	resp, err := http.Post(fx.Server.URL+"/api/vms/tailvm/testvm/options",
+		"application/json", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", resp.StatusCode)
+	}
+}
+
 // ── DataVolumes (image library) ───────────────────────────────────
 
 func TestHandleListDataVolumes(t *testing.T) {
@@ -315,6 +371,73 @@ func TestHandleImportDataVolume_MissingFields(t *testing.T) {
 	if resp.StatusCode != 400 {
 		t.Errorf("expected 400 for missing fields, got %d", resp.StatusCode)
 	}
+}
+
+func TestHandleUploadDataVolume_MissingParams(t *testing.T) {
+	fx := NewTestFixture()
+	defer fx.Server.Close()
+
+	resp, err := http.Post(fx.Server.URL+"/api/datavolumes/upload?name=iso1", "application/octet-stream", strings.NewReader("data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("expected 400 for missing size, got %d", resp.StatusCode)
+	}
+}
+
+func TestHandleUploadDataVolume_EmptyBody(t *testing.T) {
+	fx := NewTestFixture()
+	defer fx.Server.Close()
+
+	resp, err := http.Post(fx.Server.URL+"/api/datavolumes/upload?name=iso1&size=1Gi", "application/octet-stream", strings.NewReader(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("expected 400 for an empty upload, got %d", resp.StatusCode)
+	}
+}
+
+func TestHandleUploadDataVolume_StartsBackgroundTask(t *testing.T) {
+	fx := NewTestFixture()
+	defer fx.Server.Close()
+
+	resp, err := http.Post(fx.Server.URL+"/api/datavolumes/upload?name=iso1&namespace=tailvm&size=1Gi",
+		"application/octet-stream", strings.NewReader("fake iso bytes"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d", resp.StatusCode)
+	}
+	var respBody map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&respBody); err != nil {
+		t.Fatal(err)
+	}
+	if respBody["task"] == "" {
+		t.Fatal("expected a non-empty task id")
+	}
+
+	// shell.Fake.LookPath always resolves to a nonexistent /fake/bin/virtctl,
+	// so the background exec.Command fails fast and deterministically —
+	// poll the task instead of waiting a fixed duration.
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		v, ok := tasks.Load(respBody["task"])
+		if ok && v.(*buildTask).snapshot()["status"] != "running" {
+			snap := v.(*buildTask).snapshot()
+			if snap["status"] != "error" {
+				t.Errorf("status = %q, want error (no real virtctl in tests)", snap["status"])
+			}
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("task never finished")
 }
 
 func TestHandleDeleteDataVolume(t *testing.T) {
@@ -967,7 +1090,8 @@ func TestHandleRemovePlugin_Success(t *testing.T) {
 
 func TestHandleBootcCreate_ReturnsTask(t *testing.T) {
 	if kubevirt.BootcAvailable() {
-		t.Skip("bootc compiled — handler spawns goroutine that races with cleanup")
+		t.Skip("bootc compiled — this build's request would start a real build, not hit the " +
+			"400 path below; see TestCreateBootc_BuildFailure in create_bootc_bootc_test.go for the compiled-in case")
 	}
 
 	fx := NewTestFixture()

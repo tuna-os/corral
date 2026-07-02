@@ -17,6 +17,7 @@ type BootcImage struct {
 var bootcBases = []BootcImage{
 	{"fedora-bootc", "Fedora bootc 42 — official Fedora bootable container base", "quay.io/fedora/fedora-bootc:42", "fedoraproject.org", "fedora"},
 	{"fedora-bootc-43", "Fedora bootc 43 — official Fedora bootable container base", "quay.io/fedora/fedora-bootc:43", "fedoraproject.org", "fedora"},
+	{"fedora-bootc-44", "Fedora bootc 44 — official Fedora bootable container base", "quay.io/fedora/fedora-bootc:44", "fedoraproject.org", "fedora"},
 	{"centos-bootc-stream9", "CentOS Stream 9 bootc — official CentOS bootable container base", "quay.io/centos-bootc/centos-bootc:stream9", "centos.org", "centos"},
 	{"centos-bootc-stream10", "CentOS Stream 10 bootc — official CentOS bootable container base", "quay.io/centos-bootc/centos-bootc:stream10", "centos.org", "centos"},
 }

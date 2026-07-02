@@ -4,9 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hanthor/corral/pkg/catalog"
-	"github.com/hanthor/corral/pkg/kubevirt"
-	"github.com/hanthor/corral/pkg/shell"
+	"github.com/tuna-os/corral/pkg/catalog"
+	"github.com/tuna-os/corral/pkg/kubevirt"
+	"github.com/tuna-os/corral/pkg/shell"
 )
 
 func TestSearchCatalog(t *testing.T) {

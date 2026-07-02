@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hanthor/corral/pkg/kubevirt"
+	"github.com/tuna-os/corral/pkg/kubevirt"
 )
 
 // TestStaticServed verifies the embedded SPA (index.html + assets) is served.
@@ -23,7 +23,7 @@ func TestStaticServed(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	for _, path := range []string{"/", "/app.js", "/icons.js", "/style.css"} {
+	for _, path := range []string{"/", "/app.js", "/icons.js", "/style.css", "/alpine.min.js"} {
 		r, err := http.Get(srv.URL + path)
 		if err != nil {
 			t.Fatalf("GET %s: %v", path, err)
@@ -688,7 +688,7 @@ func TestHandleTaskStatus_Existing(t *testing.T) {
 	defer fx.Close()
 
 	// Insert a completed build task directly into the package-level tasks map
-	task := &buildTask{}
+	task := newBuildTask()
 	task.finish(nil) // status = "done"
 	tasks.Store("test-task-1", task)
 	defer tasks.Delete("test-task-1")

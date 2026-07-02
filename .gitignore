@@ -19,7 +19,15 @@ e2e/node_modules/
 e2e/test-results/
 
 # Local Claude Code settings
-.claude/settings.local.json
+# Agent runtime artifacts
+.pi/goals/
+
+# Claude Code runtime
+.claude/
+
+# Agent runtime state — belongs in the agent's working directory, not the repo
+.pi/goals/
+.claude/scheduled_tasks.lock
 
 # Scratch / transcript dumps — never commit (may contain secrets)
 corral.txt

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hanthor/corral/pkg/types"
+	"github.com/tuna-os/corral/pkg/types"
 )
 
 // This file holds the "Proxmox-parity" VM operations layered on top of the
@@ -815,11 +815,10 @@ func ImportDataVolume(name, namespace, url, size string) error {
 		namespace = DefaultNamespace
 	}
 	if size == "" {
-		size = "10Gi"
+		size = DetectISOSize(url)
 	}
 	EnsureNamespace(namespace)
-	dv := GenerateDataVolume(name, namespace, url)
-	dv["spec"].(map[string]any)["pvc"].(map[string]any)["resources"].(map[string]any)["requests"].(map[string]any)["storage"] = size
+	dv := GenerateDataVolume(name, namespace, url, size)
 	if sc := PreferredStorageClass(); sc != "" {
 		dv["spec"].(map[string]any)["pvc"].(map[string]any)["storageClassName"] = sc
 	}
@@ -980,7 +979,8 @@ func GeneratePVCWithClass(name, namespace, size, storageClass string) map[string
 }
 
 // PreferredStorageClass returns the StorageClass Corral prefers for new disks:
-// "longhorn" when present (RWX, snapshots, expansion), else "" (cluster default).
+// "local-path" when present (local NVMe speed — no network IO), else "" (cluster default).
+// Snapshot and expansion features are detected automatically from the cluster.
 func PreferredStorageClass() string {
 	return ClusterCapabilities().StorageClass
 }
@@ -1008,8 +1008,10 @@ func ClusterCapabilities() types.Capabilities {
 	var preferred, def string
 	for _, it := range res.Items {
 		expand[it.Metadata.Name] = it.AllowVolumeExpansion != nil && *it.AllowVolumeExpansion
-		if it.Metadata.Name == "longhorn" {
-			preferred = "longhorn"
+		if it.Metadata.Name == "local-path" {
+			preferred = "local-path"
+		} else if (strings.Contains(it.Metadata.Name, "topolvm") || it.Metadata.Name == "topolvm") && preferred != "local-path" {
+			preferred = it.Metadata.Name
 		}
 		if it.Metadata.Annotations["storageclass.kubernetes.io/is-default-class"] == "true" {
 			def = it.Metadata.Name
@@ -1020,7 +1022,7 @@ func ClusterCapabilities() types.Capabilities {
 		effective = def
 	}
 	return types.Capabilities{
-		StorageClass: preferred,
+		StorageClass: effective,
 		CanExpand:    expand[effective],
 		CanSnapshot:  hasSnapshotClass(),
 	}
