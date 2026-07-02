@@ -427,6 +427,94 @@ func TestLogsCmd_NonexistentVM(t *testing.T) {
 	}
 }
 
+func TestResolveSSHCredentials_SavesExplicitUsername(t *testing.T) {
+	dir := t.TempDir()
+	oldStore := registryStore
+	registryStore = registry.NewStoreAt(filepath.Join(dir, "registry.json"))
+	registryStore.Set("myvm", types.RegistryEntry{Backend: "kubevirt", Namespace: "default", Password: "secret"})
+	defer func() { registryStore = oldStore }()
+
+	user, password := resolveSSHCredentials("myvm", "kubevirt", "admin", "")
+	if user != "admin" {
+		t.Errorf("user = %q, want admin", user)
+	}
+	if password != "secret" {
+		t.Errorf("password = %q, want secret (preserved from the existing entry)", password)
+	}
+
+	entry, ok := registryStore.Get("myvm")
+	if !ok || entry.Username != "admin" {
+		t.Errorf("expected the registry to remember Username=admin, got %+v", entry)
+	}
+	if entry.Password != "secret" {
+		t.Errorf("expected Password to survive the update, got %q", entry.Password)
+	}
+}
+
+func TestResolveSSHCredentials_UsesRememberedUsernameWhenNoFlag(t *testing.T) {
+	dir := t.TempDir()
+	oldStore := registryStore
+	registryStore = registry.NewStoreAt(filepath.Join(dir, "registry.json"))
+	registryStore.Set("myvm", types.RegistryEntry{Backend: "kubevirt", Username: "ubuntu", Password: "hunter2"})
+	defer func() { registryStore = oldStore }()
+
+	user, password := resolveSSHCredentials("myvm", "kubevirt", "", "")
+	if user != "ubuntu" {
+		t.Errorf("user = %q, want the remembered ubuntu (no -u flag passed)", user)
+	}
+	if password != "hunter2" {
+		t.Errorf("password = %q, want hunter2", password)
+	}
+}
+
+func TestResolveSSHCredentials_FlagOverridesRemembered(t *testing.T) {
+	dir := t.TempDir()
+	oldStore := registryStore
+	registryStore = registry.NewStoreAt(filepath.Join(dir, "registry.json"))
+	registryStore.Set("myvm", types.RegistryEntry{Backend: "kubevirt", Username: "ubuntu"})
+	defer func() { registryStore = oldStore }()
+
+	user, _ := resolveSSHCredentials("myvm", "kubevirt", "root", "")
+	if user != "root" {
+		t.Errorf("user = %q, want root (explicit -u should win)", user)
+	}
+	entry, _ := registryStore.Get("myvm")
+	if entry.Username != "root" {
+		t.Errorf("expected the registry to update to the new explicit username, got %q", entry.Username)
+	}
+}
+
+func TestResolveSSHCredentials_NoEntryFallsBackToEnvOrRoot(t *testing.T) {
+	oldStore := registryStore
+	registryStore = nil
+	defer func() { registryStore = oldStore }()
+
+	oldUser := os.Getenv("USER")
+	os.Unsetenv("USER")
+	defer os.Setenv("USER", oldUser)
+
+	user, password := resolveSSHCredentials("ghost", "kubevirt", "", "")
+	if user != "root" {
+		t.Errorf("user = %q, want root fallback", user)
+	}
+	if password != "" {
+		t.Errorf("password = %q, want empty", password)
+	}
+}
+
+func TestResolveSSHCredentials_FlagPasswordOverridesSaved(t *testing.T) {
+	dir := t.TempDir()
+	oldStore := registryStore
+	registryStore = registry.NewStoreAt(filepath.Join(dir, "registry.json"))
+	registryStore.Set("myvm", types.RegistryEntry{Backend: "kubevirt", Password: "old"})
+	defer func() { registryStore = oldStore }()
+
+	_, password := resolveSSHCredentials("myvm", "kubevirt", "", "new")
+	if password != "new" {
+		t.Errorf("password = %q, want new (explicit --password should win)", password)
+	}
+}
+
 func TestSSHCmd_NonexistentVM(t *testing.T) {
 	oldStore := registryStore
 	dir := t.TempDir()

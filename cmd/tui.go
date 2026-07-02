@@ -456,15 +456,17 @@ func (m *tuiModel) performAction(action string) {
 			qemu.Viewer(name)
 		}
 	case "ssh":
-		user := os.Getenv("USER")
-		if user == "" {
-			user = "root"
-		}
-		password := ""
+		user, password := "", ""
 		if registryStore != nil {
 			if entry, ok := registryStore.Get(name); ok {
-				password = entry.Password
+				user, password = entry.Username, entry.Password
 			}
+		}
+		if user == "" {
+			user = os.Getenv("USER")
+		}
+		if user == "" {
+			user = "root"
 		}
 		if backend == "kubevirt" {
 			kubevirt.NewClient(ns).SSH(name, user, "", "", 22, password)

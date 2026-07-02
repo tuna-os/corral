@@ -57,6 +57,7 @@ type RegistryEntry struct {
 	Backend   string `json:"backend"`
 	Namespace string `json:"namespace,omitempty"`
 	Password  string `json:"password,omitempty"`
+	Username  string `json:"username,omitempty"` // remembered from the last explicit `corral ssh -u`
 }
 
 // CreateOpts holds all VM creation options.
