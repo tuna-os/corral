@@ -214,26 +214,14 @@ function renderTree() {
 
   if (treeView === 'folder') renderTreeFolders(tree);
   else renderTreeServer(tree);
-
-  // Containers (#50) — shown as their own top-level group in both views for
-  // this first slice, rather than fully replicating VM node/namespace
-  // grouping for a resource type that doesn't have a KubeVirt node concept
-  // the same way. "Alongside VMs" per the issue, not "grouped exactly like
-  // VMs" — that's a natural follow-up once CTs carry more tree-worthy state
-  // (e.g. which node they're scheduled on).
-  if (cts.length) {
-    tree.appendChild(treeRow({
-      lvl: 0, icon: icon('folder'), label: 'Containers',
-      sub: `${cts.length}`,
-      onclick: () => {},
-    }));
-    for (const c of cts) tree.appendChild(ctRow(c));
-  }
 }
 
-function ctRow(c) {
+// CTs sit in the same per-node/per-namespace groups as VMs, distinguished
+// only by icon — matching real Proxmox, which puts VMs and CTs in one
+// resource tree per node/pool rather than segregating them.
+function ctRow(c, lvl) {
   return treeRow({
-    lvl: 1, icon: icon('cube'), label: c.name,
+    lvl, icon: icon('container'), label: c.name,
     sub: c.namespace,
     dot: c.ready ? 'on' : c.phase === 'Stopped' ? 'off' : 'mid',
     sel: selected.type === 'ct' && selected.key === ctKey(c),
@@ -241,11 +229,13 @@ function ctRow(c) {
   });
 }
 
-// Server View: Datacenter → Node → VMs, grouped by v.node. VMs with no
-// placed node (stopped, unscheduled) render as top-level orphans.
+// Server View: Datacenter → Node → VMs/CTs, grouped by .node. Guests with
+// no placed node (stopped, unscheduled) render as top-level orphans.
 function renderTreeServer(tree) {
   const byNode = (nodeName) => vms.filter((v) => v.node === nodeName);
+  const ctsByNode = (nodeName) => cts.filter((c) => c.node === nodeName);
   const placed = new Set();
+  const ctPlaced = new Set();
 
   for (const n of nodes) {
     tree.appendChild(treeRow({
@@ -258,10 +248,16 @@ function renderTreeServer(tree) {
       placed.add(vmKey(vm));
       tree.appendChild(vmRow(vm, 2));
     }
+    for (const c of ctsByNode(n.name)) {
+      ctPlaced.add(ctKey(c));
+      tree.appendChild(ctRow(c, 2));
+    }
   }
 
   const orphans = vms.filter((v) => !placed.has(vmKey(v)));
   for (const vm of orphans) tree.appendChild(vmRow(vm, 1));
+  const ctOrphans = cts.filter((c) => !ctPlaced.has(ctKey(c)));
+  for (const c of ctOrphans) tree.appendChild(ctRow(c, 1));
 }
 
 // Folder View: Datacenter → Namespace → VMs/CTs (templates included — they're
@@ -271,18 +267,28 @@ function renderTreeFolders(tree) {
   const byNS = new Map();
   for (const vm of vms) {
     const ns = vm.namespace || '(none)';
-    if (!byNS.has(ns)) byNS.set(ns, []);
-    byNS.get(ns).push(vm);
+    if (!byNS.has(ns)) byNS.set(ns, { vms: [], cts: [] });
+    byNS.get(ns).vms.push(vm);
+  }
+  for (const c of cts) {
+    const ns = c.namespace || '(none)';
+    if (!byNS.has(ns)) byNS.set(ns, { vms: [], cts: [] });
+    byNS.get(ns).cts.push(c);
   }
   const namespaces = [...byNS.keys()].sort();
 
   for (const ns of namespaces) {
+    const { vms: nsVMs, cts: nsCTs } = byNS.get(ns);
+    const parts = [];
+    if (nsVMs.length) parts.push(`${nsVMs.length} VM${nsVMs.length === 1 ? '' : 's'}`);
+    if (nsCTs.length) parts.push(`${nsCTs.length} CT${nsCTs.length === 1 ? '' : 's'}`);
     tree.appendChild(treeRow({
-      lvl: 1, icon: icon('folder'), label: ns, sub: `${byNS.get(ns).length} VM${byNS.get(ns).length === 1 ? '' : 's'}`,
+      lvl: 1, icon: icon('folder'), label: ns, sub: parts.join(', '),
       sel: selected.type === 'namespace' && selected.name === ns,
       onclick: () => select({ type: 'namespace', name: ns }),
     }));
-    for (const vm of byNS.get(ns)) tree.appendChild(vmRow(vm, 2));
+    for (const vm of nsVMs) tree.appendChild(vmRow(vm, 2));
+    for (const c of nsCTs) tree.appendChild(ctRow(c, 2));
   }
 }
 
@@ -299,7 +305,7 @@ function vmRow(vm, lvl) {
 // markRendered records the just-rendered state so the next poll tick doesn't
 // re-render (and reset scroll) for a change the user already saw.
 function markRendered() {
-  lastRenderFp = JSON.stringify([vms, nodes, selected, tab]);
+  lastRenderFp = JSON.stringify([vms, cts, nodes, selected, tab]);
 }
 
 function select(sel) {
@@ -593,6 +599,7 @@ async function uploadImage(file) {
 function renderNode(main, name) {
   const n = nodes.find((x) => x.name === name);
   const nodeVMs = vms.filter((v) => v.node === name);
+  const nodeCTs = cts.filter((c) => c.node === name);
   main.innerHTML = `
     <div class="page-head">
       <h1>${icon('server')} ${esc(name)}</h1>
@@ -603,26 +610,53 @@ function renderNode(main, name) {
       <dt>Kubelet</dt><dd>${esc(n?.kubelet || '—')}</dd>
       <dt>Architecture</dt><dd>${esc(n?.arch || '—')}</dd>
       <dt>VMs</dt><dd>${nodeVMs.length}</dd>
+      <dt>CTs</dt><dd>${nodeCTs.length}</dd>
     </dl>
     <h2 style="font-size:1rem;margin:18px 0 8px">Virtual machines</h2>
-    ${vmTable(nodeVMs)}`;
+    ${vmTable(nodeVMs)}
+    ${nodeCTs.length ? `<h2 style="font-size:1rem;margin:18px 0 8px">Containers</h2>${ctTable(nodeCTs)}` : ''}`;
   bindVMTable(main);
+  bindCTTable(main);
 }
 
 // Folder View's namespace detail — same shape as renderNode, grouped by
 // namespace instead of node.
 function renderNamespace(main, name) {
   const nsVMs = vms.filter((v) => (v.namespace || '(none)') === name);
+  const nsCTs = cts.filter((c) => (c.namespace || '(none)') === name);
   main.innerHTML = `
     <div class="page-head">
       <h1>${icon('folder')} ${esc(name)}</h1>
     </div>
     <dl class="props">
       <dt>VMs</dt><dd>${nsVMs.length}</dd>
+      <dt>CTs</dt><dd>${nsCTs.length}</dd>
     </dl>
     <h2 style="font-size:1rem;margin:18px 0 8px">Virtual machines</h2>
-    ${vmTable(nsVMs)}`;
+    ${vmTable(nsVMs)}
+    ${nsCTs.length ? `<h2 style="font-size:1rem;margin:18px 0 8px">Containers</h2>${ctTable(nsCTs)}` : ''}`;
   bindVMTable(main);
+  bindCTTable(main);
+}
+
+function ctTable(list) {
+  if (!list.length) return '';
+  return `<table><thead><tr>
+      <th>Name</th><th>Status</th><th>Node</th><th>Namespace</th><th>CPU</th><th>Mem</th><th>Privileged</th>
+    </tr></thead><tbody>
+    ${list.map((c) => `<tr data-ctkey="${esc(ctKey(c))}">
+      <td>${esc(c.name)}</td>
+      <td><span class="dot ${c.ready ? 'on' : c.phase === 'Stopped' ? 'off' : 'mid'}"></span> ${esc(c.phase)}</td>
+      <td>${esc(c.node || '—')}</td><td>${esc(c.namespace)}</td>
+      <td>${c.cpu || '—'}</td><td>${esc(c.mem || '—')}</td><td>${c.privileged ? 'yes' : 'no'}</td>
+    </tr>`).join('')}
+    </tbody></table>`;
+}
+
+function bindCTTable(root) {
+  root.querySelectorAll('tr[data-ctkey]').forEach((tr) => {
+    tr.onclick = () => select({ type: 'ct', key: tr.dataset.ctkey });
+  });
 }
 
 // Container (CT) detail view (#50) — simpler than a VM's: no VNC/hardware/
@@ -665,7 +699,9 @@ function renderCT(main, c) {
       <dt>vCPUs</dt><dd>${c.cpu || '—'}</dd>
       <dt>Memory</dt><dd>${esc(c.mem || '—')}</dd>
       <dt>Privileged</dt><dd>${c.privileged ? 'yes' : 'no'}</dd>
-      <dt>Data volume</dt><dd><code>/data</code> (${esc(c.name)}-data PVC — everything else resets on stop/start)</dd>
+      <dt>Storage</dt><dd>${c.privileged
+        ? `<code>/</code> — persistent full rootfs (${esc(c.name)}-data PVC, distrobox-style: package installs and dotfiles survive Stop/Start)`
+        : `<code>/data</code> only (${esc(c.name)}-data PVC) — everything else resets on Stop/Start`}</dd>
     </dl>`;
   } else if (ctTab === 'terminal') {
     connectTTY({ namespace: c.namespace, name: c.name, running }, body);

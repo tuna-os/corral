@@ -1,6 +1,7 @@
 # ADR-0005: Containers (CT) as pet pods
 
-**Status:** accepted (first vertical slice implemented)
+**Status:** accepted (first vertical slice implemented; persistent-rootfs
+mode added 2026-07-02)
 **Date:** 2026-07-02
 
 ## Context
@@ -37,7 +38,9 @@ A CT is a pod with:
 - **Console** via `kubectl exec`, not a framebuffer — CTs have no VNC/RDP
   console the way VMs do. Reuses the existing `/api/tty/{ns}/{name}`
   endpoint: `ttyBridge` now checks whether `{name}` is a VM (`virtctl
-  console`) or falls back to a CT (`kubectl exec -it <pod> -- sh`).
+  console`) or falls back to a CT (`kubectl exec -it <pod> -- <cmd>`, where
+  `<cmd>` comes from `ct.ExecCommand` — plain `sh` for unprivileged CTs, a
+  re-`chroot` into the persistent rootfs for privileged ones).
 - **Networking** via a plain K8s Service selecting the CT pod's own
   labels directly — no proxy Deployment, no socat relay, no VMI-IP-polling
   shell script. Those exist for VMs specifically because a KubeVirt VM's
@@ -49,24 +52,38 @@ A CT is a pod with:
 
 ### What "PVC-backed persistent rootfs" means here
 
-The original design language (#50) says "PVC-backed persistent rootfs."
-The literal reading — the container's *entire* root filesystem living on
-the PVC, surviving a full re-`docker run` from scratch — needs the
-container's entrypoint to `pivot_root`/chroot into the PVC-mounted
-directory on startup, copying the base image's filesystem onto it on
-first boot. That's baked-image logic: it has to live in the `ct-*` image's
-own entrypoint script, not in generic pod-spec machinery corral can bolt
-onto an arbitrary OCI image from outside.
+The original design language (#50) says "PVC-backed persistent rootfs" —
+distrobox-style: enter the container, install packages, leave, come back
+later, it's all still there. The literal reading needs the container's
+entrypoint to `chroot` into the PVC-mounted directory on startup, copying
+the base image's filesystem onto it on first boot.
 
-This first slice mounts the PVC as a **data volume** (e.g. at `/data`),
-not as the literal container rootfs — full-rootfs persistence is
-deferred to when the curated `ct-*` images (with the pivot_root
-entrypoint logic) actually exist; building and publishing those images is
-explicitly out of scope for this slice (a separate, later content-curation
-task, not a mechanism gap). Anything not living under the PVC mount point
-resets to the image's baked-in state on every stop/start, same as any
-plain container — only genuinely different from a stateless pod in that
-identity (name, PVC, IP-via-Service) persists across that cycle.
+This turned out **not** to need a curated corral-owned image after all —
+Kubernetes lets you override any image's `command`, so the seed+chroot
+bootstrap can be generic pod-spec machinery (`pkg/ct`'s `bootstrapScript`)
+bolted onto an arbitrary OCI image from outside, rather than baked into
+the image itself. The container's own `command` becomes: on first boot,
+`cp -a --one-file-system /. $PVC` (copying the image's own filesystem onto
+the PVC — `--one-file-system` naturally excludes `/proc`, `/sys`, `/dev`,
+and the PVC mount itself, since those are all separate mounts from the
+container's own overlay), then `mount --rbind` the kernel pseudo-filesystems
+into the copy, then `exec chroot $PVC sh -c 'sleep infinity'`. From then on
+the PVC *is* the rootfs.
+
+This is gated behind **Privileged** rather than being unconditional,
+because `mount`/`chroot` need `CAP_SYS_ADMIN`/`CAP_SYS_CHROOT` — the same
+reason PVE's own unprivileged LXC containers don't get this level of host
+access either. Unprivileged CTs keep the original `/data`-only mount
+(simple, safe default, PSA-restricted-friendly); privileged CTs get the
+full persistent rootfs. It needs a real OS image (debian/ubuntu/fedora —
+has `chroot` + coreutils' `cp -a`), not alpine/busybox.
+
+**Console re-entry**: a fresh `kubectl exec` session joins the container's
+namespaces but starts from the pre-chroot image root — chroot only changes
+the *calling process's* apparent root, it's not a namespace a sibling exec
+session inherits. So `/api/tty`'s exec command for a privileged CT
+re-`chroot`s on entry (`chroot $PVC sh -c 'exec bash || exec sh'`) rather
+than running a plain shell — see `ct.ExecCommand`.
 
 ## Consequences
 
@@ -78,11 +95,15 @@ identity (name, PVC, IP-via-Service) persists across that cycle.
   snapshot-as-VM-snapshot) or shrink the interface to the point of not
   being worth sharing. `pkg/ct` is its own package with its own thin
   lifecycle surface (Create/List/Start/Stop/Delete).
-- Full rootfs persistence needs curated `ct-*` images this ADR
-  deliberately doesn't build — the mechanism is real and tested against a
-  stock public image, but "your CT looks like a fresh container on every
-  restart except for `/data`" is the honest current behavior, not the
-  eventual one.
+- Full rootfs persistence (privileged CTs) works against stock public
+  images (tested against `debian:bookworm`) — no curated `ct-*` image is
+  needed for the mechanism itself. A curated image is still worthwhile as
+  a follow-up (baked-in sshd/init, faster first-boot seed via a pre-shrunk
+  base) but is a content task, not something the persistence mechanism is
+  blocked on.
+- The seed-copy on first boot is a real cost: `cp -a` of the whole image
+  onto the PVC takes time and disk proportional to image size, paid once
+  per CT (not per Start) since the `.corral-seeded` marker skips it after.
 - Snapshot (VolumeSnapshot of the PVC) and migrate (reschedule to a node
   that can mount the PVC) are follow-up slices — the first slice is
   create/start/stop/console/network only, matching #50's own tracer-bullet

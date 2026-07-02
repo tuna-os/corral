@@ -8,6 +8,8 @@ package ct
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"os/exec"
 	"strconv"
 
 	"github.com/tuna-os/corral/pkg/shell"
@@ -29,8 +31,9 @@ type CreateOpts struct {
 type CT struct {
 	Name       string `json:"name"`
 	Namespace  string `json:"namespace"`
-	Phase      string `json:"phase"`   // pod phase: Running, Pending, Succeeded, Failed, or "Stopped" (no pod)
-	Ready      bool   `json:"ready"`   // Running and containers ready
+	Node       string `json:"node"`  // K8s node the pod is scheduled on; "" if stopped/unscheduled
+	Phase      string `json:"phase"` // pod phase: Running, Pending, Succeeded, Failed, or "Stopped" (no pod)
+	Ready      bool   `json:"ready"` // Running and containers ready
 	Image      string `json:"image"`
 	CPU        int    `json:"cpu"`
 	Mem        string `json:"mem"`
@@ -51,10 +54,54 @@ type ctSpec struct {
 }
 
 const (
-	specAnnotation = "corral.ct/spec"
-	labelCT        = "corral.dev/ct"
-	dataMountPath  = "/data"
+	specAnnotation  = "corral.ct/spec"
+	labelCT         = "corral.dev/ct"
+	dataMountPath   = "/data"
+	rootfsMountPath = "/corral-rootfs"
+	rootfsMarker    = rootfsMountPath + "/.corral-seeded"
 )
+
+// bootstrapScript is the entrypoint for a privileged (distrobox-style) CT.
+// Unprivileged CTs mount the PVC at /data and run `sleep infinity` straight
+// off the image — anything installed there (apt/dnf/apk) is lost the moment
+// the pod is deleted, since Kubernetes gives every pod restart a fresh
+// filesystem from the image; there's no docker/podman-style "stopped
+// container keeps its writable layer" here. A privileged CT instead seeds
+// the PVC with a full copy of the image's own root filesystem on first
+// boot, then chroots into it — so the PVC *is* the rootfs, and package
+// installs, dotfiles, anything under / all survive Stop/Start exactly like
+// a real distrobox container survives being stopped and re-entered. Needs
+// CAP_SYS_ADMIN (mount) + CAP_SYS_CHROOT (chroot), which is why this mode
+// is gated behind Privileged rather than being the unconditional default —
+// same tradeoff Proxmox's own unprivileged-vs-privileged LXC split makes.
+func bootstrapScript() string {
+	return `set -e
+ROOTFS="` + rootfsMountPath + `"
+MARKER="` + rootfsMarker + `"
+if [ ! -e "$MARKER" ]; then
+  echo "corral: seeding persistent rootfs from image..."
+  cp -a --one-file-system /. "$ROOTFS"
+  touch "$MARKER"
+  echo "corral: seed complete"
+fi
+for fs in proc sys dev; do
+  mkdir -p "$ROOTFS/$fs"
+  mount --rbind "/$fs" "$ROOTFS/$fs"
+done
+exec chroot "$ROOTFS" /bin/sh -c 'cd /root 2>/dev/null || cd /; exec sleep infinity'`
+}
+
+// rootfsExecCommand is what /api/tty execs into for a privileged CT — a
+// fresh `kubectl exec` session joins the container's namespaces but starts
+// from its original (un-chrooted) root, since chroot only changes the
+// calling process's own apparent root, not a namespace visible to sibling
+// exec sessions. Re-chrooting on entry (into the same already-seeded PVC)
+// is what makes a console session land inside the persistent rootfs rather
+// than the throwaway outer image. Prefers bash (present in the target
+// images distrobox mode is meant for) but falls back to sh.
+func rootfsExecCommand() []string {
+	return []string{"chroot", rootfsMountPath, "/bin/sh", "-c", "exec bash 2>/dev/null || exec sh"}
+}
 
 var runner shell.Runner = shell.Real{}
 
@@ -125,6 +172,17 @@ func generatePod(name, namespace string, spec ctSpec) map[string]any {
 	if mem == "" {
 		mem = "512Mi"
 	}
+
+	// Privileged CTs get a persistent, mutable rootfs (distrobox-on-k8s —
+	// see bootstrapScript) instead of the ephemeral-image + /data-only
+	// mount unprivileged CTs use.
+	command := []string{"sleep", "infinity"}
+	mountPath := dataMountPath
+	if spec.Privileged {
+		command = []string{"/bin/sh", "-c", bootstrapScript()}
+		mountPath = rootfsMountPath
+	}
+
 	return map[string]any{
 		"apiVersion": "v1",
 		"kind":       "Pod",
@@ -139,7 +197,7 @@ func generatePod(name, namespace string, spec ctSpec) map[string]any {
 				{
 					"name":    "ct",
 					"image":   spec.Image,
-					"command": []string{"sleep", "infinity"},
+					"command": command,
 					"stdin":   true,
 					"tty":     true,
 					"resources": map[string]any{
@@ -148,7 +206,7 @@ func generatePod(name, namespace string, spec ctSpec) map[string]any {
 					},
 					"securityContext": map[string]any{"privileged": spec.Privileged},
 					"volumeMounts": []map[string]any{
-						{"name": "data", "mountPath": dataMountPath},
+						{"name": "data", "mountPath": mountPath},
 					},
 				},
 			},
@@ -249,6 +307,39 @@ func specFromPVC(name, namespace string) (ctSpec, error) {
 	return spec, nil
 }
 
+// ExecCommand returns the command /api/tty should exec into a CT's
+// container: a plain shell for the default (ephemeral-image) mode, or a
+// re-chroot into the persistent rootfs for a privileged (distrobox-style)
+// CT — see bootstrapScript/rootfsExecCommand for why a fresh exec session
+// needs to re-chroot rather than landing inside it automatically.
+func ExecCommand(name, namespace string) ([]string, error) {
+	spec, err := specFromPVC(name, namespace)
+	if err != nil {
+		return nil, err
+	}
+	if spec.Privileged {
+		return rootfsExecCommand(), nil
+	}
+	return []string{"sh"}, nil
+}
+
+// Console opens an interactive exec session on the CT's own terminal
+// (inherited stdio) — the CLI/TUI equivalent of /api/tty's websocket
+// bridge, for callers that already own a real terminal instead of needing
+// one relayed over a websocket. Mirrors kubevirt.Client.SSH's pattern.
+func Console(name, namespace string) error {
+	shellCmd, err := ExecCommand(name, namespace)
+	if err != nil {
+		return err
+	}
+	args := append([]string{"exec", "-it", name, "-n", namespace, "--"}, shellCmd...)
+	cmd := exec.Command("kubectl", args...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
 // Start creates the pod from the spec recorded on the data PVC — the PVC
 // (and its annotation) survives Stop, so this recreates an identical pod
 // without the caller re-specifying image/cpu/mem/privileged.
@@ -310,6 +401,7 @@ func ListCTs() ([]CT, error) {
 	type podInfo struct {
 		Phase string
 		Ready bool
+		Node  string
 	}
 	pods := map[string]podInfo{} // "ns/name" -> info
 	if podOut, err := run("kubectl", "get", "pods", "-A", "-l", labelCT+"=true", "-o", "json"); err == nil {
@@ -319,6 +411,9 @@ func ListCTs() ([]CT, error) {
 					Name      string `json:"name"`
 					Namespace string `json:"namespace"`
 				} `json:"metadata"`
+				Spec struct {
+					NodeName string `json:"nodeName"`
+				} `json:"spec"`
 				Status struct {
 					Phase             string `json:"phase"`
 					ContainerStatuses []struct {
@@ -333,7 +428,9 @@ func ListCTs() ([]CT, error) {
 				for _, cs := range p.Status.ContainerStatuses {
 					ready = ready && cs.Ready
 				}
-				pods[p.Metadata.Namespace+"/"+p.Metadata.Name] = podInfo{Phase: p.Status.Phase, Ready: ready}
+				pods[p.Metadata.Namespace+"/"+p.Metadata.Name] = podInfo{
+					Phase: p.Status.Phase, Ready: ready, Node: p.Spec.NodeName,
+				}
 			}
 		}
 	}
@@ -348,12 +445,12 @@ func ListCTs() ([]CT, error) {
 		var spec ctSpec
 		json.Unmarshal([]byte(item.Metadata.Annotations[specAnnotation]), &spec)
 
-		phase, ready := "Stopped", false
+		phase, ready, node := "Stopped", false, ""
 		if pi, ok := pods[ns+"/"+name]; ok {
-			phase, ready = pi.Phase, pi.Ready
+			phase, ready, node = pi.Phase, pi.Ready, pi.Node
 		}
 		out = append(out, CT{
-			Name: name, Namespace: ns, Phase: phase, Ready: ready,
+			Name: name, Namespace: ns, Node: node, Phase: phase, Ready: ready,
 			Image: spec.Image, CPU: spec.CPU, Mem: spec.Mem, Privileged: spec.Privileged,
 		})
 	}

@@ -50,14 +50,35 @@ console-able like a VM, just without a hypervisor underneath. Lives in
 resource). Full design: `docs/adr/0005-containers-as-pet-pods.md`.
 
 - **Privilege**: unprivileged by default, privileged opt-in — 1:1 with
-  PVE's "Privileged" checkbox.
-- **Images**: any OCI image with an init process + sshd; the curated
-  corral-owned `ct-*` catalog (with a `ct: true` capability flag riding the
-  existing catalog/sources plumbing) is a follow-up content task, not part
-  of the CT mechanism itself.
+  PVE's "Privileged" checkbox, but also the gate for the distrobox mode
+  below (needs CAP_SYS_ADMIN + CAP_SYS_CHROOT, which unprivileged pods
+  don't get).
+- **Two storage modes**, chosen by Privileged:
+  - **Unprivileged** (default): the PVC mounts at `/data` only; the rest of
+    the filesystem is the image's own ephemeral layer. Package installs,
+    anything outside `/data`, don't survive Stop (Kubernetes gives every
+    pod restart a fresh filesystem from the image — there's no
+    docker/podman-style "stopped container keeps its writable layer" here).
+  - **Privileged — distrobox on k8s**: on first boot, the container seeds
+    the PVC with a full copy of the image's own root filesystem (`cp -a
+    --one-file-system /. $PVC`), then `chroot`s into it. The PVC *is* the
+    rootfs from then on, so `apt`/`dnf`/`apk` installs, dotfiles, anything
+    under `/` all survive Stop/Start — the actual distrobox experience
+    (enter, install stuff, come back later, it's still there), not just a
+    scratch `/data` dir. Needs a full OS image (debian/ubuntu/fedora — has
+    `chroot` + coreutils' `cp -a`), not alpine/busybox.
+- **Images**: any OCI image; no init process or sshd baked in by corral —
+  the curated corral-owned `ct-*` catalog (with a `ct: true` capability
+  flag riding the existing catalog/sources plumbing) is a follow-up content
+  task, not part of the CT mechanism itself.
 - **Console**: no framebuffer → exec/attach → xterm, reusing `/api/tty`
   (which now detects VM-vs-CT by name and dispatches to `virtctl console`
-  or `kubectl exec` accordingly).
+  or `kubectl exec` accordingly). For a privileged CT, the exec session
+  re-`chroot`s into the PVC-backed rootfs on entry — a fresh `kubectl exec`
+  joins the container's namespaces but starts from the un-chrooted image
+  root (chroot only changes the calling process's own apparent root, not
+  something a sibling exec session inherits), so landing inside the
+  persistent rootfs takes a second chroot, not just plain `sh`.
 - **Networking**: reached via a plain K8s Service selecting the CT pod
   directly (simpler than the VM port-proxy, which exists specifically to
   work around KubeVirt VMs not having a stable pod selector — a CT's own

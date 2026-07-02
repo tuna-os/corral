@@ -24,6 +24,7 @@ import (
 	"golang.org/x/net/websocket"
 
 	"github.com/tuna-os/corral/pkg/config"
+	"github.com/tuna-os/corral/pkg/ct"
 	"github.com/tuna-os/corral/pkg/kubevirt"
 	"github.com/tuna-os/corral/pkg/proxmox"
 	"github.com/tuna-os/corral/pkg/registry"
@@ -733,7 +734,12 @@ func ttyBridge(ws *websocket.Conn) {
 	// of file"). virtctl console has no such check (it's not an exec session,
 	// it's a virtio-serial device), which is why the VM path above can use
 	// plain pipes but this one needs a real pty.
-	bridgeConsolePTY(ws, exec.Command("kubectl", "exec", "-i", "-t", name, "-n", ns, "--", "sh"))
+	shellCmd, err := ct.ExecCommand(name, ns)
+	if err != nil {
+		return
+	}
+	args := append([]string{"exec", "-i", "-t", name, "-n", ns, "--"}, shellCmd...)
+	bridgeConsolePTY(ws, exec.Command("kubectl", args...))
 }
 
 // bridgeConsolePipes wires cmd's stdin/stdout to ws via plain OS pipes —

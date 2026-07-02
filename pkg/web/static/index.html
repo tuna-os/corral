@@ -161,8 +161,9 @@
 <dialog id="ct-create-dialog">
   <form id="ct-create-form">
     <h2>Create Container (CT)</h2>
-    <p class="hint">A pet pod: persistent <code>/data</code> volume, exec console — not a VM, no hypervisor.
-      See CONTEXT.md's Container (CT) entry for what does and doesn't persist.</p>
+    <p class="hint">A pet pod, not a VM — no hypervisor. Unprivileged (default): image runs as-is,
+      only <code>/data</code> persists. Privileged: a full, mutable root filesystem seeded onto the
+      volume and chrooted into — distrobox-style, package installs and dotfiles survive Stop/Start.</p>
     <label>Name <input name="name" required pattern="[a-z0-9][a-z0-9-]*" placeholder="myct"></label>
     <label>Image <input name="image" required placeholder="docker.io/library/debian:bookworm"></label>
     <div class="row">
@@ -174,7 +175,8 @@
       <label>Memory <input name="mem" value="512Mi"></label>
       <label>Disk <input name="disk" value="5Gi"></label>
     </div>
-    <label><input type="checkbox" name="privileged"> Privileged (PVE's "Privileged" checkbox — unprivileged is safer, leave off unless you need it)</label>
+    <label><input type="checkbox" name="privileged"> Privileged — persistent full rootfs (distrobox-style).
+      Needs a full OS image (debian/ubuntu/fedora — has chroot + coreutils), not alpine/busybox.</label>
     <div class="dialog-actions">
       <span class="spacer" style="flex:1"></span>
       <button type="button" class="btn" id="ct-btn-cancel">Cancel</button>

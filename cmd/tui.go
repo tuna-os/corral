@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/tuna-os/corral/pkg/ct"
 	"github.com/tuna-os/corral/pkg/doctor"
 	"github.com/tuna-os/corral/pkg/kubevirt"
 	"github.com/tuna-os/corral/pkg/qemu"
@@ -56,6 +57,36 @@ func vmToItem(vm types.VM) vmItem {
 	}
 }
 
+// ── CT item for the list ────────────────────────────────────────────
+//
+// A CT is not a types.VM (see pkg/ct's package doc — deliberately not a
+// types.Backend peer), so it gets its own list.Item rather than being
+// coerced into vmItem's shape. list.Model just wants anything satisfying
+// list.Item, so vmItem and ctItem values mix freely in one []list.Item —
+// same "merged, distinguished by icon" list the web UI's tree now uses,
+// matching real Proxmox's own single resource tree per node/pool.
+
+type ctItem struct {
+	ct      ct.CT
+	display string
+}
+
+func (i ctItem) Title() string       { return "[CT] " + i.ct.Name }
+func (i ctItem) Description() string { return i.display }
+func (i ctItem) FilterValue() string { return i.ct.Name }
+
+func ctToItem(c ct.CT) ctItem {
+	priv := ""
+	if c.Privileged {
+		priv = "  privileged"
+	}
+	return ctItem{
+		ct: c,
+		display: fmt.Sprintf("CT  %s  %d CPU / %s%s",
+			c.Phase, c.CPU, c.Mem, priv),
+	}
+}
+
 // ── Action item for the actions menu ──────────────────────────────
 
 type actionItem struct {
@@ -84,6 +115,17 @@ var actionsListItems = []actionItem{
 	{id: "delete", label: "Delete"},
 }
 
+// CT actions are a small, distinct set — no migrate/snapshot/hardware-edit/
+// ports/clone, since those are VM (hypervisor) concepts a plain pod doesn't
+// have. "Console" replaces "SSH": a CT is reached by kubectl exec, not a
+// virtctl SSH tunnel.
+var actionsListItemsCT = []actionItem{
+	{id: "start", label: "Start"},
+	{id: "stop", label: "Stop"},
+	{id: "console", label: "Console"},
+	{id: "delete", label: "Delete"},
+}
+
 // ── Main model ────────────────────────────────────────────────────
 
 type tuiModel struct {
@@ -92,6 +134,8 @@ type tuiModel struct {
 	quitting    bool
 	state       string // "list", "actions", "edit", "hwedit", "confirmDelete", "doctor", "cloneInput"
 	selected    types.VM
+	isCT        bool // true when the actions menu / performAction target is selectedCT, not selected
+	selectedCT  ct.CT
 	edit        editModel
 	hwEdit      hwEditModel
 	doctorRows  []doctor.Check
@@ -111,9 +155,13 @@ func newTUIModel() tuiModel {
 	for _, vm := range qVMs {
 		items = append(items, vmToItem(vm))
 	}
+	cts, _ := ct.ListCTs()
+	for _, c := range cts {
+		items = append(items, ctToItem(c))
+	}
 
 	if len(items) == 0 {
-		fmt.Println("No VMs found. Create one: corral create <name>")
+		fmt.Println("No VMs or CTs found. Create one: corral create <name>")
 		os.Exit(0)
 	}
 
@@ -130,7 +178,13 @@ func newTUIModel() tuiModel {
 
 func (m *tuiModel) newActionsList() list.Model {
 	title := "Actions"
-	if m.selected.Name != "" {
+	source := actionsListItems
+	if m.isCT {
+		if m.selectedCT.Name != "" {
+			title = fmt.Sprintf("%s (ct)", m.selectedCT.Name)
+		}
+		source = actionsListItemsCT
+	} else if m.selected.Name != "" {
 		b := m.selected.Backend
 		if b == "" {
 			b = "qemu"
@@ -138,8 +192,8 @@ func (m *tuiModel) newActionsList() list.Model {
 		title = fmt.Sprintf("%s (%s)", m.selected.Name, b)
 	}
 
-	listItems := make([]list.Item, len(actionsListItems))
-	for i, a := range actionsListItems {
+	listItems := make([]list.Item, len(source))
+	for i, a := range source {
 		listItems[i] = a
 	}
 
@@ -264,6 +318,11 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						postQuitAction = func() { m.performAction(actionID) }
 						m.quitting = true
 						return m, tea.Quit
+					case "console":
+						name, ns := m.selectedCT.Name, m.selectedCT.Namespace
+						postQuitAction = func() { ct.Console(name, ns) }
+						m.quitting = true
+						return m, tea.Quit
 					case "delete":
 						m.state = "confirmDelete"
 						return m, nil
@@ -299,8 +358,16 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.state = "doctor"
 			return m, nil
 		case "enter":
-			if item, ok := m.list.SelectedItem().(vmItem); ok {
+			switch item := m.list.SelectedItem().(type) {
+			case vmItem:
 				m.selected = item.vm
+				m.isCT = false
+				m.actionsList = m.newActionsList()
+				m.state = "actions"
+				return m, nil
+			case ctItem:
+				m.selectedCT = item.ct
+				m.isCT = true
 				m.actionsList = m.newActionsList()
 				m.state = "actions"
 				return m, nil
@@ -317,6 +384,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *tuiModel) performAction(action string) {
+	if m.isCT {
+		m.performCTAction(action)
+		return
+	}
 	name := m.selected.Name
 	backend := m.selected.Backend
 	ns := m.selected.Namespace
@@ -403,6 +474,25 @@ func (m *tuiModel) performAction(action string) {
 	}
 }
 
+// performCTAction is performAction's CT counterpart — a much smaller
+// surface (no backend split, no migrate/snapshot/pause) since a CT is
+// always a plain pod, never a hypervisor guest. "console" isn't handled
+// here — it's a quit-then-exec action (see the "actions" state's enter
+// handler), same as ssh/viewer/export, since it needs the real terminal
+// back after Bubble Tea releases it.
+func (m *tuiModel) performCTAction(action string) {
+	name, ns := m.selectedCT.Name, m.selectedCT.Namespace
+
+	switch action {
+	case "start":
+		ct.Start(name, ns)
+	case "stop":
+		ct.Stop(name, ns)
+	case "delete":
+		ct.Delete(name, ns)
+	}
+}
+
 // newCloneInput sets up the target-name text input for the Clone action,
 // pre-filled with a "-clone" suggestion off the source VM's name.
 func newCloneInput(sourceName string) textinput.Model {
@@ -449,6 +539,10 @@ func (m *tuiModel) refreshList() {
 	qVMs, _ := qemu.List()
 	for _, vm := range qVMs {
 		items = append(items, vmToItem(vm))
+	}
+	cts, _ := ct.ListCTs()
+	for _, c := range cts {
+		items = append(items, ctToItem(c))
 	}
 	m.list.SetItems(items)
 }
@@ -505,8 +599,12 @@ func (m tuiModel) View() string {
 	}
 
 	if m.state == "confirmDelete" {
+		name, what := m.selected.Name, "and its disks"
+		if m.isCT {
+			name, what = m.selectedCT.Name, "and its data volume"
+		}
 		return fmt.Sprintf("\n  %s\n\n  %s\n",
-			tuiTitle.Render(fmt.Sprintf(" Delete %s and its disks? ", m.selected.Name)),
+			tuiTitle.Render(fmt.Sprintf(" Delete %s %s? ", name, what)),
 			tuiHelp.Render("y confirm  any other key cancel"))
 	}
 

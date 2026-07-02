@@ -2,6 +2,8 @@ package ct
 
 import (
 	"encoding/json"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/tuna-os/corral/pkg/shell"
@@ -99,6 +101,85 @@ func TestCreate_PrivilegedOptIn(t *testing.T) {
 	}
 }
 
+func TestCreate_PrivilegedGetsPersistentRootfs(t *testing.T) {
+	r := withFake(t)
+	r.AddResponseKV("kubectl", []string{"apply", "-f", "-"}, "applied", nil)
+
+	if err := Create(CreateOpts{Name: "priv1", Namespace: "corral-ct", Image: "debian", Privileged: true}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	manifests := appliedManifests(t, r)
+	pod := manifests[1]
+	container := pod["spec"].(map[string]any)["containers"].([]any)[0].(map[string]any)
+
+	mounts := container["volumeMounts"].([]any)
+	mount := mounts[0].(map[string]any)
+	if mount["mountPath"] != rootfsMountPath {
+		t.Errorf("privileged CT mountPath = %v, want %s", mount["mountPath"], rootfsMountPath)
+	}
+
+	cmd := container["command"].([]any)
+	joined := fmt.Sprint(cmd)
+	for _, want := range []string{"cp -a --one-file-system", "chroot", rootfsMountPath} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("privileged CT command missing %q:\n%v", want, cmd)
+		}
+	}
+}
+
+func TestCreate_UnprivilegedKeepsDataMountAndSleepInfinity(t *testing.T) {
+	r := withFake(t)
+	r.AddResponseKV("kubectl", []string{"apply", "-f", "-"}, "applied", nil)
+
+	if err := Create(CreateOpts{Name: "web2", Namespace: "corral-ct", Image: "debian"}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	manifests := appliedManifests(t, r)
+	pod := manifests[1]
+	container := pod["spec"].(map[string]any)["containers"].([]any)[0].(map[string]any)
+
+	mounts := container["volumeMounts"].([]any)
+	mount := mounts[0].(map[string]any)
+	if mount["mountPath"] != dataMountPath {
+		t.Errorf("unprivileged CT mountPath = %v, want %s", mount["mountPath"], dataMountPath)
+	}
+	cmd := container["command"].([]any)
+	if fmt.Sprint(cmd) != fmt.Sprint([]string{"sleep", "infinity"}) {
+		t.Errorf("unprivileged CT command = %v, want sleep infinity", cmd)
+	}
+}
+
+func TestExecCommand_PrivilegedRechroots(t *testing.T) {
+	withFake(t).AddResponseKV("kubectl", []string{
+		"get", "pvc", "priv1-data", "-n", "corral-ct", "-o",
+		`jsonpath={.metadata.annotations.corral\.ct/spec}`,
+	}, `{"image":"debian","cpu":1,"mem":"512Mi","privileged":true}`, nil)
+
+	cmd, err := ExecCommand("priv1", "corral-ct")
+	if err != nil {
+		t.Fatalf("ExecCommand: %v", err)
+	}
+	joined := strings.Join(cmd, " ")
+	if !strings.Contains(joined, "chroot") || !strings.Contains(joined, rootfsMountPath) {
+		t.Errorf("privileged ExecCommand = %v, want a chroot into %s", cmd, rootfsMountPath)
+	}
+}
+
+func TestExecCommand_UnprivilegedPlainShell(t *testing.T) {
+	withFake(t).AddResponseKV("kubectl", []string{
+		"get", "pvc", "web2-data", "-n", "corral-ct", "-o",
+		`jsonpath={.metadata.annotations.corral\.ct/spec}`,
+	}, `{"image":"debian","cpu":1,"mem":"512Mi","privileged":false}`, nil)
+
+	cmd, err := ExecCommand("web2", "corral-ct")
+	if err != nil {
+		t.Fatalf("ExecCommand: %v", err)
+	}
+	if len(cmd) != 1 || cmd[0] != "sh" {
+		t.Errorf("unprivileged ExecCommand = %v, want [sh]", cmd)
+	}
+}
+
 func TestStart_RecreatesPodFromPVCAnnotation(t *testing.T) {
 	r := withFake(t)
 	specJSON := `{"image":"debian:bookworm","cpu":4,"mem":"2Gi","privileged":false}`
@@ -184,6 +265,7 @@ func TestListCTs_MergesStartedAndStoppedState(t *testing.T) {
 	]}`, nil)
 	r.AddResponseKV("kubectl", []string{"get", "pods", "-A", "-l", "corral.dev/ct=true", "-o", "json"}, `{"items":[
 		{"metadata":{"name":"web1","namespace":"corral-ct"},
+			"spec":{"nodeName":"node-a"},
 			"status":{"phase":"Running","containerStatuses":[{"ready":true}]}}
 	]}`, nil)
 
@@ -201,8 +283,14 @@ func TestListCTs_MergesStartedAndStoppedState(t *testing.T) {
 	if byName["web1"].Phase != "Running" || !byName["web1"].Ready {
 		t.Errorf("web1 = %+v, want Running+Ready (has a live pod)", byName["web1"])
 	}
+	if byName["web1"].Node != "node-a" {
+		t.Errorf("web1.Node = %q, want node-a", byName["web1"].Node)
+	}
 	if byName["stopped1"].Phase != "Stopped" || byName["stopped1"].Ready {
 		t.Errorf("stopped1 = %+v, want Stopped (no pod, PVC only)", byName["stopped1"])
+	}
+	if byName["stopped1"].Node != "" {
+		t.Errorf("stopped1.Node = %q, want empty (no pod)", byName["stopped1"].Node)
 	}
 }
 
