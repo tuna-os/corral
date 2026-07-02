@@ -6,6 +6,7 @@
 package kubevirt
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -232,7 +233,10 @@ func bootcResumeState(name, namespace string) (imageURI, pvcName string, ready, 
 func generateBlockPVC(name, namespace, size, storageClass string) map[string]any {
 	pvc := GeneratePVC(name, namespace, size)
 	spec := pvc["spec"].(map[string]any)
-	spec["volumeMode"] = "Block"
+	// Filesystem, not Block: KubeVirt file-backed disks work on every
+	// provisioner (local-path can't do Block volumes at all), and the guest
+	// still sees a plain virtio block device either way.
+	spec["volumeMode"] = "Filesystem"
 	if storageClass != "" {
 		spec["storageClassName"] = storageClass
 	}
@@ -268,7 +272,7 @@ func builderScript(imageURI, sshPublicKey, provisionScript string) string {
 		"__IMAGE__", imageURI,
 		"__SSHKEY__", strings.TrimSpace(sshPublicKey),
 		"__MIRRORCONF__", builderMirrorConf(),
-		"__PROVISION__", provisionScript,
+		"__PROVISIONB64__", base64.StdEncoding.EncodeToString([]byte(provisionScript)),
 	).Replace(builderCloudInit)
 }
 
@@ -412,6 +416,8 @@ write_files:
       __MIRRORCONF__
   - path: /root/buildkey.pub
     content: "__SSHKEY__"
+  - path: /root/provision.b64
+    content: "__PROVISIONB64__"
   - path: /root/build.sh
     permissions: '0755'
     content: |
@@ -498,11 +504,12 @@ write_files:
         done
         sync; umount /mnt/root 2>/dev/null
       fi
-      # Run custom provisioning script chrooted into the root filesystem
+      # Run custom provisioning script chrooted into the root filesystem.
+      # The script travels base64-encoded in its own write_files entry:
+      # embedding it verbatim here put its lines at column 0, which
+      # terminated this YAML block literal and broke the whole cloud-config.
       mkdir -p /mnt/root; mount /dev/disk/by-id/virtio-target-part3 /mnt/root 2>/dev/null
-      cat << 'EOF' > /mnt/root/tmp/provision.sh
-__PROVISION__
-EOF
+      base64 -d /root/provision.b64 > /mnt/root/tmp/provision.sh 2>/dev/null || true
       if [ -s /mnt/root/tmp/provision.sh ]; then
         chmod +x /mnt/root/tmp/provision.sh
         chroot /mnt/root /bin/bash /tmp/provision.sh
