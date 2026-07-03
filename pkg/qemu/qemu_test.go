@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/tuna-os/corral/pkg/types"
@@ -603,5 +604,95 @@ func TestLogs_WithFakeBinaries(t *testing.T) {
 
 	if err := Logs("test"); err == nil {
 		t.Fatal("Logs should fail when journalctl is unavailable")
+	}
+}
+
+// fakeQemuBin drops no-op qemu-system-x86_64 / qemu-img shims into a temp dir
+// and prepends it to PATH so Create() can run without real QEMU. The qemu-img
+// shim logs its argv to <dir>/qemu-img.log and honors `create` by touching
+// the target file so later stat checks behave.
+func fakeQemuBin(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	shim := `#!/bin/sh
+echo "$@" >> "$(dirname "$0")/qemu-img.log"
+cmd="$1"
+case "$cmd" in
+create) touch "$3" ;;
+convert) cp "$3" "$4" 2>/dev/null || touch "$4" ;;
+esac
+exit 0
+`
+	if err := os.WriteFile(filepath.Join(dir, "qemu-img"), []byte(shim), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "qemu-system-x86_64"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
+	return dir
+}
+
+func TestCreate_ExistingDiskIsNotClobbered(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	bin := fakeQemuBin(t)
+
+	// Simulate a bootc-built disk already in place.
+	vmDir := filepath.Join(VMHome(), "bootcvm")
+	if err := os.MkdirAll(vmDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	payload := []byte("bootc-built-disk-content")
+	diskPath := filepath.Join(vmDir, "disk.qcow2")
+	if err := os.WriteFile(diskPath, payload, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := Create(types.CreateOpts{Name: "bootcvm", Force: true, ExistingDisk: true})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	got, _ := os.ReadFile(diskPath)
+	if string(got) != string(payload) {
+		t.Fatalf("prepared disk was modified: got %q", got)
+	}
+	if log, _ := os.ReadFile(filepath.Join(bin, "qemu-img.log")); len(log) != 0 {
+		t.Fatalf("qemu-img was invoked for an ExistingDisk create: %s", log)
+	}
+}
+
+func TestCreate_ExistingDiskMissingFails(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	fakeQemuBin(t)
+
+	err := Create(types.CreateOpts{Name: "novm", Force: true, ExistingDisk: true})
+	if err == nil {
+		t.Fatal("expected error when ExistingDisk is set but no disk exists")
+	}
+}
+
+func TestCreate_QCOWTemplateCopied(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	bin := fakeQemuBin(t)
+
+	template := filepath.Join(tmp, "template.qcow2")
+	if err := os.WriteFile(template, []byte("template-bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Create(types.CreateOpts{Name: "tmplvm", Force: true, QCOW: template, Disk: "40G"}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	log, _ := os.ReadFile(filepath.Join(bin, "qemu-img.log"))
+	if !strings.Contains(string(log), "convert") {
+		t.Fatalf("expected qemu-img convert for template, log: %s", log)
+	}
+	if !strings.Contains(string(log), "resize") {
+		t.Fatalf("expected qemu-img resize when Disk is explicit, log: %s", log)
 	}
 }

@@ -81,6 +81,9 @@ type CreateOpts struct {
 	InstanceType      string // KubeVirt cluster instancetype (sets CPU/mem); overrides CPU/Mem
 	Preference        string // KubeVirt cluster preference (devices/firmware defaults)
 	StorageClass      string // overrides PreferredStorageClass() for this VM's disks; "" = default
+	// ExistingDisk means the VM dir already holds a prepared disk.qcow2 (e.g.
+	// a bootc-built disk) — Create must boot it as-is, never recreate it.
+	ExistingDisk bool
 }
 
 // PortMap maps protocol names to port numbers.

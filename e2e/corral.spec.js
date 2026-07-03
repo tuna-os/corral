@@ -134,7 +134,21 @@ async function createVM(page, opts) {
   await openCreateDialog(page);
   await page.fill('#create-form [name="name"]', opts.name);
   if (opts.sourceType) await page.selectOption('#create-form [name="sourceType"]', opts.sourceType);
-  if (opts.source) await page.fill('#create-form [name="source"]', opts.source);
+  // pvc sourceType hides [name="source"] and shows a [name="pvcSource"]
+  // <select> instead, populated async from /api/datavolumes — wait for the
+  // wanted option to actually exist before selecting it (a blind delay is
+  // exactly what hung this test before: filling the still-hidden
+  // [name="source"] field never became visible and burned the full test
+  // timeout retrying).
+  if (opts.pvcSource) {
+    await page.waitForFunction(
+      (val) => !!document.querySelector(`#create-form [name="pvcSource"] option[value="${val}"]`),
+      opts.pvcSource, { timeout: 30_000 },
+    );
+    await page.selectOption('#create-form [name="pvcSource"]', opts.pvcSource);
+  } else if (opts.source) {
+    await page.fill('#create-form [name="source"]', opts.source);
+  }
   if (opts.catalogImage) { await delay(500); await page.selectOption('#create-form [name="catalogImage"]', opts.catalogImage); }
   if (opts.cpu) await page.fill('#create-form [name="cpu"]', String(opts.cpu));
   if (opts.mem) await page.fill('#create-form [name="mem"]', opts.mem);
@@ -198,12 +212,20 @@ test.describe('Corral web UI', () => {
     expect(await page.locator('#source-field').getAttribute('hidden')).toBe('');
     await expect(page.locator('#sshkey-field')).toBeVisible(); // SSH access is universal
 
-    for (const type of ['containerDisk', 'import', 'iso', 'pvc']) {
+    for (const type of ['containerDisk', 'import', 'iso']) {
       await page.selectOption('#create-form [name="sourceType"]', type);
       await delay(300);
       await expect(page.locator('#source-field')).toBeVisible();
       await expect(page.locator('#sshkey-field')).toBeVisible();
     }
+
+    // pvc is the odd one out: it hides the free-text #source-field in favor
+    // of the #pvc-source-field dropdown (populated from the image library).
+    await page.selectOption('#create-form [name="sourceType"]', 'pvc');
+    await delay(300);
+    expect(await page.locator('#source-field').getAttribute('hidden')).toBe('');
+    await expect(page.locator('#pvc-source-field')).toBeVisible();
+    await expect(page.locator('#sshkey-field')).toBeVisible();
 
     // bootc (when the plugin is enabled): catalog datalist + bootc hint
     const bootcOpt = await page.locator('#create-form [name="sourceType"] option[value="bootc"]').count();
@@ -301,7 +323,12 @@ test.describe('Corral web UI', () => {
 
     await openVM(page, vm);
     await page.click('#content .toolbar [data-act="start"]');
-    expect(await waitFor(() => vmStatus(vm) === 'Running', 240_000, 4000, `${vm} Running`)).toBe(true);
+    // 300s not 240s: on a freshly-created ephemeral KinD cluster there's no
+    // image cache, so this is a cold pull of the containerdisk on top of
+    // virt-launcher pod bootstrap — seen this miss a 240s budget by a few
+    // seconds in CI (#77) with nothing else wrong. test.setTimeout below
+    // still leaves headroom for the stop/delete steps after this.
+    expect(await waitFor(() => vmStatus(vm) === 'Running', 300_000, 4000, `${vm} Running`)).toBe(true);
 
     // Independent cluster-side verification: VMI phase, launcher pod, qemu logs.
     assertVMHealthy(expect, vm);
@@ -437,7 +464,7 @@ test.describe('Corral web UI', () => {
     expect(status).toBe(200);
     expect(await waitFor(() => dvPhase(dv) === 'Succeeded', 300_000, 5000, `dv ${dv} Succeeded`)).toBe(true);
 
-    await createVM(page, { name: vm, sourceType: 'pvc', source: dv, cpu: 1, mem: '1G' });
+    await createVM(page, { name: vm, sourceType: 'pvc', pvcSource: dv, cpu: 1, mem: '1G' });
     expect(await waitFor(() => vmExists(vm), 30_000, 2000, `vm ${vm}`)).toBe(true);
     const claim = kubectl(`kubectl get vm ${vm} -n ${NS} -o jsonpath='{.spec.template.spec.volumes[*].persistentVolumeClaim.claimName}'`);
     expect(claim).toContain(dv);

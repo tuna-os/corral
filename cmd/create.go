@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -38,6 +39,10 @@ var (
 	createStorageClass      string
 	createBootc             string
 	createProvisionScript   string
+	createStart             bool
+	createWaitSSH           bool
+	createTimeout           int
+	createSSHUser           string
 )
 
 // limaFile is the Lima YAML format — corral reads Lima files natively.
@@ -225,13 +230,19 @@ Boot a container image as a VM? Install the bootc extension:
 			if createKubevirt {
 				return runKubevirtBootcCreate(name)
 			}
-			return runLocalBootcCreate(name)
+			if err := runLocalBootcCreate(name); err != nil {
+				return err
+			}
+			return maybeStartAndWait(name)
 		}
 
 		if createKubevirt || createImage != "" || createImport != "" {
 			return runKubevirtCreate(name)
 		}
-		return runQemuCreate(name)
+		if err := runQemuCreate(name); err != nil {
+			return err
+		}
+		return maybeStartAndWait(name)
 	},
 }
 
@@ -257,6 +268,10 @@ func init() {
 	createCmd.Flags().StringVarP(&createFile, "file", "f", "", "Lima YAML file (corral reads Lima format natively)")
 	createCmd.Flags().StringVarP(&createStorageClass, "storage-class", "s", "", "[kubevirt] StorageClass for new disks (default: cluster preference)")
 	createCmd.Flags().StringVar(&createBootc, "bootc", "", "Bootc container image to run")
+	createCmd.Flags().BoolVar(&createStart, "start", false, "[qemu] Start the VM after creating it")
+	createCmd.Flags().BoolVar(&createWaitSSH, "wait-ssh", false, "[qemu] Start the VM and block until SSH answers; nonzero exit on timeout (CI gate)")
+	createCmd.Flags().IntVar(&createTimeout, "timeout", 600, "[qemu] Seconds to wait for SSH with --wait-ssh")
+	createCmd.Flags().StringVar(&createSSHUser, "ssh-user", "root", "[qemu] User for the --wait-ssh probe (bootc injects the key for root)")
 }
 
 func runKubevirtCreate(name string) error {
@@ -441,10 +456,13 @@ func runLocalBootcCreate(name string) error {
 	defer os.Remove(keyFile)
 
 	fmt.Printf("Building bootc image locally onto %s...\n", loopDev)
+	// --generic-image installs every bootloader flavor instead of flashing
+	// host-specific firmware, so the disk boots under plain QEMU (SeaBIOS
+	// or OVMF) — required for portable/CI disks.
 	cmd := exec.Command("sudo", "podman", "run", "--privileged", "--pid=host", "--security-opt", "label=disable",
 		"-v", "/dev:/dev", "-v", vmDir+":/output:Z",
 		createBootc, "sh", "-c",
-		fmt.Sprintf("bootc install to-disk --filesystem xfs --wipe --root-ssh-authorized-keys /output/id_rsa.pub %s && udevadm settle && mkdir -p /mnt && mount %sp3 /mnt %s && umount /mnt", loopDev, loopDev, provisionArg))
+		fmt.Sprintf("bootc install to-disk --filesystem xfs --wipe --generic-image --root-ssh-authorized-keys /output/id_rsa.pub %s && udevadm settle && mkdir -p /mnt && mount %sp3 /mnt %s && umount /mnt", loopDev, loopDev, provisionArg))
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
@@ -458,11 +476,37 @@ func runLocalBootcCreate(name string) error {
 	}
 	os.Remove(diskPath)
 
-	return qemu.Create(types.CreateOpts{
-		Name:  name,
-		Mem:   createMem,
-		CPU:   createCPU,
-		Disk:  createDisk,
-		Force: true,
-	})
+	// ExistingDisk: the qcow2 we just built IS the boot disk — without it
+	// qemu.Create would recreate disk.qcow2 empty and the VM would boot
+	// into nothing.
+	if err := qemu.Create(types.CreateOpts{
+		Name:         name,
+		Mem:          createMem,
+		CPU:          createCPU,
+		Disk:         createDisk,
+		Force:        true,
+		ExistingDisk: true,
+	}); err != nil {
+		return err
+	}
+	if registryStore != nil {
+		registryStore.Set(name, types.RegistryEntry{Backend: "qemu"})
+	}
+	return nil
+}
+
+// maybeStartAndWait handles --start / --wait-ssh for QEMU-backed VMs.
+// --wait-ssh implies --start and turns creation into a CI gate: the process
+// exits nonzero unless the guest answers SSH within --timeout seconds.
+func maybeStartAndWait(name string) error {
+	if !createStart && !createWaitSSH {
+		return nil
+	}
+	if err := qemu.Start(name); err != nil {
+		return err
+	}
+	if !createWaitSSH {
+		return nil
+	}
+	return qemu.WaitSSH(name, createSSHUser, time.Duration(createTimeout)*time.Second)
 }
