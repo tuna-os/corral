@@ -456,13 +456,23 @@ func runLocalBootcCreate(name string) error {
 	defer os.Remove(keyFile)
 
 	fmt.Printf("Building bootc image locally onto %s...\n", loopDev)
+	// Install straight from the host's root podman storage when the image is
+	// already there — that makes locally built images (localhost/... from a
+	// plain `sudo podman build` / `just build`) first-class, and skips the
+	// in-container re-pull for registry refs too. Requires the store mount.
+	sourceArg := ""
+	if exec.Command("sudo", "podman", "image", "exists", createBootc).Run() == nil {
+		sourceArg = fmt.Sprintf(" --source-imgref containers-storage:%s", createBootc)
+	} else if strings.HasPrefix(createBootc, "localhost/") {
+		return fmt.Errorf("image %q not found in root podman storage — build it with sudo, or sync it: podman save %s | sudo podman load", createBootc, createBootc)
+	}
 	// --generic-image installs every bootloader flavor instead of flashing
 	// host-specific firmware, so the disk boots under plain QEMU (SeaBIOS
 	// or OVMF) — required for portable/CI disks.
 	cmd := exec.Command("sudo", "podman", "run", "--privileged", "--pid=host", "--security-opt", "label=disable",
-		"-v", "/dev:/dev", "-v", vmDir+":/output:Z",
+		"-v", "/dev:/dev", "-v", "/var/lib/containers:/var/lib/containers", "-v", vmDir+":/output:Z",
 		createBootc, "sh", "-c",
-		fmt.Sprintf("bootc install to-disk --filesystem xfs --wipe --generic-image --root-ssh-authorized-keys /output/id_rsa.pub %s && udevadm settle && mkdir -p /mnt && mount %sp3 /mnt %s && umount /mnt", loopDev, loopDev, provisionArg))
+		fmt.Sprintf("bootc install to-disk --filesystem xfs --wipe --generic-image --root-ssh-authorized-keys /output/id_rsa.pub%s %s && udevadm settle && mkdir -p /mnt && mount %sp3 /mnt %s && umount /mnt", sourceArg, loopDev, loopDev, provisionArg))
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
