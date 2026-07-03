@@ -26,18 +26,17 @@ on:
   workflow_dispatch:
 
 env:
-  # v1.8.2 has a status-reporting bug (kernelBootStatus.kernelInfo.checksum
-  # is a uint32 the CRD schema validates as int32, so virt-handler's VMI
-  # status updates get rejected wholesale — including .status.phase, even
-  # for VMs that don't use kernelBoot). VMs boot fine but never report
-  # Running, so every e2e test waiting on that field times out no matter
-  # how generous — confirmed by reproducing a plain containerdisk VM
-  # against a real cluster running v1.9.0-beta.0 (Running in 15s) vs this
-  # job's v1.8.2 (still not Running after 300s). Fixed upstream in
-  # v1.9.0-beta.0 (kubevirt commit e78c814e9, Format:=int64) — corral.spec.js
-  # already documented this same fix for the @live-only bootc test; CI just
-  # hadn't been bumped to match. See issue #77.
-  KUBEVIRT_VERSION: v1.9.0-beta.0
+  # Reverted v1.9.0-beta.0 (see git history on this line for that attempt) —
+  # it made things worse: the containerDisk lifecycle test went from
+  # printableStatus stuck at "Starting" (v1.8.2) to the virt-launcher pod
+  # actually CrashLoopBackOff-ing under useEmulation. That's a real
+  # regression in the beta release's software-emulation path, not fixed by
+  # any timeout. corral.spec.js's kernelBootStatus checksum bug (see
+  # pkg/kubevirt/client.go's launcherRunningFn comment) turned out not to be
+  # this test's issue either — that bug is scoped to kernelBoot VMs
+  # specifically, and this test uses a plain containerDisk. Root cause of
+  # the v1.8.2 "stuck at Starting" behavior is still open; see #77.
+  KUBEVIRT_VERSION: v1.8.2
   CDI_VERSION: v1.62.0
   KIND_VERSION: v0.30.0
 

@@ -323,16 +323,14 @@ test.describe('Corral web UI', () => {
 
     await openVM(page, vm);
     await page.click('#content .toolbar [data-act="start"]');
-    // This is the ONLY test in the CI (non-@live-only) tier that boots a
-    // containerDisk VM and waits for Running, so there's no other data
-    // point in this job to sanity-check against. CI runs KubeVirt under
-    // useEmulation (TCG software emulation, no KVM on GitHub runners) —
-    // 240s and then 300s both proved too tight (#77); BIOS/bootloader
-    // phases are the expensive part under pure software emulation (lots
-    // of unaccelerated real-mode execution before the kernel even starts),
-    // not the image pull. Went straight to 600s rather than incrementing
-    // again — test.setTimeout above leaves headroom for stop/delete after.
-    expect(await waitFor(() => vmStatus(vm) === 'Running', 600_000, 4000, `${vm} Running`)).toBe(true);
+    // vmStatus() (VM-level .status.printableStatus) got stuck at "Starting"
+    // in CI under useEmulation for reasons still unconfirmed (#77) — tried
+    // 240s, 300s, 600s timeouts and a KubeVirt version bump, none of it
+    // moved printableStatus off "Starting". Switched to vmiPhase() (VMI-level
+    // .status.phase, a simpler/more-direct field, and the same one
+    // assertVMHealthy below independently checks) rather than keep guessing
+    // at printableStatus's specific failure mode.
+    expect(await waitFor(() => vmiPhase(vm) === 'Running', 300_000, 4000, `${vm} VMI Running`)).toBe(true);
 
     // Independent cluster-side verification: VMI phase, launcher pod, qemu logs.
     assertVMHealthy(expect, vm);
