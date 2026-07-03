@@ -437,7 +437,7 @@ write_files:
       # this podman errors out instead of falling back to a full pull.
       printf '[storage]\ndriver = "overlay"\nrunroot = "/run/containers/storage"\ngraphroot = "/var/lib/containers/storage"\n\n[storage.options.pull_options]\nenable_partial_images = "false"\n' > /etc/containers/storage.conf
       IMG=__IMAGE__
-      podman pull "$IMG" || { echo CORRAL_BUILD_FAIL pull; sync; poweroff; }
+      podman pull "$IMG" || { echo CORRAL_BUILD_FAIL pull; sync; poweroff; exit 1; }
       # Read the image to pick the bootc storage backend (per the bootc docs the
       # composefs-rs backend requires systemd-boot and NO bootupd; traditional
       # ostree images ship bootupd):
@@ -474,12 +474,21 @@ write_files:
       echo "CORRAL_COMPOSEFS=$COMPOSEFS FS=$FS"
       podman run --rm --privileged --pid=host --security-opt label=type:unconfined_t \
         -v /var/lib/containers:/var/lib/containers -v /dev:/dev -v /root/buildkey.pub:/buildkey.pub:ro \
-        "$IMG" bootc install to-disk $BACKEND --filesystem "$FS" --wipe --generic-image \
+        "$IMG" bootc install to-disk $BACKEND --filesystem "$FS" --wipe \
         --root-ssh-authorized-keys /buildkey.pub /dev/disk/by-id/virtio-target \
-        || { echo CORRAL_BUILD_FAIL install; sync; poweroff; }
+        || { echo CORRAL_BUILD_FAIL install; sync; poweroff; exit 1; }
       udevadm settle
-      mkdir -p /mnt/esp; mount /dev/disk/by-id/virtio-target-part2 /mnt/esp \
-        || { echo CORRAL_BUILD_FAIL espmount; sync; poweroff; }
+      # ESP partition index varies by layout (--generic-image, backend);
+      # probe for the FAT partition that actually contains /EFI.
+      mkdir -p /mnt/esp
+      ESP_OK=0
+      for P in 1 2 3; do
+        if mount /dev/disk/by-id/virtio-target-part$P /mnt/esp 2>/dev/null; then
+          if [ -d /mnt/esp/EFI ]; then ESP_OK=1; break; fi
+          umount /mnt/esp
+        fi
+      done
+      [ "$ESP_OK" = 1 ] || { echo CORRAL_BUILD_FAIL espmount; sync; poweroff; exit 1; }
       if [ "$COMPOSEFS" = 1 ]; then
         # bootc's composefs backend writes the ESP kernel/initrd from the EROFS
         # store, which zero-fills large files past the inline threshold (corrupt
