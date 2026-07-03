@@ -427,6 +427,11 @@ write_files:
       echo CORRAL_BUILD_START
       mkfs.xfs -f /dev/disk/by-id/virtio-scratch
       mount /dev/disk/by-id/virtio-scratch /var/lib/containers
+      # Blob downloads stage in $TMPDIR (default /var/tmp) before landing in
+      # storage — on the ~4G containerdisk rootfs that ENOSPCs on desktop
+      # images. Stage on the scratch disk instead.
+      mkdir -p /var/lib/containers/tmp
+      export TMPDIR=/var/lib/containers/tmp
       # Disable zstd:chunked partial pulls: they need multi-range HTTP GETs,
       # GHCR's blob CDN answers those with 501 Unsupported client range, and
       # this podman errors out instead of falling back to a full pull.
