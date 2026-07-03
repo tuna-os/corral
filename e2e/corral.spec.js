@@ -323,7 +323,12 @@ test.describe('Corral web UI', () => {
 
     await openVM(page, vm);
     await page.click('#content .toolbar [data-act="start"]');
-    expect(await waitFor(() => vmStatus(vm) === 'Running', 240_000, 4000, `${vm} Running`)).toBe(true);
+    // 300s not 240s: on a freshly-created ephemeral KinD cluster there's no
+    // image cache, so this is a cold pull of the containerdisk on top of
+    // virt-launcher pod bootstrap — seen this miss a 240s budget by a few
+    // seconds in CI (#77) with nothing else wrong. test.setTimeout below
+    // still leaves headroom for the stop/delete steps after this.
+    expect(await waitFor(() => vmStatus(vm) === 'Running', 300_000, 4000, `${vm} Running`)).toBe(true);
 
     // Independent cluster-side verification: VMI phase, launcher pod, qemu logs.
     assertVMHealthy(expect, vm);
