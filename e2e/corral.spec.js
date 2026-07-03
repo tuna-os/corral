@@ -323,14 +323,22 @@ test.describe('Corral web UI', () => {
 
     await openVM(page, vm);
     await page.click('#content .toolbar [data-act="start"]');
-    // vmStatus() (VM-level .status.printableStatus) got stuck at "Starting"
-    // in CI under useEmulation for reasons still unconfirmed (#77) — tried
-    // 240s, 300s, 600s timeouts and a KubeVirt version bump, none of it
-    // moved printableStatus off "Starting". Switched to vmiPhase() (VMI-level
-    // .status.phase, a simpler/more-direct field, and the same one
-    // assertVMHealthy below independently checks) rather than keep guessing
-    // at printableStatus's specific failure mode.
-    expect(await waitFor(() => vmiPhase(vm) === 'Running', 300_000, 4000, `${vm} VMI Running`)).toBe(true);
+    // Neither vmStatus() (VM-level printableStatus) nor vmiPhase() (VMI-level
+    // phase) has reached Running in CI under useEmulation across several
+    // attempts (#77) — dump direct cluster diagnostics on failure instead of
+    // guessing at another field/timeout blind.
+    const gotRunning = await waitFor(() => vmiPhase(vm) === 'Running', 300_000, 4000, `${vm} VMI Running`);
+    if (!gotRunning) {
+      console.log(`--- diagnostics for ${vm} ---`);
+      console.log('vmi:', kubectl(`kubectl get vmi ${vm} -n ${NS} -o yaml --ignore-not-found`));
+      console.log('pods:', kubectl(`kubectl get pod -n ${NS} -l vm.kubevirt.io/name=${vm} -o wide`));
+      const pod = kubectl(`kubectl get pod -n ${NS} -l vm.kubevirt.io/name=${vm} -o jsonpath='{.items[0].metadata.name}'`).replace(/'/g, '');
+      if (pod) {
+        console.log('pod describe:', kubectl(`kubectl describe pod ${pod} -n ${NS}`));
+        console.log('pod compute logs:', kubectl(`kubectl logs ${pod} -n ${NS} -c compute --tail=80`));
+      }
+    }
+    expect(gotRunning).toBe(true);
 
     // Independent cluster-side verification: VMI phase, launcher pod, qemu logs.
     assertVMHealthy(expect, vm);
