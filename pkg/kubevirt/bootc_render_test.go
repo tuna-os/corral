@@ -3,9 +3,12 @@
 package kubevirt
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"strings"
 	"testing"
+
+	yaml "gopkg.in/yaml.v3"
 )
 
 // The builder VM must render as a valid VirtualMachine that attaches the target
@@ -78,5 +81,33 @@ func TestRenderBootcFinalVM(t *testing.T) {
 	// The SSH key is recorded on the VM so rebuild/upgrade/switch can re-bake it.
 	if !strings.Contains(js, "corral.bootc/ssh-key") || !strings.Contains(js, "AAAAREBUILDKEY") {
 		t.Errorf("final VM must record the SSH key annotation for rebuilds")
+	}
+}
+
+// The builder cloud-init must stay valid YAML no matter what the provision
+// script contains — embedding it verbatim once put script lines at column 0,
+// which silently terminated the `content: |` block and cloud-init dropped the
+// ENTIRE config ("empty cloud config"), so the build never started.
+func TestBuilderSecretUserdataIsValidYAML(t *testing.T) {
+	provision := "#!/bin/bash\nsystemctl enable sshd\necho 'EOF'\nkey: looks-like-yaml\n"
+	secret := generateBuilderSecret("vm1", "ns1", "ghcr.io/tuna-os/yellowfin:gnome", "ssh-ed25519 AAAA test", provision)
+	userdata, _ := secret["stringData"].(map[string]any)["userdata"].(string)
+	if userdata == "" {
+		t.Fatal("empty userdata")
+	}
+
+	var doc map[string]any
+	if err := yaml.Unmarshal([]byte(userdata), &doc); err != nil {
+		t.Fatalf("builder cloud-init is not valid YAML: %v", err)
+	}
+	if _, ok := doc["write_files"]; !ok {
+		t.Fatal("write_files missing from parsed cloud-config")
+	}
+	if _, ok := doc["runcmd"]; !ok {
+		t.Fatal("runcmd missing from parsed cloud-config (block literal likely swallowed it)")
+	}
+	// The provision payload must round-trip through its base64 write_files entry.
+	if !strings.Contains(userdata, base64.StdEncoding.EncodeToString([]byte(provision))) {
+		t.Fatal("provision script not embedded base64-encoded")
 	}
 }

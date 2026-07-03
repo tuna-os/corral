@@ -6,6 +6,7 @@
 package kubevirt
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -232,7 +233,10 @@ func bootcResumeState(name, namespace string) (imageURI, pvcName string, ready, 
 func generateBlockPVC(name, namespace, size, storageClass string) map[string]any {
 	pvc := GeneratePVC(name, namespace, size)
 	spec := pvc["spec"].(map[string]any)
-	spec["volumeMode"] = "Block"
+	// Filesystem, not Block: KubeVirt file-backed disks work on every
+	// provisioner (local-path can't do Block volumes at all), and the guest
+	// still sees a plain virtio block device either way.
+	spec["volumeMode"] = "Filesystem"
 	if storageClass != "" {
 		spec["storageClassName"] = storageClass
 	}
@@ -268,7 +272,7 @@ func builderScript(imageURI, sshPublicKey, provisionScript string) string {
 		"__IMAGE__", imageURI,
 		"__SSHKEY__", strings.TrimSpace(sshPublicKey),
 		"__MIRRORCONF__", builderMirrorConf(),
-		"__PROVISION__", provisionScript,
+		"__PROVISIONB64__", base64.StdEncoding.EncodeToString([]byte(provisionScript)),
 	).Replace(builderCloudInit)
 }
 
@@ -412,6 +416,8 @@ write_files:
       __MIRRORCONF__
   - path: /root/buildkey.pub
     content: "__SSHKEY__"
+  - path: /root/provision.b64
+    content: "__PROVISIONB64__"
   - path: /root/build.sh
     permissions: '0755'
     content: |
@@ -421,8 +427,17 @@ write_files:
       echo CORRAL_BUILD_START
       mkfs.xfs -f /dev/disk/by-id/virtio-scratch
       mount /dev/disk/by-id/virtio-scratch /var/lib/containers
+      # Blob downloads stage in $TMPDIR (default /var/tmp) before landing in
+      # storage — on the ~4G containerdisk rootfs that ENOSPCs on desktop
+      # images. Stage on the scratch disk instead.
+      mkdir -p /var/lib/containers/tmp
+      export TMPDIR=/var/lib/containers/tmp
+      # Disable zstd:chunked partial pulls: they need multi-range HTTP GETs,
+      # GHCR's blob CDN answers those with 501 Unsupported client range, and
+      # this podman errors out instead of falling back to a full pull.
+      printf '[storage]\ndriver = "overlay"\nrunroot = "/run/containers/storage"\ngraphroot = "/var/lib/containers/storage"\n\n[storage.options.pull_options]\nenable_partial_images = "false"\n' > /etc/containers/storage.conf
       IMG=__IMAGE__
-      podman pull "$IMG" || { echo CORRAL_BUILD_FAIL pull; sync; poweroff; }
+      podman pull "$IMG" || { echo CORRAL_BUILD_FAIL pull; sync; poweroff; exit 1; }
       # Read the image to pick the bootc storage backend (per the bootc docs the
       # composefs-rs backend requires systemd-boot and NO bootupd; traditional
       # ostree images ship bootupd):
@@ -461,10 +476,19 @@ write_files:
         -v /var/lib/containers:/var/lib/containers -v /dev:/dev -v /root/buildkey.pub:/buildkey.pub:ro \
         "$IMG" bootc install to-disk $BACKEND --filesystem "$FS" --wipe \
         --root-ssh-authorized-keys /buildkey.pub /dev/disk/by-id/virtio-target \
-        || { echo CORRAL_BUILD_FAIL install; sync; poweroff; }
+        || { echo CORRAL_BUILD_FAIL install; sync; poweroff; exit 1; }
       udevadm settle
-      mkdir -p /mnt/esp; mount /dev/disk/by-id/virtio-target-part2 /mnt/esp \
-        || { echo CORRAL_BUILD_FAIL espmount; sync; poweroff; }
+      # ESP partition index varies by layout (--generic-image, backend);
+      # probe for the FAT partition that actually contains /EFI.
+      mkdir -p /mnt/esp
+      ESP_OK=0
+      for P in 1 2 3; do
+        if mount /dev/disk/by-id/virtio-target-part$P /mnt/esp 2>/dev/null; then
+          if [ -d /mnt/esp/EFI ]; then ESP_OK=1; break; fi
+          umount /mnt/esp
+        fi
+      done
+      [ "$ESP_OK" = 1 ] || { echo CORRAL_BUILD_FAIL espmount; sync; poweroff; exit 1; }
       if [ "$COMPOSEFS" = 1 ]; then
         # bootc's composefs backend writes the ESP kernel/initrd from the EROFS
         # store, which zero-fills large files past the inline threshold (corrupt
@@ -498,11 +522,12 @@ write_files:
         done
         sync; umount /mnt/root 2>/dev/null
       fi
-      # Run custom provisioning script chrooted into the root filesystem
+      # Run custom provisioning script chrooted into the root filesystem.
+      # The script travels base64-encoded in its own write_files entry:
+      # embedding it verbatim here put its lines at column 0, which
+      # terminated this YAML block literal and broke the whole cloud-config.
       mkdir -p /mnt/root; mount /dev/disk/by-id/virtio-target-part3 /mnt/root 2>/dev/null
-      cat << 'EOF' > /mnt/root/tmp/provision.sh
-__PROVISION__
-EOF
+      base64 -d /root/provision.b64 > /mnt/root/tmp/provision.sh 2>/dev/null || true
       if [ -s /mnt/root/tmp/provision.sh ]; then
         chmod +x /mnt/root/tmp/provision.sh
         chroot /mnt/root /bin/bash /tmp/provision.sh
@@ -560,17 +585,29 @@ func waitForBuilderVM(name, namespace string, progress io.Writer) error {
 				return fmt.Errorf("builder reported failure (%s)", lastFail)
 			}
 		}
-		// If the VMI has ended (guest powered off) do a final read, then decide.
+		// If the VMI has ended (guest powered off), read the final log and
+		// decide. Retry the read for a while: right after poweroff the
+		// virt-launcher pod is tearing down and `kubectl logs` can come back
+		// empty for several seconds — a single read here used to declare
+		// completed builds failed ("ended without success" with a finished
+		// disk PVC sitting right there).
 		if phase := builderVMIPhase(name, namespace); phase == "Succeeded" || phase == "Failed" {
-			time.Sleep(2 * time.Second)
-			ok, fail := emit(builderSerialLog(name, namespace))
-			if ok {
-				return nil
+			for attempt := 0; attempt < 6; attempt++ {
+				time.Sleep(5 * time.Second)
+				log := builderSerialLog(name, namespace)
+				if log == "" {
+					continue
+				}
+				ok, fail := emit(log)
+				if ok {
+					return nil
+				}
+				if fail {
+					return fmt.Errorf("builder reported failure (%s)", lastFail)
+				}
+				break // log readable but no marker — genuinely inconclusive
 			}
-			if fail {
-				return fmt.Errorf("builder reported failure (%s)", lastFail)
-			}
-			return fmt.Errorf("builder VM ended (%s) without success — check: kubectl logs <virt-launcher-%s-*> -c guest-console-log -n %s", phase, name, namespace)
+			return fmt.Errorf("builder VM ended (%s) without a build marker — if the build actually finished (disk PVC exists), retry with --resume; console: kubectl logs <virt-launcher-%s-*> -c guest-console-log -n %s", phase, name, namespace)
 		}
 		time.Sleep(5 * time.Second)
 	}
