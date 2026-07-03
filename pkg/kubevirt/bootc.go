@@ -474,7 +474,7 @@ write_files:
       echo "CORRAL_COMPOSEFS=$COMPOSEFS FS=$FS"
       podman run --rm --privileged --pid=host --security-opt label=type:unconfined_t \
         -v /var/lib/containers:/var/lib/containers -v /dev:/dev -v /root/buildkey.pub:/buildkey.pub:ro \
-        "$IMG" bootc install to-disk $BACKEND --filesystem "$FS" --wipe --generic-image \
+        "$IMG" bootc install to-disk $BACKEND --filesystem "$FS" --wipe \
         --root-ssh-authorized-keys /buildkey.pub /dev/disk/by-id/virtio-target \
         || { echo CORRAL_BUILD_FAIL install; sync; poweroff; exit 1; }
       udevadm settle
