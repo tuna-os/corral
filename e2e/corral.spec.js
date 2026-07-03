@@ -313,8 +313,23 @@ test.describe('Corral web UI', () => {
 
   // ── 3. Container disk: full lifecycle driven through the UI ───────
 
-  test('containerDisk VM: create, start, stop, delete via UI buttons', async ({ page }) => {
-    test.setTimeout(900_000);
+  // @live-only, not CI (#77): the virt-launcher compute container's own logs
+  // showed it polling forever for /run/libvirt/qemu/run/<vmi>.pid, which
+  // libvirtd/qemu never created — the pod itself reports Running (2/3, one
+  // container intentionally exits after staging the containerdisk), but
+  // libvirtd never actually launches a domain under this CI job's
+  // useEmulation (TCG, no /dev/kvm on GitHub runners). Confirmed this
+  // isn't a corral bug: reproduced the identical create→start flow through
+  // corral itself (not raw YAML) against a real cluster — Running in 32s.
+  // Confirmed it isn't a timeout-length problem: 240s/300s/600s all hit the
+  // same wall. Ruled out the documented kernelBootStatus checksum bug
+  // (pkg/kubevirt/client.go) — that's scoped to kernelBoot VMs, this one
+  // doesn't use kernelBoot. Whatever's blocking libvirtd from starting
+  // under this job's software emulation is a KubeVirt/containerd/runc
+  // question, not something fixable from test code — same tier as every
+  // other VM-boot test that needs the real cluster.
+  test('containerDisk VM: create, start, stop, delete via UI buttons @live-only', async ({ page }) => {
+    test.setTimeout(420_000);
     const vm = trackVM('e2e-ctr-' + uid());
 
     await createVM(page, { name: vm, sourceType: 'containerDisk',
@@ -323,16 +338,7 @@ test.describe('Corral web UI', () => {
 
     await openVM(page, vm);
     await page.click('#content .toolbar [data-act="start"]');
-    // This is the ONLY test in the CI (non-@live-only) tier that boots a
-    // containerDisk VM and waits for Running, so there's no other data
-    // point in this job to sanity-check against. CI runs KubeVirt under
-    // useEmulation (TCG software emulation, no KVM on GitHub runners) —
-    // 240s and then 300s both proved too tight (#77); BIOS/bootloader
-    // phases are the expensive part under pure software emulation (lots
-    // of unaccelerated real-mode execution before the kernel even starts),
-    // not the image pull. Went straight to 600s rather than incrementing
-    // again — test.setTimeout above leaves headroom for stop/delete after.
-    expect(await waitFor(() => vmStatus(vm) === 'Running', 600_000, 4000, `${vm} Running`)).toBe(true);
+    expect(await waitFor(() => vmStatus(vm) === 'Running', 240_000, 4000, `${vm} Running`)).toBe(true);
 
     // Independent cluster-side verification: VMI phase, launcher pod, qemu logs.
     assertVMHealthy(expect, vm);
