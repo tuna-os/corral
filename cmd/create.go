@@ -39,6 +39,7 @@ var (
 	createStorageClass      string
 	createBootc             string
 	createProvisionScript   string
+	createQemu              bool
 	createStart             bool
 	createWaitSSH           bool
 	createTimeout           int
@@ -222,13 +223,36 @@ Boot a container image as a VM? Install the bootc extension:
 			}
 		}
 
+		// Backend preference: explicit flags win, then CORRAL_BACKEND, then
+		// auto — prefer KubeVirt when a cluster answers, fall back to local
+		// QEMU. One command, same behavior on a cluster workstation and a
+		// bare CI runner.
+		if !createKubevirt && !createQemu {
+			switch strings.ToLower(strings.TrimSpace(os.Getenv("CORRAL_BACKEND"))) {
+			case "kubevirt":
+				createKubevirt = true
+			case "qemu", "local":
+				// stay local
+			default:
+				if kubevirtReachable() {
+					createKubevirt = true
+					fmt.Fprintln(os.Stderr, "backend: kubevirt (auto-detected — force local with --qemu or CORRAL_BACKEND=qemu)")
+				} else {
+					fmt.Fprintln(os.Stderr, "backend: qemu (no KubeVirt cluster reachable)")
+				}
+			}
+		}
+
 		if existing := resolveBackend(name); existing != "" && !createForce {
 			return fmt.Errorf("VM %q already exists (backend: %s). Use --force to overwrite", name, existing)
 		}
 
 		if createBootc != "" {
 			if createKubevirt {
-				return runKubevirtBootcCreate(name)
+				if err := runKubevirtBootcCreate(name); err != nil {
+					return err
+				}
+				return maybeStartAndWait(name)
 			}
 			if err := runLocalBootcCreate(name); err != nil {
 				return err
@@ -237,7 +261,10 @@ Boot a container image as a VM? Install the bootc extension:
 		}
 
 		if createKubevirt || createImage != "" || createImport != "" {
-			return runKubevirtCreate(name)
+			if err := runKubevirtCreate(name); err != nil {
+				return err
+			}
+			return maybeStartAndWait(name)
 		}
 		if err := runQemuCreate(name); err != nil {
 			return err
@@ -248,7 +275,8 @@ Boot a container image as a VM? Install the bootc extension:
 
 func init() {
 	rootCmd.AddCommand(createCmd)
-	createCmd.Flags().BoolVarP(&createKubevirt, "kubevirt", "k", false, "Use KubeVirt backend")
+	createCmd.Flags().BoolVarP(&createKubevirt, "kubevirt", "k", false, "Force the KubeVirt backend")
+	createCmd.Flags().BoolVar(&createQemu, "qemu", false, "Force the local QEMU backend (skip cluster auto-detection)")
 	createCmd.Flags().StringVar(&createMem, "mem", "4G", "Memory allocation")
 	createCmd.Flags().IntVar(&createCPU, "cpu", 2, "CPU cores")
 	createCmd.Flags().StringVar(&createDisk, "disk", "", "Disk size (default: 20G)")
@@ -505,12 +533,26 @@ func runLocalBootcCreate(name string) error {
 	return nil
 }
 
-// maybeStartAndWait handles --start / --wait-ssh for QEMU-backed VMs.
+// maybeStartAndWait handles --start / --wait-ssh on both backends.
 // --wait-ssh implies --start and turns creation into a CI gate: the process
 // exits nonzero unless the guest answers SSH within --timeout seconds.
 func maybeStartAndWait(name string) error {
 	if !createStart && !createWaitSSH {
 		return nil
+	}
+	if createKubevirt {
+		ns := createNamespace
+		if ns == "" {
+			ns = kubevirt.DefaultNamespace
+		}
+		client := kubevirt.NewClient(ns)
+		if err := client.StartVM(name); err != nil {
+			return err
+		}
+		if !createWaitSSH {
+			return nil
+		}
+		return client.WaitSSH(name, createSSHUser, time.Duration(createTimeout)*time.Second)
 	}
 	if err := qemu.Start(name); err != nil {
 		return err
@@ -519,4 +561,11 @@ func maybeStartAndWait(name string) error {
 		return nil
 	}
 	return qemu.WaitSSH(name, createSSHUser, time.Duration(createTimeout)*time.Second)
+}
+
+// kubevirtReachable reports whether a KubeVirt-capable cluster answers on
+// the current kubeconfig, quickly enough to use as an auto-detection probe.
+func kubevirtReachable() bool {
+	out, err := exec.Command("kubectl", "get", "--raw", "/apis/kubevirt.io", "--request-timeout=3s").Output()
+	return err == nil && len(out) > 0
 }

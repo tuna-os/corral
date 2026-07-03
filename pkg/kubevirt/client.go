@@ -537,6 +537,37 @@ func (c *Client) SSH(name, username, identityFile, command string, port int, pas
 	return cmd.Run()
 }
 
+// WaitSSH polls the VM over virtctl ssh until a non-interactive probe
+// succeeds or timeout elapses. BatchMode keeps a misconfigured guest from
+// hanging the poll on a password prompt.
+func (c *Client) WaitSSH(name, username string, timeout time.Duration) error {
+	virtctl, err := c.ensureVirtctl()
+	if err != nil {
+		return err
+	}
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		probe := exec.Command(virtctl, "ssh",
+			"--namespace="+c.Namespace,
+			"--username="+username,
+			"--command=true",
+			"--local-ssh-opts=-o StrictHostKeyChecking=no",
+			"--local-ssh-opts=-o UserKnownHostsFile=/dev/null",
+			"--local-ssh-opts=-o BatchMode=yes",
+			"--local-ssh-opts=-o ConnectTimeout=5",
+			"vm/"+name)
+		if out, err := probe.CombinedOutput(); err == nil {
+			fmt.Fprintf(os.Stderr, "VM %q is reachable over SSH (%s@vm/%s).\n", name, username, name)
+			return nil
+		} else {
+			lastErr = fmt.Errorf("%s: %w", strings.TrimSpace(string(out)), err)
+		}
+		time.Sleep(10 * time.Second)
+	}
+	return fmt.Errorf("VM %q not SSH-reachable within %s (last error: %v)", name, timeout, lastErr)
+}
+
 // Viewer launches VNC viewer using virtctl proxy + xdg-open.
 func (c *Client) Viewer(name string) error {
 	virtctl, err := c.ensureVirtctl()
@@ -829,7 +860,7 @@ func DetectISOSize(isoURL string) string {
 		return fmt.Sprintf("%dGi", isoSizeFallbackGi)
 	}
 	const gib = 1 << 30
-	const minSizeGi = 2 // a real ISO smaller than this is unusual; floor rather than provision a suspiciously tiny PVC
+	const minSizeGi = 2                               // a real ISO smaller than this is unusual; floor rather than provision a suspiciously tiny PVC
 	sizeGi := int((resp.ContentLength+gib-1)/gib) + 1 // round up + 1GiB margin
 	if sizeGi < minSizeGi {
 		sizeGi = minSizeGi
