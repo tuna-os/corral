@@ -26,7 +26,18 @@ on:
   workflow_dispatch:
 
 env:
-  KUBEVIRT_VERSION: v1.8.2
+  # v1.8.2 has a status-reporting bug (kernelBootStatus.kernelInfo.checksum
+  # is a uint32 the CRD schema validates as int32, so virt-handler's VMI
+  # status updates get rejected wholesale — including .status.phase, even
+  # for VMs that don't use kernelBoot). VMs boot fine but never report
+  # Running, so every e2e test waiting on that field times out no matter
+  # how generous — confirmed by reproducing a plain containerdisk VM
+  # against a real cluster running v1.9.0-beta.0 (Running in 15s) vs this
+  # job's v1.8.2 (still not Running after 300s). Fixed upstream in
+  # v1.9.0-beta.0 (kubevirt commit e78c814e9, Format:=int64) — corral.spec.js
+  # already documented this same fix for the @live-only bootc test; CI just
+  # hadn't been bumped to match. See issue #77.
+  KUBEVIRT_VERSION: v1.9.0-beta.0
   CDI_VERSION: v1.62.0
   KIND_VERSION: v0.30.0
 
