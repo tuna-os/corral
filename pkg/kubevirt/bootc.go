@@ -571,17 +571,29 @@ func waitForBuilderVM(name, namespace string, progress io.Writer) error {
 				return fmt.Errorf("builder reported failure (%s)", lastFail)
 			}
 		}
-		// If the VMI has ended (guest powered off) do a final read, then decide.
+		// If the VMI has ended (guest powered off), read the final log and
+		// decide. Retry the read for a while: right after poweroff the
+		// virt-launcher pod is tearing down and `kubectl logs` can come back
+		// empty for several seconds — a single read here used to declare
+		// completed builds failed ("ended without success" with a finished
+		// disk PVC sitting right there).
 		if phase := builderVMIPhase(name, namespace); phase == "Succeeded" || phase == "Failed" {
-			time.Sleep(2 * time.Second)
-			ok, fail := emit(builderSerialLog(name, namespace))
-			if ok {
-				return nil
+			for attempt := 0; attempt < 6; attempt++ {
+				time.Sleep(5 * time.Second)
+				log := builderSerialLog(name, namespace)
+				if log == "" {
+					continue
+				}
+				ok, fail := emit(log)
+				if ok {
+					return nil
+				}
+				if fail {
+					return fmt.Errorf("builder reported failure (%s)", lastFail)
+				}
+				break // log readable but no marker — genuinely inconclusive
 			}
-			if fail {
-				return fmt.Errorf("builder reported failure (%s)", lastFail)
-			}
-			return fmt.Errorf("builder VM ended (%s) without success — check: kubectl logs <virt-launcher-%s-*> -c guest-console-log -n %s", phase, name, namespace)
+			return fmt.Errorf("builder VM ended (%s) without a build marker — if the build actually finished (disk PVC exists), retry with --resume; console: kubectl logs <virt-launcher-%s-*> -c guest-console-log -n %s", phase, name, namespace)
 		}
 		time.Sleep(5 * time.Second)
 	}
