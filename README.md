@@ -374,6 +374,7 @@ Full design document: [SPEC.md](SPEC.md).
 - **[WEBUI-PLAN.md](WEBUI-PLAN.md)** — web UI architecture, Proxmox feature map, constraints
 - **[docs/api.md](docs/api.md)** — complete REST API reference
 - **[docs/architecture.md](docs/architecture.md)** — package map, design decisions, data flow, build system
+- **[docs/ci-boot-gate.md](docs/ci-boot-gate.md)** — gating CI publishes on bootc images actually booting (QEMU + KubeVirt), with field-tested troubleshooting
 - **[docs/kubevirt-proxmox-setup.md](docs/kubevirt-proxmox-setup.md)** — from-scratch KubeVirt + Longhorn + Corral setup guide
 - **[docs/testing.md](docs/testing.md)** — testing strategy & plan (unit, integration, E2E)
 - **[docs/vdi.md](docs/vdi.md)** — VDI plugin setup guide (desktop pools)
