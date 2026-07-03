@@ -427,6 +427,10 @@ write_files:
       echo CORRAL_BUILD_START
       mkfs.xfs -f /dev/disk/by-id/virtio-scratch
       mount /dev/disk/by-id/virtio-scratch /var/lib/containers
+      # Disable zstd:chunked partial pulls: they need multi-range HTTP GETs,
+      # GHCR's blob CDN answers those with 501 Unsupported client range, and
+      # this podman errors out instead of falling back to a full pull.
+      printf '[storage]\ndriver = "overlay"\nrunroot = "/run/containers/storage"\ngraphroot = "/var/lib/containers/storage"\n\n[storage.options.pull_options]\nenable_partial_images = "false"\n' > /etc/containers/storage.conf
       IMG=__IMAGE__
       podman pull "$IMG" || { echo CORRAL_BUILD_FAIL pull; sync; poweroff; }
       # Read the image to pick the bootc storage backend (per the bootc docs the
