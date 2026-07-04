@@ -12,13 +12,14 @@ import (
 // migrate, scale (CPU/RAM), snapshot, and disk hotplug.
 
 var (
-	migrateNode  string
-	scaleCPU     int
-	scaleMem     string
-	addDiskSize  string
-	rmDiskVol    string
-	exportVolume string
-	exportOutput string
+	migrateNode      string
+	scaleCPU         int
+	scaleMem         string
+	addDiskSize      string
+	rmDiskVol        string
+	exportVolume     string
+	exportOutput     string
+	screenshotOutput string
 )
 
 // kubevirtOnly resolves the VM and errors if it is not a KubeVirt VM.
@@ -36,6 +37,49 @@ func kubevirtOnly(args []string, action string) (*kubevirt.Client, string, error
 	}
 	ns, _ := resolveNamespace(name)
 	return kubevirt.NewClient(ns), name, nil
+}
+
+// qemuOnly resolves the VM and errors if it is not a QEMU (local) VM.
+func qemuOnly(args []string, action string) (string, error) {
+	name, err := requireOrPrompt(args, action)
+	if err != nil {
+		return "", err
+	}
+	backend, err := requireBackend(name)
+	if err != nil {
+		return "", err
+	}
+	if backend != "qemu" {
+		return "", fmt.Errorf("%s is only supported for QEMU VMs", action)
+	}
+	return name, nil
+}
+
+var screenshotCmd = &cobra.Command{
+	Use:   "screenshot [name]",
+	Short: "Capture a screenshot of a QEMU VM's framebuffer",
+	Long: `Capture the current framebuffer of a running QEMU VM over its QMP
+monitor socket and save it as a PNG — no VNC client needed. Useful as boot
+evidence in CI (a black/blank screen is easy to catch programmatically:
+compare pixel variance against a threshold).
+
+KubeVirt VMs aren't supported here — use ` + "`corral viewer`" + ` for VNC instead.`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		name, err := qemuOnly(args, "screenshot")
+		if err != nil {
+			return err
+		}
+		out := screenshotOutput
+		if out == "" {
+			out = name + "-screenshot.png"
+		}
+		if err := qemu.Screenshot(name, out); err != nil {
+			return err
+		}
+		fmt.Printf("Screenshot written to %s\n", out)
+		return nil
+	},
 }
 
 var restartCmd = &cobra.Command{
@@ -351,7 +395,7 @@ var snapshotDeleteCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.AddCommand(restartCmd, pauseCmd, unpauseCmd, migrateCmd, scaleCmd, addDiskCmd, rmDiskCmd, exportCmd, snapshotCmd, templateCmd)
+	rootCmd.AddCommand(restartCmd, pauseCmd, unpauseCmd, migrateCmd, scaleCmd, addDiskCmd, rmDiskCmd, exportCmd, snapshotCmd, templateCmd, screenshotCmd)
 	templateCmd.AddCommand(templateMarkCmd, templateUnmarkCmd, templateListCmd, templateNewCmd)
 
 	migrateCmd.Flags().StringVar(&migrateNode, "node", "", "Target node (default: scheduler chooses)")
@@ -361,6 +405,7 @@ func init() {
 	rmDiskCmd.Flags().StringVar(&rmDiskVol, "volume", "", "Volume (PVC) name to detach")
 	exportCmd.Flags().StringVar(&exportVolume, "volume", "", "Volume/PVC to export (default: primary disk)")
 	exportCmd.Flags().StringVarP(&exportOutput, "output", "o", "", "Output file (default: <name>.img.gz)")
+	screenshotCmd.Flags().StringVarP(&screenshotOutput, "output", "o", "", "Output PNG path (default: <name>-screenshot.png)")
 
 	snapshotCmd.AddCommand(snapshotCreateCmd, snapshotListCmd, snapshotRestoreCmd, snapshotDeleteCmd)
 }

@@ -61,14 +61,44 @@ VMs are cattle. Stop treating each one like a networking project.
 
 ## Install
 
+Grab the prebuilt binary (rolling release, rebuilt from `main` on every push
+— not a CI artifact, so no GitHub login or expiry):
+
+```bash
+curl -fsSL -o corral \
+  "https://github.com/tuna-os/corral/releases/download/binaries/corral-linux-$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')"
+chmod +x corral
+install corral ~/.local/bin/
+```
+
+<details><summary>…or via <code>go install</code></summary>
+
+```bash
+go install github.com/tuna-os/corral@latest
+```
+</details>
+
+<details><summary>…or build from source</summary>
+
 ```bash
 git clone https://github.com/tuna-os/corral
 cd corral
 go build -o corral .
 install corral ~/.local/bin/
 ```
+</details>
 
-Or grab a prebuilt `corral-linux-{amd64,arm64}` from the CI artifacts.
+<details><summary>…or pull the container image</summary>
+
+The same image that runs `corral web` in-cluster also ships the CLI binary:
+
+```bash
+podman create --name corral-extract ghcr.io/tuna-os/corral:latest
+podman cp corral-extract:/usr/local/bin/corral .
+podman rm corral-extract
+install corral ~/.local/bin/
+```
+</details>
 
 Optional: `corral completion fish | source` (bash/zsh/fish, via Cobra).
 

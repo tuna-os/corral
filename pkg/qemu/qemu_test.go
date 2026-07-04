@@ -169,6 +169,39 @@ func TestGenerateUnit_AllFields(t *testing.T) {
 	}
 }
 
+func TestGenerateUnit_WithQMPSocket(t *testing.T) {
+	unit := generateUnit(generateUnitOpts{
+		Name:        "qmptest",
+		QemuPath:    "/usr/bin/qemu-system-x86_64",
+		Mem:         "4G",
+		CPU:         2,
+		DiskPath:    "/tmp/test.qcow2",
+		TailscaleIP: "100.64.0.1",
+		VncDisplay:  5,
+		QMPSocket:   "/tmp/vms/qmptest/qmp.sock",
+	})
+
+	if !contains(unit, "-qmp unix:/tmp/vms/qmptest/qmp.sock,server,nowait") {
+		t.Errorf("unit missing QMP socket flag:\n%s", unit)
+	}
+}
+
+func TestGenerateUnit_WithoutQMPSocket(t *testing.T) {
+	unit := generateUnit(generateUnitOpts{
+		Name:        "noqmp",
+		QemuPath:    "/usr/bin/qemu-system-x86_64",
+		Mem:         "4G",
+		CPU:         2,
+		DiskPath:    "/tmp/test.qcow2",
+		TailscaleIP: "100.64.0.1",
+		VncDisplay:  5,
+	})
+
+	if contains(unit, "-qmp") {
+		t.Errorf("unit should not reference -qmp when QMPSocket is empty:\n%s", unit)
+	}
+}
+
 // ── Metadata / Info ──────────────────────────────────────────────
 
 func TestReadMetadata(t *testing.T) {
