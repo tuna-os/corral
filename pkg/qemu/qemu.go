@@ -165,6 +165,10 @@ func Create(opts types.CreateOpts) error {
 		tailscaleIP = "127.0.0.1"
 	}
 
+	// QMP monitor socket — lets `corral screenshot` (and anything else that
+	// wants programmatic monitor access) talk to the VM without a VNC client.
+	qmpSocket := filepath.Join(vmDir, "qmp.sock")
+
 	// Systemd unit
 	unit := generateUnit(generateUnitOpts{
 		Name:        name,
@@ -177,6 +181,7 @@ func Create(opts types.CreateOpts) error {
 		TailscaleIP: tailscaleIP,
 		VncDisplay:  vncDisplay,
 		SSHPort:     sshPort,
+		QMPSocket:   qmpSocket,
 	})
 	unitPath := filepath.Join(systemdUserDir(), "corral-"+name+".service")
 	if err := os.MkdirAll(systemdUserDir(), 0755); err != nil {
@@ -480,6 +485,7 @@ type generateUnitOpts struct {
 	HasISO                                              bool
 	VncDisplay                                          int
 	SSHPort                                             int
+	QMPSocket                                           string
 }
 
 func generateUnit(opts generateUnitOpts) string {
@@ -496,6 +502,14 @@ func generateUnit(opts generateUnitOpts) string {
 	mem := opts.Mem
 	if !strings.HasSuffix(mem, "M") && !strings.HasSuffix(mem, "G") {
 		mem += "G"
+	}
+
+	qmpPart := ""
+	if opts.QMPSocket != "" {
+		// server,nowait: QEMU listens and accepts connect/disconnect any
+		// number of times over the VM's life, rather than requiring a client
+		// at startup.
+		qmpPart = fmt.Sprintf(" \\\n  -qmp unix:%s,server,nowait", opts.QMPSocket)
 	}
 
 	return fmt.Sprintf(`[Unit]
@@ -517,7 +531,7 @@ ExecStart=%s \
   -display none \
   -netdev user,id=net0%s \
   -device virtio-net-pci,netdev=net0 \
-  -device virtio-rng-pci%s
+  -device virtio-rng-pci%s%s
 Restart=no
 StandardOutput=journal
 StandardError=journal
@@ -525,5 +539,5 @@ StandardError=journal
 [Install]
 WantedBy=default.target
 `, opts.Name, opts.QemuPath, opts.Name, mem, opts.CPU,
-		opts.DiskPath, opts.TailscaleIP, opts.VncDisplay, hostfwd, isoPart)
+		opts.DiskPath, opts.TailscaleIP, opts.VncDisplay, hostfwd, isoPart, qmpPart)
 }
