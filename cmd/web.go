@@ -17,11 +17,11 @@ The web UI shares the registry and cluster state with the CLI and TUI,
 so all three can be used in tandem.
 
 By default it binds to 127.0.0.1:8006 (Proxmox's port). To reach it from
-other tailnet devices, bind your Tailscale IP:
-
-  corral web --addr "$(tailscale ip -4):8006"
+other tailnet devices, bind your Tailscale IP.
 
 There is no authentication — never bind a public interface.`,
+	Example: `  corral web
+  corral web --addr "$(tailscale ip -4):8006"`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return web.Serve(webAddr)
 	},

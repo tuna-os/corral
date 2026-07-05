@@ -10,40 +10,76 @@ import (
 	"github.com/tuna-os/corral/pkg/types"
 )
 
+// imagesType filters `corral images`/`corral images search` to one catalog
+// ("os", "bootc") or both ("all", the default) — see catalogSections.
+var imagesType string
+
 var imagesCmd = &cobra.Command{
 	Use:   "images",
-	Short: "Browse and pull the curated OS image catalog",
-	Long: `List ready-to-boot OS images. Create a VM from one with:
+	Short: "Browse and pull the curated image catalog (OS images + bootc images)",
+	Long: `List ready-to-boot images from both built-in catalogs:
 
-  corral create myvm --image ubuntu
+  - OS images (cloud images, installer ISOs) — boot directly, no plugin needed:
+      corral create myvm --image ubuntu
 
-Pull one as a reusable golden template (clone-from-template):
+  - Bootc images (bootable containers: Fedora/CentOS bootc, Universal Blue,
+    Bluefin/Aurora/Bazzite) — built into a VM disk by the bootc plugin:
+      corral plugin install bootc
+      corral bootc create myvm --image bluefin
+
+--type os or --type bootc shows just one catalog.
+
+Pull an OS image as a reusable golden template (clone-from-template):
 
   corral images pull ubuntu
 
 For anything else, import a qcow2/raw disk image by URL or file:
 
   corral import myvm --source https://…/image.qcow2`,
+	Example: `  corral images                     # both catalogs
+  corral images --type bootc        # bootc images only
+  corral images search gnome        # search both catalogs
+  corral create myvm --image fedora
+  corral bootc create myvm --image bluefin`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		printCatalog(catalog.Images)
+		if err := validateImagesType(imagesType); err != nil {
+			return err
+		}
+		printCatalogSections(imagesType, catalog.Images, catalog.BootcImages)
 		return nil
 	},
 }
 
+// validateImagesType rejects anything but the three --type values catalog
+// display/search understand, so a typo shows an error instead of silently
+// falling through to "show both".
+func validateImagesType(t string) error {
+	switch t {
+	case "", "os", "bootc":
+		return nil
+	default:
+		return fmt.Errorf("--type must be \"os\" or \"bootc\" (got %q)", t)
+	}
+}
+
 var imagesSearchCmd = &cobra.Command{
-	Use:   "search [term]",
-	Short: "Search the image catalog",
-	Args:  cobra.MaximumNArgs(1),
+	Use:     "search [term]",
+	Short:   "Search the image catalog (OS + bootc, unless --type narrows it)",
+	Args:    cobra.MaximumNArgs(1),
+	Example: `  corral images search gnome`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := validateImagesType(imagesType); err != nil {
+			return err
+		}
 		term := ""
 		if len(args) == 1 {
 			term = args[0]
 		}
-		matches := searchCatalog(term)
-		if len(matches) == 0 {
+		osMatches, bootcMatches := searchCatalogs(term, imagesType)
+		if len(osMatches) == 0 && len(bootcMatches) == 0 {
 			return fmt.Errorf("no catalog image matches %q", term)
 		}
-		printCatalog(matches)
+		printCatalogSections(imagesType, osMatches, bootcMatches)
 		return nil
 	},
 }
@@ -86,6 +122,61 @@ func searchCatalog(term string) []catalog.Image {
 	return out
 }
 
+// searchBootcCatalog mirrors searchCatalog for the bootc image catalog.
+func searchBootcCatalog(term string) []catalog.BootcImage {
+	term = strings.ToLower(term)
+	var out []catalog.BootcImage
+	for _, img := range catalog.BootcImages {
+		if term == "" ||
+			strings.Contains(strings.ToLower(img.Name), term) ||
+			strings.Contains(strings.ToLower(img.Description), term) ||
+			strings.Contains(strings.ToLower(img.Source), term) {
+			out = append(out, img)
+		}
+	}
+	return out
+}
+
+// searchCatalogs applies searchCatalog/searchBootcCatalog, narrowed by
+// typeFilter ("os", "bootc", or "" / "all" for both).
+func searchCatalogs(term, typeFilter string) (os []catalog.Image, bootc []catalog.BootcImage) {
+	if typeFilter != "bootc" {
+		os = searchCatalog(term)
+	}
+	if typeFilter != "os" {
+		bootc = searchBootcCatalog(term)
+	}
+	return os, bootc
+}
+
+func printBootcCatalog(images []catalog.BootcImage) {
+	fmt.Printf("%-26s %-24s %s\n", "NAME", "SOURCE", "DESCRIPTION")
+	for _, img := range images {
+		fmt.Printf("%-26s %-24s %s\n", img.Name, img.Source, img.Description)
+	}
+}
+
+// printCatalogSections renders the OS and/or bootc catalogs per typeFilter
+// ("os", "bootc", or "" / "all" for both), each clearly headed so `corral
+// images` surfaces both without the bootc plugin needing to be discovered
+// separately first.
+func printCatalogSections(typeFilter string, osImages []catalog.Image, bootcImages []catalog.BootcImage) {
+	showOS := typeFilter != "bootc"
+	showBootc := typeFilter != "os"
+
+	if showOS {
+		fmt.Println("OS images — corral create myvm --image <name>")
+		printCatalog(osImages)
+	}
+	if showOS && showBootc {
+		fmt.Println()
+	}
+	if showBootc {
+		fmt.Println("Bootc images — corral bootc create myvm --image <name> (needs: corral plugin install bootc)")
+		printBootcCatalog(bootcImages)
+	}
+}
+
 // templateName is the VM name a pulled catalog image gets.
 func templateName(image string) string { return "tmpl-" + image }
 
@@ -122,6 +213,7 @@ func pullTemplate(image, ns string) error {
 
 func init() {
 	imagesPullCmd.Flags().StringVarP(&imagesPullNamespace, "namespace", "n", "", "Namespace (default corral)")
+	imagesCmd.PersistentFlags().StringVar(&imagesType, "type", "", "Filter to one catalog: os, bootc (default: both)")
 	imagesCmd.AddCommand(imagesSearchCmd, imagesPullCmd)
 	rootCmd.AddCommand(imagesCmd)
 }

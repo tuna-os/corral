@@ -15,6 +15,10 @@ var pluginCmd = &cobra.Command{
 Plugins are standalone executables named "corral-<name>" in
 ~/.local/share/corral/plugins. Once installed, run them as "corral <name> …".
 The marketplace is a curated index of installable plugins.`,
+	Example: `  corral plugin search
+  corral plugin install bootc
+  corral bootc create myvm --image bluefin
+  corral plugin list`,
 }
 
 var pluginListCmd = &cobra.Command{

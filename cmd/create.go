@@ -208,6 +208,10 @@ KubeVirt examples:
 
 Boot a container image as a VM? Install the bootc extension:
   corral plugin install bootc && corral bootc create myvm --image quay.io/centos-bootc/centos-bootc:stream9`,
+	Example: `  corral create myvm --kubevirt --image fedora
+  corral create myvm --iso ./install.iso --disk 40G
+  corral create scratch --kubevirt --image bluefin --ephemeral --ttl 2h
+  corral create gate --bootc ghcr.io/tuna-os/yellowfin:gnome --wait-ssh --timeout 900`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]

@@ -20,9 +20,10 @@ var (
 )
 
 var startCmd = &cobra.Command{
-	Use:   "start [name]",
-	Short: "Start a VM",
-	Args:  cobra.MaximumNArgs(1),
+	Use:     "start [name]",
+	Short:   "Start a VM",
+	Example: `  corral start myvm`,
+	Args:    cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name, err := requireOrPrompt(args, "start")
 		if err != nil {
@@ -41,9 +42,10 @@ var startCmd = &cobra.Command{
 }
 
 var stopCmd = &cobra.Command{
-	Use:   "stop [name]",
-	Short: "Stop a VM",
-	Args:  cobra.MaximumNArgs(1),
+	Use:     "stop [name]",
+	Short:   "Stop a VM",
+	Example: `  corral stop myvm`,
+	Args:    cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name, err := requireOrPrompt(args, "stop")
 		if err != nil {
@@ -64,7 +66,9 @@ var stopCmd = &cobra.Command{
 var deleteCmd = &cobra.Command{
 	Use:   "delete [name]",
 	Short: "Delete a VM and its disks",
-	Args:  cobra.MaximumNArgs(1),
+	Example: `  corral delete myvm       # asks to confirm
+  corral delete myvm -f    # skip the confirmation`,
+	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name, err := requireOrPrompt(args, "delete")
 		if err != nil {
@@ -98,9 +102,10 @@ var deleteCmd = &cobra.Command{
 }
 
 var infoCmd = &cobra.Command{
-	Use:   "info [name]",
-	Short: "Show VM details",
-	Args:  cobra.MaximumNArgs(1),
+	Use:     "info [name]",
+	Short:   "Show VM details",
+	Example: `  corral info myvm`,
+	Args:    cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name, err := requireOrPrompt(args, "view details for")
 		if err != nil {
@@ -129,9 +134,10 @@ var infoCmd = &cobra.Command{
 }
 
 var viewerCmd = &cobra.Command{
-	Use:   "viewer [name]",
-	Short: "Launch VNC viewer for a VM",
-	Args:  cobra.MaximumNArgs(1),
+	Use:     "viewer [name]",
+	Short:   "Launch VNC viewer for a VM",
+	Example: `  corral viewer myvm`,
+	Args:    cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name, err := requireOrPrompt(args, "view")
 		if err != nil {
@@ -195,10 +201,8 @@ var sshCmd = &cobra.Command{
 	Long: `Open an interactive SSH session to a VM.
 
 For KubeVirt VMs, this uses virtctl ssh which tunnels through the
-Kubernetes API. For QEMU VMs, it connects to the VM's Tailscale IP.
-
-Examples:
-  corral ssh myvm
+Kubernetes API. For QEMU VMs, it connects to the VM's Tailscale IP.`,
+	Example: `  corral ssh myvm
   corral ssh myvm --user root
   corral ssh myvm -u root -i ~/.ssh/vm_key
   corral ssh myvm -c "ls /"`,
@@ -224,9 +228,10 @@ Examples:
 }
 
 var logsCmd = &cobra.Command{
-	Use:   "logs [name]",
-	Short: "Tail VM logs",
-	Args:  cobra.MaximumNArgs(1),
+	Use:     "logs [name]",
+	Short:   "Tail VM logs",
+	Example: `  corral logs myvm`,
+	Args:    cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name, err := requireOrPrompt(args, "view logs for")
 		if err != nil {

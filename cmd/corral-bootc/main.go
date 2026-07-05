@@ -124,7 +124,12 @@ func main() {
 		Long: `Well-maintained bootable container bases from Fedora, CentOS, and
 Universal Blue. Use a catalog name directly:
 
-  corral bootc create myvm --image fedora-bootc`,
+  corral bootc create myvm --image fedora-bootc
+
+This is the bootc-only view. "corral images" (core CLI, no plugin needed)
+lists this same catalog alongside the OS image catalog in one place.`,
+		Example: `  corral bootc images
+  corral bootc create myvm --image bluefin`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fmt.Printf("%-22s %-46s %s\n", "NAME", "IMAGE", "DESCRIPTION")
 			for _, b := range catalog.BootcImages {
