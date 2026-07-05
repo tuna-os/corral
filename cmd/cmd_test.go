@@ -1,12 +1,14 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	ctpkg "github.com/tuna-os/corral/pkg/ct"
+	"github.com/tuna-os/corral/pkg/kubevirt"
 	"github.com/tuna-os/corral/pkg/registry"
 	"github.com/tuna-os/corral/pkg/shell"
 	"github.com/tuna-os/corral/pkg/types"
@@ -174,7 +176,7 @@ func TestCreateCommand_Flags(t *testing.T) {
 		"kubevirt", "mem", "cpu", "disk", "iso", "qcow",
 		"force", "container-disk", "image", "import", "pvc",
 		"namespace", "node", "cloud-init-password", "cloud-init",
-		"instancetype", "preference",
+		"instancetype", "preference", "lan", "network-nad", "bridge-iface",
 	}
 
 	for _, flag := range expectedFlags {
@@ -223,7 +225,7 @@ func TestSSHCommand_HasFlags(t *testing.T) {
 		t.Fatal("ssh command not found")
 	}
 
-	for _, flag := range []string{"user", "identity", "command", "port", "password"} {
+	for _, flag := range []string{"user", "identity", "command", "port", "password", "local-forward"} {
 		if cmd.Flags().Lookup(flag) == nil {
 			t.Errorf("expected --%s flag on ssh command", flag)
 		}
@@ -813,6 +815,94 @@ func TestActionsListItemsCT_NoHypervisorConcepts(t *testing.T) {
 		if !found {
 			t.Errorf("CT actions list missing %q", want)
 		}
+	}
+}
+
+// ── LAN bridge networking (issue #82) ────────────────────────────
+
+func TestNetworksAndAddNicCommands_Exist(t *testing.T) {
+	for _, name := range []string{"networks", "addnic"} {
+		cmd, _, err := rootCmd.Find([]string{name})
+		if err != nil || cmd == rootCmd {
+			t.Errorf("expected subcommand %q, but not found", name)
+		}
+	}
+}
+
+func TestAddNicCmd_Flags(t *testing.T) {
+	for _, name := range []string{"network-nad", "iface"} {
+		if addNicCmd.Flags().Lookup(name) == nil {
+			t.Errorf("addnic: missing --%s flag", name)
+		}
+	}
+}
+
+func TestAddNicCmd_NonexistentVM(t *testing.T) {
+	oldStore := registryStore
+	dir := t.TempDir()
+	registryStore = registry.NewStoreAt(filepath.Join(dir, "registry.json"))
+	defer func() { registryStore = oldStore }()
+
+	err := addNicCmd.RunE(addNicCmd, []string{"nonexistent-vm-xyzzzy"})
+	if err == nil {
+		t.Error("expected error for nonexistent VM")
+	}
+}
+
+func TestNetworksCmd_NoNADs(t *testing.T) {
+	fake := shell.NewFake()
+	fake.AddResponseKV("kubectl", []string{"get", "net-attach-def", "-A",
+		"-o", `jsonpath={range .items[*]}{.metadata.namespace}/{.metadata.name}{"\n"}{end}`}, "", fmt.Errorf("no Multus"))
+	kubevirt.SetPackageRunner(fake)
+	defer kubevirt.SetPackageRunner(shell.Real{})
+
+	if err := networksCmd.RunE(networksCmd, nil); err != nil {
+		t.Fatalf("networksCmd should report zero NADs, not error: %v", err)
+	}
+}
+
+func TestAttachLANBridge_ZeroNADsErrors(t *testing.T) {
+	fake := shell.NewFake()
+	fake.AddResponseKV("kubectl", []string{"get", "net-attach-def", "-A",
+		"-o", `jsonpath={range .items[*]}{.metadata.namespace}/{.metadata.name}{"\n"}{end}`}, "", fmt.Errorf("no Multus"))
+	kubevirt.SetPackageRunner(fake)
+	defer kubevirt.SetPackageRunner(shell.Real{})
+
+	oldNAD := createNetworkNAD
+	createNetworkNAD = ""
+	defer func() { createNetworkNAD = oldNAD }()
+
+	if err := attachLANBridge("corral-vms", "myvm"); err == nil {
+		t.Error("expected an error when no NAD exists on the cluster, not a silent no-op")
+	}
+}
+
+func TestAttachLANBridge_ExplicitNADPatchesVM(t *testing.T) {
+	fake := shell.NewFake()
+	fake.AddPrefixResponse("kubectl patch vm myvm -n corral-vms --type json -p", "", nil)
+	kubevirt.SetPackageRunner(fake)
+	kubevirt.SetDefaultRunner(fake)
+	defer func() {
+		kubevirt.SetPackageRunner(shell.Real{})
+		kubevirt.SetDefaultRunner(nil)
+	}()
+
+	oldNAD, oldIface := createNetworkNAD, createBridgeIface
+	createNetworkNAD = "default/lan-bridge"
+	createBridgeIface = "net1"
+	defer func() { createNetworkNAD, createBridgeIface = oldNAD, oldIface }()
+
+	if err := attachLANBridge("corral-vms", "myvm"); err != nil {
+		t.Fatalf("attachLANBridge: %v", err)
+	}
+	var patched bool
+	for _, c := range fake.Calls() {
+		if c.Name == "kubectl" && len(c.Args) > 0 && c.Args[0] == "patch" {
+			patched = true
+		}
+	}
+	if !patched {
+		t.Error("expected attachLANBridge to patch the VM with the new NIC")
 	}
 }
 

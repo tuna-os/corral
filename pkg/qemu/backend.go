@@ -19,6 +19,6 @@ func (Backend) VMInfo(name string) ([]byte, error) { return Info(name) }
 func (Backend) Viewer(name string) error           { return Viewer(name) }
 func (Backend) Logs(name string) error             { return Logs(name) }
 
-func (Backend) SSH(name, username, identityFile, command string, port int, password string) error {
-	return SSH(name, username, identityFile, command, port, password)
+func (Backend) SSH(name, username, identityFile, command string, port int, password string, localForwards []string) error {
+	return SSH(name, username, identityFile, command, port, password, localForwards)
 }

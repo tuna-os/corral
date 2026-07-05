@@ -223,12 +223,14 @@ corral list
 
 ## 6. (Optional) Secondary networks — Multus
 
-For VMs with extra NICs (e.g. a real LAN IP), install
+By default a KubeVirt VM only gets a NATed pod-network interface: outbound
+internet works, but nothing on your actual LAN can reach it, and it can't
+reach LAN-only devices either (a smartwatch, a NAS, a router admin panel).
+For a real LAN IP, install
 [Multus](https://github.com/k8snetworkplumbingwg/multus-cni) and create a
-`NetworkAttachmentDefinition`, then use Corral's **Add NIC** (Hardware →
-Network) or `kubectl`. Multus changes the CNI chain — do it in a maintenance
-window. Example macvlan NAD (set `master` to each node's uplink; note nodes may
-name interfaces differently):
+`NetworkAttachmentDefinition`. Multus changes the CNI chain — do it in a
+maintenance window. Example macvlan NAD (set `master` to each node's uplink;
+note nodes may name interfaces differently):
 
 ```yaml
 apiVersion: k8s.cni.cncf.io/v1
@@ -239,6 +241,20 @@ spec:
     { "cniVersion":"0.3.1","type":"macvlan","master":"eth0","mode":"bridge",
       "ipam":{"type":"dhcp"} }
 ```
+
+Once a NAD exists, bridge a VM onto it:
+
+```bash
+corral networks                        # list NADs Corral can see
+corral create myvm --kubevirt --image fedora --lan   # new VM, bridges automatically if there's exactly one NAD
+corral addnic myvm                     # existing VM — same auto-detect
+corral addnic myvm --network-nad tailvm/lan --iface net1   # explicit, if there's more than one NAD
+```
+
+Or use Corral's **Add NIC** (Hardware → Network) in the web UI. `--lan`/
+`corral addnic` only auto-picks a NAD when exactly one exists on the
+cluster — with several, pass `--network-nad` explicitly so a VM never ends
+up bridged onto the wrong network by a guess.
 
 ## 7. Extensions (the marketplace)
 

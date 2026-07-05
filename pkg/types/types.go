@@ -14,7 +14,7 @@ type Backend interface {
 	StopVM(name string) error
 	DeleteVM(name string) error
 	VMInfo(name string) ([]byte, error)
-	SSH(name, username, identityFile, command string, port int, password string) error
+	SSH(name, username, identityFile, command string, port int, password string, localForwards []string) error
 	Viewer(name string) error
 	Logs(name string) error
 }

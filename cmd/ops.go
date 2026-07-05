@@ -20,6 +20,8 @@ var (
 	exportVolume     string
 	exportOutput     string
 	screenshotOutput string
+	addNicNAD        string
+	addNicIface      string
 )
 
 // kubevirtOnly resolves the VM and errors if it is not a KubeVirt VM.
@@ -218,6 +220,54 @@ var rmDiskCmd = &cobra.Command{
 	},
 }
 
+var networksCmd = &cobra.Command{
+	Use:     "networks",
+	Short:   "List Multus NetworkAttachmentDefinitions available for --lan/--network-nad (KubeVirt)",
+	Example: `  corral networks`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		nads := kubevirt.ListNADs()
+		if len(nads) == 0 {
+			fmt.Println("No NetworkAttachmentDefinitions found — Multus may not be installed on this cluster.")
+			return nil
+		}
+		for _, n := range nads {
+			fmt.Println(n)
+		}
+		return nil
+	},
+}
+
+var addNicCmd = &cobra.Command{
+	Use:   "addnic [name]",
+	Short: "Bridge a secondary NIC onto the LAN for an existing VM (KubeVirt)",
+	Long: `Attach a bridge-bound secondary NIC backed by a Multus NetworkAttachmentDefinition
+— same mechanism as ` + "`corral create --lan`" + `, for a VM that already exists.
+Hotplugs on a running VM where KubeVirt supports it, otherwise it takes
+effect on the next boot.`,
+	Example: `  corral addnic myvm
+  corral addnic myvm --network-nad default/lan-bridge --iface net1`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		c, name, err := kubevirtOnly(args, "addnic")
+		if err != nil {
+			return err
+		}
+		nad, err := kubevirt.ResolveNAD(addNicNAD, kubevirt.ListNADs())
+		if err != nil {
+			return err
+		}
+		if err := c.AddNIC(name, nad, addNicIface); err != nil {
+			return err
+		}
+		iface := addNicIface
+		if iface == "" {
+			iface = "net1"
+		}
+		fmt.Printf("Bridged %s onto %s (guest iface %s)\n", name, nad, iface)
+		return nil
+	},
+}
+
 var exportCmd = &cobra.Command{
 	Use:   "export [name]",
 	Short: "Back up a VM's disk to a compressed image (KubeVirt)",
@@ -406,7 +456,7 @@ var snapshotDeleteCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.AddCommand(restartCmd, pauseCmd, unpauseCmd, migrateCmd, scaleCmd, addDiskCmd, rmDiskCmd, exportCmd, snapshotCmd, templateCmd, screenshotCmd)
+	rootCmd.AddCommand(restartCmd, pauseCmd, unpauseCmd, migrateCmd, scaleCmd, addDiskCmd, rmDiskCmd, exportCmd, snapshotCmd, templateCmd, screenshotCmd, networksCmd, addNicCmd)
 	templateCmd.AddCommand(templateMarkCmd, templateUnmarkCmd, templateListCmd, templateNewCmd)
 
 	migrateCmd.Flags().StringVar(&migrateNode, "node", "", "Target node (default: scheduler chooses)")
@@ -417,6 +467,8 @@ func init() {
 	exportCmd.Flags().StringVar(&exportVolume, "volume", "", "Volume/PVC to export (default: primary disk)")
 	exportCmd.Flags().StringVarP(&exportOutput, "output", "o", "", "Output file (default: <name>.img.gz)")
 	screenshotCmd.Flags().StringVarP(&screenshotOutput, "output", "o", "", "Output PNG path (default: <name>-screenshot.png)")
+	addNicCmd.Flags().StringVar(&addNicNAD, "network-nad", "", "NetworkAttachmentDefinition to bridge onto (\"ns/name\"); default: the cluster's only one")
+	addNicCmd.Flags().StringVar(&addNicIface, "iface", "", "Guest interface name for the new NIC (default: net1)")
 
 	snapshotCmd.AddCommand(snapshotCreateCmd, snapshotListCmd, snapshotRestoreCmd, snapshotDeleteCmd)
 }

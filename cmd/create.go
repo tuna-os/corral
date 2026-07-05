@@ -45,6 +45,9 @@ var (
 	createSSHUser           string
 	createEphemeral         bool
 	createTTL               string
+	createLAN               bool
+	createNetworkNAD        string
+	createBridgeIface       string
 )
 
 // limaFile is the Lima YAML format — corral reads Lima files natively.
@@ -206,12 +209,21 @@ KubeVirt examples:
   corral create myvm --kubevirt --iso https://example.com/bluefin.iso
   corral create myvm --kubevirt --container-disk quay.io/containerdisks/ubuntu:24.04
 
+By default a KubeVirt VM only gets a NATed pod-network interface — it can
+reach the internet but not LAN-only devices (a smartwatch, a NAS, a router
+admin panel). --lan bridges a second NIC onto the cluster's Multus
+NetworkAttachmentDefinition so the VM gets a real LAN IP (needs Multus and
+a bridge NAD set up on the cluster first — see docs/lan-networking.md):
+  corral create myvm --kubevirt --image fedora --lan
+  corral create myvm --kubevirt --image fedora --network-nad default/lan-bridge
+
 Boot a container image as a VM? Install the bootc extension:
   corral plugin install bootc && corral bootc create myvm --image quay.io/centos-bootc/centos-bootc:stream9`,
 	Example: `  corral create myvm --kubevirt --image fedora
   corral create myvm --iso ./install.iso --disk 40G
   corral create scratch --kubevirt --image bluefin --ephemeral --ttl 2h
-  corral create gate --bootc ghcr.io/tuna-os/yellowfin:gnome --wait-ssh --timeout 900`,
+  corral create gate --bootc ghcr.io/tuna-os/yellowfin:gnome --wait-ssh --timeout 900
+  corral create builder --kubevirt --image fedora --lan   # direct LAN access, e.g. a Multus bridge NAD`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
@@ -280,6 +292,9 @@ func init() {
 	createCmd.Flags().StringVar(&createSSHUser, "ssh-user", "root", "[qemu] User for the --wait-ssh probe (bootc injects the key for root)")
 	createCmd.Flags().BoolVar(&createEphemeral, "ephemeral", false, "[kubevirt] Mark for `corral gc`: stopped (PVCs kept) once --ttl expires, deleted after a grace period")
 	createCmd.Flags().StringVar(&createTTL, "ttl", "", "[kubevirt] Lifetime before `corral gc` stops this VM, e.g. \"4h\" (default 4h; requires --ephemeral)")
+	createCmd.Flags().BoolVar(&createLAN, "lan", false, "[kubevirt] Bridge a secondary NIC onto the LAN (needs a Multus NetworkAttachmentDefinition)")
+	createCmd.Flags().StringVar(&createNetworkNAD, "network-nad", "", "[kubevirt] NetworkAttachmentDefinition to bridge onto (\"ns/name\"); implies --lan")
+	createCmd.Flags().StringVar(&createBridgeIface, "bridge-iface", "", "[kubevirt] Guest interface name for the LAN bridge (default: net1)")
 }
 
 func runKubevirtCreate(name string) error {
@@ -337,6 +352,12 @@ func runKubevirtCreate(name string) error {
 		fmt.Fprintf(os.Stderr, "warning: tailnet expose failed: %v\n", err)
 	}
 
+	if createLAN || createNetworkNAD != "" {
+		if err := attachLANBridge(ns, name); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: %v\n", err)
+		}
+	}
+
 	if registryStore != nil {
 		if err := registryStore.Set(name, types.RegistryEntry{
 			Backend:   "kubevirt",
@@ -350,6 +371,25 @@ func runKubevirtCreate(name string) error {
 	fmt.Fprintf(os.Stderr, "VM %q created in ns/%s\n", name, ns)
 	fmt.Fprintf(os.Stderr, "  Start:  corral start %s\n", name)
 	fmt.Fprintf(os.Stderr, "  SSH:    corral ssh %s\n", name)
+	return nil
+}
+
+// attachLANBridge resolves which Multus NAD to use (--network-nad, or the
+// cluster's only one) and hotplugs a bridge-bound secondary NIC onto the
+// just-created VM — see kubevirt.ResolveNAD/AddNIC and issue #82.
+func attachLANBridge(ns, name string) error {
+	nad, err := kubevirt.ResolveNAD(createNetworkNAD, kubevirt.ListNADs())
+	if err != nil {
+		return fmt.Errorf("LAN bridge not attached: %w", err)
+	}
+	if err := kubevirt.NewClient(ns).AddNIC(name, nad, createBridgeIface); err != nil {
+		return fmt.Errorf("LAN bridge not attached: %w", err)
+	}
+	iface := createBridgeIface
+	if iface == "" {
+		iface = "net1"
+	}
+	fmt.Fprintf(os.Stderr, "  LAN:    bridged via %s (guest iface %s)\n", nad, iface)
 	return nil
 }
 
