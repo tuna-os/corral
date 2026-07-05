@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/tuna-os/corral/pkg/shell"
 )
@@ -355,6 +356,65 @@ func Console(name, namespace string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+// execArgv builds the argv a one-shot Exec should run: chrooted into the
+// persistent rootfs for a privileged CT (matching how a console session
+// re-enters it — see rootfsExecCommand), plain `sh -c` otherwise. argv, when
+// set, runs directly with no shell (devcontainer.json's postCreateCommand as
+// a JSON array); script runs under `sh -c` (postCreateCommand as a string).
+// Exactly one of argv/script is set.
+func execArgv(privileged bool, argv []string, script string) []string {
+	inner := argv
+	if len(inner) == 0 {
+		inner = []string{"sh", "-c", script}
+	}
+	if privileged {
+		return append([]string{"chroot", rootfsMountPath}, inner...)
+	}
+	return inner
+}
+
+// Exec runs a one-shot, non-interactive command inside a running CT,
+// streaming its output to stdout/stderr. Used for devcontainer.json's
+// postCreateCommand (see cmd/ct.go's --devcontainer flag and
+// devcontainer.go). Exactly one of argv/script should be set — argv runs
+// directly (devcontainer's array form), script runs under `sh -c` (string
+// form).
+func Exec(name, namespace string, argv []string, script string) error {
+	spec, err := specFromPVC(name, namespace)
+	if err != nil {
+		return err
+	}
+	args := append([]string{"exec", name, "-n", namespace, "--"}, execArgv(spec.Privileged, argv, script)...)
+	cmd := exec.Command("kubectl", args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+// WaitReady polls ListCTs until name is Ready or timeout elapses. A
+// privileged CT's rootfs-seeding bootstrap (see bootstrapScript) runs
+// asynchronously after the pod starts, so callers that need to Exec into it
+// right after Create (e.g. devcontainer.json's postCreateCommand) must wait
+// for real readiness first — the container reporting Ready only once its
+// entrypoint's `exec chroot ... sleep infinity` has actually started.
+func WaitReady(name, namespace string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		cts, err := ListCTs()
+		if err == nil {
+			for _, c := range cts {
+				if c.Name == name && c.Namespace == namespace && c.Ready {
+					return nil
+				}
+			}
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("CT %q not ready within %s", name, timeout)
+		}
+		time.Sleep(2 * time.Second)
+	}
 }
 
 // Start creates the pod from the spec recorded on the data PVC — the PVC

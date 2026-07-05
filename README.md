@@ -133,6 +133,9 @@ corral list
 # Container (CT) — distrobox-style persistent rootfs
 corral ct create devbox --image docker.io/library/debian:bookworm --privileged
 corral ct console devbox
+
+# Container (CT) from a project's devcontainer.json
+corral ct create myproj --devcontainer ./myproj
 ```
 
 ## How VMs are reached
@@ -316,6 +319,30 @@ Two stages, on purpose:
 Run `corral gc` by hand, or point a CronJob at it for hands-off cleanup.
 Non-`--ephemeral` VMs are never touched.
 
+## Dev containers (scoped MVP)
+
+`corral ct create --devcontainer <path>` reads a project's
+`.devcontainer/devcontainer.json` and provisions a Container (CT) from it —
+`image` (or an error pointing you at `--image` if it's `build.dockerfile`
+instead), `postCreateCommand`, `remoteUser`, and `forwardPorts`:
+
+```bash
+corral ct create myproj --devcontainer ./myproj
+corral ct console myproj
+```
+
+`<path>` is the devcontainer.json itself, or a directory containing
+`.devcontainer/devcontainer.json`/`.devcontainer.json`. Runs privileged
+(persistent rootfs) by default — that's the whole point of a dev
+container — unless you pass `--privileged=false`; any of `--image`,
+`--cpu`, `--mem`, etc. still override what the json would otherwise set.
+
+This is a scoped MVP, not full devcontainer-spec/VS Code support:
+**Features**, `build.dockerfile`, and `postCreateCommand`'s object form
+(several named commands run in parallel) aren't implemented — see the
+tracking issue for the fuller story (VS Code's "Reopen in Container"
+recognizing Corral natively, etc.).
+
 ## Configuration
 
 ```yaml
@@ -395,6 +422,7 @@ corral delete <name>    [-f] removes VM, disks, proxy, registry entry
 
 corral ct create <name>  --image … [--cpu 1] [--mem 512Mi] [--disk 5Gi]
                           [--privileged]  (distrobox-style persistent rootfs)
+                          --devcontainer <path>  (scoped MVP — see below)
 corral ct list|start|stop|delete|console <name>
 
 corral vdi pool create <name> --from <golden-vm> --size N   (plugin, desktop pools)
