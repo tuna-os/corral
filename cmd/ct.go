@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"fmt"
+	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/tuna-os/corral/pkg/ct"
@@ -16,6 +18,8 @@ var (
 	ctDisk         string
 	ctStorageClass string
 	ctPrivileged   bool
+	ctDevcontainer string
+	ctReadyTimeout time.Duration
 )
 
 var ctCmd = &cobra.Command{
@@ -39,29 +43,107 @@ package installs and dotfiles survive Stop/Start. Needs a real OS image
 
 var ctCreateCmd = &cobra.Command{
 	Use:   "create <name>",
-	Short: "Create a Container (CT)",
+	Short: "Create a Container (CT) — optionally from a project's devcontainer.json",
+	Long: `Create a Container (CT).
+
+--devcontainer <path> reads image, postCreateCommand, remoteUser, and
+forwardPorts from a project's devcontainer.json (the path itself, or a
+directory containing .devcontainer/devcontainer.json or .devcontainer.json).
+This is a scoped MVP, not full devcontainer-spec/VS Code support: Features,
+build.dockerfile, and postCreateCommand's parallel-named-commands object
+form aren't implemented (see the tracking issue). --image/--privileged etc.
+still override anything --devcontainer would otherwise set.`,
 	Example: `  corral ct create tools --image fedora:40
-  corral ct create devbox --image debian:12 --privileged --cpu 2 --mem 2Gi --disk 10Gi`,
+  corral ct create devbox --image debian:12 --privileged --cpu 2 --mem 2Gi --disk 10Gi
+  corral ct create myproj --devcontainer ./myproj`,
 	Args: cobra.ExactArgs(1),
-	RunE: func(_ *cobra.Command, args []string) error {
+	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
-		if ctImage == "" {
-			return fmt.Errorf("--image is required")
-		}
 		ns := ctNamespace
 		if ns == "" {
 			ns = kubevirt.DefaultNamespace
 		}
+
+		image := ctImage
+		privileged := ctPrivileged
+		var devcfg *ct.DevContainerConfig
+		if ctDevcontainer != "" {
+			jsonPath, err := ct.FindDevContainerJSON(ctDevcontainer)
+			if err != nil {
+				return err
+			}
+			devcfg, err = ct.LoadDevContainerConfig(jsonPath)
+			if err != nil {
+				return err
+			}
+			if devcfg.Build != nil && image == "" {
+				return fmt.Errorf("%s builds a Dockerfile (build.dockerfile) rather than pulling an image — not supported yet; build and push an image yourself, then pass --image", jsonPath)
+			}
+			if image == "" {
+				image = devcfg.Image
+			}
+			if image == "" {
+				return fmt.Errorf("%s has no usable image (image or build.dockerfile)", jsonPath)
+			}
+			// devcontainer.json's whole point is a persistent, customized
+			// environment — --privileged unless the user explicitly said
+			// otherwise.
+			if !cmd.Flags().Changed("privileged") {
+				privileged = true
+			}
+		}
+		if image == "" {
+			return fmt.Errorf("--image is required (or --devcontainer pointing at a devcontainer.json with one)")
+		}
+
 		if err := ct.Create(ct.CreateOpts{
-			Name: name, Namespace: ns, Image: ctImage,
+			Name: name, Namespace: ns, Image: image,
 			CPU: ctCPU, Mem: ctMem, Disk: ctDisk,
-			StorageClass: ctStorageClass, Privileged: ctPrivileged,
+			StorageClass: ctStorageClass, Privileged: privileged,
 		}); err != nil {
 			return err
 		}
 		fmt.Printf("CT %q created in ns/%s\n", name, ns)
-		return nil
+
+		if devcfg == nil {
+			return nil
+		}
+		return applyDevContainerPostCreate(name, ns, devcfg)
 	},
+}
+
+// applyDevContainerPostCreate runs devcontainer.json's postCreateCommand
+// (if any) and exposes forwardPorts (if any) once the CT is actually ready
+// — best-effort, matching how kubevirt's ApplyProxy failures are handled
+// elsewhere: the CT itself is already up, so these are reported as warnings
+// rather than rolling back a successful Create.
+func applyDevContainerPostCreate(name, ns string, cfg *ct.DevContainerConfig) error {
+	post, err := cfg.ResolvePostCreate()
+	if err != nil {
+		return err
+	}
+	post = post.WithUser(cfg.RemoteUser)
+
+	if post != nil {
+		fmt.Println("Waiting for the CT to be ready before running postCreateCommand…")
+		if err := ct.WaitReady(name, ns, ctReadyTimeout); err != nil {
+			return fmt.Errorf("postCreateCommand: %w", err)
+		}
+		fmt.Println("Running postCreateCommand…")
+		if err := ct.Exec(name, ns, post.Argv, post.Script); err != nil {
+			return fmt.Errorf("postCreateCommand failed: %w", err)
+		}
+	}
+
+	if ports := cfg.Ports(); len(ports) > 0 {
+		allPorts := append(append([]int{}, ct.ConsolePorts...), ports...)
+		if err := ct.ApplyProxy(name, ns, allPorts); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: exposing forwardPorts failed: %v\n", err)
+		} else {
+			fmt.Printf("Forwarded ports: %v\n", ports)
+		}
+	}
+	return nil
 }
 
 var ctListCmd = &cobra.Command{
@@ -132,10 +214,12 @@ func init() {
 	ctCmd.PersistentFlags().StringVarP(&ctNamespace, "namespace", "n", "", "Namespace (default: corral's default)")
 	ctCmd.AddCommand(ctCreateCmd, ctListCmd, ctStartCmd, ctStopCmd, ctDeleteCmd, ctConsoleCmd)
 
-	ctCreateCmd.Flags().StringVar(&ctImage, "image", "", "OCI image (required)")
+	ctCreateCmd.Flags().StringVar(&ctImage, "image", "", "OCI image (required, unless --devcontainer's json has one)")
 	ctCreateCmd.Flags().IntVar(&ctCPU, "cpu", 1, "vCPU cores")
 	ctCreateCmd.Flags().StringVar(&ctMem, "mem", "512Mi", "Memory")
 	ctCreateCmd.Flags().StringVar(&ctDisk, "disk", "5Gi", "Data volume size")
 	ctCreateCmd.Flags().StringVarP(&ctStorageClass, "storage-class", "s", "", "StorageClass (default: cluster preference)")
 	ctCreateCmd.Flags().BoolVar(&ctPrivileged, "privileged", false, "Persistent full rootfs (distrobox-style) — needs a real OS image")
+	ctCreateCmd.Flags().StringVar(&ctDevcontainer, "devcontainer", "", "Path to a devcontainer.json, or a directory containing one")
+	ctCreateCmd.Flags().DurationVar(&ctReadyTimeout, "devcontainer-ready-timeout", 2*time.Minute, "How long to wait for the CT before running postCreateCommand")
 }
