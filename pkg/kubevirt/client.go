@@ -204,9 +204,10 @@ func parseVMList(out []byte, vmis map[string]vmiStatus, vendors map[string]strin
 	var result struct {
 		Items []struct {
 			Metadata struct {
-				Name      string            `json:"name"`
-				Namespace string            `json:"namespace"`
-				Labels    map[string]string `json:"labels"`
+				Name        string            `json:"name"`
+				Namespace   string            `json:"namespace"`
+				Labels      map[string]string `json:"labels"`
+				Annotations map[string]string `json:"annotations"`
 			} `json:"metadata"`
 			Spec struct {
 				Running  *bool `json:"running"`
@@ -283,6 +284,9 @@ func parseVMList(out []byte, vmis map[string]vmiStatus, vendors map[string]strin
 			IsTemplate: vm.Metadata.Labels["corral.dev/template"] == "true",
 			Bootc:      kernelBoot,
 			Tags:       tagsFromLabels(vm.Metadata.Labels),
+			Ephemeral:  vm.Metadata.Labels["corral.dev/ephemeral"] == "true",
+			ExpiresAt:  vm.Metadata.Annotations["corral.dev/expires-at"],
+			StoppedAt:  vm.Metadata.Annotations["corral.dev/gc-stopped-at"],
 		}
 		// Overlay live VMI facts (actual node, IP, migratability, agent).
 		// LiveMigratable reflects REAL viability: KubeVirt's condition AND a
@@ -770,16 +774,40 @@ func GenerateVM(opts types.CreateOpts) map[string]any {
 		}
 	}
 
+	labels := map[string]any{"corral": name}
+	metadata := map[string]any{
+		"name":      name,
+		"namespace": ns,
+		"labels":    labels,
+	}
+	if opts.Ephemeral {
+		labels["corral.dev/ephemeral"] = "true"
+		metadata["annotations"] = map[string]any{
+			"corral.dev/expires-at": time.Now().Add(ephemeralTTL(opts.TTL)).Format(time.RFC3339),
+		}
+	}
+
 	return map[string]any{
 		"apiVersion": "kubevirt.io/v1",
 		"kind":       "VirtualMachine",
-		"metadata": map[string]any{
-			"name":      name,
-			"namespace": ns,
-			"labels":    map[string]any{"corral": name},
-		},
-		"spec": spec,
+		"metadata":   metadata,
+		"spec":       spec,
 	}
+}
+
+// ephemeralTTL parses opts.TTL (e.g. "4h", "30m"); an empty or invalid value
+// falls back to a conservative default rather than erroring at create time —
+// getting *some* GC is better than silently getting none over a typo.
+func ephemeralTTL(ttl string) time.Duration {
+	const defaultTTL = 4 * time.Hour
+	if ttl == "" {
+		return defaultTTL
+	}
+	d, err := time.ParseDuration(ttl)
+	if err != nil || d <= 0 {
+		return defaultTTL
+	}
+	return d
 }
 
 // GeneratePVC creates a PersistentVolumeClaim manifest.

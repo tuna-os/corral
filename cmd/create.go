@@ -43,6 +43,8 @@ var (
 	createWaitSSH           bool
 	createTimeout           int
 	createSSHUser           string
+	createEphemeral         bool
+	createTTL               string
 )
 
 // limaFile is the Lima YAML format — corral reads Lima files natively.
@@ -272,6 +274,8 @@ func init() {
 	createCmd.Flags().BoolVar(&createWaitSSH, "wait-ssh", false, "[qemu] Start the VM and block until SSH answers; nonzero exit on timeout (CI gate)")
 	createCmd.Flags().IntVar(&createTimeout, "timeout", 600, "[qemu] Seconds to wait for SSH with --wait-ssh")
 	createCmd.Flags().StringVar(&createSSHUser, "ssh-user", "root", "[qemu] User for the --wait-ssh probe (bootc injects the key for root)")
+	createCmd.Flags().BoolVar(&createEphemeral, "ephemeral", false, "[kubevirt] Mark for `corral gc`: stopped (PVCs kept) once --ttl expires, deleted after a grace period")
+	createCmd.Flags().StringVar(&createTTL, "ttl", "", "[kubevirt] Lifetime before `corral gc` stops this VM, e.g. \"4h\" (default 4h; requires --ephemeral)")
 }
 
 func runKubevirtCreate(name string) error {
@@ -317,6 +321,8 @@ func runKubevirtCreate(name string) error {
 		Preference:        createPreference,
 		SSHPublicKey:      kubevirt.LoadSSHPublicKey(),
 		StorageClass:      createStorageClass,
+		Ephemeral:         createEphemeral,
+		TTL:               createTTL,
 	}
 	if err := kubevirt.CreateVM(opts); err != nil {
 		return err

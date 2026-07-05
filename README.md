@@ -289,6 +289,33 @@ On GitHub-hosted runners, enable KVM first:
     sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
 ```
 
+## Ephemeral VMs & garbage collection
+
+Scratch/build VMs (a `--bootc` builder, a one-off boot-gate test, a CI
+throwaway) are easy to create and easy to forget — they don't clean
+themselves up if you `Ctrl+C` out or just walk away. `--ephemeral` marks a
+VM for `corral gc` instead of relying on you to remember:
+
+```bash
+corral create scratch --kubevirt --image bluefin --ephemeral --ttl 2h
+# ... time passes, nobody comes back for it ...
+corral gc              # stops it — PVCs and disk state survive
+corral gc --dry-run     # preview without touching anything
+```
+
+Two stages, on purpose:
+
+1. **TTL expires → stopped.** Reclaims the scarce resource (cluster CPU/RAM)
+   immediately; the disk is untouched, so `corral start scratch` brings it
+   right back if you did need it after all.
+2. **Stopped by gc, past the grace period (default 72h, `--delete-after`
+   to change it) → deleted.** VM and PVCs, for real. Only VMs *gc itself*
+   stopped are eligible — stopping one yourself doesn't start this clock,
+   so an intentionally-parked VM is never swept up by surprise.
+
+Run `corral gc` by hand, or point a CronJob at it for hands-off cleanup.
+Non-`--ephemeral` VMs are never touched.
+
 ## Configuration
 
 ```yaml
@@ -346,7 +373,10 @@ corral list             all VMs, both backends
 corral create <name>    --kubevirt | (default: local qemu)
                         --mem 4G --cpu 2 --disk 20G --iso … --container-disk …
                         --pvc … --node … --cloud-init … --instancetype … --ts-authkey …
-                        --storage-class …
+                        --storage-class … --ephemeral --ttl 4h
+corral gc               [kubevirt] [--dry-run] [--delete-after 72h]
+                        stop --ephemeral VMs past their --ttl (PVCs kept),
+                        delete them once stopped past --delete-after
 corral clone <src> <dst>  [kubevirt] clone a VM's disk + config to a new name
 corral plugin           search | install <name> | list | remove <name>   (extensions)
 corral start|stop <name>
