@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -283,6 +284,42 @@ func TestParseVMList(t *testing.T) {
 	}
 	if st.CPU != 2 {
 		t.Errorf("legacy cores-based CPU = %d, want 2", st.CPU)
+	}
+}
+
+func TestParseVMList_Ephemeral(t *testing.T) {
+	const sample = `{"items":[
+      {"metadata":{"name":"ephvm","namespace":"default",
+       "labels":{"corral.dev/ephemeral":"true"},
+       "annotations":{"corral.dev/expires-at":"2026-01-01T12:00:00Z","corral.dev/gc-stopped-at":"2026-01-01T13:00:00Z"}},
+       "spec":{"running":false,"template":{"spec":{"domain":{"cpu":{"cores":1},"memory":{"guest":"1Gi"}}}}},
+       "status":{"printableStatus":"Stopped"}},
+      {"metadata":{"name":"regular","namespace":"default"},
+       "spec":{"running":false,"template":{"spec":{"domain":{"cpu":{"cores":1},"memory":{"guest":"1Gi"}}}}},
+       "status":{"printableStatus":"Stopped"}}
+    ]}`
+	noProxy := func(_, _ string) string { return "off" }
+	noISO := func(_, _ string) string { return "" }
+	noLauncher := func(_, _ string) bool { return false }
+	vms, err := parseVMList([]byte(sample), nil, nil, noProxy, noISO, noLauncher)
+	if err != nil {
+		t.Fatalf("parseVMList: %v", err)
+	}
+
+	eph := vms[0]
+	if !eph.Ephemeral {
+		t.Error("expected Ephemeral=true from corral.dev/ephemeral label")
+	}
+	if eph.ExpiresAt != "2026-01-01T12:00:00Z" {
+		t.Errorf("ExpiresAt = %q, want the annotation value", eph.ExpiresAt)
+	}
+	if eph.StoppedAt != "2026-01-01T13:00:00Z" {
+		t.Errorf("StoppedAt = %q, want the annotation value", eph.StoppedAt)
+	}
+
+	reg := vms[1]
+	if reg.Ephemeral || reg.ExpiresAt != "" || reg.StoppedAt != "" {
+		t.Errorf("VM with no ephemeral label/annotations should have zero values, got %+v", reg)
 	}
 }
 
@@ -672,6 +709,47 @@ func TestGenerateVM_Defaults(t *testing.T) {
 	}
 	if !hasCloudInit {
 		t.Error("cloud-init volume missing")
+	}
+}
+
+func TestGenerateVM_Ephemeral(t *testing.T) {
+	opts := types.CreateOpts{Name: "ephvm", Namespace: "default", Ephemeral: true, TTL: "2h"}
+	vm := GenerateVM(opts)
+
+	meta := vm["metadata"].(map[string]any)
+	labels := meta["labels"].(map[string]any)
+	if labels["corral.dev/ephemeral"] != "true" {
+		t.Errorf("expected corral.dev/ephemeral=true label, got %v", labels)
+	}
+
+	annotations, ok := meta["annotations"].(map[string]any)
+	if !ok {
+		t.Fatal("expected an annotations map on an ephemeral VM")
+	}
+	expiresAt, ok := annotations["corral.dev/expires-at"].(string)
+	if !ok {
+		t.Fatal("expected corral.dev/expires-at annotation")
+	}
+	parsed, err := time.Parse(time.RFC3339, expiresAt)
+	if err != nil {
+		t.Fatalf("corral.dev/expires-at not RFC3339: %v", err)
+	}
+	if until := time.Until(parsed); until < time.Hour || until > 2*time.Hour+time.Minute {
+		t.Errorf("expires-at should be ~2h out per TTL, got %v from now", until)
+	}
+}
+
+func TestGenerateVM_NotEphemeral(t *testing.T) {
+	opts := types.CreateOpts{Name: "regvm", Namespace: "default"}
+	vm := GenerateVM(opts)
+
+	meta := vm["metadata"].(map[string]any)
+	labels := meta["labels"].(map[string]any)
+	if _, present := labels["corral.dev/ephemeral"]; present {
+		t.Error("non-ephemeral VM should not carry the corral.dev/ephemeral label")
+	}
+	if _, present := meta["annotations"]; present {
+		t.Error("non-ephemeral VM should not carry an annotations map")
 	}
 }
 

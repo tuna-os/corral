@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
@@ -84,10 +85,33 @@ func printVMList(vms []types.VM) {
 				extra = "vnc:" + vm.VNC
 			}
 		}
+		if vm.Ephemeral {
+			extra += "  ⏳" + ephemeralSummary(vm)
+		}
 
 		fmt.Printf("%-20s  %-8s  %-16s  %-12s  %-4d  %-6s  %s  %s\n",
 			vm.Name, vm.Backend, status, ns, vm.CPU, vm.Mem, node, extra)
 	}
+}
+
+// ephemeralSummary renders a short human hint for `corral list`: time left
+// before `corral gc` stops the VM, or how it's progressing through the two
+// gc stages once past that point.
+func ephemeralSummary(vm types.VM) string {
+	if vm.Running {
+		expiresAt, err := time.Parse(time.RFC3339, vm.ExpiresAt)
+		if err != nil {
+			return " (no valid TTL)"
+		}
+		if left := time.Until(expiresAt); left > 0 {
+			return fmt.Sprintf(" %s left", left.Round(time.Minute))
+		}
+		return " gc: stop due"
+	}
+	if vm.StoppedAt != "" {
+		return " gc-stopped"
+	}
+	return ""
 }
 
 func resolveBackend(name string) string {

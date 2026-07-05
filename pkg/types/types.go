@@ -42,6 +42,14 @@ type VM struct {
 	IsTemplate     bool     `json:"isTemplate"`     // labeled corral.dev/template=true
 	Bootc          bool     `json:"bootc"`          // kernel-boot VM (built by the bootc plugin)
 	Tags           []string `json:"tags,omitempty"` // from corral.dev/tag.<name> labels
+
+	// Ephemeral GC (see pkg/kubevirt/gc.go): labeled corral.dev/ephemeral=true
+	// at create time with a TTL. `corral gc` stops (not deletes) the VM once
+	// ExpiresAt passes — PVCs and disk state survive a stop — and only
+	// deletes it outright after it's sat stopped past the grace period.
+	Ephemeral bool   `json:"ephemeral,omitempty"`
+	ExpiresAt string `json:"expiresAt,omitempty"` // RFC3339; when running past this, gc stops it
+	StoppedAt string `json:"stoppedAt,omitempty"` // RFC3339; when gc stopped it (unset if user-stopped)
 }
 
 // Capabilities reports what optional operations the cluster supports, so the
@@ -81,6 +89,8 @@ type CreateOpts struct {
 	InstanceType      string // KubeVirt cluster instancetype (sets CPU/mem); overrides CPU/Mem
 	Preference        string // KubeVirt cluster preference (devices/firmware defaults)
 	StorageClass      string // overrides PreferredStorageClass() for this VM's disks; "" = default
+	Ephemeral         bool   // labels the VM for `corral gc` (see pkg/kubevirt/gc.go)
+	TTL               string // duration string (e.g. "4h"); with Ephemeral, sets corral.dev/expires-at
 	// ExistingDisk means the VM dir already holds a prepared disk.qcow2 (e.g.
 	// a bootc-built disk) — Create must boot it as-is, never recreate it.
 	ExistingDisk bool
