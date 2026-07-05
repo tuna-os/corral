@@ -31,12 +31,18 @@ Privileged: distrobox-on-Kubernetes — the CT seeds its volume with a full
 copy of the image's own root filesystem and chroots into it on boot, so
 package installs and dotfiles survive Stop/Start. Needs a real OS image
 (debian/ubuntu/fedora), not alpine/busybox.`,
+	Example: `  corral ct create devbox --image debian:12 --privileged
+  corral ct console devbox
+  corral ct stop devbox   # data volume survives
+  corral ct list`,
 }
 
 var ctCreateCmd = &cobra.Command{
 	Use:   "create <name>",
 	Short: "Create a Container (CT)",
-	Args:  cobra.ExactArgs(1),
+	Example: `  corral ct create tools --image fedora:40
+  corral ct create devbox --image debian:12 --privileged --cpu 2 --mem 2Gi --disk 10Gi`,
+	Args: cobra.ExactArgs(1),
 	RunE: func(_ *cobra.Command, args []string) error {
 		name := args[0]
 		if ctImage == "" {

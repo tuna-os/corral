@@ -64,6 +64,8 @@ evidence in CI (a black/blank screen is easy to catch programmatically:
 compare pixel variance against a threshold).
 
 KubeVirt VMs aren't supported here — use ` + "`corral viewer`" + ` for VNC instead.`,
+	Example: `  corral screenshot myvm
+  corral screenshot myvm -o boot-evidence.png`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name, err := qemuOnly(args, "screenshot")
@@ -83,9 +85,10 @@ KubeVirt VMs aren't supported here — use ` + "`corral viewer`" + ` for VNC ins
 }
 
 var restartCmd = &cobra.Command{
-	Use:   "restart [name]",
-	Short: "Restart a VM",
-	Args:  cobra.MaximumNArgs(1),
+	Use:     "restart [name]",
+	Short:   "Restart a VM",
+	Example: `  corral restart myvm`,
+	Args:    cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name, err := requireOrPrompt(args, "restart")
 		if err != nil {
@@ -107,9 +110,10 @@ var restartCmd = &cobra.Command{
 }
 
 var pauseCmd = &cobra.Command{
-	Use:   "pause [name]",
-	Short: "Pause a running VM (KubeVirt)",
-	Args:  cobra.MaximumNArgs(1),
+	Use:     "pause [name]",
+	Short:   "Pause a running VM (KubeVirt)",
+	Example: `  corral pause myvm`,
+	Args:    cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, name, err := kubevirtOnly(args, "pause")
 		if err != nil {
@@ -120,9 +124,10 @@ var pauseCmd = &cobra.Command{
 }
 
 var unpauseCmd = &cobra.Command{
-	Use:   "unpause [name]",
-	Short: "Resume a paused VM (KubeVirt)",
-	Args:  cobra.MaximumNArgs(1),
+	Use:     "unpause [name]",
+	Short:   "Resume a paused VM (KubeVirt)",
+	Example: `  corral unpause myvm`,
+	Args:    cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, name, err := kubevirtOnly(args, "unpause")
 		if err != nil {
@@ -135,7 +140,9 @@ var unpauseCmd = &cobra.Command{
 var migrateCmd = &cobra.Command{
 	Use:   "migrate [name]",
 	Short: "Live-migrate a VM to another node (KubeVirt)",
-	Args:  cobra.MaximumNArgs(1),
+	Example: `  corral migrate myvm                # let the scheduler choose
+  corral migrate myvm --node karnataka`,
+	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, name, err := kubevirtOnly(args, "migrate")
 		if err != nil {
@@ -149,10 +156,8 @@ var scaleCmd = &cobra.Command{
 	Use:   "scale [name]",
 	Short: "Change a VM's CPU and/or memory (KubeVirt, live when possible)",
 	Long: `Change CPU and/or memory. For live-migratable VMs the change is
-hotplugged without downtime; otherwise the VM is restarted to apply.
-
-Examples:
-  corral scale web --cpu 4
+hotplugged without downtime; otherwise the VM is restarted to apply.`,
+	Example: `  corral scale web --cpu 4
   corral scale web --mem 8G
   corral scale web --cpu 4 --mem 8G`,
 	Args: cobra.MaximumNArgs(1),
@@ -178,9 +183,10 @@ Examples:
 }
 
 var addDiskCmd = &cobra.Command{
-	Use:   "adddisk [name]",
-	Short: "Create and hotplug a new disk onto a VM (KubeVirt)",
-	Args:  cobra.MaximumNArgs(1),
+	Use:     "adddisk [name]",
+	Short:   "Create and hotplug a new disk onto a VM (KubeVirt)",
+	Example: `  corral adddisk myvm --size 20Gi`,
+	Args:    cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, name, err := kubevirtOnly(args, "adddisk")
 		if err != nil {
@@ -196,9 +202,10 @@ var addDiskCmd = &cobra.Command{
 }
 
 var rmDiskCmd = &cobra.Command{
-	Use:   "rmdisk [name]",
-	Short: "Detach a hotplugged disk from a VM (KubeVirt)",
-	Args:  cobra.MaximumNArgs(1),
+	Use:     "rmdisk [name]",
+	Short:   "Detach a hotplugged disk from a VM (KubeVirt)",
+	Example: `  corral rmdisk myvm --volume myvm-data-a1b2c3`,
+	Args:    cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, name, err := kubevirtOnly(args, "rmdisk")
 		if err != nil {
@@ -216,10 +223,8 @@ var exportCmd = &cobra.Command{
 	Short: "Back up a VM's disk to a compressed image (KubeVirt)",
 	Long: `Export (back up) a VM's persistent disk to a gzip image via the
 KubeVirt export API. The VM should be stopped first — its disk can't be read
-while a running VM holds it.
-
-Examples:
-  corral export web                       # → web.img.gz
+while a running VM holds it.`,
+	Example: `  corral export web                       # → web.img.gz
   corral export web -o /backups/web.gz
   corral export web --volume web-disk`,
 	Args: cobra.MaximumNArgs(1),
@@ -293,9 +298,10 @@ var templateListCmd = &cobra.Command{
 }
 
 var templateNewCmd = &cobra.Command{
-	Use:   "new [template] [newname]",
-	Short: "Create a new VM from a template (clone)",
-	Args:  cobra.ExactArgs(2),
+	Use:     "new [template] [newname]",
+	Short:   "Create a new VM from a template (clone)",
+	Example: `  corral template new tmpl-ubuntu dev1`,
+	Args:    cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, tmpl, err := kubevirtOnly(args[:1], "template")
 		if err != nil {
@@ -314,12 +320,17 @@ var templateNewCmd = &cobra.Command{
 var snapshotCmd = &cobra.Command{
 	Use:   "snapshot",
 	Short: "Manage VM snapshots (KubeVirt)",
+	Example: `  corral snapshot create myvm
+  corral snapshot ls myvm
+  corral snapshot restore myvm myvm-20260704-1200
+  corral snapshot rm myvm myvm-20260704-1200`,
 }
 
 var snapshotCreateCmd = &cobra.Command{
-	Use:   "create [name]",
-	Short: "Take a snapshot of a VM",
-	Args:  cobra.MaximumNArgs(1),
+	Use:     "create [name]",
+	Short:   "Take a snapshot of a VM",
+	Example: `  corral snapshot create myvm`,
+	Args:    cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, name, err := kubevirtOnly(args, "snapshot")
 		if err != nil {

@@ -16,10 +16,9 @@ var cloneCmd = &cobra.Command{
 	Use:   "clone <source-vm> <target-vm>",
 	Short: "Clone an existing VM to a new VM",
 	Long: `Clone a VM's disk and configuration to a new VM name.
-Only supported on the KubeVirt backend.
-
-Examples:
-  corral clone myvm myvm-clone`,
+Only supported on the KubeVirt backend.`,
+	Example: `  corral clone myvm myvm-clone
+  corral clone myvm myvm-clone -n other-namespace`,
 	Args: cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		src := args[0]

@@ -31,13 +31,12 @@ var importCmd = &cobra.Command{
 	Short: "Import a qcow2/raw disk image as a new VM",
 	Long: `Import an existing disk image into KubeVirt and wrap a VM around it.
 
-  corral import legacy --source https://server/disk.qcow2   # CDI HTTP import
-  corral import legacy --source ./disk.qcow2                # upload local file
-
 qcow2 and raw images work as-is. Convert other formats first:
 
   qemu-img convert -O qcow2 disk.vmdk disk.qcow2             # VMDK
   tar xf appliance.ova && qemu-img convert -O qcow2 *.vmdk disk.qcow2   # OVA`,
+	Example: `  corral import legacy --source https://server/disk.qcow2   # CDI HTTP import
+  corral import legacy --source ./disk.qcow2                # upload local file`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if importSource == "" {

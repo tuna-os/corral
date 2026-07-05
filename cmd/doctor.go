@@ -16,6 +16,8 @@ var doctorCmd = &cobra.Command{
 KubeVirt, CDI, the right feature gates + LiveUpdate, expandable/snapshot
 storage, the export proxy, metrics — and report what's missing or
 misconfigured. --fix reconciles the safe, config-only issues.`,
+	Example: `  corral doctor
+  corral doctor --fix`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if doctorFix {
 			fixed, err := doctor.Fix()
