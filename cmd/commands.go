@@ -11,12 +11,13 @@ import (
 )
 
 var (
-	forceDelete bool
-	sshUser     string
-	sshIdentity string
-	sshCommand  string
-	sshPort     int
-	sshPassword string
+	forceDelete      bool
+	sshUser          string
+	sshIdentity      string
+	sshCommand       string
+	sshPort          int
+	sshPassword      string
+	sshLocalForwards []string
 )
 
 var startCmd = &cobra.Command{
@@ -201,11 +202,18 @@ var sshCmd = &cobra.Command{
 	Long: `Open an interactive SSH session to a VM.
 
 For KubeVirt VMs, this uses virtctl ssh which tunnels through the
-Kubernetes API. For QEMU VMs, it connects to the VM's Tailscale IP.`,
+Kubernetes API. For QEMU VMs, it connects to the VM's Tailscale IP.
+
+-L forwards a local port through the VM, same as ssh -L: [bind_address:]port:host:hostport.
+Repeatable. host is resolved from the VM's side, so "localhost" there means
+the VM itself, not your machine — e.g. -L 8080:localhost:80 reaches
+something the VM has listening on its own port 80.`,
 	Example: `  corral ssh myvm
   corral ssh myvm --user root
   corral ssh myvm -u root -i ~/.ssh/vm_key
-  corral ssh myvm -c "ls /"`,
+  corral ssh myvm -c "ls /"
+  corral ssh myvm -L 8080:localhost:80
+  corral ssh myvm -L 5432:localhost:5432 -L 6379:localhost:6379`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name, err := requireOrPrompt(args, "ssh into")
@@ -221,9 +229,9 @@ Kubernetes API. For QEMU VMs, it connects to the VM's Tailscale IP.`,
 
 		if backend == "kubevirt" {
 			ns, _ := resolveNamespace(name)
-			return kubevirt.NewClient(ns).SSH(name, user, sshIdentity, sshCommand, sshPort, password)
+			return kubevirt.NewClient(ns).SSH(name, user, sshIdentity, sshCommand, sshPort, password, sshLocalForwards)
 		}
-		return qemu.SSH(name, user, sshIdentity, sshCommand, sshPort, password)
+		return qemu.SSH(name, user, sshIdentity, sshCommand, sshPort, password, sshLocalForwards)
 	},
 }
 
@@ -264,6 +272,7 @@ func init() {
 	sshCmd.Flags().StringVarP(&sshCommand, "command", "c", "", "Command to execute (non-interactive)")
 	sshCmd.Flags().IntVarP(&sshPort, "port", "p", 22, "SSH port")
 	sshCmd.Flags().StringVar(&sshPassword, "password", "", "SSH password (uses cloud-init password if empty)")
+	sshCmd.Flags().StringArrayVarP(&sshLocalForwards, "local-forward", "L", nil, "Forward a local port through the VM: [bind_address:]port:host:hostport (repeatable)")
 }
 
 func requireOrPrompt(args []string, action string) (string, error) {

@@ -2,6 +2,7 @@ package kubevirt
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/tuna-os/corral/pkg/shell"
@@ -282,6 +283,71 @@ func TestClient_AddNIC(t *testing.T) {
 
 	if err := c.AddNIC("testvm", "default/lan", "eth1"); err != nil {
 		t.Fatalf("AddNIC: %v", err)
+	}
+}
+
+func TestResolveNAD_ExplicitWins(t *testing.T) {
+	got, err := ResolveNAD("default/other", []string{"default/lan"})
+	if err != nil {
+		t.Fatalf("ResolveNAD: %v", err)
+	}
+	if got != "default/other" {
+		t.Errorf("got %q, want the explicit NAD to win", got)
+	}
+}
+
+func TestResolveNAD_AutoDetectsSingle(t *testing.T) {
+	got, err := ResolveNAD("", []string{"default/lan-bridge"})
+	if err != nil {
+		t.Fatalf("ResolveNAD: %v", err)
+	}
+	if got != "default/lan-bridge" {
+		t.Errorf("got %q, want the cluster's only NAD", got)
+	}
+}
+
+func TestResolveNAD_ZeroErrors(t *testing.T) {
+	if _, err := ResolveNAD("", nil); err == nil {
+		t.Error("expected an error when no NAD exists, not a silent no-op")
+	}
+}
+
+func TestResolveNAD_MultipleErrors(t *testing.T) {
+	_, err := ResolveNAD("", []string{"default/lan", "default/other"})
+	if err == nil {
+		t.Fatal("expected an error when multiple NADs exist and none was specified")
+	}
+	if !strings.Contains(err.Error(), "default/lan") || !strings.Contains(err.Error(), "default/other") {
+		t.Errorf("error should list the ambiguous candidates, got: %v", err)
+	}
+}
+
+func TestVirtctlSSHArgs_NoForwards(t *testing.T) {
+	args := virtctlSSHArgs("tailvm", "root", "", "", 22, nil, "myvm")
+	joined := strings.Join(args, " ")
+	if strings.Contains(joined, "-L ") {
+		t.Errorf("no forwards requested, but found -L in args: %v", args)
+	}
+	if args[len(args)-1] != "vm/myvm" {
+		t.Errorf("expected vm/myvm as the final arg, got %v", args)
+	}
+}
+
+func TestVirtctlSSHArgs_LocalForwards(t *testing.T) {
+	args := virtctlSSHArgs("tailvm", "root", "", "", 22, []string{"8080:localhost:80"}, "myvm")
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "--local-ssh-opts=-L 8080:localhost:80") {
+		t.Errorf("expected a --local-ssh-opts=-L forward, got %v", args)
+	}
+}
+
+func TestVirtctlSSHArgs_IdentityCommandPort(t *testing.T) {
+	args := virtctlSSHArgs("tailvm", "root", "/key", "ls /", 2222, nil, "myvm")
+	joined := strings.Join(args, " ")
+	for _, want := range []string{"--identity-file=/key", "--command=ls /", "--port=2222"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("expected %q in args, got %v", want, args)
+		}
 	}
 }
 

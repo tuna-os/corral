@@ -469,9 +469,9 @@ func (m *tuiModel) performAction(action string) {
 			user = "root"
 		}
 		if backend == "kubevirt" {
-			kubevirt.NewClient(ns).SSH(name, user, "", "", 22, password)
+			kubevirt.NewClient(ns).SSH(name, user, "", "", 22, password, nil)
 		} else {
-			qemu.SSH(name, user, "", "", 22, password)
+			qemu.SSH(name, user, "", "", 22, password, nil)
 		}
 	}
 }

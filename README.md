@@ -401,6 +401,7 @@ corral create <name>    --kubevirt | (default: local qemu)
                         --mem 4G --cpu 2 --disk 20G --iso … --container-disk …
                         --pvc … --node … --cloud-init … --instancetype … --ts-authkey …
                         --storage-class … --ephemeral --ttl 4h
+                        --lan | --network-nad ns/name [--bridge-iface net1]  (LAN bridge NIC)
 corral gc               [kubevirt] [--dry-run] [--delete-after 72h]
                         stop --ephemeral VMs past their --ttl (PVCs kept),
                         delete them once stopped past --delete-after
@@ -414,7 +415,11 @@ corral migrate <name>   [kubevirt] --node X  live-migrate to another node
 corral adddisk <name>   [kubevirt] --size 10Gi  hotplug a new disk
 corral rmdisk <name>    [kubevirt] --volume PVC  detach a hotplugged disk
 corral snapshot …       [kubevirt] create | ls | restore | rm
+corral networks         [kubevirt] list Multus NetworkAttachmentDefinitions
+corral addnic <name>    [kubevirt] --network-nad ns/name --iface net1
+                          bridge a LAN NIC onto an existing VM
 corral ssh <name>       [-u user] [-i key] [-c cmd] [-p port] [--password …]
+                          [-L [bind:]port:host:hostport ...]  local port forward(s)
 corral viewer <name>    VNC via xdg-open
 corral logs <name>      journald (local) / virt-launcher (cluster)
 corral info <name>      raw JSON

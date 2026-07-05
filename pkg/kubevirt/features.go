@@ -615,6 +615,25 @@ func ListNADs() []string {
 	return nads
 }
 
+// ResolveNAD picks the NAD `--lan`/`--network-nad` should use: explicit wins
+// outright; otherwise exactly one NAD on the cluster is used automatically,
+// and zero or several is an error rather than a guess (guessing wrong wires
+// the VM onto the wrong LAN silently). available is ListNADs()'s output,
+// passed in so this stays a pure, testable decision — no cluster call here.
+func ResolveNAD(explicit string, available []string) (string, error) {
+	if explicit != "" {
+		return explicit, nil
+	}
+	switch len(available) {
+	case 0:
+		return "", fmt.Errorf("--lan needs a Multus NetworkAttachmentDefinition on the cluster, but none exist (see docs/lan-networking.md)")
+	case 1:
+		return available[0], nil
+	default:
+		return "", fmt.Errorf("multiple NetworkAttachmentDefinitions exist (%s) — specify one with --network-nad", strings.Join(available, ", "))
+	}
+}
+
 // AddNIC attaches a secondary interface backed by a Multus NAD to the VM
 // (bridge binding). Applied to the VM spec; KubeVirt hotplugs it on a running
 // VM where supported, else it takes effect on next boot.

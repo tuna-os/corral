@@ -729,3 +729,41 @@ func TestCreate_QCOWTemplateCopied(t *testing.T) {
 		t.Fatalf("expected qemu-img resize when Disk is explicit, log: %s", log)
 	}
 }
+
+func TestSSHArgs_NoForwards(t *testing.T) {
+	args := sshArgs("root", "", "", 22, "1.2.3.4", nil)
+	joined := strings.Join(args, " ")
+	if strings.Contains(joined, "-L") {
+		t.Errorf("no forwards requested, but got -L in args: %v", args)
+	}
+	if !strings.Contains(joined, "root@1.2.3.4") {
+		t.Errorf("expected user@host in args, got %v", args)
+	}
+}
+
+func TestSSHArgs_LocalForwards(t *testing.T) {
+	args := sshArgs("root", "", "", 22, "1.2.3.4", []string{"8080:localhost:80", "5432:localhost:5432"})
+	var forwards []string
+	for i, a := range args {
+		if a == "-L" && i+1 < len(args) {
+			forwards = append(forwards, args[i+1])
+		}
+	}
+	if len(forwards) != 2 || forwards[0] != "8080:localhost:80" || forwards[1] != "5432:localhost:5432" {
+		t.Errorf("forwards = %v, want both -L specs preserved in order", forwards)
+	}
+}
+
+func TestSSHArgs_IdentityAndCommand(t *testing.T) {
+	args := sshArgs("root", "/key", "ls /", 2222, "1.2.3.4", nil)
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "-i /key") {
+		t.Errorf("expected -i /key in args, got %v", args)
+	}
+	if args[len(args)-1] != "ls /" {
+		t.Errorf("expected the command as the final arg, got %v", args)
+	}
+	if !strings.Contains(joined, "-p 2222") {
+		t.Errorf("expected -p 2222 in args, got %v", args)
+	}
+}

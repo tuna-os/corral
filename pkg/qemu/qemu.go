@@ -285,7 +285,9 @@ func Info(name string) ([]byte, error) {
 
 // SSH opens an SSH session to a QEMU VM. The guest's port 22 is forwarded
 // to a host port (bound on the host's Tailscale IP) via QEMU user networking.
-func SSH(name, username, identityFile, command string, port int, password string) error {
+// localForwards are raw ssh -L specs ([bind_address:]port:host:hostport),
+// passed straight through to the ssh client.
+func SSH(name, username, identityFile, command string, port int, password string, localForwards []string) error {
 	meta, err := readMetadata(name)
 	if err != nil {
 		return fmt.Errorf("VM %q not found: %w", name, err)
@@ -309,18 +311,7 @@ func SSH(name, username, identityFile, command string, port int, password string
 		return fmt.Errorf("ssh not found in PATH")
 	}
 
-	args := []string{
-		"-o", "StrictHostKeyChecking=no",
-		"-o", "UserKnownHostsFile=/dev/null",
-		"-p", fmt.Sprintf("%d", port),
-	}
-	if identityFile != "" {
-		args = append(args, "-i", identityFile)
-	}
-	args = append(args, fmt.Sprintf("%s@%s", username, host))
-	if command != "" {
-		args = append(args, command)
-	}
+	args := sshArgs(username, identityFile, command, port, host, localForwards)
 
 	if password != "" {
 		return shell.RunWithSSHPass(password, sshBin, args...)
@@ -331,6 +322,27 @@ func SSH(name, username, identityFile, command string, port int, password string
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+// sshArgs builds the ssh(1) argv SSH execs, factored out for unit testing —
+// the exec itself is a real interactive process, not mockable.
+func sshArgs(username, identityFile, command string, port int, host string, localForwards []string) []string {
+	args := []string{
+		"-o", "StrictHostKeyChecking=no",
+		"-o", "UserKnownHostsFile=/dev/null",
+		"-p", fmt.Sprintf("%d", port),
+	}
+	if identityFile != "" {
+		args = append(args, "-i", identityFile)
+	}
+	for _, fwd := range localForwards {
+		args = append(args, "-L", fwd)
+	}
+	args = append(args, fmt.Sprintf("%s@%s", username, host))
+	if command != "" {
+		args = append(args, command)
+	}
+	return args
 }
 
 // WaitSSH polls the VM's forwarded SSH port until a non-interactive login

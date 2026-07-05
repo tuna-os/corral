@@ -507,14 +507,32 @@ func (c *Client) VMInfo(name string) ([]byte, error) {
 	return c.runner().Run("kubectl", "get", "vm", name, "-n", c.Namespace, "-o", "json")
 }
 
-// SSH opens an SSH session to a VM via virtctl ssh.
-func (c *Client) SSH(name, username, identityFile, command string, port int, password string) error {
+// SSH opens an SSH session to a VM via virtctl ssh. localForwards are raw
+// ssh -L specs ([bind_address:]port:host:hostport), passed through to
+// virtctl's underlying local ssh client via --local-ssh-opts.
+func (c *Client) SSH(name, username, identityFile, command string, port int, password string, localForwards []string) error {
 	virtctl, err := c.ensureVirtctl()
 	if err != nil {
 		return err
 	}
 
-	args := []string{"ssh", "--namespace=" + c.Namespace, "--username=" + username}
+	args := virtctlSSHArgs(c.Namespace, username, identityFile, command, port, localForwards, name)
+
+	if password != "" {
+		return shell.RunWithSSHPass(password, virtctl, args...)
+	}
+
+	cmd := exec.Command(virtctl, args...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+// virtctlSSHArgs builds the virtctl ssh argv, factored out for unit testing
+// — the exec itself is a real interactive process, not mockable.
+func virtctlSSHArgs(namespace, username, identityFile, command string, port int, localForwards []string, name string) []string {
+	args := []string{"ssh", "--namespace=" + namespace, "--username=" + username}
 	if identityFile != "" {
 		args = append(args, "--identity-file="+identityFile)
 	}
@@ -528,17 +546,11 @@ func (c *Client) SSH(name, username, identityFile, command string, port int, pas
 		"--local-ssh-opts=-o StrictHostKeyChecking=no",
 		"--local-ssh-opts=-o UserKnownHostsFile=/dev/null",
 	)
-	args = append(args, "vm/"+name)
-
-	if password != "" {
-		return shell.RunWithSSHPass(password, virtctl, args...)
+	for _, fwd := range localForwards {
+		args = append(args, "--local-ssh-opts=-L "+fwd)
 	}
-
-	cmd := exec.Command(virtctl, args...)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	args = append(args, "vm/"+name)
+	return args
 }
 
 // Viewer launches VNC viewer using virtctl proxy + xdg-open.
