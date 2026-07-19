@@ -101,7 +101,7 @@ func bootcRebuild(name, namespace, imageURI, sshPublicKey, diskSize string, prog
 	// Rebuild keeps whatever storage class the existing PVC used — "" tells
 	// bootcBuildDisk to fall back to PreferredStorageClass(), same as before
 	// storageClass existed as an explicit override.
-	if _, err := bootcBuildDisk(name, namespace, imageURI, sshPublicKey, diskSize, "", "", progress); err != nil {
+	if _, err := bootcBuildDisk(name, namespace, imageURI, sshPublicKey, diskSize, "", "", "", progress); err != nil {
 		return fmt.Errorf("rebuild: %w", err)
 	}
 
@@ -117,7 +117,7 @@ func bootcRebuild(name, namespace, imageURI, sshPublicKey, diskSize string, prog
 // onto it via `bootc install to-disk`, waits for that VM to finish, then deletes
 // the builder (keeping the disk). Progress/builder logs go to progress.
 // storageClass "" falls back to PreferredStorageClass().
-func bootcBuildDisk(name, namespace, imageURI, sshPublicKey, diskSize, storageClass, provisionScript string, progress io.Writer) (*BootcBuildResult, error) {
+func bootcBuildDisk(name, namespace, imageURI, sshPublicKey, diskSize, storageClass, provisionScript, node string, progress io.Writer) (*BootcBuildResult, error) {
 	if progress == nil {
 		progress = os.Stderr
 	}
@@ -160,7 +160,7 @@ func bootcBuildDisk(name, namespace, imageURI, sshPublicKey, diskSize, storageCl
 		return nil, fmt.Errorf("creating builder secret: %w", err)
 	}
 
-	builder := generateBuilderVM(builderName, namespace, pvcName, builderName+"-cloudinit", imageURI)
+	builder := generateBuilderVM(builderName, namespace, pvcName, builderName+"-cloudinit", imageURI, node)
 	bdata, err := json.Marshal(builder)
 	if err != nil {
 		return nil, fmt.Errorf("marshaling builder VM: %w", err)
@@ -352,13 +352,55 @@ func generateBuilderSecret(name, namespace, imageURI, sshPublicKey, provisionScr
 // into the cloud-init secret instead) but read back by bootcResumeState if
 // the CLI that started the build gets interrupted before it can create the
 // final VM: the annotation is what lets a later `--resume` recover it.
-func generateBuilderVM(name, namespace, pvcName, secretName, imageURI string) map[string]any {
+func generateBuilderVM(name, namespace, pvcName, secretName, imageURI, node string) map[string]any {
 	disk := func(n string, extra map[string]any) map[string]any {
 		d := map[string]any{"name": n, "disk": map[string]any{"bus": "virtio"}}
 		for k, v := range extra {
 			d[k] = v
 		}
 		return d
+	}
+
+	vmSpec := map[string]any{
+		"runStrategy": "Manual",
+		"template": map[string]any{
+			"metadata": map[string]any{"labels": map[string]any{"kubevirt.io/vm": name}},
+			"spec": map[string]any{
+				"domain": map[string]any{
+					"cpu":    cpuSpec(2),
+					"memory": memSpec(4096),
+					"devices": map[string]any{
+						"logSerialConsole": true,
+						"disks": []map[string]any{
+							disk("rootdisk", nil),
+							disk("scratch", map[string]any{"serial": "scratch"}),
+							disk("target", map[string]any{"serial": "target"}),
+							disk("cloudinit", nil),
+						},
+						"interfaces": []map[string]any{
+							{"name": "default", "masquerade": map[string]any{}},
+						},
+					},
+				},
+				"networks": []map[string]any{{"name": "default", "pod": map[string]any{}}},
+				"volumes": []map[string]any{
+					{"name": "rootdisk", "containerDisk": map[string]any{"image": builderImage()}},
+					{"name": "scratch", "emptyDisk": map[string]any{"capacity": "40Gi"}},
+					{"name": "target", "persistentVolumeClaim": map[string]any{"claimName": pvcName}},
+					{"name": "cloudinit", "cloudInitNoCloud": map[string]any{
+						"secretRef": map[string]any{"name": secretName},
+					}},
+				},
+			},
+		},
+	}
+
+	// Pin the builder to a node when asked. local-path disks are node-bound
+	// (WaitForFirstConsumer), so pinning the builder guarantees the final VM —
+	// which mounts that same PVC — can schedule on the same node.
+	if node != "" {
+		vmSpec["template"].(map[string]any)["spec"].(map[string]any)["nodeSelector"] =
+			map[string]any{"kubernetes.io/hostname": node}
 	}
 
 	return map[string]any{
@@ -370,39 +412,7 @@ func generateBuilderVM(name, namespace, pvcName, secretName, imageURI string) ma
 			"labels":      map[string]any{"corral-bootc-builder": name},
 			"annotations": map[string]any{"corral.bootc/image": imageURI},
 		},
-		"spec": map[string]any{
-			"runStrategy": "Manual",
-			"template": map[string]any{
-				"metadata": map[string]any{"labels": map[string]any{"kubevirt.io/vm": name}},
-				"spec": map[string]any{
-					"domain": map[string]any{
-						"cpu":    cpuSpec(2),
-						"memory": memSpec(4096),
-						"devices": map[string]any{
-							"logSerialConsole": true,
-							"disks": []map[string]any{
-								disk("rootdisk", nil),
-								disk("scratch", map[string]any{"serial": "scratch"}),
-								disk("target", map[string]any{"serial": "target"}),
-								disk("cloudinit", nil),
-							},
-							"interfaces": []map[string]any{
-								{"name": "default", "masquerade": map[string]any{}},
-							},
-						},
-					},
-					"networks": []map[string]any{{"name": "default", "pod": map[string]any{}}},
-					"volumes": []map[string]any{
-						{"name": "rootdisk", "containerDisk": map[string]any{"image": builderImage()}},
-						{"name": "scratch", "emptyDisk": map[string]any{"capacity": "40Gi"}},
-						{"name": "target", "persistentVolumeClaim": map[string]any{"claimName": pvcName}},
-						{"name": "cloudinit", "cloudInitNoCloud": map[string]any{
-							"secretRef": map[string]any{"name": secretName},
-						}},
-					},
-				},
-			},
-		},
+		"spec": vmSpec,
 	}
 }
 
@@ -437,7 +447,7 @@ write_files:
       # this podman errors out instead of falling back to a full pull.
       printf '[storage]\ndriver = "overlay"\nrunroot = "/run/containers/storage"\ngraphroot = "/var/lib/containers/storage"\n\n[storage.options.pull_options]\nenable_partial_images = "false"\n' > /etc/containers/storage.conf
       IMG=__IMAGE__
-      podman pull "$IMG" || { echo CORRAL_BUILD_FAIL pull; sync; poweroff; exit 1; }
+      podman pull "$IMG" || { echo CORRAL_BUILD_FAIL pull; echo CORRAL_BUILD_FAIL pull > /dev/ttyS0 2>/dev/null; sync; sleep 2; poweroff; exit 1; }
       # Read the image to pick the bootc storage backend (per the bootc docs the
       # composefs-rs backend requires systemd-boot and NO bootupd; traditional
       # ostree images ship bootupd):
@@ -476,7 +486,7 @@ write_files:
         -v /var/lib/containers:/var/lib/containers -v /dev:/dev -v /root/buildkey.pub:/buildkey.pub:ro \
         "$IMG" bootc install to-disk $BACKEND --filesystem "$FS" --wipe \
         --root-ssh-authorized-keys /buildkey.pub /dev/disk/by-id/virtio-target \
-        || { echo CORRAL_BUILD_FAIL install; sync; poweroff; exit 1; }
+        || { echo CORRAL_BUILD_FAIL install; echo CORRAL_BUILD_FAIL install > /dev/ttyS0 2>/dev/null; sync; sleep 2; poweroff; exit 1; }
       udevadm settle
       # ESP partition index varies by layout (--generic-image, backend);
       # probe for the FAT partition that actually contains /EFI.
@@ -488,7 +498,7 @@ write_files:
           umount /mnt/esp
         fi
       done
-      [ "$ESP_OK" = 1 ] || { echo CORRAL_BUILD_FAIL espmount; sync; poweroff; exit 1; }
+      [ "$ESP_OK" = 1 ] || { echo CORRAL_BUILD_FAIL espmount; echo CORRAL_BUILD_FAIL espmount > /dev/ttyS0 2>/dev/null; sync; sleep 2; poweroff; exit 1; }
       if [ "$COMPOSEFS" = 1 ]; then
         # bootc's composefs backend writes the ESP kernel/initrd from the EROFS
         # store, which zero-fills large files past the inline threshold (corrupt
@@ -536,7 +546,11 @@ write_files:
       sync; umount /mnt/root 2>/dev/null
 
       echo CORRAL_BUILD_OK
-      sync; poweroff
+      # Ensure the marker reaches the serial console even if the early
+      # tee-to-ttyS0 redirect hit an I/O error (KubeVirt serial can be
+      # transiently unavailable at boot). Write directly + flush.
+      echo CORRAL_BUILD_OK > /dev/ttyS0 2>/dev/null || true
+      sync; sleep 2; poweroff
 runcmd:
   - [ bash, -c, "nohup /root/build.sh &" ]
 `
@@ -592,7 +606,9 @@ func waitForBuilderVM(name, namespace string, progress io.Writer) error {
 		// completed builds failed ("ended without success" with a finished
 		// disk PVC sitting right there).
 		if phase := builderVMIPhase(name, namespace); phase == "Succeeded" || phase == "Failed" {
-			for attempt := 0; attempt < 6; attempt++ {
+			// Try reading the serial log for up to 60s — the virt-launcher pod
+			// may linger briefly after the guest powers off.
+			for attempt := 0; attempt < 12; attempt++ {
 				time.Sleep(5 * time.Second)
 				log := builderSerialLog(name, namespace)
 				if log == "" {
@@ -605,13 +621,101 @@ func waitForBuilderVM(name, namespace string, progress io.Writer) error {
 				if fail {
 					return fmt.Errorf("builder reported failure (%s)", lastFail)
 				}
-				break // log readable but no marker — genuinely inconclusive
+				break
+			}
+			// Serial log lost (common: virt-launcher pod terminates before we
+			// read). Fall back to the durable ground truth: did the build
+			// actually write data to the disk? A successful bootc install
+			// produces a 4-8 GB disk image; a failed/empty one is <1 MB.
+			if phase == "Succeeded" {
+				size := bootcDiskSizeBytes(name, namespace)
+				if size > 500*1024*1024 { // >500MB = real OS installed
+					fmt.Fprintf(progress, "  Builder powered off cleanly; disk has %d MB of data — success.\n", size/1024/1024)
+					return nil
+				}
+				if size >= 0 {
+					return fmt.Errorf("builder ended (Succeeded) but disk is only %d MB — install likely failed; retry with --resume or check the image", size/1024/1024)
+				}
 			}
 			return fmt.Errorf("builder VM ended (%s) without a build marker — if the build actually finished (disk PVC exists), retry with --resume; console: kubectl logs <virt-launcher-%s-*> -c guest-console-log -n %s", phase, name, namespace)
 		}
 		time.Sleep(5 * time.Second)
 	}
 	return fmt.Errorf("timeout waiting for bootc build (%d minutes)", int(bootcBuildTimeout()/time.Minute))
+}
+
+// bootcDiskExists reports whether the built disk PVC for a builder is present —
+// the source of truth for "did the build produce a disk". builderName is the
+// builder VM's name (<vm>-bootc-builder); the disk PVC is <vm>-bootc-disk, so
+// we strip the builder suffix to recover the base name. Used to disambiguate a
+// clean builder poweroff whose success marker was lost to log truncation.
+func bootcDiskExists(builderName, namespace string) bool {
+	base := strings.TrimSuffix(builderName, "-bootc-builder")
+	err := exec.Command("kubectl", "get", "pvc", base+"-bootc-disk",
+		"-n", namespace).Run()
+	return err == nil
+}
+
+// bootcDiskSizeBytes checks the real data size of the built disk by launching a
+// short-lived pod that mounts the PVC and stats disk.img. Returns -1 if the
+// check fails (PVC doesn't exist, pod can't schedule, etc). This is the durable
+// ground-truth for build success: a real bootc install writes 4-8 GB, a
+// failed/empty one stays at the sparse file header size (<1 MB).
+func bootcDiskSizeBytes(builderName, namespace string) int64 {
+	base := strings.TrimSuffix(builderName, "-bootc-builder")
+	pvcName := base + "-bootc-disk"
+	podName := base + "-sizecheck"
+
+	// Clean up any leftover from a prior attempt.
+	exec.Command("kubectl", "delete", "pod", podName, "-n", namespace, "--ignore-not-found", "--wait=false").Run()
+	time.Sleep(2 * time.Second)
+
+	manifest := fmt.Sprintf(`{
+		"apiVersion": "v1", "kind": "Pod",
+		"metadata": {"name": %q, "namespace": %q},
+		"spec": {
+			"restartPolicy": "Never",
+			"containers": [{"name": "c", "image": "busybox",
+				"command": ["sh", "-c", "du -sb /disk/ 2>/dev/null | cut -f1"],
+				"volumeMounts": [{"name": "d", "mountPath": "/disk"}]}],
+			"volumes": [{"name": "d", "persistentVolumeClaim": {"claimName": %q}}]
+		}
+	}`, podName, namespace, pvcName)
+
+	cmd := exec.Command("kubectl", "apply", "-f", "-")
+	cmd.Stdin = strings.NewReader(manifest)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		exec.Command("kubectl", "delete", "pod", podName, "-n", namespace, "--ignore-not-found").Run()
+		_ = out
+		return -1
+	}
+
+	// Wait for the pod to complete (up to 60s).
+	deadline := time.Now().Add(60 * time.Second)
+	for time.Now().Before(deadline) {
+		out, err := exec.Command("kubectl", "get", "pod", podName, "-n", namespace,
+			"-o", "jsonpath={.status.phase}").Output()
+		if err == nil && strings.TrimSpace(string(out)) == "Succeeded" {
+			break
+		}
+		if err == nil && strings.TrimSpace(string(out)) == "Failed" {
+			exec.Command("kubectl", "delete", "pod", podName, "-n", namespace, "--ignore-not-found").Run()
+			return -1
+		}
+		time.Sleep(3 * time.Second)
+	}
+
+	out, err := exec.Command("kubectl", "logs", podName, "-n", namespace).Output()
+	exec.Command("kubectl", "delete", "pod", podName, "-n", namespace, "--ignore-not-found").Run()
+	if err != nil {
+		return -1
+	}
+	sizeStr := strings.TrimSpace(string(out))
+	var size int64
+	if _, err := fmt.Sscanf(sizeStr, "%d", &size); err != nil {
+		return -1
+	}
+	return size
 }
 
 // builderSerialLog returns the captured serial console of the builder VM, read

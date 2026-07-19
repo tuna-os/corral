@@ -17,7 +17,7 @@ import (
 // manual composefs key injection, and the console/sshd kargs).
 func TestRenderBuilderVM(t *testing.T) {
 	vm := generateBuilderVM("e2e-x-bootc-builder", "corral-vms",
-		"e2e-x-bootc-disk", "e2e-x-bootc-builder-cloudinit", "quay.io/centos-bootc/centos-bootc:stream9")
+		"e2e-x-bootc-disk", "e2e-x-bootc-builder-cloudinit", "quay.io/centos-bootc/centos-bootc:stream9", "")
 
 	data, err := json.Marshal(vm)
 	if err != nil {
@@ -109,5 +109,26 @@ func TestBuilderSecretUserdataIsValidYAML(t *testing.T) {
 	// The provision payload must round-trip through its base64 write_files entry.
 	if !strings.Contains(userdata, base64.StdEncoding.EncodeToString([]byte(provision))) {
 		t.Fatal("provision script not embedded base64-encoded")
+	}
+}
+
+func TestRenderBuilderVM_NodePinned(t *testing.T) {
+	vm := generateBuilderVM("e2e-x-bootc-builder", "corral-vms",
+		"e2e-x-bootc-disk", "e2e-x-bootc-builder-cloudinit",
+		"quay.io/centos-bootc/centos-bootc:stream9", "karnataka")
+	spec := vm["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)
+	sel, ok := spec["nodeSelector"].(map[string]any)
+	if !ok || sel["kubernetes.io/hostname"] != "karnataka" {
+		t.Fatalf("expected builder pinned to karnataka, got nodeSelector=%v", spec["nodeSelector"])
+	}
+}
+
+func TestRenderBuilderVM_NoNodeMeansNoSelector(t *testing.T) {
+	vm := generateBuilderVM("e2e-x-bootc-builder", "corral-vms",
+		"e2e-x-bootc-disk", "e2e-x-bootc-builder-cloudinit",
+		"quay.io/centos-bootc/centos-bootc:stream9", "")
+	spec := vm["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)
+	if _, ok := spec["nodeSelector"]; ok {
+		t.Fatalf("expected no nodeSelector when node is empty, got %v", spec["nodeSelector"])
 	}
 }

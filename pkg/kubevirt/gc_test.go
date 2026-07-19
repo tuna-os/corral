@@ -108,3 +108,52 @@ func TestEphemeralTTL_Valid(t *testing.T) {
 		t.Errorf("valid TTL should parse as-is, got %v", got)
 	}
 }
+
+func TestPVCOwner(t *testing.T) {
+	cases := map[string]struct {
+		owner   string
+		isCorPV bool
+	}{
+		"gate-x-bootc-disk":          {"gate-x", true},
+		"myvm-disk":                  {"myvm", true},
+		"myvm-data":                  {"myvm", true},
+		"myvm-iso":                   {"myvm", true},
+		"vfy-yelgno-0444-bootc-disk": {"vfy-yelgno-0444", true},
+		"random-pvc":                 {"", false},
+		"postgres-pv":                {"", false},
+	}
+	for name, want := range cases {
+		owner, ok := pvcOwner(name)
+		if owner != want.owner || ok != want.isCorPV {
+			t.Errorf("pvcOwner(%q) = (%q, %v), want (%q, %v)", name, owner, ok, want.owner, want.isCorPV)
+		}
+	}
+}
+
+func TestPlanOrphanPVCs(t *testing.T) {
+	pvcs := []pvcRef{
+		{Namespace: "corral-vms", Name: "live-vm-bootc-disk"}, // owner exists -> keep
+		{Namespace: "corral-vms", Name: "dead-vm-bootc-disk"}, // owner gone   -> orphan
+		{Namespace: "corral-vms", Name: "postgres-pv"},        // not corral   -> ignore
+		{Namespace: "default", Name: "gate-old-disk"},         // owner gone   -> orphan
+	}
+	live := map[string]bool{"live-vm": true}
+
+	orphans := planOrphanPVCs(pvcs, live)
+	got := map[string]bool{}
+	for _, o := range orphans {
+		got[o.String()] = true
+	}
+	if !got["corral-vms/dead-vm-bootc-disk"] || !got["default/gate-old-disk"] {
+		t.Errorf("expected dead-vm and gate-old orphans, got %v", got)
+	}
+	if got["corral-vms/live-vm-bootc-disk"] {
+		t.Errorf("live-vm PVC must not be an orphan")
+	}
+	if got["corral-vms/postgres-pv"] {
+		t.Errorf("non-corral PVC must never be touched")
+	}
+	if len(orphans) != 2 {
+		t.Errorf("expected exactly 2 orphans, got %d: %v", len(orphans), orphans)
+	}
+}

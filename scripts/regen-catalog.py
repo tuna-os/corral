@@ -100,6 +100,60 @@ def meta_for(org, name):
     return (f"{org} {title} — bootc image", "linux", "server", "latest")
 
 
+def resolve_tag(org, name, preferred_tag):
+    """Resolve the best available tag for an image.
+
+    Tries the preferred tag first, then falls back through stable > latest > the
+    most recent version-ish tag. Returns None if no usable tag is found.
+    """
+    # Fetch actual tags for this image via the GH Container Registry API.
+    # Use --paginate because `bluefin` has 200+ versions and the usable tag
+    # (e.g. `stable`) may land on page 2+.
+    r = sh("gh", "api", "--paginate", f"/orgs/{org}/packages/container/{name}/versions?per_page=100")
+    if r.returncode != 0:
+        print(f"  warn: gh api {org}/{name}: {r.stderr.strip()[:160]}", file=sys.stderr)
+        return preferred_tag  # fall back to the curated tag
+
+    try:
+        versions = json.loads(r.stdout)
+        if isinstance(versions, list) and versions and isinstance(versions[0], list):
+            # --paginate returns a list-of-lists; flatten
+            versions = [v for page in versions for v in page]
+    except Exception:
+        return preferred_tag
+
+    all_tags = set()
+    for v in versions:
+        for t in v.get("metadata", {}).get("container", {}).get("tags", []):
+            if not t.startswith("sha256-") and not t.endswith(".sig"):
+                all_tags.add(t)
+
+    if not all_tags:
+        return None  # no usable tags at all
+
+    # Priority order: preferred > stable > latest > stable-daily > a version tag
+    candidates = [
+        preferred_tag,
+        "stable",
+        "latest",
+        "stable-daily",
+    ]
+    for tag in candidates:
+        if tag in all_tags:
+            return tag
+
+    # Fall back to a non-testing, non-staging, non-sha256 tag that looks like a version.
+    # SHA256-only tags are unmanageable (no stable alias), so skip those images.
+    for t in sorted(all_tags, reverse=True):
+        if any(x in t for x in ("testing", "staging")):
+            continue
+        if len(t) == 64 and all(c in "0123456789abcdef" for c in t):
+            continue  # bare sha256 hash, not a usable alias
+        return t
+
+    return None
+
+
 def fetch_images():
     rows = []
     for org in ORGS:
@@ -115,8 +169,14 @@ def fetch_images():
             if not dt or dt < CUTOFF:
                 continue
             desc, logo, variant, tag = meta_for(org, name)
+            resolved_tag = resolve_tag(org, name, tag)
+            if resolved_tag is None:
+                print(f"  skip {org}/{name}: no usable tag found (preferred={tag})", file=sys.stderr)
+                continue
+            if resolved_tag != tag:
+                print(f"  tag {org}/{name}: {tag} -> {resolved_tag}", file=sys.stderr)
             short = name.split("/")[-1] if org == "ublue-os" else f"{org.split('-')[0]}-{name.split('/')[-1]}"
-            rows.append((short, desc, f"ghcr.io/{org}/{name}:{tag}", SOURCE[org], logo))
+            rows.append((short, desc, f"ghcr.io/{org}/{name}:{resolved_tag}", SOURCE[org], logo))
     # Dedup by catalog name, stable order.
     seen, out = set(), []
     for row in sorted(rows):

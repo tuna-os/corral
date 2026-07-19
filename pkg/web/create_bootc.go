@@ -40,7 +40,7 @@ func createBootc(req createRequest, ns string) (id string, task *buildTask, err 
 	done := taskBegin("bootc build", ns+"/"+req.Name)
 
 	go func() {
-		build, err := kubevirt.BootcBuildDisk(req.Name, ns, image, sshKey, req.Disk, req.StorageClass, "", task)
+		build, err := kubevirt.BootcBuildDisk(req.Name, ns, image, sshKey, req.Disk, req.StorageClass, "", req.Node, task)
 		if err == nil {
 			vm := kubevirt.GenerateBootcVM(req.Name, ns, build.PVCName, image, sshKey, req.Mem, req.CPU, req.Node)
 			err = kubevirt.Apply(vm)

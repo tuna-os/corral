@@ -115,6 +115,17 @@ func defaultNamespace() string {
 	return "corral-vms"
 }
 
+// Reachable reports whether a KubeVirt-capable cluster is usable right now:
+// the kubeconfig points somewhere the API answers AND KubeVirt is installed.
+// It's the signal for auto-selecting the backend — KubeVirt when this is true,
+// local QEMU otherwise — so one command works in both places. Cheap enough to
+// call inline (a single cached kubectl get with a short timeout).
+func Reachable() bool {
+	_, err := getPackageRunner().Run("kubectl", "get", "kubevirt",
+		"-A", "--request-timeout=5s", "-o", "name")
+	return err == nil
+}
+
 // EnsureNamespace creates the namespace if it doesn't exist and labels it
 // for privileged pods (needed by the bootc builder Job).
 func EnsureNamespace(ns string) {
@@ -529,6 +540,59 @@ func (c *Client) SSH(name, username, identityFile, command string, port int, pas
 	return cmd.Run()
 }
 
+// WaitSSH starts name (if not already running), waits for the VMI to reach
+// Running, then polls a non-interactive SSH probe until it succeeds or timeout
+// elapses. It's the KubeVirt twin of qemu.WaitSSH, so `corral create --bootc
+// <img> --wait-ssh` is a backend-agnostic boot gate: nonzero return ⇒ fail the
+// pipeline. identityFile "" lets virtctl pick the default key.
+func (c *Client) WaitSSH(name, username, identityFile string, timeout time.Duration) error {
+	if err := c.StartVM(name); err != nil {
+		return fmt.Errorf("starting VM: %w", err)
+	}
+	virtctl, err := c.ensureVirtctl()
+	if err != nil {
+		return err
+	}
+	deadline := time.Now().Add(timeout)
+
+	// Phase 1: wait for the VMI to be Running (scheduled + booting). Until then
+	// there's no guest to SSH into, so probing is pointless.
+	for time.Now().Before(deadline) {
+		out, _ := c.runner().Run("kubectl", "get", "vmi", name, "-n", c.Namespace,
+			"-o", "jsonpath={.status.phase}")
+		if strings.TrimSpace(string(out)) == "Running" {
+			break
+		}
+		time.Sleep(3 * time.Second)
+	}
+
+	// Phase 2: poll SSH. `true` is the lightest possible probe; a nonzero exit
+	// (connection refused, auth not ready) just means "not yet" until the
+	// deadline. StrictHostKeyChecking off so the changing host key never blocks.
+	args := []string{"ssh", "--namespace=" + c.Namespace, "--username=" + username,
+		"--command=true",
+		"--local-ssh-opts=-o StrictHostKeyChecking=no",
+		"--local-ssh-opts=-o UserKnownHostsFile=/dev/null",
+		"--local-ssh-opts=-o ConnectTimeout=5",
+	}
+	if identityFile != "" {
+		args = append(args, "--identity-file="+identityFile)
+	}
+	args = append(args, "vm/"+name)
+
+	var lastErr error
+	for time.Now().Before(deadline) {
+		cmd := exec.Command(virtctl, args...)
+		if out, err := cmd.CombinedOutput(); err == nil {
+			return nil
+		} else {
+			lastErr = fmt.Errorf("%v: %s", err, strings.TrimSpace(string(out)))
+		}
+		time.Sleep(5 * time.Second)
+	}
+	return fmt.Errorf("timeout after %s waiting for SSH on %q (last probe: %v)", timeout, name, lastErr)
+}
+
 // virtctlSSHArgs builds the virtctl ssh argv, factored out for unit testing
 // — the exec itself is a real interactive process, not mockable.
 func virtctlSSHArgs(namespace, username, identityFile, command string, port int, localForwards []string, name string) []string {
@@ -830,6 +894,10 @@ func GeneratePVC(name, namespace, size string) map[string]any {
 		"metadata": map[string]any{
 			"name":      name,
 			"namespace": namespace,
+			// ManagedLabel marks this PVC as corral-created so `corral gc` can
+			// safely reclaim it when its VM is gone, without ever matching an
+			// unrelated application PVC by name.
+			"labels": map[string]any{ManagedLabel: "true"},
 		},
 		"spec": map[string]any{
 			"accessModes": []string{"ReadWriteOnce"},
@@ -1089,6 +1157,89 @@ func GenerateProxyDeployment(name, namespace string, ports []int) map[string]any
 	}
 }
 
+// GenerateLANService creates a LoadBalancer-type Service fronting the same
+// proxy Deployment ApplyProxy's tailnet Service targets (same selector —
+// see GenerateProxyDeployment), so a VM can be reached on the LAN without
+// Multus/a secondary NIC. Unlike ApplyProxy this carries no vendor-specific
+// annotations: any controller that fulfills LoadBalancer Services — Cilium's
+// own L2 Announcement or BGP Control Plane, or MetalLB — assigns the
+// external IP the same way, so this works regardless of which one a given
+// cluster runs. If none is installed, the Service just sits <pending>,
+// same as it would with a plain `kubectl apply` of a LoadBalancer Service.
+func GenerateLANService(name, namespace string, ports []int) map[string]any {
+	svcPorts := []map[string]any{}
+	for _, p := range ports {
+		svcPorts = append(svcPorts, map[string]any{
+			"port":       p,
+			"targetPort": p,
+			"name":       fmt.Sprintf("port-%d", p),
+			"protocol":   "TCP",
+		})
+	}
+	return map[string]any{
+		"apiVersion": "v1",
+		"kind":       "Service",
+		"metadata": map[string]any{
+			"name":      name + "-lan",
+			"namespace": namespace,
+			"labels": map[string]string{
+				"app": "corral-proxy",
+				"vm":  name,
+			},
+		},
+		"spec": map[string]any{
+			"type": "LoadBalancer",
+			"selector": map[string]string{
+				"app": "corral-proxy",
+				"vm":  name,
+			},
+			"ports": svcPorts,
+		},
+	}
+}
+
+// ApplyLANService ensures the shared proxy Deployment/RBAC exist (same ones
+// ApplyProxy's tailnet Service targets — applying them twice is a no-op,
+// kubectl apply is idempotent) and applies the LoadBalancer Service. Unlike
+// ApplyProxy, this doesn't gate on any specific operator being present —
+// there's no reliable single "is a LoadBalancer-Service controller
+// installed" check the way tailscaleOperatorPresent checks for one
+// IngressClass, so it always applies and simply sits <pending> if nothing
+// fulfills it.
+func ApplyLANService(name, ns string, ports []int) error {
+	if err := applyProxyManifest("RBAC", GenerateProxyRBAC(name, ns)); err != nil {
+		return err
+	}
+	deploy, _ := json.Marshal(GenerateProxyDeployment(name, ns, ports))
+	if err := applyProxyManifest("deployment", string(deploy)); err != nil {
+		return err
+	}
+	svc, _ := json.Marshal(GenerateLANService(name, ns, ports))
+	return applyProxyManifest("LAN service", string(svc))
+}
+
+// LANServiceIP returns the external IP a LoadBalancer controller has
+// assigned to name-lan, or "" if it's still <pending> (or doesn't exist).
+func LANServiceIP(name, ns string) string {
+	out, err := runPkg("kubectl", "get", "svc", name+"-lan", "-n", ns, "-o", "json")
+	if err != nil {
+		return ""
+	}
+	var svc struct {
+		Status struct {
+			LoadBalancer struct {
+				Ingress []struct {
+					IP string `json:"ip"`
+				} `json:"ingress"`
+			} `json:"loadBalancer"`
+		} `json:"status"`
+	}
+	if json.Unmarshal(out, &svc) != nil || len(svc.Status.LoadBalancer.Ingress) == 0 {
+		return ""
+	}
+	return svc.Status.LoadBalancer.Ingress[0].IP
+}
+
 // ExposedPorts returns the currently exposed proxy ports for a VM.
 func ExposedPorts(name, ns string) []int {
 	out, err := runPkg("kubectl", "get", "svc", name+"-proxy", "-n", ns, "-o", "json")
@@ -1165,7 +1316,10 @@ func tailscaleOperatorPresent() bool {
 	return err == nil
 }
 
-// DeleteProxy removes all proxy resources for a VM.
+// DeleteProxy removes all proxy resources for a VM, including the LAN
+// Service ApplyLANService may have created (it shares the same proxy
+// Deployment/RBAC, but is a separate Service that isn't otherwise cleaned
+// up by deleting those).
 func DeleteProxy(name, ns string) error {
 	for _, kind := range []string{"deploy", "svc", "sa", "role", "rolebinding"} {
 		rname := name + "-proxy"
@@ -1174,6 +1328,7 @@ func DeleteProxy(name, ns string) error {
 		}
 		exec.Command("kubectl", "delete", kind, rname, "-n", ns, "--ignore-not-found").Run()
 	}
+	exec.Command("kubectl", "delete", "svc", name+"-lan", "-n", ns, "--ignore-not-found").Run()
 	return nil
 }
 

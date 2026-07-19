@@ -268,6 +268,34 @@ effect on the next boot.`,
 	},
 }
 
+var lanServiceCmd = &cobra.Command{
+	Use:   "lanservice [name]",
+	Short: "Expose an existing VM on the LAN via a LoadBalancer Service (KubeVirt)",
+	Long: `Create a LoadBalancer-type Service for a VM — no Multus, no secondary
+NIC. Needs a controller that fulfills LoadBalancer Services already running
+on the cluster (Cilium's own L2 Announcement or BGP Control Plane, or
+MetalLB); without one the Service just sits <pending> forever, same as any
+other LoadBalancer Service on a cluster without one. Same mechanism as
+` + "`corral create --lan-service`" + `, for a VM that already exists.`,
+	Example: `  corral lanservice myvm`,
+	Args:    cobra.MaximumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		_, name, err := kubevirtOnly(args, "lanservice")
+		if err != nil {
+			return err
+		}
+		ns, _ := resolveNamespace(name)
+		if err := kubevirt.ApplyLANService(name, ns, []int{22}); err != nil {
+			return err
+		}
+		fmt.Printf("LAN service %s-lan created — check its external IP: kubectl get svc %s-lan -n %s\n", name, name, ns)
+		if ip := kubevirt.LANServiceIP(name, ns); ip != "" {
+			fmt.Printf("External IP: %s\n", ip)
+		}
+		return nil
+	},
+}
+
 var exportCmd = &cobra.Command{
 	Use:   "export [name]",
 	Short: "Back up a VM's disk to a compressed image (KubeVirt)",
@@ -456,7 +484,7 @@ var snapshotDeleteCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.AddCommand(restartCmd, pauseCmd, unpauseCmd, migrateCmd, scaleCmd, addDiskCmd, rmDiskCmd, exportCmd, snapshotCmd, templateCmd, screenshotCmd, networksCmd, addNicCmd)
+	rootCmd.AddCommand(restartCmd, pauseCmd, unpauseCmd, migrateCmd, scaleCmd, addDiskCmd, rmDiskCmd, exportCmd, snapshotCmd, templateCmd, screenshotCmd, networksCmd, addNicCmd, lanServiceCmd)
 	templateCmd.AddCommand(templateMarkCmd, templateUnmarkCmd, templateListCmd, templateNewCmd)
 
 	migrateCmd.Flags().StringVar(&migrateNode, "node", "", "Target node (default: scheduler chooses)")

@@ -105,6 +105,11 @@ rules:
   - apiGroups: ["batch"]
     resources: ["jobs"]
     verbs: ["get", "list", "create", "delete"]
+  # Tailscale operator detection (ApplyProxy): tailscaleOperatorPresent() checks
+  # for the `tailscale` IngressClass the operator registers.
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingressclasses"]
+    verbs: ["get", "list"]
   # Per-VM Tailscale operator proxy (ApplyProxy): create the SA/Role/RoleBinding/
   # Service/Deployment that expose a VM on the tailnet; VM deletion cleans them up.
   - apiGroups: ["apps"]

@@ -102,7 +102,7 @@ func main() {
 				size = "50Gi"
 			}
 
-			build, err := kubevirt.BootcBuildDisk(name, ns, image, key, size, storageClass, "", os.Stderr)
+			build, err := kubevirt.BootcBuildDisk(name, ns, image, key, size, storageClass, "", node, os.Stderr)
 			if err != nil {
 				return fmt.Errorf("bootc build: %w — if the builder actually finished after this failed, retry with --resume", err)
 			}

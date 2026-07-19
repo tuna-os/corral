@@ -1,13 +1,25 @@
 # Corral task runner. `just` (https://github.com/casey/just) — run `just` to list.
 # Build tags: most code is plain; the bootc plugin needs `-tags bootc`.
 
+# Version stamp for `corral version`. Defaults to the current git describe;
+# a plain `go build` still self-reports via the toolchain's VCS stamps.
+export CORRAL_VERSION := `git describe --tags --always --dirty 2>/dev/null || echo dev`
+_ldflags := "-X github.com/tuna-os/corral/cmd.version=" + CORRAL_VERSION
+
 _default:
     @just --list
 
 # Build everything (both tag sets).
 build:
-    go build ./...
-    go build -tags bootc ./...
+    go build -ldflags "{{_ldflags}}" ./...
+    go build -tags bootc -ldflags "{{_ldflags}}" ./...
+
+# Install corral + the bootc plugin into ~/.local/bin and the plugin dir.
+# This is the supported "get current" path — run it after `git pull`.
+install:
+    go build -ldflags "{{_ldflags}}" -o ~/.local/bin/corral .
+    go build -tags bootc -ldflags "{{_ldflags}}" -o "${XDG_DATA_HOME:-$HOME/.local/share}/corral/plugins/corral-bootc" ./cmd/corral-bootc
+    @echo "✓ installed: $(~/.local/bin/corral version)"
 
 # Run the full test suite (both tag sets), race detector on.
 test:

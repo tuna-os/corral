@@ -537,6 +537,52 @@ func TestExposedPorts_NoProxy(t *testing.T) {
 	}
 }
 
+func TestLANServiceIP_Assigned(t *testing.T) {
+	_, r := newFeaturesFake(t)
+	r.AddResponseKV("kubectl", []string{"get", "svc", "web-lan", "-n", "tailvm", "-o", "json"},
+		`{"status":{"loadBalancer":{"ingress":[{"ip":"192.168.1.50"}]}}}`, nil)
+
+	if ip := LANServiceIP("web", "tailvm"); ip != "192.168.1.50" {
+		t.Errorf("LANServiceIP = %q, want 192.168.1.50", ip)
+	}
+}
+
+func TestLANServiceIP_Pending(t *testing.T) {
+	_, r := newFeaturesFake(t)
+	r.AddResponseKV("kubectl", []string{"get", "svc", "web-lan", "-n", "tailvm", "-o", "json"},
+		`{"status":{"loadBalancer":{}}}`, nil)
+
+	if ip := LANServiceIP("web", "tailvm"); ip != "" {
+		t.Errorf("LANServiceIP = %q, want empty while pending", ip)
+	}
+}
+
+func TestLANServiceIP_NoService(t *testing.T) {
+	newFeaturesFake(t)
+
+	if ip := LANServiceIP("web", "tailvm"); ip != "" {
+		t.Errorf("LANServiceIP without a Service = %q, want empty", ip)
+	}
+}
+
+func TestApplyLANService_AppliesRBACDeploymentAndService(t *testing.T) {
+	_, r := newFeaturesFake(t)
+	r.AddResponseKV("kubectl", []string{"apply", "-f", "-"}, "applied", nil)
+
+	if err := ApplyLANService("web", "tailvm", []int{22}); err != nil {
+		t.Fatalf("ApplyLANService: %v", err)
+	}
+	applies := 0
+	for _, c := range r.Calls() {
+		if c.Name == "kubectl" && len(c.Args) > 0 && c.Args[0] == "apply" {
+			applies++
+		}
+	}
+	if applies != 3 {
+		t.Errorf("expected 3 applies (RBAC + deployment + service), got %d", applies)
+	}
+}
+
 func TestQuantityToMib(t *testing.T) {
 	tests := map[string]int{
 		"":       0,
