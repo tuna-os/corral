@@ -14,6 +14,7 @@ var (
 	ctNamespace    string
 	ctImage        string
 	ctCPU          int
+	ctPorts        []int
 	ctMem          string
 	ctDisk         string
 	ctStorageClass string
@@ -55,6 +56,7 @@ form aren't implemented (see the tracking issue). --image/--privileged etc.
 still override anything --devcontainer would otherwise set.`,
 	Example: `  corral ct create tools --image fedora:40
   corral ct create devbox --image debian:12 --privileged --cpu 2 --mem 2Gi --disk 10Gi
+  corral ct create web --image nginx:alpine --ports 80,8080   # published on the tailnet Service
   corral ct create myproj --devcontainer ./myproj`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -106,9 +108,10 @@ still override anything --devcontainer would otherwise set.`,
 		fmt.Printf("CT %q created in ns/%s\n", name, ns)
 
 		if devcfg == nil {
+			exposeCTPorts(name, ns, ctPorts)
 			return nil
 		}
-		return applyDevContainerPostCreate(name, ns, devcfg)
+		return applyDevContainerPostCreate(name, ns, devcfg, ctPorts)
 	},
 }
 
@@ -117,7 +120,22 @@ still override anything --devcontainer would otherwise set.`,
 // — best-effort, matching how kubevirt's ApplyProxy failures are handled
 // elsewhere: the CT itself is already up, so these are reported as warnings
 // rather than rolling back a successful Create.
-func applyDevContainerPostCreate(name, ns string, cfg *ct.DevContainerConfig) error {
+// exposeCTPorts publishes extra ports (plus the console ports) on the CT's
+// tailnet Service — best-effort with a warning, same policy as forwardPorts:
+// the CT itself is already up, so a Service failure shouldn't roll it back.
+func exposeCTPorts(name, ns string, ports []int) {
+	if len(ports) == 0 {
+		return
+	}
+	all := append(append([]int{}, ct.ConsolePorts...), ports...)
+	if err := ct.ApplyProxy(name, ns, all); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: exposing ports failed: %v\n", err)
+	} else {
+		fmt.Printf("Exposed ports: %v\n", ports)
+	}
+}
+
+func applyDevContainerPostCreate(name, ns string, cfg *ct.DevContainerConfig, extraPorts []int) error {
 	post, err := cfg.ResolvePostCreate()
 	if err != nil {
 		return err
@@ -135,14 +153,7 @@ func applyDevContainerPostCreate(name, ns string, cfg *ct.DevContainerConfig) er
 		}
 	}
 
-	if ports := cfg.Ports(); len(ports) > 0 {
-		allPorts := append(append([]int{}, ct.ConsolePorts...), ports...)
-		if err := ct.ApplyProxy(name, ns, allPorts); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: exposing forwardPorts failed: %v\n", err)
-		} else {
-			fmt.Printf("Forwarded ports: %v\n", ports)
-		}
-	}
+	exposeCTPorts(name, ns, append(cfg.Ports(), extraPorts...))
 	return nil
 }
 
@@ -221,5 +232,6 @@ func init() {
 	ctCreateCmd.Flags().StringVarP(&ctStorageClass, "storage-class", "s", "", "StorageClass (default: cluster preference)")
 	ctCreateCmd.Flags().BoolVar(&ctPrivileged, "privileged", false, "Persistent full rootfs (distrobox-style) — needs a real OS image")
 	ctCreateCmd.Flags().StringVar(&ctDevcontainer, "devcontainer", "", "Path to a devcontainer.json, or a directory containing one")
+	ctCreateCmd.Flags().IntSliceVar(&ctPorts, "ports", nil, "Extra ports to publish on the CT's tailnet Service, e.g. --ports 8080,3000")
 	ctCreateCmd.Flags().DurationVar(&ctReadyTimeout, "devcontainer-ready-timeout", 2*time.Minute, "How long to wait for the CT before running postCreateCommand")
 }
