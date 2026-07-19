@@ -40,4 +40,4 @@ require (
 	golang.org/x/text v0.38.0 // indirect
 )
 
-replace github.com/charmbracelet/bubbles/v2 => charm.land/bubbles/v2 v2.1.0
+replace github.com/charmbracelet/bubbles/v2 => charm.land/bubbles/v2 v2.1.1
