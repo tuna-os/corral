@@ -1,0 +1,46 @@
+# Publishes the curated CT base images (#50) to ghcr on every change.
+name: ct-images
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "containers/**"
+      - ".github/workflows/ct-images.yml"
+  pull_request:
+    paths:
+      - "containers/**"
+      - ".github/workflows/ct-images.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  ct-debian:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: docker build -f containers/ct-debian/Containerfile -t ct-debian:test containers/ct-debian
+
+      - name: Smoke test — init brings up sshd and stays as PID 1
+        run: |
+          cid=$(docker run -d ct-debian:test)
+          sleep 4
+          docker exec "$cid" sh -c 'pgrep -x sshd >/dev/null' || { docker logs "$cid"; exit 1; }
+          docker exec "$cid" sh -c '[ "$(cat /proc/1/comm)" = "sleep" ] || [ "$(cat /proc/1/comm)" = "ct-init" ]' || exit 1
+          docker rm -f "$cid"
+
+      - name: Push
+        if: github.event_name != 'pull_request'
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          IMG="ghcr.io/${{ github.repository_owner }}/ct-debian"
+          docker tag ct-debian:test "$IMG:latest"
+          docker tag ct-debian:test "$IMG:${GITHUB_SHA::7}"
+          docker push "$IMG:latest"
+          docker push "$IMG:${GITHUB_SHA::7}"
