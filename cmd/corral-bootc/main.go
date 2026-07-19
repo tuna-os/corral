@@ -110,7 +110,7 @@ func main() {
 		},
 	}
 	create.Flags().String("image", "", "Bootc container image — catalog name or OCI ref")
-	create.Flags().StringVar(&disk, "disk", "50Gi", "Disk size")
+	create.Flags().StringVar(&disk, "disk", "80Gi", "Disk size")
 	create.Flags().StringVar(&mem, "mem", "4G", "Memory")
 	create.Flags().IntVar(&cpu, "cpu", 2, "vCPUs")
 	create.Flags().StringVar(&node, "node", "", "Schedule on a specific node")
