@@ -21,12 +21,15 @@ const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 const pageErrors = [];
 page.on('pageerror', (e) => pageErrors.push(e.message));
 
-// Datacenter view renders the demo fleet.
+// Datacenter view renders the demo fleet. Wait on real elements, not a fixed
+// delay — CI runners cold-start slower than the 5s poll cycle.
 await page.goto(BASE);
-await page.waitForTimeout(2500);
+await page.waitForSelector('#tree >> text=Datacenter', { timeout: 30000 }).catch(() => {});
+await page.waitForSelector('td:has-text("web-prod")', { timeout: 30000 }).catch(() => {});
 check(await page.locator('#tree >> text=Datacenter').count() > 0, 'tree renders');
 check(await page.locator('td:has-text("web-prod")').count() > 0, 'VM table lists the fleet');
 check(await page.locator('.chip.filter').count() > 2, 'tag filter bar populated');
+check(await page.locator('#tree >> text=laptop-dev').count() > 0, 'local demo VM in the tree');
 
 // VM summary.
 await page.click('#tree >> text=web-prod');

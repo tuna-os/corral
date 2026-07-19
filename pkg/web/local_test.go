@@ -169,3 +169,34 @@ func TestLocalVNCBridge_DialsLocalPort(t *testing.T) {
 		t.Fatal("bytes never reached the local VNC listener")
 	}
 }
+
+func TestCreateLocalVM_Validation(t *testing.T) {
+	fakeLocalVM(t, "existingvm")
+	fx := NewTestFixture()
+	defer fx.Close()
+
+	// No source → clear 400, not a kubectl error.
+	resp, err := http.Post(fx.Server.URL+"/api/vms", "application/json",
+		strings.NewReader(`{"name":"newlocal","target":"local"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body map[string]string
+	json.NewDecoder(resp.Body).Decode(&body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(body["error"], "ISO or a qcow2") {
+		t.Fatalf("want 400 with source guidance, got %d %q", resp.StatusCode, body["error"])
+	}
+
+	// A URL source is accepted async (202) and lands in the task log.
+	resp, err = http.Post(fx.Server.URL+"/api/vms", "application/json",
+		strings.NewReader(`{"name":"newlocal","target":"local","iso":"http://127.0.0.1:1/never.iso"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	json.NewDecoder(resp.Body).Decode(&body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted || body["status"] != "downloading" {
+		t.Fatalf("want 202 downloading, got %d %+v", resp.StatusCode, body)
+	}
+}

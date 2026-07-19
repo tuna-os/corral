@@ -292,6 +292,7 @@ type createRequest struct {
 	Preference    string `json:"preference"`
 	Windows       bool   `json:"windows"`      // Windows installer flow (windows plugin)
 	StorageClass  string `json:"storageClass"` // overrides the cluster-preferred StorageClass
+	Target        string `json:"target"`       // "" / "cluster" (KubeVirt) or "local" (QEMU on this host, #91)
 }
 
 // buildTask tracks a long-running bootc build kicked off from the UI.
@@ -371,6 +372,11 @@ func handleCreateVM(w http.ResponseWriter, r *http.Request) {
 	ns := req.Namespace
 	if ns == "" {
 		ns = kubevirt.DefaultNamespace
+	}
+
+	if req.Target == "local" {
+		createLocalVM(w, req)
+		return
 	}
 
 	switch {

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tuna-os/corral/pkg/qemu"
 	"github.com/tuna-os/corral/pkg/registry"
 )
 
@@ -23,6 +24,7 @@ func newDemoServer(t *testing.T) *httptest.Server {
 	store = registry.NewStoreAt(tmpDir + "/registry.json")
 	t.Cleanup(func() {
 		// Restore the seams so later tests in this package start clean.
+		qemu.SetStateDirs("", "")
 		f := NewTestFixture()
 		f.Close()
 	})
@@ -76,10 +78,14 @@ func TestDemoMode_EndToEnd(t *testing.T) {
 	if len(cts) != 2 {
 		t.Errorf("demo has %d CTs, want 2", len(cts))
 	}
+	// Local backend fixture (#91 Phase 4): a fake qemu VM under a "local" node.
+	if v := byName["laptop-dev"]; v == nil || v["backend"] != "qemu" || v["namespace"] != "local" {
+		t.Errorf("demo local VM missing or misshaped: %+v", byName["laptop-dev"])
+	}
 	var nodes []map[string]any
 	getJSON(t, srv, "/api/nodes", &nodes)
-	if len(nodes) != 3 {
-		t.Errorf("demo has %d nodes, want 3", len(nodes))
+	if len(nodes) != 4 { // 3 cluster nodes + the synthetic local node
+		t.Errorf("demo has %d nodes, want 4: %+v", len(nodes), nodes)
 	}
 
 	// Cluster checks are all green (local checks depend on the CI host —

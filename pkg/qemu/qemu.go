@@ -15,12 +15,35 @@ import (
 
 // VMHome returns the QEMU VM directory.
 func VMHome() string {
+	if vmHomeOverride != "" {
+		return vmHomeOverride
+	}
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".local", "share", "corral", "vms")
 }
 
+// State-dir + systemctl seams: demo mode (and tests) point the backend at
+// throwaway directories and an in-memory service layer, so the full local
+// lifecycle works without touching the host's real state (#91 Phase 4).
+var (
+	vmHomeOverride  string
+	unitDirOverride string
+	systemctlRun    = func(args ...string) ([]byte, error) {
+		return exec.Command("systemctl", append([]string{"--user"}, args...)...).CombinedOutput()
+	}
+)
+
+// SetStateDirs overrides where VM state and systemd units live ("" = default).
+func SetStateDirs(vmHome, unitDir string) { vmHomeOverride, unitDirOverride = vmHome, unitDir }
+
+// SetSystemctl overrides the systemd --user command runner.
+func SetSystemctl(f func(args ...string) ([]byte, error)) { systemctlRun = f }
+
 // systemdUserDir returns the systemd user unit directory.
 func systemdUserDir() string {
+	if unitDirOverride != "" {
+		return unitDirOverride
+	}
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".config", "systemd", "user")
 }
@@ -56,7 +79,7 @@ func List() ([]types.VM, error) {
 		}
 
 		svc := "corral-" + e.Name()
-		out, _ := exec.Command("systemctl", "--user", "is-active", svc).Output()
+		out, _ := systemctlRun("is-active", svc)
 		running := strings.TrimSpace(string(out)) == "active"
 
 		status := "○ Stopped"
@@ -192,7 +215,7 @@ func Create(opts types.CreateOpts) error {
 	}
 
 	// Reload systemd
-	exec.Command("systemctl", "--user", "daemon-reload").Run()
+	systemctlRun("daemon-reload")
 
 	// Save metadata
 	meta := map[string]any{
@@ -225,17 +248,14 @@ func Start(name string) error {
 		return fmt.Errorf("VM %q does not exist", name)
 	}
 
-	out, _ := exec.Command("systemctl", "--user", "is-active", svc).Output()
+	out, _ := systemctlRun("is-active", svc)
 	if strings.TrimSpace(string(out)) == "active" {
 		fmt.Fprintf(os.Stderr, "VM %q is already running.\n", name)
 		return nil
 	}
 
-	cmd := exec.Command("systemctl", "--user", "start", svc)
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("starting VM: %w", err)
+	if out, err := systemctlRun("start", svc); err != nil {
+		return fmt.Errorf("starting VM: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 
 	fmt.Fprintf(os.Stderr, "VM %q started.\n", name)
@@ -250,11 +270,8 @@ func Start(name string) error {
 // Stop stops a QEMU VM.
 func Stop(name string) error {
 	svc := "corral-" + name
-	cmd := exec.Command("systemctl", "--user", "stop", svc)
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("stopping VM: %w", err)
+	if out, err := systemctlRun("stop", svc); err != nil {
+		return fmt.Errorf("stopping VM: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	fmt.Fprintf(os.Stderr, "VM %q stopped.\n", name)
 	return nil
@@ -263,12 +280,12 @@ func Stop(name string) error {
 // Delete removes a QEMU VM and its files.
 func Delete(name string) error {
 	svc := "corral-" + name
-	exec.Command("systemctl", "--user", "stop", svc).Run()
-	exec.Command("systemctl", "--user", "disable", svc).Run()
+	systemctlRun("stop", svc)
+	systemctlRun("disable", svc)
 
 	unitPath := filepath.Join(systemdUserDir(), svc+".service")
 	os.Remove(unitPath)
-	exec.Command("systemctl", "--user", "daemon-reload").Run()
+	systemctlRun("daemon-reload")
 
 	vmDir := filepath.Join(VMHome(), name)
 	os.RemoveAll(vmDir)
@@ -429,6 +446,13 @@ func VNCAddr(name string) (string, error) {
 		host = "127.0.0.1"
 	}
 	return fmt.Sprintf("%s:%d", host, meta.VncPort), nil
+}
+
+// Available reports whether this host can run local VMs (QEMU binaries
+// found). The web UI gates its "create on this host" target on it (#91).
+func Available() bool {
+	_, _, err := findQEMU()
+	return err == nil
 }
 
 // Viewer launches VNC viewer.

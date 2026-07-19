@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -22,6 +23,7 @@ import (
 	"github.com/tuna-os/corral/pkg/ct"
 	"github.com/tuna-os/corral/pkg/doctor"
 	"github.com/tuna-os/corral/pkg/kubevirt"
+	"github.com/tuna-os/corral/pkg/qemu"
 	"github.com/tuna-os/corral/pkg/shell"
 )
 
@@ -35,7 +37,63 @@ func Enable() shell.Runner {
 	kubevirt.SetApplyRunner(d)
 	ct.SetRunner(d)
 	doctor.SetRunner(d)
+	d.enableLocalBackend()
 	return d
+}
+
+// enableLocalBackend gives the demo a fake local QEMU VM (#91 Phase 4):
+// throwaway state dirs plus an in-memory systemd, so the "local" node,
+// lifecycle, and merged tree render without qemu or systemd units on the
+// host. Best-effort — a failure just means no local VM in the demo.
+func (d *demoCluster) enableLocalBackend() {
+	vmHome, err := os.MkdirTemp("", "corral-demo-vms-*")
+	if err != nil {
+		return
+	}
+	unitDir, err := os.MkdirTemp("", "corral-demo-units-*")
+	if err != nil {
+		return
+	}
+	name := "laptop-dev"
+	dir := filepath.Join(vmHome, name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return
+	}
+	meta := `{"name":"` + name + `","cpu":2,"memory":"4G","disk_size":"30G","vnc_port":5901,"tailscale_ip":"100.64.0.10"}`
+	if os.WriteFile(filepath.Join(dir, "metadata.json"), []byte(meta), 0o644) != nil {
+		return
+	}
+	if os.WriteFile(filepath.Join(unitDir, "corral-"+name+".service"), []byte("# demo unit\n"), 0o644) != nil {
+		return
+	}
+	qemu.SetStateDirs(vmHome, unitDir)
+	qemu.SetSystemctl(d.localSystemctl)
+}
+
+// localSystemctl is the demo's in-memory systemd --user: is-active reads,
+// start/stop flip, everything else succeeds quietly.
+func (d *demoCluster) localSystemctl(args ...string) ([]byte, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if len(args) < 1 {
+		return []byte{}, nil
+	}
+	svcName := ""
+	if len(args) > 1 {
+		svcName = strings.TrimPrefix(args[len(args)-1], "corral-")
+	}
+	switch args[0] {
+	case "is-active":
+		if d.localRunning[svcName] {
+			return []byte("active\n"), nil
+		}
+		return []byte("inactive\n"), fmt.Errorf("inactive")
+	case "start":
+		d.localRunning[svcName] = true
+	case "stop":
+		delete(d.localRunning, svcName)
+	}
+	return []byte{}, nil
 }
 
 type demoVM struct {
@@ -65,16 +123,18 @@ type demoCT struct {
 }
 
 type demoCluster struct {
-	mu    sync.Mutex
-	vms   []*demoVM
-	cts   []*demoCT
-	start time.Time
+	mu           sync.Mutex
+	vms          []*demoVM
+	cts          []*demoCT
+	localRunning map[string]bool // fake local (qemu) VMs' systemd state
+	start        time.Time
 }
 
 func newDemoCluster() *demoCluster {
 	expires := time.Now().Add(2 * time.Hour).UTC().Format(time.RFC3339)
 	return &demoCluster{
-		start: time.Now(),
+		start:        time.Now(),
+		localRunning: map[string]bool{},
 		vms: []*demoVM{
 			{Name: "web-prod", NS: "corral-vms", Node: "corral-1", Status: "Running", CPU: 2, Mem: "4Gi", IP: "10.42.1.20", Tags: []string{"prod", "web"}, Load: 240},
 			{Name: "db-prod", NS: "corral-vms", Node: "corral-2", Status: "Running", CPU: 4, Mem: "8Gi", IP: "10.42.2.31", Tags: []string{"prod", "db"}, Load: 900},
