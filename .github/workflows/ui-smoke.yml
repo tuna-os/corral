@@ -1,0 +1,56 @@
+# UI smoke: build corral, serve the dashboard against the built-in --demo
+# fake cluster, and drive it with headless Chromium (scripts/ui-smoke.mjs).
+# No cluster, no KVM — runs anywhere. This is the regression net for the
+# frontend + demo seam.
+name: ui-smoke
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "pkg/web/**"
+      - "pkg/demo/**"
+      - "scripts/ui-smoke.mjs"
+      - ".github/workflows/ui-smoke.yml"
+  pull_request:
+    paths:
+      - "pkg/web/**"
+      - "pkg/demo/**"
+      - "scripts/ui-smoke.mjs"
+      - ".github/workflows/ui-smoke.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  ui-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Build corral
+        run: go build -o corral .
+
+      - name: Install Playwright Chromium
+        run: |
+          npm init -y >/dev/null
+          npm install --no-save playwright >/dev/null
+          npx playwright install --with-deps chromium
+
+      - name: Serve demo dashboard
+        run: |
+          ./corral web --demo --addr 127.0.0.1:8899 &
+          for i in $(seq 1 30); do
+            curl -fsS -o /dev/null http://127.0.0.1:8899/ && break
+            sleep 1
+          done
+
+      - name: UI smoke
+        run: node scripts/ui-smoke.mjs

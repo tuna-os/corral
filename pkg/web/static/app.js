@@ -888,14 +888,21 @@ const TABS = [
 ];
 
 function renderVM(main, vm) {
+  // Local QEMU VMs (#91 Phase 1): lifecycle + info only — cluster concepts
+  // (migrate, snapshots, pause, templates…) don't exist on this backend.
+  const isLocal = vm.backend === 'qemu';
+  const tabs = isLocal ? TABS.filter(([id]) => id === 'summary' || id === 'yaml') : TABS;
+  if (!tabs.some(([id]) => id === tab)) tab = 'summary';
   main.innerHTML = `
     <div class="page-head">
       <h1>${icon('cube')} ${esc(vm.name)}</h1>
       <span class="pill ${vm.ready ? 'on' : 'off'}">${esc(vm.status)}</span>
+      ${isLocal ? '<span class="pill">local · qemu</span>' : ''}
       <div class="toolbar">
         <button class="btn" data-act="start" ${vm.running ? 'disabled' : ''}>${icon('play')} Start</button>
         <button class="btn" data-act="stop" ${vm.running ? '' : 'disabled'}>${icon('stop')} Stop</button>
         <button class="btn" data-act="restart" ${vm.running ? '' : 'disabled'}>${icon('restart')} Restart</button>
+        ${isLocal ? '' : `
         <button class="btn" data-act="pause" ${vm.ready ? '' : 'disabled'}>${icon('pause')} Pause</button>
         <button class="btn" data-act="unpause">${icon('play')} Resume</button>
         <button class="btn" data-act="migrate" ${vm.ready && vm.liveMigratable ? '' : 'disabled'}
@@ -906,12 +913,12 @@ function renderVM(main, vm) {
         <button class="btn" data-act="export" ${vm.running ? 'disabled' : ''}
           title="${vm.running ? 'Stop the VM to export its disk' : 'Download a disk backup'}">${icon('download')} Export</button>
         ${vm.bootc && caps.bootc ? `<button class="btn" data-act="upgrade"
-          title="Rebuild this bootc VM's disk from the latest image and restart">${icon('restart')} Upgrade</button>` : ''}
+          title="Rebuild this bootc VM's disk from the latest image and restart">${icon('restart')} Upgrade</button>` : ''}`}
         <button class="btn danger" data-act="delete">${icon('trash')} Delete</button>
       </div>
     </div>
     <div class="tabs">
-      ${TABS.map(([id, label]) =>
+      ${tabs.map(([id, label]) =>
         `<div class="tab ${tab === id ? 'active' : ''}" data-tab="${id}">${label}</div>`).join('')}
     </div>
     <div id="tab-body"></div>`;
@@ -930,6 +937,20 @@ function renderTab(vm) {
   const body = $('#tab-body');
   switch (tab) {
     case 'summary':
+      if (vm.backend === 'qemu') {
+        // Local VM summary: no cluster concepts, no kubevirt API calls.
+        body.innerHTML = `<dl class="props">
+          <dt>Status</dt><dd>${esc(vm.status)}</dd>
+          <dt>Backend</dt><dd>local (QEMU/KVM, systemd user service)</dd>
+          <dt>vCPUs</dt><dd>${vm.cpu}</dd>
+          <dt>Memory</dt><dd>${esc(vm.mem)}</dd>
+          <dt>Disk</dt><dd>${esc(vm.disk || '—')}</dd>
+          <dt>Tailscale IP</dt><dd>${esc(vm.ip || '—')}</dd>
+          <dt>VNC</dt><dd>${vm.vnc ? `<code>vnc://${esc(vm.ip || 'host')}:${esc(vm.vnc)}</code>` : '—'}</dd>
+          <dt>SSH</dt><dd><code>corral ssh ${esc(vm.name)}</code></dd>
+        </dl>`;
+        break;
+      }
       body.innerHTML = `<dl class="props">
         <dt>Status</dt><dd>${esc(vm.status)}</dd>
         <dt>Tags</dt><dd id="vm-tags">${tagChips(vm)}</dd>
