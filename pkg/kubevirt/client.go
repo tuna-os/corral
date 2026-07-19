@@ -670,7 +670,7 @@ func (c *Client) Virtctl() (string, error) { return c.ensureVirtctl() }
 func (c *Client) ensureVirtctl() (string, error) {
 	path, err := c.runner().LookPath("virtctl")
 	if err != nil {
-		return "", fmt.Errorf("virtctl not found — install: brew install kubevirt-cli")
+		return "", fmt.Errorf("virtctl not found — install: brew install virtctl")
 	}
 	return path, nil
 }

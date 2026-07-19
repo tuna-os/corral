@@ -36,6 +36,15 @@ func ok(name string, args ...string) bool {
 	return err == nil
 }
 
+// okList is for label-selector list queries, where kubectl exits 0 even with
+// zero matches — found on a real cluster where "CDI installed" passed with no
+// CDI anywhere. Requires an actual resource name (`-o name` output contains
+// "/") rather than just a clean exit.
+func okList(args ...string) bool {
+	out, err := runner.Run("kubectl", append(args, "-o", "name")...)
+	return err == nil && strings.Contains(string(out), "/")
+}
+
 // Run executes all checks. A machine with no reachable cluster is a valid,
 // healthy Corral setup (local QEMU backend) — in that case the dozen KubeVirt
 // checks collapse into one explanatory row instead of a wall of failures,
@@ -97,7 +106,7 @@ func localChecks() []Check {
 	checks = append(checks, Check{
 		Name:   "virtctl CLI",
 		OK:     vcErr == nil,
-		Detail: detailIf(vcErr == nil, "found — needed for KubeVirt consoles/SSH", "not installed — needed only for the KubeVirt backend (brew install kubevirt-cli)"),
+		Detail: detailIf(vcErr == nil, "found — needed for KubeVirt consoles/SSH", "not installed — needed only for the KubeVirt backend (brew install virtctl)"),
 	})
 
 	return checks
@@ -141,7 +150,7 @@ func clusterChecks() []Check {
 		fix:     installKubeVirt,
 	})
 	// Label selector (not hardcoded namespace) — CDI may be installed anywhere.
-	cdiInstalled := ok("kubectl", "get", "deploy", "-A", "-l", "cdi.kubevirt.io=cdi-operator")
+	cdiInstalled := okList("get", "deploy", "-A", "-l", "cdi.kubevirt.io=cdi-operator")
 	checks = append(checks, Check{
 		Name:    "CDI installed",
 		OK:      cdiInstalled,
@@ -245,7 +254,7 @@ func clusterChecks() []Check {
 		})
 	}
 
-	expProxy := ok("kubectl", "get", "deploy", "-A", "-l", "kubevirt.io=virt-exportproxy")
+	expProxy := okList("get", "deploy", "-A", "-l", "kubevirt.io=virt-exportproxy")
 	checks = append(checks, Check{
 		Name:   "Export proxy",
 		OK:     expProxy,

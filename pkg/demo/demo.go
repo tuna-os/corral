@@ -213,6 +213,10 @@ func (d *demoCluster) dispatch(stdin, name string, args []string) ([]byte, error
 		return d.vmiListJSON(), nil
 	case key == "get nodes -o json":
 		return demoNodesJSON, nil
+	case strings.HasPrefix(key, "get deploy -A -l cdi.kubevirt.io=cdi-operator"):
+		return []byte("deployment.apps/cdi-operator"), nil
+	case strings.HasPrefix(key, "get deploy -A -l kubevirt.io=virt-exportproxy"):
+		return []byte("deployment.apps/virt-exportproxy"), nil
 	case strings.HasPrefix(key, "get pods -A -l kubevirt.io=virt-launcher"):
 		return d.launcherPodsJSON(), nil
 	case strings.HasPrefix(key, "top pod -A -l kubevirt.io=virt-launcher"):
