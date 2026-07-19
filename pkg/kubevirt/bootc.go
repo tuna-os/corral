@@ -122,7 +122,7 @@ func bootcBuildDisk(name, namespace, imageURI, sshPublicKey, diskSize, storageCl
 		progress = os.Stderr
 	}
 	if diskSize == "" {
-		diskSize = "50Gi"
+		diskSize = "80Gi"
 	}
 	if storageClass == "" {
 		storageClass = PreferredStorageClass()
