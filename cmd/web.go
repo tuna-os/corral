@@ -10,8 +10,11 @@ var webAddr string
 var webCmd = &cobra.Command{
 	Use:   "web",
 	Short: "Serve the Corral web UI (Proxmox-style dashboard)",
-	Long: `Serve the Corral web UI: a Proxmox-style dashboard for the KubeVirt
-backend with in-browser VNC and serial TTY consoles. Works on mobile.
+	Long: `Serve the Corral web UI: a Proxmox-style dashboard with in-browser
+VNC and serial TTY consoles. Works on mobile.
+
+Shows both backends: KubeVirt VMs and CTs from the cluster, plus this
+host's local QEMU VMs under a "local" node (lifecycle, VNC console, info).
 
 The web UI shares the registry and cluster state with the CLI and TUI,
 so all three can be used in tandem.

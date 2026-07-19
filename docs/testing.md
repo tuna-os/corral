@@ -1,24 +1,25 @@
 # Corral Testing Plan
 
-## Current state
+## Current state (refreshed 2026-07-19)
 
-7 test files, ~35 tests total, ~760 lines of test code. All are unit tests for
-pure-logic functions (manifest generation, registry CRUD, type marshaling,
-plugin resolution). No integration tests, no HTTP handler tests, no frontend
-tests, no tests that touch a real cluster or QEMU.
+~59 test files, ~740 tests, ~14.6k lines of test code, across four layers:
 
-| Package | Tests | What they cover | What's missing |
-|---|---|---|---|
-| `kubevirt/` | 14 | manifest generation, VM-list parsing, helpers | VM CRUD (create/start/stop/delete), vol/snapshot/clone ops, cloud-init injection, SSH |
-| `registry/` | 6 | file-based CRUD | concurrent access, corruption recovery |
-| `qemu/` | 4 | basic ops | all QEMU lifecycle (start/stop/SSH/logs), service template generation |
-| `types/` | 2 | JSON round-trip | validation, edge cases |
-| `plugin/` | 2 | resolve/install | marketplace fetch, actual download, remove |
-| `web/` | 2 | server startup | **all 35+ HTTP handlers**, WS bridges, bootc task tracking, error paths |
-| `cmd/` | 5 | CLI parsing | actual command execution, flag interactions, TUI |
-| `catalog/` | 0 | — | Find(), catalog integrity |
-| `config/` | 0 | — | YAML parsing, env-var fallback, auth-key masking |
-| `doctor/` | 0 | — | each diagnostic check, Fix() |
+- **Unit tests** everywhere the earlier gaps were: web handlers (HTTP via
+  `httptest` + a scriptable `shell.Fake` runner), WS console bridges
+  (byte-level round-trips, including the local-VNC bridge), doctor checks and
+  fixes, qemu ops, kubevirt manifest/parse logic, cmd parsing.
+- **Demo-mode end-to-end** (`pkg/web/demo_test.go`): boots the real mux
+  against `pkg/demo`'s in-memory fake cluster and exercises list → action →
+  state-flip → metrics through real handler code.
+- **UI smoke in CI** (`.github/workflows/ui-smoke.yml`): headless Chromium
+  drives the actual dashboard against `corral web --demo` on every
+  `pkg/web`/`pkg/demo` change (`scripts/ui-smoke.mjs`).
+- **Cluster e2e** (`.github/workflows/e2e.yml`): kind + emulated KubeVirt on
+  GitHub runners — real `kubectl`/`virtctl` against a real API server.
+
+Remaining known gaps: TUI interaction tests (Bubble Tea update loop is only
+covered indirectly), plugin marketplace fetch/download, `config/` and
+`catalog/` remain thin, and nothing exercises real KVM hardware in CI.
 
 ---
 

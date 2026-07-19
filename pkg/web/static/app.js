@@ -888,10 +888,13 @@ const TABS = [
 ];
 
 function renderVM(main, vm) {
-  // Local QEMU VMs (#91 Phase 1): lifecycle + info only — cluster concepts
-  // (migrate, snapshots, pause, templates…) don't exist on this backend.
+  // Local QEMU VMs (#91): lifecycle, VNC console (the ws bridge dials the
+  // local VNC port), and info — cluster concepts (migrate, snapshots, pause,
+  // templates…) don't exist on this backend.
   const isLocal = vm.backend === 'qemu';
-  const tabs = isLocal ? TABS.filter(([id]) => id === 'summary' || id === 'yaml') : TABS;
+  const tabs = isLocal
+    ? TABS.filter(([id]) => id === 'summary' || id === 'console' || id === 'yaml')
+    : TABS;
   if (!tabs.some(([id]) => id === tab)) tab = 'summary';
   main.innerHTML = `
     <div class="page-head">

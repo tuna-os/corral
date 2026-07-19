@@ -413,6 +413,24 @@ func readMetadata(name string) (vmMetadata, error) {
 	return meta, nil
 }
 
+// VNCAddr returns the host:port a VM's VNC server listens on (the host's
+// Tailscale IP — QEMU binds there, never 0.0.0.0). Used by the web UI's
+// websocket bridge to serve a local VM's console in the browser (#91).
+func VNCAddr(name string) (string, error) {
+	meta, err := readMetadata(name)
+	if err != nil {
+		return "", err
+	}
+	if meta.VncPort == 0 {
+		return "", fmt.Errorf("VM %q has no VNC port", name)
+	}
+	host := meta.Tailscale
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	return fmt.Sprintf("%s:%d", host, meta.VncPort), nil
+}
+
 // Viewer launches VNC viewer.
 func Viewer(name string) error {
 	meta, err := readMetadata(name)

@@ -1,7 +1,7 @@
-// Package web serves the Corral web UI: a Proxmox-style dashboard for the
-// KubeVirt backend, with in-browser VNC (noVNC) and serial TTY (xterm.js)
-// consoles. It shares the registry and cluster state with the CLI/TUI, so
-// both can be used in tandem.
+// Package web serves the Corral web UI: a Proxmox-style dashboard over both
+// backends — KubeVirt VMs/CTs and this host's local QEMU VMs (#91) — with
+// in-browser VNC (noVNC) and serial TTY (xterm.js) consoles. It shares the
+// registry and cluster state with the CLI/TUI, so both can be used in tandem.
 package web
 
 import (
@@ -752,7 +752,15 @@ func vncBridge(ws *websocket.Conn) {
 		return
 	}
 
-	conn, err := consoleDialer.Dial(ns, name, kubevirt.VNC)
+	// Local QEMU VMs (#91 Phase 2): their VNC server is a plain TCP listener
+	// on this host — dial it directly instead of the virtctl proxy.
+	var conn io.ReadWriteCloser
+	var err error
+	if ns == localNS {
+		conn, err = dialLocalVNC(name)
+	} else {
+		conn, err = consoleDialer.Dial(ns, name, kubevirt.VNC)
+	}
 	if err != nil {
 		return
 	}
