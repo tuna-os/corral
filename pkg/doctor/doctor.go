@@ -72,6 +72,20 @@ func localChecks() []Check {
 		Detail: detailIf(kvm == nil, "/dev/kvm accessible", "no /dev/kvm access — local VMs fall back to slow emulation (add your user to the kvm group, or enable virtualization in BIOS)"),
 	})
 
+	// Nested virtualization (#68): only meaningful where KVM works at all,
+	// and only a warning — it matters when this host's VMs will themselves
+	// run VMs (e.g. a laptop hosting a KubeVirt dev cluster).
+	if kvm == nil {
+		nested, known := nestedVirtEnabled()
+		if known {
+			checks = append(checks, Check{
+				Name:   "Nested virtualization",
+				OK:     nested,
+				Detail: detailIf(nested, "kvm module has nested=1 — VMs can host VMs", "disabled — enable with: modprobe -r kvm_intel && modprobe kvm_intel nested=1 (or kvm_amd); only needed if VMs will run VMs"),
+			})
+		}
+	}
+
 	_, tsErr := runner.LookPath("tailscale")
 	checks = append(checks, Check{
 		Name:   "Tailscale CLI",
@@ -87,6 +101,21 @@ func localChecks() []Check {
 	})
 
 	return checks
+}
+
+// nestedVirtEnabled reads the kvm_intel/kvm_amd module's nested parameter.
+// known=false when neither module directory exists (no KVM, or exotic arch).
+// A seam for tests.
+var nestedVirtEnabled = func() (nested, known bool) {
+	for _, mod := range []string{"kvm_intel", "kvm_amd"} {
+		b, err := os.ReadFile("/sys/module/" + mod + "/parameters/nested")
+		if err != nil {
+			continue
+		}
+		v := strings.TrimSpace(string(b))
+		return v == "1" || v == "Y" || v == "y", true
+	}
+	return false, false
 }
 
 // statDevKVM is a seam for tests; returns nil when /dev/kvm is usable.
@@ -175,6 +204,29 @@ func clusterChecks() []Check {
 		OK:     hasSnap,
 		Detail: detailIf(hasSnap, "persistent-VM snapshots available", "needs a CSI driver + external-snapshotter (setup guide)"),
 	})
+
+	// Storage clone/migration readiness (#68), from CDI's StorageProfiles —
+	// CDI is already a corral prerequisite and its profiles state exactly
+	// what the StorageClass object can't: the effective clone strategy and
+	// access modes. Only reported when a default SC's profile exists (CDI
+	// absent or profiles unpopulated → stay silent rather than guess).
+	if prof := defaultStorageProfile(scs); prof != nil {
+		fastClone := prof.CloneStrategy == "csi-clone" || prof.CloneStrategy == "snapshot"
+		checks = append(checks, Check{
+			Name: "Fast VM cloning",
+			OK:   fastClone,
+			Detail: detailIf(fastClone,
+				fmt.Sprintf("CDI clone strategy %q — corral clone avoids full disk copies", prof.CloneStrategy),
+				fmt.Sprintf("CDI clone strategy %q — every corral clone is a full host-assisted disk copy (CSI driver lacks clone/snapshot support)", orUnset(prof.CloneStrategy))),
+		})
+		checks = append(checks, Check{
+			Name: "Migratable storage (RWX)",
+			OK:   prof.RWX,
+			Detail: detailIf(prof.RWX,
+				"default SC supports ReadWriteMany — disks don't block live migration",
+				"default SC has no ReadWriteMany mode — VMs on it can't live-migrate (RWO disks pin to a node)"),
+		})
+	}
 
 	// Advisory, not a pass/fail: Longhorn is network-replicated storage and
 	// measurably slower than local-path/topolvm for VM disk IO — corral's own
@@ -497,6 +549,57 @@ func storageClasses() []scInfo {
 		})
 	}
 	return scs
+}
+
+// storageProfileInfo is what doctor needs from a CDI StorageProfile.
+type storageProfileInfo struct {
+	CloneStrategy string
+	RWX           bool
+}
+
+func orUnset(s string) string {
+	if s == "" {
+		return "unset"
+	}
+	return s
+}
+
+// defaultStorageProfile returns the CDI StorageProfile for the cluster's
+// default StorageClass, or nil when there's no default SC / no profile.
+func defaultStorageProfile(scs []scInfo) *storageProfileInfo {
+	var def string
+	for _, sc := range scs {
+		if sc.Default {
+			def = sc.Name
+		}
+	}
+	if def == "" {
+		return nil
+	}
+	out, err := run("kubectl", "get", "storageprofile", def, "-o", "json")
+	if err != nil {
+		return nil
+	}
+	var prof struct {
+		Status struct {
+			CloneStrategy     string `json:"cloneStrategy"`
+			ClaimPropertySets []struct {
+				AccessModes []string `json:"accessModes"`
+			} `json:"claimPropertySets"`
+		} `json:"status"`
+	}
+	if json.Unmarshal(out, &prof) != nil {
+		return nil
+	}
+	info := &storageProfileInfo{CloneStrategy: prof.Status.CloneStrategy}
+	for _, set := range prof.Status.ClaimPropertySets {
+		for _, m := range set.AccessModes {
+			if m == "ReadWriteMany" {
+				info.RWX = true
+			}
+		}
+	}
+	return info
 }
 
 // defaultLonghornSC returns the name of the cluster's default StorageClass

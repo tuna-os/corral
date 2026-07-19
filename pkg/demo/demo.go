@@ -245,6 +245,8 @@ func (d *demoCluster) dispatch(stdin, name string, args []string) ([]byte, error
 		return []byte("kubevirt"), nil
 	case key == "get sc -o json" || key == "get storageclass -o json":
 		return demoStorageClassJSON, nil
+	case strings.HasPrefix(key, "get storageprofile"):
+		return []byte(`{"status":{"cloneStrategy":"csi-clone","claimPropertySets":[{"accessModes":["ReadWriteMany","ReadWriteOnce"]}]}}`), nil
 	case strings.HasPrefix(key, "get volumesnapshotclass"):
 		if hasJSONOutput(args) {
 			return []byte(`{"items":[{"metadata":{"name":"demo-snapclass"},"driver":"demo.csi.corral.dev"}]}`), nil
