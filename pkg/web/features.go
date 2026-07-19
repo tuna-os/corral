@@ -13,6 +13,7 @@ import (
 	"github.com/tuna-os/corral/pkg/doctor"
 	"github.com/tuna-os/corral/pkg/kubevirt"
 	"github.com/tuna-os/corral/pkg/plugin"
+	"github.com/tuna-os/corral/pkg/qemu"
 	"github.com/tuna-os/corral/pkg/sources"
 	"github.com/tuna-os/corral/pkg/types"
 )
@@ -136,6 +137,7 @@ func handleCapabilities(w http.ResponseWriter, r *http.Request) {
 		"canExpand":        c.CanExpand,
 		"canSnapshot":      c.CanSnapshot,
 		"bootc":            kubevirt.BootcAvailable(), // optional plugin
+		"local":            qemu.Available(),          // this host can run QEMU VMs (#91)
 		"plugins":          plugins,
 		"defaultNamespace": kubevirt.DefaultNamespace,
 	})

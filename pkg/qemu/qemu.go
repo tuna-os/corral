@@ -431,6 +431,13 @@ func VNCAddr(name string) (string, error) {
 	return fmt.Sprintf("%s:%d", host, meta.VncPort), nil
 }
 
+// Available reports whether this host can run local VMs (QEMU binaries
+// found). The web UI gates its "create on this host" target on it (#91).
+func Available() bool {
+	_, _, err := findQEMU()
+	return err == nil
+}
+
 // Viewer launches VNC viewer.
 func Viewer(name string) error {
 	meta, err := readMetadata(name)

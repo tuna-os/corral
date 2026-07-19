@@ -153,6 +153,11 @@ async function loadCaps() {
   if (!caps.bootc) {
     document.querySelector('[name=sourceType] option[value=bootc]')?.remove();
   }
+  // "Create on this host" appears only when the server's host can run QEMU.
+  if (caps.local) {
+    const tf = $('#target-field');
+    if (tf) tf.hidden = false;
+  }
   // The Windows create flow is compiled into the web server (manifest gen in
   // pkg/kubevirt), so it's always available — no plugin install needed.
   try { availableNADs = await api('/api/nads'); } catch { availableNADs = []; }
@@ -2083,12 +2088,46 @@ const CREATE_HINTS = {
 };
 const DEFAULT_HINT = 'Cloud-init VMs get your SSH key and Tailscale auth key (if configured) automatically.';
 
+// isLocalTarget: the create form is aimed at this host's QEMU, not the
+// cluster (#91 Phase 3). Local supports installer ISO / qcow2 sources only
+// (no cloud-init, no cluster fields).
+function isLocalTarget() {
+  return document.querySelector('#create-form [name=target]')?.value === 'local';
+}
+
 function updateSourceFields() {
-  const type = document.querySelector('[name=sourceType]').value;
+  const local = isLocalTarget();
+  const srcSel = document.querySelector('[name=sourceType]');
+  // Local target: only ISO and qcow2 import make sense — hide the rest.
+  for (const opt of srcSel.options) {
+    opt.hidden = local && opt.value !== 'iso' && opt.value !== 'import';
+  }
+  if (local && srcSel.value !== 'iso' && srcSel.value !== 'import') srcSel.value = 'iso';
+  // Cluster-only fields disappear for a local VM.
+  for (const sel of ['#create-form [name=namespace]', '#create-form [name=node]',
+    '#create-form [name=instancetype]', '#create-form [name=preference]',
+    '#create-form [name=cloudInit]', '#sshkey-field input']) {
+    const el = document.querySelector(sel);
+    if (el) el.closest('label').hidden = local;
+  }
+
+  const type = srcSel.value;
   $('#catalog-field').hidden = type !== 'catalog';
   $('#source-field').hidden = type === 'catalog' || type === 'pvc';
   $('#pvc-source-field').hidden = type !== 'pvc';
-  $('#create-hint').textContent = CREATE_HINTS[type] || DEFAULT_HINT;
+  $('#create-hint').textContent = local
+    ? 'Local VM on this host (QEMU/KVM, systemd user service). Source can be a path on the host or a URL (downloaded once, then cached). No cloud-init on this backend.'
+    : (CREATE_HINTS[type] || DEFAULT_HINT);
+  if (local) {
+    const srcInput = document.querySelector('[name=source]');
+    if (srcInput) {
+      srcInput.placeholder = type === 'iso'
+        ? '/path/on/this/host.iso or https://…/installer.iso'
+        : '/path/on/this/host.qcow2 or https://…/image.qcow2';
+      srcInput.removeAttribute('list');
+    }
+    return;
+  }
   const src = document.querySelector('[name=source]');
   if (src) {
     src.placeholder = SOURCE_HINTS[type] || '';
@@ -2116,6 +2155,7 @@ async function loadPVCSources() {
 }
 
 document.querySelector('[name=sourceType]').onchange = updateSourceFields;
+document.querySelector('#create-form [name=target]').onchange = updateSourceFields;
 
 $('#create-form').onsubmit = async (e) => {
   e.preventDefault();
@@ -2133,6 +2173,25 @@ $('#create-form').onsubmit = async (e) => {
   };
   const src = f.get('source');
   const type = f.get('sourceType');
+  if (f.get('target') === 'local') {
+    // Local QEMU VM (#91 Phase 3): lean payload, ISO or qcow2 only.
+    const local = { name: body.name, target: 'local', cpu: body.cpu, mem: body.mem, disk: body.disk };
+    if (type === 'import') local.import = src; else local.iso = src;
+    try {
+      const res = await api('/api/vms', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(local),
+      });
+      $('#create-dialog').close();
+      e.target.reset();
+      if (res.status === 'downloading') toast(`Downloading image for ${local.name} — progress in the Tasks panel`);
+      refresh();
+    } catch (err) {
+      toast(`Create failed: ${err.message}`);
+    }
+    return;
+  }
   body.sshKey = f.get('sshKey') || ''; // key or GitHub username, any source type
   if (type === 'catalog') body.image = f.get('catalogImage');
   else if (type === 'containerDisk') body.containerDisk = src;
