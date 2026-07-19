@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/creack/pty"
+	"github.com/tuna-os/corral/pkg/qemu"
 	"golang.org/x/net/websocket"
 
 	"github.com/tuna-os/corral/pkg/config"
@@ -104,36 +105,48 @@ func newMux() (http.Handler, error) {
 	mux.HandleFunc("GET /api/tasks/{id}", handleTaskStatus)
 	mux.HandleFunc("GET /api/tasklog", handleTaskLog)
 	mux.HandleFunc("GET /api/vms/{ns}/{name}", handleVMInfo)
-	mux.HandleFunc("POST /api/vms/{ns}/{name}/migrate", handleMigrate)
 	mux.HandleFunc("POST /api/vms/{ns}/{name}/{action}", handleVMAction)
 	mux.HandleFunc("DELETE /api/vms/{ns}/{name}", handleDeleteVM)
 
-	// Advanced operations — more specific patterns win over {action} above.
-	mux.HandleFunc("POST /api/vms/{ns}/{name}/scale", handleScale)
-	mux.HandleFunc("POST /api/vms/{ns}/{name}/expand", handleExpand)
-	mux.HandleFunc("POST /api/vms/{ns}/{name}/clone", handleClone)
-	mux.HandleFunc("POST /api/vms/{ns}/{name}/template", handleMarkTemplate)
-	mux.HandleFunc("POST /api/vms/{ns}/{name}/tags", handleSetTag)
-	mux.HandleFunc("POST /api/vms/{ns}/{name}/options", handleSetOptions)
+	// Cluster-only operations — no meaning for local QEMU VMs (#91), so the
+	// reserved "local" namespace gets a uniform 400 instead of a confusing
+	// kubectl error. More specific patterns win over {action} above.
+	noLocal := func(h http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			if r.PathValue("ns") == localNS {
+				errResp(w, http.StatusBadRequest,
+					fmt.Errorf("this operation is not supported for local QEMU VMs"))
+				return
+			}
+			h(w, r)
+		}
+	}
+	mux.HandleFunc("POST /api/vms/{ns}/{name}/migrate", noLocal(handleMigrate))
+	mux.HandleFunc("POST /api/vms/{ns}/{name}/scale", noLocal(handleScale))
+	mux.HandleFunc("POST /api/vms/{ns}/{name}/expand", noLocal(handleExpand))
+	mux.HandleFunc("POST /api/vms/{ns}/{name}/clone", noLocal(handleClone))
+	mux.HandleFunc("POST /api/vms/{ns}/{name}/template", noLocal(handleMarkTemplate))
+	mux.HandleFunc("POST /api/vms/{ns}/{name}/tags", noLocal(handleSetTag))
+	mux.HandleFunc("POST /api/vms/{ns}/{name}/options", noLocal(handleSetOptions))
 	mux.HandleFunc("GET /api/vms/{ns}/{name}/guestinfo", handleGuestInfo)
 	mux.HandleFunc("GET /api/vms/{ns}/{name}/rdp", handleRDPCheck)
-	mux.HandleFunc("POST /api/vms/{ns}/{name}/bootc/rebuild", handleBootcRebuild)
+	mux.HandleFunc("POST /api/vms/{ns}/{name}/bootc/rebuild", noLocal(handleBootcRebuild))
 	mux.HandleFunc("GET /api/vms/{ns}/{name}/events", handleEvents)
 	mux.HandleFunc("GET /api/vms/{ns}/{name}/metrics", handleMetrics)
 	mux.HandleFunc("GET /api/vms/{ns}/{name}/metrics/history", handleMetricsHistory)
-	mux.HandleFunc("GET /api/vms/{ns}/{name}/export", handleExport)
-	mux.HandleFunc("POST /api/vms/{ns}/{name}/volumes", handleAddVolume)
-	mux.HandleFunc("DELETE /api/vms/{ns}/{name}/volumes/{vol}", handleRemoveVolume)
+	mux.HandleFunc("GET /api/vms/{ns}/{name}/export", noLocal(handleExport))
+	mux.HandleFunc("POST /api/vms/{ns}/{name}/volumes", noLocal(handleAddVolume))
+	mux.HandleFunc("DELETE /api/vms/{ns}/{name}/volumes/{vol}", noLocal(handleRemoveVolume))
 	mux.HandleFunc("GET /api/vms/{ns}/{name}/snapschedule", handleGetSnapSchedule)
-	mux.HandleFunc("POST /api/vms/{ns}/{name}/snapschedule", handleSetSnapSchedule)
-	mux.HandleFunc("DELETE /api/vms/{ns}/{name}/snapschedule", handleDeleteSnapSchedule)
+	mux.HandleFunc("POST /api/vms/{ns}/{name}/snapschedule", noLocal(handleSetSnapSchedule))
+	mux.HandleFunc("DELETE /api/vms/{ns}/{name}/snapschedule", noLocal(handleDeleteSnapSchedule))
 	mux.HandleFunc("GET /api/vms/{ns}/{name}/powerschedule", handleGetPowerSchedule)
-	mux.HandleFunc("POST /api/vms/{ns}/{name}/powerschedule", handleSetPowerSchedule)
-	mux.HandleFunc("DELETE /api/vms/{ns}/{name}/powerschedule", handleDeletePowerSchedule)
+	mux.HandleFunc("POST /api/vms/{ns}/{name}/powerschedule", noLocal(handleSetPowerSchedule))
+	mux.HandleFunc("DELETE /api/vms/{ns}/{name}/powerschedule", noLocal(handleDeletePowerSchedule))
 	mux.HandleFunc("GET /api/vms/{ns}/{name}/snapshots", handleListSnapshots)
-	mux.HandleFunc("POST /api/vms/{ns}/{name}/snapshots", handleCreateSnapshot)
-	mux.HandleFunc("DELETE /api/vms/{ns}/{name}/snapshots/{snap}", handleDeleteSnapshot)
-	mux.HandleFunc("POST /api/vms/{ns}/{name}/snapshots/{snap}/restore", handleRestoreSnapshot)
+	mux.HandleFunc("POST /api/vms/{ns}/{name}/snapshots", noLocal(handleCreateSnapshot))
+	mux.HandleFunc("DELETE /api/vms/{ns}/{name}/snapshots/{snap}", noLocal(handleDeleteSnapshot))
+	mux.HandleFunc("POST /api/vms/{ns}/{name}/snapshots/{snap}/restore", noLocal(handleRestoreSnapshot))
 
 	wsServer := func(h websocket.Handler) http.Handler {
 		return websocket.Server{
@@ -187,8 +200,15 @@ func statusFor(err error) int {
 // ── VM list ───────────────────────────────────────────────────────
 
 func handleListVMs(w http.ResponseWriter, r *http.Request) {
+	local := localVMs()
 	vms, err := kubevirt.NewClient("").ListVMs()
 	if err != nil {
+		// No cluster but local QEMU VMs exist → the dashboard still works,
+		// local-only. Only a machine with neither gets the offline page.
+		if len(local) > 0 {
+			jsonResp(w, http.StatusOK, local)
+			return
+		}
 		errResp(w, http.StatusBadGateway, fmt.Errorf("listing VMs (is kubectl configured?): %w", err))
 		return
 	}
@@ -206,6 +226,7 @@ func handleListVMs(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	vms = append(vms, local...)
 	if vms == nil {
 		vms = []types.VM{}
 	}
@@ -380,6 +401,10 @@ func handleCreateVM(w http.ResponseWriter, r *http.Request) {
 func handleVMAction(w http.ResponseWriter, r *http.Request) {
 	ns, name := r.PathValue("ns"), r.PathValue("name")
 	action := r.PathValue("action")
+	if ns == localNS {
+		localVMAction(w, name, action)
+		return
+	}
 
 	c := kubevirt.NewClient(ns)
 	var err error
@@ -596,6 +621,19 @@ func convertRawToQcow2(qemuImg, rawPath, qcowPath string) error {
 func handleDeleteVM(w http.ResponseWriter, r *http.Request) {
 	ns, name := r.PathValue("ns"), r.PathValue("name")
 	done := taskBegin("delete", ns+"/"+name)
+	if ns == localNS {
+		if err := qemu.Delete(name); err != nil {
+			done(err)
+			errResp(w, http.StatusInternalServerError, err)
+			return
+		}
+		done(nil)
+		if store != nil {
+			store.Remove(name)
+		}
+		jsonResp(w, http.StatusOK, map[string]string{"status": "deleted"})
+		return
+	}
 	if err := kubevirt.NewClient(ns).DeleteVM(name); err != nil {
 		done(err)
 		errResp(w, http.StatusInternalServerError, err)
@@ -610,7 +648,13 @@ func handleDeleteVM(w http.ResponseWriter, r *http.Request) {
 
 func handleVMInfo(w http.ResponseWriter, r *http.Request) {
 	ns, name := r.PathValue("ns"), r.PathValue("name")
-	data, err := kubevirt.NewClient(ns).VMInfo(name)
+	var data []byte
+	var err error
+	if ns == localNS {
+		data, err = qemu.Info(name)
+	} else {
+		data, err = kubevirt.NewClient(ns).VMInfo(name)
+	}
 	if err != nil {
 		errResp(w, http.StatusNotFound, err)
 		return
@@ -630,8 +674,19 @@ type nodeResp struct {
 }
 
 func handleNodes(w http.ResponseWriter, r *http.Request) {
+	// This host appears as a synthetic node whenever it has local QEMU VMs,
+	// so they group under one tree entry alongside the cluster nodes.
+	var localNode []nodeResp
+	if len(localVMs()) > 0 {
+		localNode = []nodeResp{{Name: "local", Ready: true, Roles: "this host (qemu)"}}
+	}
+
 	out, err := defaultRunner.Run("kubectl", "get", "nodes", "-o", "json")
 	if err != nil {
+		if localNode != nil {
+			jsonResp(w, http.StatusOK, localNode)
+			return
+		}
 		errResp(w, http.StatusBadGateway, fmt.Errorf("listing nodes: %w", err))
 		return
 	}
@@ -679,6 +734,7 @@ func handleNodes(w http.ResponseWriter, r *http.Request) {
 		n.Roles = strings.Join(roles, ",")
 		nodes = append(nodes, n)
 	}
+	nodes = append(nodes, localNode...)
 	jsonResp(w, http.StatusOK, nodes)
 }
 

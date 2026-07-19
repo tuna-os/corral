@@ -16,9 +16,13 @@ corral ssh web        # from this machine, your laptop, or your phone's terminal
 
 VMs are cattle. Stop treating each one like a networking project.
 
-![Corral web dashboard — Proxmox-style datacenter view](docs/screenshots/dashboard.png)
+![Corral demo tour — datacenter view, tag filters, VM summary, live actions, cluster health](docs/screenshots/demo.gif)
 
-<details><summary>More screenshots: VM summary with live CPU, mobile view</summary>
+*↑ that's `corral web --demo` — try the whole dashboard yourself in 30 seconds, no cluster needed.*
+
+<details><summary>Screenshots: datacenter view, VM summary with live CPU, mobile view</summary>
+
+![Corral web dashboard — Proxmox-style datacenter view](docs/screenshots/dashboard.png)
 
 ![VM summary with live CPU sparkline](docs/screenshots/vm-summary.png)
 
@@ -31,6 +35,11 @@ VMs are cattle. Stop treating each one like a networking project.
   `clone` / `delete` work identically whether the VM is local QEMU/KVM or
   KubeVirt on your cluster. Corral remembers which is which — you never
   specify it again.
+- **Your OS is a container image.** Point Corral at a *bootable container*
+  (`corral create dev --bootc ghcr.io/...`) and it builds the OS disk
+  on-cluster with `bootc install to-disk`, then boots it as a first-class VM.
+  `corral bootc upgrade` rolls the VM to the image's next build — your VM
+  fleet updates like containers do. No other VM platform has this.
 - **Containers (CT) — distrobox on Kubernetes.** Proxmox-style pet pods
   alongside VMs (`corral ct create`). A privileged CT seeds a full root
   filesystem onto its own volume and `chroot`s into it on boot — `apt` /
