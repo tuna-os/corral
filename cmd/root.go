@@ -6,11 +6,14 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
+	"github.com/tuna-os/corral/pkg/demo"
 	"github.com/tuna-os/corral/pkg/plugin"
 	"github.com/tuna-os/corral/pkg/registry"
 )
 
 var registryStore *registry.Store
+var verbose bool
+var rootDemo bool
 
 var rootCmd = &cobra.Command{
 	Use:   "corral",
@@ -21,6 +24,9 @@ Tailscale service exposure for VNC, SSH, RDP, and custom ports.
 
 Run without arguments to launch the interactive TUI.`,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		if rootDemo {
+			demo.Enable()
+		}
 		s, err := registry.NewStore()
 		if err != nil {
 			return fmt.Errorf("init registry: %w", err)
@@ -38,6 +44,21 @@ Run without arguments to launch the interactive TUI.`,
 			postQuitAction()
 		}
 	},
+}
+
+func init() {
+	rootCmd.PersistentFlags().BoolVar(&rootDemo, "demo", false,
+		"Run against a built-in fake cluster (no kubectl/cluster needed) — explore the TUI, CLI, or web UI safely")
+
+	// A runtime failure ("VM not found", cluster unreachable) is not a syntax
+	// error — dumping the whole usage block after it buries the message.
+	// Bad flags still get usage via the flag-error hook below.
+	rootCmd.SilenceUsage = true
+	rootCmd.SilenceErrors = true // Execute() prints the error once itself
+	rootCmd.SetFlagErrorFunc(func(c *cobra.Command, err error) error {
+		c.Println(c.UsageString())
+		return err
+	})
 }
 
 func Execute() {

@@ -7,13 +7,22 @@ import (
 	"github.com/tuna-os/corral/pkg/shell"
 )
 
-// withFake installs a fake runner for the duration of the test.
+// withFake installs a fake runner for the duration of the test. The /dev/kvm
+// probe is stubbed to pass — it reads the real device node, which CI lacks.
 func withFake(t *testing.T) *shell.Fake {
 	t.Helper()
 	fake := shell.NewFake()
 	SetRunner(fake)
-	t.Cleanup(func() { SetRunner(shell.Real{}) })
+	prevKVM := statDevKVM
+	statDevKVM = func() error { return nil }
+	t.Cleanup(func() { SetRunner(shell.Real{}); statDevKVM = prevKVM })
 	return fake
+}
+
+// scriptReachable makes the cluster-connectivity gate pass so the KubeVirt
+// checks run at all.
+func scriptReachable(fake *shell.Fake) {
+	fake.AddResponse("kubectl get --raw /livez --request-timeout=3s", "ok", nil)
 }
 
 const healthyKubeVirtJSON = `{
@@ -47,6 +56,7 @@ const healthySCJSON = `{
 
 // scriptHealthyCluster registers responses describing a fully configured cluster.
 func scriptHealthyCluster(fake *shell.Fake) {
+	scriptReachable(fake)
 	fake.AddResponse("kubectl get kubevirt -n kubevirt", "kubevirt", nil)
 	fake.AddResponse("kubectl get deploy -A -l cdi.kubevirt.io=cdi-operator", "cdi-operator", nil)
 	fake.AddResponse("kubectl get kubevirt kubevirt -n kubevirt -o json", healthyKubeVirtJSON, nil)
@@ -113,19 +123,51 @@ func TestRun_ExpectedCheckNames(t *testing.T) {
 	}
 }
 
-func TestRun_EmptyCluster_OnlyInstallsFixable(t *testing.T) {
-	// No responses registered: every kubectl call fails, as on a machine
-	// with no cluster. Everything must report not-OK; only the KubeVirt/CDI
-	// install checks may claim to be fixable (the gate/strategy checks need
-	// KubeVirt present first).
+func TestRun_NoCluster_CollapsesToOneRow(t *testing.T) {
+	// No responses registered: the connectivity gate fails, so the dozen
+	// KubeVirt checks collapse into one "Cluster reachable" row — a laptop
+	// with no cluster is a valid setup, not a wall of failures. The local
+	// checks still run (and pass via the fake's LookPath).
 	withFake(t)
+
+	checks := Run()
+	c := checks[0]
+	if c.Name != "Cluster reachable" || c.OK {
+		t.Fatalf("first check = %+v, want a failed 'Cluster reachable'", c)
+	}
+	for _, c := range checks {
+		if c.Name == "KubeVirt installed" {
+			t.Error("cluster checks should be skipped when the cluster is unreachable")
+		}
+		if c.Fixable {
+			t.Errorf("check %q fixable without a cluster", c.Name)
+		}
+	}
+	checkByName(t, checks, "QEMU (local backend)")
+	checkByName(t, checks, "KVM acceleration")
+}
+
+func TestRun_EmptyCluster_OnlyInstallsFixable(t *testing.T) {
+	// Reachable cluster with nothing installed: every cluster check fails;
+	// only the KubeVirt/CDI/metrics installs may claim to be fixable (the
+	// gate/strategy checks need KubeVirt present first). Local checks pass
+	// via the fake's LookPath and are exempt.
+	fake := withFake(t)
+	scriptReachable(fake)
 
 	checks := Run()
 	if len(checks) == 0 {
 		t.Fatal("Run() returned no checks")
 	}
+	local := map[string]bool{
+		"QEMU (local backend)": true, "KVM acceleration": true,
+		"Tailscale CLI": true, "virtctl CLI": true,
+	}
 	installable := map[string]bool{"KubeVirt installed": true, "CDI installed": true, "metrics-server": true}
 	for _, c := range checks {
+		if local[c.Name] {
+			continue
+		}
 		if c.OK {
 			t.Errorf("check %q OK without a cluster", c.Name)
 		}
@@ -137,6 +179,7 @@ func TestRun_EmptyCluster_OnlyInstallsFixable(t *testing.T) {
 
 func TestFix_InstallsKubeVirtAndCDI(t *testing.T) {
 	fake := withFake(t)
+	scriptReachable(fake)
 	// Bare cluster, but kubectl apply works.
 	fake.AddPrefixResponse("kubectl apply -f", "applied", nil)
 	// reconcileKubeVirt's follow-up read fails (webhook not up) — tolerated.
@@ -176,7 +219,8 @@ func TestFix_InstallsKubeVirtAndCDI(t *testing.T) {
 }
 
 func TestFix_InstallFails_ReturnsError(t *testing.T) {
-	withFake(t) // apply not registered → install fails
+	fake := withFake(t)
+	scriptReachable(fake) // reachable, but apply not registered → install fails
 
 	if _, err := Fix(); err == nil {
 		t.Fatal("Fix() should propagate the install failure")

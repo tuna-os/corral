@@ -19,10 +19,17 @@ so all three can be used in tandem.
 By default it binds to 127.0.0.1:8006 (Proxmox's port). To reach it from
 other tailnet devices, bind your Tailscale IP.
 
-There is no authentication — never bind a public interface.`,
+There is no authentication — never bind a public interface.
+
+--demo serves a built-in fake cluster (VMs, CTs, nodes, live metrics) so
+you can explore the dashboard — or develop on it — with no cluster at all.`,
 	Example: `  corral web
-  corral web --addr "$(tailscale ip -4):8006"`,
+  corral web --addr "$(tailscale ip -4):8006"
+  corral web --demo   # explore the UI without a cluster`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if rootDemo {
+			web.EnableDemo()
+		}
 		return web.Serve(webAddr)
 	},
 }

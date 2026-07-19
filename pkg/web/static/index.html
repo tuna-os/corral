@@ -5,9 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Corral · Virtual Environment</title>
 <link rel="stylesheet" href="style.css">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
-<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+<!-- Vendored (see vendor/README.md) so consoles work offline/air-gapped —
+     same rationale as the vendored Alpine below (ADR-0004). -->
+<link rel="stylesheet" href="vendor/xterm.min.css">
+<script src="vendor/xterm.min.js"></script>
+<script src="vendor/addon-fit.min.js"></script>
 <!-- app.js (a module, deferred by spec) must run before Alpine's own deferred
      script so its alpine:init listener is registered before Alpine auto-starts
      — deferred/module scripts execute in document order, so order matters here. -->
