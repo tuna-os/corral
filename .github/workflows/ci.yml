@@ -3,15 +3,11 @@ name: CI
 on:
   push:
     branches: [main]
-  # Run the fast gate (gofmt/vet/build/test -race) when Go code (or this
-  # workflow) changes — on every PR regardless of base branch, so stacked PRs
-  # are covered. Docs/marketplace/UI-asset-only PRs skip it (no Go to test).
+  # The fast gate (gofmt/vet/build/test -race) runs on EVERY PR — it is the
+  # required status check that auto-merge waits on, and a required check that
+  # gets path-filtered out never reports, deadlocking the merge. ~2 min on a
+  # docs-only PR is the price of auto-merge meaning something.
   pull_request:
-    paths:
-      - "**.go"
-      - "go.mod"
-      - "go.sum"
-      - ".github/workflows/ci.yml"
   workflow_dispatch:
 
 env:
