@@ -271,9 +271,47 @@ func (k *kubectlTimeoutRunner) looksLikeTimeout(out []byte, elapsed time.Duratio
 	return false
 }
 
+// readOnlyVerb reports whether a kubectl invocation is a fast read — the
+// only class that gets the request-timeout flag and the hard process
+// deadline. Mutations (delete waits on graceful pod termination, apply on
+// server round-trips, exec on the command itself) legitimately exceed a
+// read budget — the first kind-CI run of the CT e2e proved it: the deadline
+// killed a normal `kubectl delete pod` mid-termination. They still consult
+// the breaker, so a dead cluster fails them fast once any read has tripped.
+func readOnlyVerb(args []string) bool {
+	for _, a := range args {
+		if strings.HasPrefix(a, "-") {
+			continue
+		}
+		switch a {
+		case "get", "top", "version", "api-resources", "api-versions", "auth", "explain":
+			return true
+		}
+		return false
+	}
+	return false
+}
+
+// breakerOnly gates a call on the tripped breaker without arming it — used
+// for non-read kubectl verbs, whose slowness is not evidence of a dead
+// cluster.
+func (k *kubectlTimeoutRunner) breakerOnly(fn func() ([]byte, error)) ([]byte, error) {
+	k.mu.Lock()
+	if time.Now().Before(k.deadUntil) {
+		until := time.Until(k.deadUntil).Round(time.Second)
+		k.mu.Unlock()
+		return nil, fmt.Errorf("cluster unreachable (a recent kubectl call timed out; retrying in %s)", until)
+	}
+	k.mu.Unlock()
+	return fn()
+}
+
 func (k *kubectlTimeoutRunner) Run(name string, args ...string) ([]byte, error) {
 	if filepath.Base(name) != "kubectl" {
 		return k.next.Run(name, args...)
+	}
+	if !readOnlyVerb(args) {
+		return k.breakerOnly(func() ([]byte, error) { return k.next.Run(name, args...) })
 	}
 	if _, isReal := k.next.(Real); isReal {
 		// --request-timeout caps each HTTP request, but kubectl's discovery
@@ -288,6 +326,9 @@ func (k *kubectlTimeoutRunner) Run(name string, args ...string) ([]byte, error) 
 func (k *kubectlTimeoutRunner) RunStdin(stdin string, name string, args ...string) ([]byte, error) {
 	if filepath.Base(name) != "kubectl" {
 		return k.next.RunStdin(stdin, name, args...)
+	}
+	if !readOnlyVerb(args) {
+		return k.breakerOnly(func() ([]byte, error) { return k.next.RunStdin(stdin, name, args...) })
 	}
 	if _, isReal := k.next.(Real); isReal {
 		return k.call(func() ([]byte, error) { return k.hardRun(stdin, name, k.inject(name, args)) })

@@ -363,3 +363,31 @@ func TestKubectlTimeout_InjectsFlagAndBreaks(t *testing.T) {
 		t.Errorf("broken call took %v, want instant", d)
 	}
 }
+
+func TestKubectlTimeout_MutationsBypassDeadlineButRespectBreaker(t *testing.T) {
+	fake := NewFake()
+	// Mutations pass through untouched — no flag injection.
+	fake.AddResponse("kubectl delete pod x -n ns", "pod deleted", nil)
+	r := WithKubectlTimeout(fake, "50ms")
+	if out, err := r.Run("kubectl", "delete", "pod", "x", "-n", "ns"); err != nil || string(out) != "pod deleted" {
+		t.Fatalf("mutation should bypass injection: %v %q", err, out)
+	}
+
+	// A tripped breaker (from a read) blocks mutations fast too.
+	slow := WithKubectlTimeout(slowRunner{delay: 60 * time.Millisecond}, "50ms")
+	slow.Run("kubectl", "get", "vms") // trips
+	start := time.Now()
+	_, err := slow.Run("kubectl", "delete", "pod", "x")
+	if err == nil || !strings.Contains(err.Error(), "cluster unreachable") {
+		t.Fatalf("tripped breaker should block mutations: %v", err)
+	}
+	if time.Since(start) > 20*time.Millisecond {
+		t.Error("blocked mutation should fail instantly")
+	}
+	// But a slow mutation itself must NOT trip the breaker.
+	slow2 := WithKubectlTimeout(slowRunner{delay: 60 * time.Millisecond}, "50ms")
+	slow2.Run("kubectl", "delete", "pod", "y") // slow, errors, but is a mutation
+	if _, err := slow2.Run("kubectl", "delete", "pod", "z"); err != nil && strings.Contains(err.Error(), "cluster unreachable") {
+		t.Error("slow mutations must not trip the breaker")
+	}
+}
