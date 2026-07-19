@@ -22,7 +22,7 @@ type Check struct {
 	fix     func() error
 }
 
-var runner shell.Runner = shell.Real{}
+var runner shell.Runner = shell.DefaultKubectl
 
 // SetRunner overrides the command runner (for unit tests).
 func SetRunner(r shell.Runner) { runner = r }

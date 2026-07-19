@@ -3,7 +3,9 @@ package shell
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestFake_Run_ExactMatch(t *testing.T) {
@@ -317,5 +319,47 @@ func TestCommandKey(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("commandKey(%q, %v) = %q, want %q", tt.name, tt.args, got, tt.want)
 		}
+	}
+}
+
+// slowRunner simulates kubectl hanging until its --request-timeout expires.
+type slowRunner struct{ delay time.Duration }
+
+func (s slowRunner) Run(name string, args ...string) ([]byte, error) {
+	time.Sleep(s.delay)
+	return nil, fmt.Errorf("context deadline exceeded")
+}
+func (s slowRunner) RunStdin(in, name string, args ...string) ([]byte, error) {
+	return s.Run(name, args...)
+}
+func (s slowRunner) LookPath(name string) (string, error) { return name, nil }
+
+func TestKubectlTimeout_InjectsFlagAndBreaks(t *testing.T) {
+	fake := NewFake()
+	fake.AddResponse("kubectl --request-timeout=10s get pods", "ok", nil)
+	r := WithKubectlTimeout(fake, "10s")
+	out, err := r.Run("kubectl", "get", "pods")
+	if err != nil || string(out) != "ok" {
+		t.Fatalf("flag not injected: %v %q", err, out)
+	}
+	// Non-kubectl commands pass through untouched.
+	fake.AddResponse("virtctl start vm", "started", nil)
+	if _, err := r.Run("virtctl", "start", "vm"); err != nil {
+		t.Fatalf("non-kubectl call touched: %v", err)
+	}
+
+	// A call that burns its full timeout trips the breaker...
+	slow := WithKubectlTimeout(slowRunner{delay: 60 * time.Millisecond}, "50ms")
+	if _, err := slow.Run("kubectl", "get", "vms"); err == nil {
+		t.Fatal("slow call should error")
+	}
+	// ...so the next call fails instantly instead of waiting again.
+	start := time.Now()
+	_, err = slow.Run("kubectl", "get", "nodes")
+	if err == nil || !strings.Contains(err.Error(), "cluster unreachable") {
+		t.Fatalf("breaker not tripped: %v", err)
+	}
+	if d := time.Since(start); d > 20*time.Millisecond {
+		t.Errorf("broken call took %v, want instant", d)
 	}
 }

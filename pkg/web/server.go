@@ -35,7 +35,7 @@ import (
 
 // defaultRunner is the command runner used by handlers that shell out
 // (vmiIndex, handleNodes, handleExport). Defaults to shell.Real; set in tests.
-var defaultRunner shell.Runner = shell.Real{}
+var defaultRunner shell.Runner = shell.DefaultKubectl
 
 //go:embed static
 var staticFS embed.FS

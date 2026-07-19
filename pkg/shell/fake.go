@@ -3,10 +3,14 @@
 package shell
 
 import (
+	"context"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Runner executes external commands and returns their output.
@@ -170,4 +174,147 @@ func (f *Fake) Reset() {
 
 func commandKey(name string, args []string) string {
 	return name + " " + strings.Join(args, " ")
+}
+
+// WithKubectlTimeout wraps a Runner so every kubectl invocation carries a
+// client-side --request-timeout (unless the caller set one), plus a circuit
+// breaker: once a kubectl call times out, further kubectl calls fail
+// instantly for a short window instead of each burning its own timeout.
+// Without this, a kubeconfig pointing at a dead cluster — asleep homelab,
+// VPN down, stale context — hangs every corral surface for minutes (one
+// list stacks 4–5 sequential kubectl calls). Wrap only production runners:
+// test Fakes match exact argument lists.
+func WithKubectlTimeout(r Runner, timeout string) Runner {
+	d, _ := time.ParseDuration(timeout)
+	return &kubectlTimeoutRunner{next: r, timeout: timeout, timeoutDur: d}
+}
+
+// DefaultKubectl is the shared production kubectl runner: Real wrapped with
+// the timeout + circuit breaker. A single instance on purpose — the breaker
+// only works if every package's kubectl calls share its state, so one timed-out
+// call anywhere makes the whole binary fail fast until the TTL expires.
+// CORRAL_KUBECTL_TIMEOUT overrides the per-call budget (e.g. "30s" for a
+// slow control plane).
+var DefaultKubectl Runner = WithKubectlTimeout(Real{}, kubectlTimeoutDefault())
+
+func kubectlTimeoutDefault() string {
+	if v := os.Getenv("CORRAL_KUBECTL_TIMEOUT"); v != "" {
+		if _, err := time.ParseDuration(v); err == nil {
+			return v
+		}
+	}
+	return "5s"
+}
+
+// breakerTTL is how long kubectl calls short-circuit after a timeout. Short
+// on purpose: a cluster coming back is noticed within seconds.
+const breakerTTL = 15 * time.Second
+
+type kubectlTimeoutRunner struct {
+	next       Runner
+	timeout    string
+	timeoutDur time.Duration
+
+	mu        sync.Mutex
+	deadUntil time.Time
+}
+
+func (k *kubectlTimeoutRunner) inject(name string, args []string) []string {
+	for _, a := range args {
+		if strings.HasPrefix(a, "--request-timeout") {
+			return args
+		}
+	}
+	return append([]string{"--request-timeout=" + k.timeout}, args...)
+}
+
+// call wraps one kubectl execution with the breaker bookkeeping.
+func (k *kubectlTimeoutRunner) call(fn func() ([]byte, error)) ([]byte, error) {
+	k.mu.Lock()
+	if time.Now().Before(k.deadUntil) {
+		until := time.Until(k.deadUntil).Round(time.Second)
+		k.mu.Unlock()
+		return nil, fmt.Errorf("cluster unreachable (a recent kubectl call timed out; retrying in %s)", until)
+	}
+	k.mu.Unlock()
+
+	start := time.Now()
+	out, err := fn()
+	if err != nil && k.looksLikeTimeout(out, time.Since(start)) {
+		k.mu.Lock()
+		k.deadUntil = time.Now().Add(breakerTTL)
+		k.mu.Unlock()
+	} else if err == nil {
+		k.mu.Lock()
+		k.deadUntil = time.Time{}
+		k.mu.Unlock()
+	}
+	return out, err
+}
+
+// looksLikeTimeout classifies a failed kubectl call as "cluster unreachable"
+// — either it burned most of its request timeout, or kubectl said so. kubectl
+// often exits marginally before the parsed duration, so a strict >= check
+// never fires; 80%% is the tripwire.
+func (k *kubectlTimeoutRunner) looksLikeTimeout(out []byte, elapsed time.Duration) bool {
+	if k.timeoutDur > 0 && elapsed >= k.timeoutDur*8/10 {
+		return true
+	}
+	for _, marker := range []string{
+		"context deadline exceeded", "Client.Timeout", "Unable to connect to the server",
+		"connection refused", "no route to host", "i/o timeout",
+	} {
+		if strings.Contains(string(out), marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func (k *kubectlTimeoutRunner) Run(name string, args ...string) ([]byte, error) {
+	if filepath.Base(name) != "kubectl" {
+		return k.next.Run(name, args...)
+	}
+	if _, isReal := k.next.(Real); isReal {
+		// --request-timeout caps each HTTP request, but kubectl's discovery
+		// phase retries several endpoints sequentially against a dead API —
+		// one invocation can burn 5× the flag. A hard process deadline is the
+		// only real bound.
+		return k.call(func() ([]byte, error) { return k.hardRun("", name, k.inject(name, args)) })
+	}
+	return k.call(func() ([]byte, error) { return k.next.Run(name, k.inject(name, args)...) })
+}
+
+func (k *kubectlTimeoutRunner) RunStdin(stdin string, name string, args ...string) ([]byte, error) {
+	if filepath.Base(name) != "kubectl" {
+		return k.next.RunStdin(stdin, name, args...)
+	}
+	if _, isReal := k.next.(Real); isReal {
+		return k.call(func() ([]byte, error) { return k.hardRun(stdin, name, k.inject(name, args)) })
+	}
+	return k.call(func() ([]byte, error) { return k.next.RunStdin(stdin, name, k.inject(name, args)...) })
+}
+
+// hardRun executes kubectl with a hard process deadline (the request timeout
+// plus grace), killing it outright when the deadline passes.
+func (k *kubectlTimeoutRunner) hardRun(stdin, name string, args []string) ([]byte, error) {
+	deadline := k.timeoutDur + 3*time.Second
+	if k.timeoutDur <= 0 {
+		deadline = 30 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), deadline)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, name, args...)
+	if stdin != "" {
+		cmd.Stdin = strings.NewReader(stdin)
+	}
+	out, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		return out, fmt.Errorf("kubectl killed after %s: context deadline exceeded", deadline)
+	}
+	return out, err
+}
+
+func (k *kubectlTimeoutRunner) LookPath(name string) (string, error) {
+	return k.next.LookPath(name)
 }

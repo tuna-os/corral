@@ -94,7 +94,7 @@ func (c *Client) runner() shell.Runner {
 	if defaultClientRunner != nil {
 		return defaultClientRunner
 	}
-	return shell.Real{}
+	return shell.DefaultKubectl
 }
 
 // defaultClientRunner is a package-level runner override for tests.
@@ -1518,8 +1518,8 @@ func applyManifest(yaml string) error {
 // -race` flags the read/write.
 var (
 	runnerMu             sync.RWMutex
-	applyRunner          shell.Runner = shell.Real{} // runner used by Apply
-	defaultPackageRunner shell.Runner = shell.Real{} // runner for package-level kubectl
+	applyRunner          shell.Runner = shell.DefaultKubectl // runner used by Apply
+	defaultPackageRunner shell.Runner = shell.DefaultKubectl // runner for package-level kubectl
 )
 
 func getApplyRunner() shell.Runner { runnerMu.RLock(); defer runnerMu.RUnlock(); return applyRunner }
