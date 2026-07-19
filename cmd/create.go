@@ -445,7 +445,7 @@ func runKubevirtBootcCreate(name string) error {
 	}
 	size := createDisk
 	if size == "" {
-		size = "50Gi"
+		size = "80Gi"
 	}
 
 	// The bootc build pipeline is an optional plugin (kept out of the lean core

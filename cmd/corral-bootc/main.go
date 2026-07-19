@@ -99,7 +99,7 @@ func main() {
 			}
 			size := disk
 			if size == "" {
-				size = "50Gi"
+				size = "80Gi"
 			}
 
 			build, err := kubevirt.BootcBuildDisk(name, ns, image, key, size, storageClass, "", node, os.Stderr)
