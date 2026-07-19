@@ -77,6 +77,12 @@ One line — detects OS/arch, installs the rolling-release binary to
 curl -fsSL https://raw.githubusercontent.com/tuna-os/corral/main/scripts/install.sh | sh
 ```
 
+…or via Homebrew: `brew install hanthor/tap/corral`
+
+Either way, the one binary you get **is the whole product** — CLI, TUI
+(`corral` bare), and the web dashboard (`corral web`). There is no separate
+web-UI package or frontend to deploy.
+
 <details><summary>…or grab the binary yourself</summary>
 
 Rolling release, rebuilt from `main` on every push — not a CI artifact, so
