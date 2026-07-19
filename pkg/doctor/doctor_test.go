@@ -15,7 +15,9 @@ func withFake(t *testing.T) *shell.Fake {
 	SetRunner(fake)
 	prevKVM := statDevKVM
 	statDevKVM = func() error { return nil }
-	t.Cleanup(func() { SetRunner(shell.Real{}); statDevKVM = prevKVM })
+	prevNested := nestedVirtEnabled
+	nestedVirtEnabled = func() (bool, bool) { return false, false } // absent unless a test opts in
+	t.Cleanup(func() { SetRunner(shell.Real{}); statDevKVM = prevKVM; nestedVirtEnabled = prevNested })
 	return fake
 }
 
@@ -493,6 +495,62 @@ func TestGateDetail(t *testing.T) {
 	for gate, want := range tests {
 		if got := gateDetail(gate); got != want {
 			t.Errorf("gateDetail(%q) = %q, want %q", gate, got, want)
+		}
+	}
+}
+
+func TestRun_NestedVirt_ReportedWhenKnown(t *testing.T) {
+	withFake(t)
+	nestedVirtEnabled = func() (bool, bool) { return true, true }
+
+	c := checkByName(t, Run(), "Nested virtualization")
+	if !c.OK {
+		t.Errorf("nested=1 should pass: %s", c.Detail)
+	}
+}
+
+func TestRun_StorageProfile_CloneAndRWX(t *testing.T) {
+	fake := withFake(t)
+	scriptHealthyCluster(fake)
+	fake.AddResponse("kubectl get sc -o json", `{"items":[{"metadata":{"name":"fast",
+		"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}},"allowVolumeExpansion":true}]}`, nil)
+	fake.AddResponse("kubectl get storageprofile fast -o json", `{"status":{
+		"cloneStrategy":"csi-clone",
+		"claimPropertySets":[{"accessModes":["ReadWriteMany","ReadWriteOnce"]}]}}`, nil)
+
+	checks := Run()
+	if c := checkByName(t, checks, "Fast VM cloning"); !c.OK {
+		t.Errorf("csi-clone should pass: %s", c.Detail)
+	}
+	if c := checkByName(t, checks, "Migratable storage (RWX)"); !c.OK {
+		t.Errorf("RWX should pass: %s", c.Detail)
+	}
+}
+
+func TestRun_StorageProfile_HostAssistedNoRWX_Fails(t *testing.T) {
+	fake := withFake(t)
+	scriptHealthyCluster(fake)
+	fake.AddResponse("kubectl get sc -o json", `{"items":[{"metadata":{"name":"slow",
+		"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}},"allowVolumeExpansion":true}]}`, nil)
+	fake.AddResponse("kubectl get storageprofile slow -o json", `{"status":{
+		"cloneStrategy":"copy","claimPropertySets":[{"accessModes":["ReadWriteOnce"]}]}}`, nil)
+
+	checks := Run()
+	if c := checkByName(t, checks, "Fast VM cloning"); c.OK {
+		t.Error("copy strategy should fail the fast-clone check")
+	}
+	if c := checkByName(t, checks, "Migratable storage (RWX)"); c.OK {
+		t.Error("RWO-only should fail the RWX check")
+	}
+}
+
+func TestRun_StorageProfile_Absent_ChecksHidden(t *testing.T) {
+	fake := withFake(t)
+	scriptHealthyCluster(fake) // no storageprofile response registered
+
+	for _, c := range Run() {
+		if c.Name == "Fast VM cloning" || c.Name == "Migratable storage (RWX)" {
+			t.Errorf("storage-profile checks should be absent without a profile, got %+v", c)
 		}
 	}
 }
