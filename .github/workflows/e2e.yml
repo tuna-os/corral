@@ -108,6 +108,8 @@ jobs:
         if: always()
         run: |
           leftovers=$(kubectl get vm,dv -n corral-vms -o name 2>/dev/null || true)
+          ct_leftovers=$(kubectl get pvc,pod -n corral-vms -l corral.dev/ct=true -o name 2>/dev/null || true)
+          leftovers="$leftovers$ct_leftovers"
           if [ -n "$leftovers" ]; then
             echo "e2e left resources behind:"; echo "$leftovers"; exit 1
           fi

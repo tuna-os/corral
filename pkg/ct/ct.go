@@ -27,6 +27,7 @@ type CreateOpts struct {
 	Disk         string // PVC size, e.g. "5Gi"
 	StorageClass string // "" = cluster default
 	Privileged   bool   // PVE's "Privileged" checkbox
+	Init         bool   // run the image's own entrypoint (curated CT images, e.g. ct-debian's sshd init) instead of sleep
 }
 
 // CT describes a running or stopped Container as reported by ListCTs.
@@ -53,6 +54,7 @@ type ctSpec struct {
 	CPU        int    `json:"cpu"`
 	Mem        string `json:"mem"`
 	Privileged bool   `json:"privileged"`
+	Init       bool   `json:"init,omitempty"`
 }
 
 const (
@@ -148,7 +150,7 @@ func pvcName(name string) string { return name + "-data" }
 // generatePVC builds the CT's persistent data volume, annotated with the
 // spec Start needs to recreate the pod later.
 func generatePVC(opts CreateOpts) (map[string]any, error) {
-	spec := ctSpec{Image: opts.Image, CPU: opts.CPU, Mem: opts.Mem, Privileged: opts.Privileged}
+	spec := ctSpec{Image: opts.Image, CPU: opts.CPU, Mem: opts.Mem, Privileged: opts.Privileged, Init: opts.Init}
 	specJSON, err := json.Marshal(spec)
 	if err != nil {
 		return nil, err
@@ -194,11 +196,35 @@ func generatePod(name, namespace string, spec ctSpec) map[string]any {
 	// Privileged CTs get a persistent, mutable rootfs (distrobox-on-k8s —
 	// see bootstrapScript) instead of the ephemeral-image + /data-only
 	// mount unprivileged CTs use.
+	// Unprivileged default: force sleep so generic images (whose CMD would
+	// exit immediately) stay up. Init opts out for curated CT images whose
+	// entrypoint is a real init (ct-debian: sshd + idle). Privileged always
+	// uses the bootstrap chroot script — that IS its init.
 	command := []string{"sleep", "infinity"}
 	mountPath := dataMountPath
 	if spec.Privileged {
 		command = []string{"/bin/sh", "-c", bootstrapScript()}
 		mountPath = rootfsMountPath
+	} else if spec.Init {
+		command = nil
+	}
+
+	ctr := map[string]any{
+		"name":  "ct",
+		"image": spec.Image,
+		"stdin": true,
+		"tty":   true,
+		"resources": map[string]any{
+			"limits":   map[string]any{"cpu": strconv.Itoa(cpu), "memory": mem},
+			"requests": map[string]any{"cpu": strconv.Itoa(cpu), "memory": mem},
+		},
+		"securityContext": map[string]any{"privileged": spec.Privileged},
+		"volumeMounts": []map[string]any{
+			{"name": "data", "mountPath": mountPath},
+		},
+	}
+	if command != nil {
+		ctr["command"] = command // nil = the image's own entrypoint (Init)
 	}
 
 	return map[string]any{
@@ -211,23 +237,7 @@ func generatePod(name, namespace string, spec ctSpec) map[string]any {
 		},
 		"spec": map[string]any{
 			"restartPolicy": "Always",
-			"containers": []map[string]any{
-				{
-					"name":    "ct",
-					"image":   spec.Image,
-					"command": command,
-					"stdin":   true,
-					"tty":     true,
-					"resources": map[string]any{
-						"limits":   map[string]any{"cpu": strconv.Itoa(cpu), "memory": mem},
-						"requests": map[string]any{"cpu": strconv.Itoa(cpu), "memory": mem},
-					},
-					"securityContext": map[string]any{"privileged": spec.Privileged},
-					"volumeMounts": []map[string]any{
-						{"name": "data", "mountPath": mountPath},
-					},
-				},
-			},
+			"containers":    []map[string]any{ctr},
 			"volumes": []map[string]any{
 				{"name": "data", "persistentVolumeClaim": map[string]any{"claimName": pvcName(name)}},
 			},
@@ -303,7 +313,7 @@ func Create(opts CreateOpts) error {
 	if err := apply(pvc); err != nil {
 		return fmt.Errorf("creating data PVC: %w", err)
 	}
-	spec := ctSpec{Image: opts.Image, CPU: opts.CPU, Mem: opts.Mem, Privileged: opts.Privileged}
+	spec := ctSpec{Image: opts.Image, CPU: opts.CPU, Mem: opts.Mem, Privileged: opts.Privileged, Init: opts.Init}
 	if err := apply(generatePod(opts.Name, opts.Namespace, spec)); err != nil {
 		return fmt.Errorf("creating pod: %w", err)
 	}

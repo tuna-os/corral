@@ -47,6 +47,12 @@ const dvExists = (n) => {
   const all = kubectl(`kubectl get dv -n ${NS} -o name`);
   return all.split('\n').some(line => line.endsWith('/' + n));
 };
+// CTs are pods + a labeled PVC (pkg/ct) — existence means the PVC exists,
+// same as a stopped CT still being a CT.
+const ctExists = (n) => {
+  const all = kubectl(`kubectl get pvc -n ${NS} -l corral.dev/ct-name=${n} -o name`);
+  return all.trim() !== '';
+};
 const vmStatus = (n) => kubectl(`kubectl get vm ${n} -n ${NS} -o jsonpath='{.status.printableStatus}'`).replace(/'/g, '');
 const dvPhase = (n) => kubectl(`kubectl get dv ${n} -n ${NS} -o jsonpath='{.status.phase}'`).replace(/'/g, '');
 const vmiPhase = (n) => kubectl(`kubectl get vmi ${n} -n ${NS} -o jsonpath='{.status.phase}' --ignore-not-found`).replace(/'/g, '');
@@ -96,10 +102,19 @@ let createdDVs = [];
 const trackVM = (n) => { createdVMs.push(n); return n; };
 const trackDV = (n) => { createdDVs.push(n); return n; };
 
-test.beforeEach(() => { createdVMs = []; createdDVs = []; });
+let createdCTs = [];
+const trackCT = (n) => { createdCTs.push(n); return n; };
+
+test.beforeEach(() => { createdVMs = []; createdDVs = []; createdCTs = []; });
 
 test.afterEach(async () => {
   test.setTimeout(180_000);
+  for (const ct of createdCTs) {
+    if (!ct.startsWith('e2e-')) continue;
+    await api(`/api/cts/${NS}/${ct}`, { method: 'DELETE' }).catch(() => {});
+    await waitFor(() => !ctExists(ct), 60_000, 3000, `ct ${ct} gone`);
+    kubectl(`kubectl delete pod ${ct} -n ${NS} --ignore-not-found --wait=false`);
+  }
   for (const vm of createdVMs) {
     if (!vm.startsWith('e2e-')) continue; // safety: only test resources
     // A bootc build interrupted mid-flight leaves its builder job running.
@@ -1176,6 +1191,68 @@ test.describe('Corral web UI', () => {
     // The filter bar appears and narrows the table to the tagged VM.
     await page.click('#content [data-tagfilter="e2e"]');
     await expect(page.locator(`#content tr[data-key="${NS}/${vm}"]`)).toBeVisible();
+  });
+
+  // ── Containers (CT) — #50 first slice ─────────────────────────────
+  // Pet pods need no KVM, so unlike the VM tests this tier is exactly as
+  // real in CI's kind cluster as on a production cluster.
+  test('CT: create, appears in tree, console exec answers, stop, delete', async ({ page }) => {
+    test.setTimeout(300_000);
+    const name = trackCT('e2e-ct-' + uid());
+
+    // Create an unprivileged CT from a stock image (pod + PVC rootfs).
+    const { status } = await api('/api/cts', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, image: 'docker.io/library/debian:bookworm', namespace: NS, cpu: 1, mem: '256Mi', disk: '1Gi' }),
+    });
+    expect(status, 'CT create').toBe(201);
+    expect(await waitFor(() => ctExists(name), 60_000, 3000, `ct ${name} pvc`)).toBe(true);
+
+    // Ready = pod Running with ready containers (image pull included).
+    const ctReady = async () => {
+      const { body } = await api('/api/cts');
+      return (body || []).some((c) => c.name === name && c.ready);
+    };
+    expect(await waitFor(ctReady, 180_000, 5000, `ct ${name} ready`)).toBe(true);
+
+    // It shows in the datacenter tree alongside VMs.
+    await page.goto(CORRAL_URL);
+    await expect(page.locator(`#tree >> text=${name}`)).toBeVisible({ timeout: 30_000 });
+
+    // Console: drive the real /api/tty websocket bridge (kubectl exec under
+    // the hood) from the browser context and expect a command round-trip.
+    const echoed = await page.evaluate(async ({ ns, ct }) => {
+      return await new Promise((resolve) => {
+        const ws = new WebSocket(`ws://${location.host}/api/tty/${ns}/${ct}`);
+        ws.binaryType = 'arraybuffer';
+        let out = '';
+        const marker = 'corral-ct-e2e-' + Date.now();
+        ws.onopen = () => setTimeout(() => ws.send(`echo ${marker}\n`), 1500);
+        ws.onmessage = (ev) => {
+          out += typeof ev.data === 'string' ? ev.data : new TextDecoder().decode(ev.data);
+          // The marker appears once as the echo of our keystrokes and once
+          // as command output — require the output occurrence (line start).
+          if (out.split(marker).length > 2) { ws.close(); resolve(true); }
+        };
+        ws.onerror = () => resolve(false);
+        setTimeout(() => resolve(false), 60_000);
+      });
+    }, { ns: NS, ct: name });
+    expect(echoed, 'console exec round-trip over /api/tty').toBe(true);
+
+    // Stop → phase Stopped (PVC survives); the tree keeps the CT.
+    const stop = await api(`/api/cts/${NS}/${name}/stop`, { method: 'POST' });
+    expect(stop.status).toBe(200);
+    const ctStopped = async () => {
+      const { body } = await api('/api/cts');
+      return (body || []).some((c) => c.name === name && c.phase === 'Stopped');
+    };
+    expect(await waitFor(ctStopped, 120_000, 5000, `ct ${name} stopped`)).toBe(true);
+    expect(ctExists(name), 'PVC survives stop').toBe(true);
+
+    // Delete removes pod + PVC (afterEach verifies it's really gone).
+    const del = await api(`/api/cts/${NS}/${name}`, { method: 'DELETE' });
+    expect(del.status).toBe(200);
   });
 
 });

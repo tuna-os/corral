@@ -1,0 +1,19 @@
+# ct-debian — corral's curated Container (CT) base image (#50):
+# Debian with sshd and a tiny init, so a CT created from it is SSH-able
+# through the port-proxy out of the box. Published by
+# .github/workflows/ct-images.yml as ghcr.io/tuna-os/ct-debian.
+#
+# Use with the image's own init (instead of corral's default sleep):
+#   corral ct create devbox --image ghcr.io/tuna-os/ct-debian:latest --init
+FROM docker.io/library/debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      openssh-server ca-certificates curl procps iproute2 vim-tiny \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /run/sshd
+
+COPY ct-init /usr/local/bin/ct-init
+RUN chmod +x /usr/local/bin/ct-init
+
+EXPOSE 22
+ENTRYPOINT ["/usr/local/bin/ct-init"]

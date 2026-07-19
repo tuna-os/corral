@@ -19,6 +19,7 @@ var (
 	ctDisk         string
 	ctStorageClass string
 	ctPrivileged   bool
+	ctInit         bool
 	ctDevcontainer string
 	ctReadyTimeout time.Duration
 )
@@ -57,7 +58,8 @@ still override anything --devcontainer would otherwise set.`,
 	Example: `  corral ct create tools --image fedora:40
   corral ct create devbox --image debian:12 --privileged --cpu 2 --mem 2Gi --disk 10Gi
   corral ct create web --image nginx:alpine --ports 80,8080   # published on the tailnet Service
-  corral ct create myproj --devcontainer ./myproj`,
+  corral ct create myproj --devcontainer ./myproj
+  corral ct create shell --image ghcr.io/tuna-os/ct-debian:latest --init   # curated image: sshd via its own init`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
@@ -102,6 +104,7 @@ still override anything --devcontainer would otherwise set.`,
 			Name: name, Namespace: ns, Image: image,
 			CPU: ctCPU, Mem: ctMem, Disk: ctDisk,
 			StorageClass: ctStorageClass, Privileged: privileged,
+			Init: ctInit,
 		}); err != nil {
 			return err
 		}
@@ -233,5 +236,6 @@ func init() {
 	ctCreateCmd.Flags().BoolVar(&ctPrivileged, "privileged", false, "Persistent full rootfs (distrobox-style) — needs a real OS image")
 	ctCreateCmd.Flags().StringVar(&ctDevcontainer, "devcontainer", "", "Path to a devcontainer.json, or a directory containing one")
 	ctCreateCmd.Flags().IntSliceVar(&ctPorts, "ports", nil, "Extra ports to publish on the CT's tailnet Service, e.g. --ports 8080,3000")
+	ctCreateCmd.Flags().BoolVar(&ctInit, "init", false, "Run the image's own entrypoint instead of corral's sleep — for curated CT images (ghcr.io/tuna-os/ct-debian) whose init starts sshd")
 	ctCreateCmd.Flags().DurationVar(&ctReadyTimeout, "devcontainer-ready-timeout", 2*time.Minute, "How long to wait for the CT before running postCreateCommand")
 }

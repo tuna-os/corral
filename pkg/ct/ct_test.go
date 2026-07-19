@@ -309,3 +309,26 @@ func TestExists(t *testing.T) {
 type fakeErr struct{ msg string }
 
 func (e *fakeErr) Error() string { return e.msg }
+
+func TestGeneratePod_InitUsesImageEntrypoint(t *testing.T) {
+	// Default unprivileged: command forced to sleep (generic images exit).
+	pod := generatePod("a", "ns", ctSpec{Image: "debian:12"})
+	ctr := pod["spec"].(map[string]any)["containers"].([]map[string]any)[0]
+	if _, ok := ctr["command"]; !ok {
+		t.Error("default unprivileged CT should force a sleep command")
+	}
+
+	// Init: no command override — the curated image's entrypoint is PID 1.
+	pod = generatePod("b", "ns", ctSpec{Image: "ghcr.io/tuna-os/ct-debian:latest", Init: true})
+	ctr = pod["spec"].(map[string]any)["containers"].([]map[string]any)[0]
+	if _, ok := ctr["command"]; ok {
+		t.Errorf("Init CT should use the image entrypoint, got command %v", ctr["command"])
+	}
+
+	// Privileged ignores Init — the bootstrap chroot script is its init.
+	pod = generatePod("c", "ns", ctSpec{Image: "debian:12", Privileged: true, Init: true})
+	ctr = pod["spec"].(map[string]any)["containers"].([]map[string]any)[0]
+	if cmd, ok := ctr["command"].([]string); !ok || len(cmd) == 0 || cmd[0] != "/bin/sh" {
+		t.Errorf("privileged CT must keep the bootstrap command, got %v", ctr["command"])
+	}
+}

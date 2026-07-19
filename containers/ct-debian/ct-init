@@ -1,0 +1,25 @@
+#!/bin/sh
+# ct-init — PID 1 for corral CT images: bring up sshd, then idle.
+#
+# Host keys live under /data/ssh when the CT's persistent volume is mounted
+# (unprivileged CTs persist only /data), so the CT keeps its SSH identity
+# across stop/start; falls back to ephemeral keys otherwise.
+set -u
+
+SSHD_OPTS=""
+if [ -d /data ]; then
+  mkdir -p /data/ssh
+  chmod 700 /data/ssh
+  for t in rsa ed25519; do
+    [ -f "/data/ssh/ssh_host_${t}_key" ] || ssh-keygen -q -t "$t" -f "/data/ssh/ssh_host_${t}_key" -N ''
+    SSHD_OPTS="$SSHD_OPTS -h /data/ssh/ssh_host_${t}_key"
+  done
+else
+  ssh-keygen -A
+fi
+
+mkdir -p /run/sshd
+# shellcheck disable=SC2086 — SSHD_OPTS is a flag list on purpose
+/usr/sbin/sshd $SSHD_OPTS
+
+exec sleep infinity
