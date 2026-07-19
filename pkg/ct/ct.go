@@ -107,7 +107,7 @@ func rootfsExecCommand() []string {
 
 var (
 	runnerMu sync.RWMutex
-	runner   shell.Runner = shell.Real{}
+	runner   shell.Runner = shell.DefaultKubectl
 )
 
 // SetRunner overrides the command runner (for unit tests). Guarded by a

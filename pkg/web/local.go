@@ -7,11 +7,23 @@ package web
 
 import (
 	"fmt"
+	"net"
 	"net/http"
+	"time"
 
 	"github.com/tuna-os/corral/pkg/qemu"
 	"github.com/tuna-os/corral/pkg/types"
 )
+
+// dialLocalVNC connects to a local VM's QEMU VNC listener for the browser
+// console bridge (#91 Phase 2).
+func dialLocalVNC(name string) (net.Conn, error) {
+	addr, err := qemu.VNCAddr(name)
+	if err != nil {
+		return nil, err
+	}
+	return net.DialTimeout("tcp", addr, 5*time.Second)
+}
 
 const localNS = "local"
 

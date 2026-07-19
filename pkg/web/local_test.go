@@ -6,11 +6,16 @@ package web
 
 import (
 	"encoding/json"
+	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"golang.org/x/net/websocket"
 )
 
 func fakeLocalVM(t *testing.T, name string) {
@@ -110,5 +115,57 @@ func TestLocalVMs_ClusterOnlyActionsRejected(t *testing.T) {
 		if !strings.Contains(body["error"], "not supported") {
 			t.Errorf("%s error should say not supported: %q", action, body["error"])
 		}
+	}
+}
+
+func TestLocalVNCBridge_DialsLocalPort(t *testing.T) {
+	// Real TCP listener plays the QEMU VNC server; metadata points at it.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	port := ln.Addr().(*net.TCPAddr).Port
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := filepath.Join(home, ".local", "share", "corral", "vms", "laptopvm")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	meta := fmt.Sprintf(`{"name":"laptopvm","cpu":1,"memory":"1G","vnc_port":%d,"tailscale_ip":"127.0.0.1"}`, port)
+	if err := os.WriteFile(filepath.Join(dir, "metadata.json"), []byte(meta), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := make(chan string, 1)
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		buf := make([]byte, 64)
+		n, _ := c.Read(buf)
+		got <- string(buf[:n])
+	}()
+
+	fx := NewTestFixture()
+	defer fx.Close()
+	ws, err := websocket.Dial(wsURL(fx.Server.URL)+"/api/vnc/local/laptopvm", "", "http://localhost")
+	if err != nil {
+		t.Fatalf("ws dial: %v", err)
+	}
+	defer ws.Close()
+	if _, err := ws.Write([]byte("rfb-hello")); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case s := <-got:
+		if s != "rfb-hello" {
+			t.Errorf("VNC listener got %q, want rfb-hello", s)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("bytes never reached the local VNC listener")
 	}
 }
