@@ -50,11 +50,15 @@ func vmToItem(vm types.VM) vmItem {
 	} else if vm.VNC == "pending" {
 		proxy = "◐"
 	}
-	return vmItem{
-		vm: vm,
-		display: fmt.Sprintf("%s  %s  ports:%s  %d CPU / %s",
-			vm.Status, vm.Backend, proxy, vm.CPU, vm.Mem),
+	display := fmt.Sprintf("%s  %s  ports:%s  %d CPU / %s",
+		vm.Status, vm.Backend, proxy, vm.CPU, vm.Mem)
+	if vm.Node != "" && vm.Node != "—" {
+		display += "  " + vm.Node
 	}
+	if vm.IP != "" {
+		display += "  " + vm.IP
+	}
+	return vmItem{vm: vm, display: display}
 }
 
 // ── CT item for the list ────────────────────────────────────────────
@@ -115,6 +119,41 @@ var actionsListItems = []actionItem{
 	{id: "delete", label: "Delete"},
 }
 
+// actionApplies reports whether an action is a valid transition from the
+// VM's current power state — the menu only offers what can actually happen
+// (Proxmox-style), instead of a fixed list where "Start" leads on a VM
+// that's already running.
+func actionApplies(id string, vm types.VM) bool {
+	paused := strings.Contains(vm.Status, "Paused")
+	switch id {
+	case "start":
+		return !vm.Running
+	case "stop", "restart":
+		return vm.Running
+	case "pause":
+		return vm.Running && !paused
+	case "unpause":
+		return paused
+	case "migrate":
+		return vm.Backend == "kubevirt" && vm.Running && !paused
+	case "ssh", "viewer":
+		return vm.Running && !paused
+	default:
+		return true
+	}
+}
+
+func ctActionApplies(id string, c ct.CT) bool {
+	switch id {
+	case "start":
+		return c.Phase != "Running"
+	case "stop", "console":
+		return c.Phase == "Running"
+	default:
+		return true
+	}
+}
+
 // CT actions are a small, distinct set — no migrate/snapshot/hardware-edit/
 // ports/clone, since those are VM (hypervisor) concepts a plain pod doesn't
 // have. "Console" replaces "SSH": a CT is reached by kubectl exec, not a
@@ -166,7 +205,7 @@ func newTUIModel() tuiModel {
 	}
 
 	l := list.New(items, vmItemDelegate{}, 0, 0)
-	l.Title = "Corral  ·  d: cluster health"
+	l.Title = tuiListTitle(items)
 	l.SetShowStatusBar(false)
 	l.SetFilteringEnabled(false)
 	l.Styles.Title = tuiTitle
@@ -192,12 +231,24 @@ func (m *tuiModel) newActionsList() list.Model {
 		title = fmt.Sprintf("%s (%s)", m.selected.Name, b)
 	}
 
-	listItems := make([]list.Item, len(source))
-	for i, a := range source {
-		listItems[i] = a
+	listItems := make([]list.Item, 0, len(source))
+	for _, a := range source {
+		if m.isCT && m.selectedCT.Name != "" && !ctActionApplies(a.id, m.selectedCT) {
+			continue
+		}
+		if !m.isCT && m.selected.Name != "" && !actionApplies(a.id, m.selected) {
+			continue
+		}
+		listItems = append(listItems, a)
 	}
 
-	l := list.New(listItems, actionItemDelegate{}, 30, len(listItems)*2+2)
+	// Height: 2 rows per item + title/padding, capped to the window so every
+	// action (Delete included) is visible without paginating.
+	h := len(listItems)*2 + 4
+	if m.height > 2 && h > m.height-2 {
+		h = m.height - 2
+	}
+	l := list.New(listItems, actionItemDelegate{}, 30, h)
 	l.Title = title
 	l.SetShowStatusBar(false)
 	l.SetFilteringEnabled(false)
@@ -217,6 +268,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.list.SetSize(msg.Width, msg.Height-2)
+		m.actionsList.SetSize(msg.Width, msg.Height-2)
 		return m, nil
 
 	case tea.KeyMsg:
@@ -547,6 +599,24 @@ func (m *tuiModel) refreshList() {
 		items = append(items, ctToItem(c))
 	}
 	m.list.SetItems(items)
+	m.list.Title = tuiListTitle(items)
+}
+
+// tuiListTitle summarizes the fleet in the header: "Corral · 8 VMs · 2 CTs".
+func tuiListTitle(items []list.Item) string {
+	nVM, nCT := 0, 0
+	for _, it := range items {
+		if _, ok := it.(ctItem); ok {
+			nCT++
+		} else {
+			nVM++
+		}
+	}
+	t := fmt.Sprintf("Corral  ·  %d VMs", nVM)
+	if nCT > 0 {
+		t += fmt.Sprintf("  ·  %d CTs", nCT)
+	}
+	return t + "  ·  d: cluster health"
 }
 
 func (m tuiModel) View() string {
@@ -931,7 +1001,12 @@ func (d vmItemDelegate) Height() int                               { return 2 }
 func (d vmItemDelegate) Spacing() int                              { return 0 }
 func (d vmItemDelegate) Update(msg tea.Msg, m *list.Model) tea.Cmd { return nil }
 func (d vmItemDelegate) Render(w io.Writer, m list.Model, index int, li list.Item) {
-	i, ok := li.(vmItem)
+	// The list mixes vmItem and ctItem (both satisfy list.Item) — render via
+	// the shared shape, or CTs silently occupy invisible rows.
+	i, ok := li.(interface {
+		Title() string
+		Description() string
+	})
 	if !ok {
 		return
 	}

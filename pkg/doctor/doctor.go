@@ -7,6 +7,7 @@ package doctor
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/tuna-os/corral/pkg/shell"
@@ -35,8 +36,71 @@ func ok(name string, args ...string) bool {
 	return err == nil
 }
 
-// Run executes all checks.
+// Run executes all checks. A machine with no reachable cluster is a valid,
+// healthy Corral setup (local QEMU backend) — in that case the dozen KubeVirt
+// checks collapse into one explanatory row instead of a wall of failures,
+// and the local checks still run.
 func Run() []Check {
+	local := localChecks()
+	if !ok("kubectl", "get", "--raw", "/livez", "--request-timeout=3s") {
+		return append([]Check{{
+			Name: "Cluster reachable",
+			OK:   false,
+			Detail: "no Kubernetes cluster answered (set KUBECONFIG or ~/.kube/config) — " +
+				"cluster checks skipped; the local QEMU backend works without one",
+		}}, local...)
+	}
+	return append(clusterChecks(), local...)
+}
+
+// localChecks covers the QEMU backend and client-side tooling — everything
+// that matters on this machine regardless of any cluster.
+func localChecks() []Check {
+	var checks []Check
+
+	_, qemuErr := runner.LookPath("qemu-system-x86_64")
+	checks = append(checks, Check{
+		Name:   "QEMU (local backend)",
+		OK:     qemuErr == nil,
+		Detail: detailIf(qemuErr == nil, "qemu-system-x86_64 found", "not installed — needed only for local VMs (dnf/apt install qemu-system-x86)"),
+	})
+
+	kvm := statDevKVM()
+	checks = append(checks, Check{
+		Name:   "KVM acceleration",
+		OK:     kvm == nil,
+		Detail: detailIf(kvm == nil, "/dev/kvm accessible", "no /dev/kvm access — local VMs fall back to slow emulation (add your user to the kvm group, or enable virtualization in BIOS)"),
+	})
+
+	_, tsErr := runner.LookPath("tailscale")
+	checks = append(checks, Check{
+		Name:   "Tailscale CLI",
+		OK:     tsErr == nil,
+		Detail: detailIf(tsErr == nil, "found — VMs can join the tailnet", "not installed (optional) — VMs won't auto-join the tailnet"),
+	})
+
+	_, vcErr := runner.LookPath("virtctl")
+	checks = append(checks, Check{
+		Name:   "virtctl CLI",
+		OK:     vcErr == nil,
+		Detail: detailIf(vcErr == nil, "found — needed for KubeVirt consoles/SSH", "not installed — needed only for the KubeVirt backend (brew install kubevirt-cli)"),
+	})
+
+	return checks
+}
+
+// statDevKVM is a seam for tests; returns nil when /dev/kvm is usable.
+var statDevKVM = func() error {
+	f, err := os.OpenFile("/dev/kvm", os.O_RDWR, 0)
+	if err != nil {
+		return err
+	}
+	f.Close()
+	return nil
+}
+
+// clusterChecks runs the KubeVirt-backend diagnostics (requires a cluster).
+func clusterChecks() []Check {
 	var checks []Check
 
 	kvInstalled := ok("kubectl", "get", "kubevirt", "-n", "kubevirt")

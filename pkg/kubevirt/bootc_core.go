@@ -26,7 +26,7 @@ type BootcBuildResult struct {
 
 // Registered by bootc.go when the `bootc` build tag is set; nil otherwise.
 var (
-	bootcBuildFunc   func(name, namespace, imageURI, sshPublicKey, diskSize, storageClass, provisionScript string, progress io.Writer) (*BootcBuildResult, error)
+	bootcBuildFunc   func(name, namespace, imageURI, sshPublicKey, diskSize, storageClass, provisionScript, node string, progress io.Writer) (*BootcBuildResult, error)
 	bootcVMFunc      func(name, namespace, pvcName, imageURI, sshKey, mem string, cpu int, node string) map[string]any
 	bootcRebuildFunc func(name, namespace, imageURI, sshPublicKey, diskSize string, progress io.Writer) error
 	bootcResumeFunc  func(name, namespace string) (imageURI, pvcName string, ready, failed bool)
@@ -49,12 +49,14 @@ func BootcImageOf(name, namespace string) string {
 }
 
 // BootcBuildDisk runs the on-cluster bootc disk build. storageClass "" uses
-// PreferredStorageClass(). Errors if the plugin isn't compiled in.
-func BootcBuildDisk(name, namespace, imageURI, sshPublicKey, diskSize, storageClass, provisionScript string, progress io.Writer) (*BootcBuildResult, error) {
+// PreferredStorageClass(). node "" lets the scheduler place the builder; a
+// non-empty node pins it (so it co-locates with a node-bound local-path disk
+// and the final VM can mount it). Errors if the plugin isn't compiled in.
+func BootcBuildDisk(name, namespace, imageURI, sshPublicKey, diskSize, storageClass, provisionScript, node string, progress io.Writer) (*BootcBuildResult, error) {
 	if bootcBuildFunc == nil {
 		return nil, errBootcUnavailable()
 	}
-	return bootcBuildFunc(name, namespace, imageURI, sshPublicKey, diskSize, storageClass, provisionScript, progress)
+	return bootcBuildFunc(name, namespace, imageURI, sshPublicKey, diskSize, storageClass, provisionScript, node, progress)
 }
 
 // GenerateBootcVM builds the final VM manifest that UEFI-boots a bootc-built

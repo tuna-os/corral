@@ -16,6 +16,19 @@
 
 * { box-sizing: border-box; }
 
+/* Scrollbars — theme them everywhere; the browser defaults render as chunky
+   light bars against the dark panels. */
+* { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background-color: var(--muted); }
+
 html { height: 100%; }
 body {
   margin: 0;
@@ -146,6 +159,7 @@ body.read-only .toolbar { display: none !important; }
   padding: 8px 14px;
   font-size: .88rem;
   cursor: pointer;
+  white-space: nowrap;
 }
 .btn.sm { padding: 4px 9px; font-size: .8rem; }
 .btn.sm .icon { width: 14px; height: 14px; }
@@ -397,6 +411,9 @@ dialog {
   width: min(480px, 92vw);
 }
 dialog::backdrop { background: rgba(0,0,0,.6); }
+/* The create wizard shows a card grid — give it room on desktop (the base
+   480px fits only two cramped columns). */
+#create-dialog { width: min(720px, 94vw); }
 dialog h2 { margin: 0 0 14px; font-size: 1.1rem; }
 dialog label { display: block; margin-bottom: 10px; font-size: .85rem; color: var(--muted); }
 dialog input, dialog select, dialog textarea {
@@ -409,6 +426,15 @@ dialog input, dialog select, dialog textarea {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   font-size: .9rem;
+}
+/* Checkboxes are labelled inline — the block/full-width rule above would
+   orphan the box centered on its own line. */
+dialog input[type="checkbox"] {
+  display: inline-block;
+  width: auto;
+  margin: 0 6px 0 0;
+  vertical-align: -2px;
+  accent-color: var(--accent);
 }
 dialog .row { display: flex; gap: 10px; }
 dialog .row label { flex: 1; }
@@ -489,10 +515,43 @@ tr.ev-warn td { color: var(--yellow); }
 .ext-actions { display: flex; gap: 8px; align-items: center; }
 .ext-actions a.btn { text-decoration: none; }
 
+/* ── Offline / empty state (no cluster reachable) ───────── */
+.empty-state {
+  max-width: 560px;
+  margin: 8vh auto 0;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 26px 30px;
+}
+.empty-state .empty-icon { font-size: 2rem; margin-bottom: 6px; }
+.empty-state h1 { font-size: 1.3rem; margin: 0 0 10px; }
+.empty-state p, .empty-state li { font-size: .92rem; line-height: 1.55; }
+.empty-state ul { padding-left: 20px; margin: 8px 0 16px; }
+.empty-state li { margin-bottom: 6px; }
+.empty-state code {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: .85em;
+}
+
 /* ── Mobile ─────────────────────────────────────────────── */
 @media (max-width: 760px) {
   .icon-btn { display: block; }
   .brand span { display: none; }
+  /* Header: keep the create buttons on one line and finger-sized. */
+  header { padding: 8px 10px; gap: 8px; }
+  header .btn { padding: 8px 10px; font-size: .82rem; }
+  /* Touch targets — comfortable tap heights for rows, tabs, buttons. */
+  .btn { min-height: 40px; }
+  .btn.sm { min-height: 34px; }
+  .tree-item { padding: 11px 10px; }
+  .tab { padding: 11px 16px; }
+  /* Wide tables scroll sideways instead of crushing/clipping columns. */
+  main table { display: block; overflow-x: auto; }
+  main th, main td { white-space: nowrap; }
   #tree {
     position: fixed;
     top: 49px;

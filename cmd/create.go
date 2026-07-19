@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/tuna-os/corral/pkg/catalog"
 	"github.com/tuna-os/corral/pkg/kubevirt"
+	"github.com/tuna-os/corral/pkg/plugin"
 	"github.com/tuna-os/corral/pkg/qemu"
 	"github.com/tuna-os/corral/pkg/types"
 )
@@ -48,6 +49,7 @@ var (
 	createLAN               bool
 	createNetworkNAD        string
 	createBridgeIface       string
+	createLANService        bool
 )
 
 // limaFile is the Lima YAML format — corral reads Lima files natively.
@@ -211,11 +213,16 @@ KubeVirt examples:
 
 By default a KubeVirt VM only gets a NATed pod-network interface — it can
 reach the internet but not LAN-only devices (a smartwatch, a NAS, a router
-admin panel). --lan bridges a second NIC onto the cluster's Multus
-NetworkAttachmentDefinition so the VM gets a real LAN IP (needs Multus and
-a bridge NAD set up on the cluster first — see docs/lan-networking.md):
-  corral create myvm --kubevirt --image fedora --lan
-  corral create myvm --kubevirt --image fedora --network-nad default/lan-bridge
+admin panel). Two ways to fix that (see docs/kubevirt-proxmox-setup.md
+§6 for cluster-side setup):
+  --lan bridges a second NIC onto a Multus NetworkAttachmentDefinition —
+    a real secondary interface, needs Multus installed:
+      corral create myvm --kubevirt --image fedora --lan
+      corral create myvm --kubevirt --image fedora --network-nad default/lan-bridge
+  --lan-service exposes via a LoadBalancer Service instead — no Multus, no
+    new interface; needs a controller that fulfills LoadBalancer Services
+    (Cilium's own L2 Announcement/BGP, or MetalLB):
+      corral create myvm --kubevirt --image fedora --lan-service
 
 Boot a container image as a VM? Install the bootc extension:
   corral plugin install bootc && corral bootc create myvm --image quay.io/centos-bootc/centos-bootc:stream9`,
@@ -223,7 +230,8 @@ Boot a container image as a VM? Install the bootc extension:
   corral create myvm --iso ./install.iso --disk 40G
   corral create scratch --kubevirt --image bluefin --ephemeral --ttl 2h
   corral create gate --bootc ghcr.io/tuna-os/yellowfin:gnome --wait-ssh --timeout 900
-  corral create builder --kubevirt --image fedora --lan   # direct LAN access, e.g. a Multus bridge NAD`,
+  corral create builder --kubevirt --image fedora --lan   # direct LAN access via a Multus bridge NAD
+  corral create builder --kubevirt --image fedora --lan-service   # LAN access via LoadBalancer Service (Cilium/MetalLB)`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
@@ -245,7 +253,14 @@ Boot a container image as a VM? Install the bootc extension:
 		}
 
 		if createBootc != "" {
-			if createKubevirt {
+			// Backend auto-selection: honor an explicit --kubevirt/-k, otherwise
+			// use KubeVirt when a cluster is reachable and fall back to local
+			// QEMU. One command, right backend, no flag juggling.
+			useKubevirt := createKubevirt
+			if !cmd.Flags().Changed("kubevirt") {
+				useKubevirt = kubevirt.Reachable()
+			}
+			if useKubevirt {
 				return runKubevirtBootcCreate(name)
 			}
 			if err := runLocalBootcCreate(name); err != nil {
@@ -286,15 +301,16 @@ func init() {
 	createCmd.Flags().StringVarP(&createFile, "file", "f", "", "Lima YAML file (corral reads Lima format natively)")
 	createCmd.Flags().StringVarP(&createStorageClass, "storage-class", "s", "", "[kubevirt] StorageClass for new disks (default: cluster preference)")
 	createCmd.Flags().StringVar(&createBootc, "bootc", "", "Bootc container image to run")
-	createCmd.Flags().BoolVar(&createStart, "start", false, "[qemu] Start the VM after creating it")
-	createCmd.Flags().BoolVar(&createWaitSSH, "wait-ssh", false, "[qemu] Start the VM and block until SSH answers; nonzero exit on timeout (CI gate)")
-	createCmd.Flags().IntVar(&createTimeout, "timeout", 600, "[qemu] Seconds to wait for SSH with --wait-ssh")
-	createCmd.Flags().StringVar(&createSSHUser, "ssh-user", "root", "[qemu] User for the --wait-ssh probe (bootc injects the key for root)")
+	createCmd.Flags().BoolVar(&createStart, "start", false, "Start the VM after creating it")
+	createCmd.Flags().BoolVar(&createWaitSSH, "wait-ssh", false, "Start the VM and block until SSH answers; nonzero exit on timeout (CI boot gate; works on QEMU and KubeVirt bootc VMs)")
+	createCmd.Flags().IntVar(&createTimeout, "timeout", 600, "Seconds to wait for SSH with --wait-ssh")
+	createCmd.Flags().StringVar(&createSSHUser, "ssh-user", "root", "User for the --wait-ssh probe (bootc injects the key for root)")
 	createCmd.Flags().BoolVar(&createEphemeral, "ephemeral", false, "[kubevirt] Mark for `corral gc`: stopped (PVCs kept) once --ttl expires, deleted after a grace period")
 	createCmd.Flags().StringVar(&createTTL, "ttl", "", "[kubevirt] Lifetime before `corral gc` stops this VM, e.g. \"4h\" (default 4h; requires --ephemeral)")
 	createCmd.Flags().BoolVar(&createLAN, "lan", false, "[kubevirt] Bridge a secondary NIC onto the LAN (needs a Multus NetworkAttachmentDefinition)")
 	createCmd.Flags().StringVar(&createNetworkNAD, "network-nad", "", "[kubevirt] NetworkAttachmentDefinition to bridge onto (\"ns/name\"); implies --lan")
 	createCmd.Flags().StringVar(&createBridgeIface, "bridge-iface", "", "[kubevirt] Guest interface name for the LAN bridge (default: net1)")
+	createCmd.Flags().BoolVar(&createLANService, "lan-service", false, "[kubevirt] Expose via a LoadBalancer Service instead of a secondary NIC (no Multus needed — works with Cilium L2/BGP or MetalLB)")
 }
 
 func runKubevirtCreate(name string) error {
@@ -355,6 +371,13 @@ func runKubevirtCreate(name string) error {
 	if createLAN || createNetworkNAD != "" {
 		if err := attachLANBridge(ns, name); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: %v\n", err)
+		}
+	}
+	if createLANService {
+		if err := kubevirt.ApplyLANService(name, ns, []int{22}); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: LAN service not created: %v\n", err)
+		} else {
+			fmt.Fprintf(os.Stderr, "  LAN:    corral lanservice %s   # check the assigned external IP\n", name)
 		}
 	}
 
@@ -422,9 +445,45 @@ func runKubevirtBootcCreate(name string) error {
 	}
 	size := createDisk
 	if size == "" {
-		size = "50Gi"
+		size = "80Gi"
 	}
-	build, err := kubevirt.BootcBuildDisk(name, ns, createBootc, sshKey, size, createStorageClass, createProvisionScript, os.Stderr)
+
+	// The bootc build pipeline is an optional plugin (kept out of the lean core
+	// binary — see pkg/kubevirt/bootc_core.go). When it isn't compiled in,
+	// delegate the build+VM creation to the `corral-bootc` plugin so
+	// `corral create --bootc ... --wait-ssh` still works as one command. The
+	// plugin creates the VM stopped; we then handle --start/--wait-ssh below.
+	if !kubevirt.BootcAvailable() {
+		if !plugin.IsInstalled("bootc") {
+			return fmt.Errorf("bootc build needs the bootc plugin: corral plugin install bootc")
+		}
+		args := []string{"create", name, "--image", createBootc, "-n", ns}
+		if size != "" {
+			args = append(args, "--disk", size)
+		}
+		if createStorageClass != "" {
+			args = append(args, "--storage-class", createStorageClass)
+		}
+		if createNode != "" {
+			args = append(args, "--node", createNode)
+		}
+		if err := plugin.Dispatch("bootc", args); err != nil {
+			return err
+		}
+		if registryStore != nil {
+			registryStore.Set(name, types.RegistryEntry{Backend: "kubevirt", Namespace: ns})
+		}
+		if createWaitSSH {
+			fmt.Fprintf(os.Stderr, "  Waiting for SSH (timeout %ds)...\n", createTimeout)
+			return kubevirt.NewClient(ns).WaitSSH(name, createSSHUser, "", time.Duration(createTimeout)*time.Second)
+		}
+		if createStart {
+			return kubevirt.NewClient(ns).StartVM(name)
+		}
+		return nil
+	}
+
+	build, err := kubevirt.BootcBuildDisk(name, ns, createBootc, sshKey, size, createStorageClass, createProvisionScript, createNode, os.Stderr)
 	if err != nil {
 		return err
 	}
@@ -441,6 +500,17 @@ func runKubevirtBootcCreate(name string) error {
 	fmt.Fprintf(os.Stderr, "VM %q created in ns/%s\n", name, ns)
 	fmt.Fprintf(os.Stderr, "  Start:  corral start %s\n", name)
 	fmt.Fprintf(os.Stderr, "  SSH:    corral ssh %s\n", name)
+
+	// --wait-ssh turns create into a boot gate on KubeVirt too: start the VM
+	// and block until root SSH answers, so the same command works on both
+	// backends. --start (without --wait-ssh) just brings it up.
+	if createWaitSSH {
+		fmt.Fprintf(os.Stderr, "  Waiting for SSH (timeout %ds)...\n", createTimeout)
+		return kubevirt.NewClient(ns).WaitSSH(name, createSSHUser, "", time.Duration(createTimeout)*time.Second)
+	}
+	if createStart {
+		return kubevirt.NewClient(ns).StartVM(name)
+	}
 	return nil
 }
 

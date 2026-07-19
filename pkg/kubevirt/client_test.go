@@ -211,6 +211,31 @@ func TestGenerateProxyService(t *testing.T) {
 	}
 }
 
+func TestGenerateLANService(t *testing.T) {
+	svc := GenerateLANService("bluefin", "default", []int{22})
+
+	meta := svc["metadata"].(map[string]any)
+	if meta["name"] != "bluefin-lan" {
+		t.Errorf("wrong name: %v", meta["name"])
+	}
+	spec := svc["spec"].(map[string]any)
+	if spec["type"] != "LoadBalancer" {
+		t.Errorf("expected type LoadBalancer, got %v", spec["type"])
+	}
+	sel := spec["selector"].(map[string]string)
+	if sel["app"] != "corral-proxy" || sel["vm"] != "bluefin" {
+		t.Errorf("expected the same selector as the proxy Deployment, got %v", sel)
+	}
+	if _, hasAnnotations := meta["annotations"]; hasAnnotations {
+		t.Error("GenerateLANService should carry no vendor-specific annotations")
+	}
+
+	// Verify it's valid JSON (can be serialized)
+	if _, err := json.Marshal(svc); err != nil {
+		t.Errorf("failed to marshal: %v", err)
+	}
+}
+
 func TestGenerateProxyDeployment(t *testing.T) {
 	deploy := GenerateProxyDeployment("bluefin", "default", []int{22, 5900})
 

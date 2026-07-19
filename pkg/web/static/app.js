@@ -1,5 +1,5 @@
 // Corral web UI — Proxmox-style dashboard for KubeVirt.
-// Vanilla JS; noVNC + xterm.js loaded from CDN for the consoles.
+// Vanilla JS; noVNC + xterm.js vendored under static/vendor/ (offline-safe).
 
 import { icon } from './icons.js';
 
@@ -84,14 +84,52 @@ function bindTags(vm) {
 // the data (or what's selected) actually changed — otherwise innerHTML
 // replacement would reset scroll position and text selection on every tick.
 let lastRenderFp = '';
+// Whether the offline empty state is showing — rendered once, not on every
+// failed 5s poll, so it doesn't clobber pages that work offline (Extensions).
+let offlineShown = false;
+
+// First-load failure page: no cluster reachable. The dashboard drives the
+// KubeVirt backend, so tell the user how to connect one instead of showing
+// a blank screen.
+function renderOffline(msg) {
+  $('#content').innerHTML = `
+    <div class="empty-state">
+      <div class="empty-icon">🤠</div>
+      <h1>No cluster connected</h1>
+      <p class="muted">Corral couldn't reach a Kubernetes cluster:
+        <code>${esc(msg)}</code></p>
+      <p>This dashboard drives the KubeVirt backend. To get going:</p>
+      <ul>
+        <li>Point <code>kubectl</code> at a cluster (<code>KUBECONFIG</code> or
+          <code>~/.kube/config</code>), then hit Retry.</li>
+        <li>Run <code>corral doctor --fix</code> to install anything the
+          cluster is missing (KubeVirt, CDI, …).</li>
+        <li>No cluster handy? Local QEMU VMs work from the CLI:
+          <code>corral create myvm --image fedora</code></li>
+      </ul>
+      <button class="btn primary" id="offline-retry">Retry</button>
+    </div>`;
+  const b = $('#offline-retry');
+  if (b) b.onclick = () => { offlineShown = false; refresh(true); };
+}
 
 async function refresh(force = false) {
   try {
     [vms, nodes] = await Promise.all([api('/api/vms'), api('/api/nodes')]);
   } catch (e) {
-    toast(`Refresh failed: ${e.message}`);
+    // Never rendered anything yet → the cluster is unreachable on first load.
+    // A blank page with a toast reads as "broken"; show setup guidance once
+    // instead, and keep the static tree rows (Extensions works offline).
+    if (!lastRenderFp && !offlineShown) {
+      offlineShown = true;
+      renderTree();
+      renderOffline(e.message);
+    } else if (lastRenderFp) {
+      toast(`Refresh failed: ${e.message}`);
+    }
     return;
   }
+  offlineShown = false;
   try { cts = await api('/api/cts'); } catch { cts = []; } // best-effort — don't fail the whole refresh over CTs
   const fp = JSON.stringify([vms, cts, nodes, selected, tab]);
   if (!force && fp === lastRenderFp) return; // nothing changed — keep the DOM
@@ -365,7 +403,7 @@ async function renderMultiview(main) {
   let RFB;
   try {
     ({ default: RFB } = await import(
-      'https://cdn.jsdelivr.net/npm/@novnc/novnc@1.4.0/core/rfb.js'));
+      './vendor/novnc-rfb.esm.js'));
   } catch (e) {
     $('#mv-grid').innerHTML = `<p class="console-msg">noVNC failed to load: ${esc(e.message)}</p>`;
     return;
@@ -1277,7 +1315,9 @@ async function renderHardware(vm, body) {
     <h2 class="section">${icon('info')} Firmware</h2>
     <dl class="props">
       <dt>Boot</dt><dd>${spec.domain?.firmware?.kernelBoot ? 'kernel boot (bootc)' : 'BIOS'}</dd>
-      <dt>Node selector</dt><dd><code>${esc(JSON.stringify(spec.nodeSelector ?? {}))}</code></dd>
+      <dt>Node selector</dt><dd>${Object.keys(spec.nodeSelector ?? {}).length
+        ? `<code>${esc(JSON.stringify(spec.nodeSelector))}</code>`
+        : '<span class="muted">(any node)</span>'}</dd>
     </dl>`;
 
   renderGPUs(vm);
@@ -1649,7 +1689,7 @@ async function connectVNC(vm, body) {
     <div id="vnc-screen"><p class="console-msg">Connecting…</p></div>`;
   try {
     const { default: RFB } = await import(
-      'https://cdn.jsdelivr.net/npm/@novnc/novnc@1.4.0/core/rfb.js');
+      './vendor/novnc-rfb.esm.js');
     const screen = $('#vnc-screen');
     screen.replaceChildren();
     rfb = new RFB(screen, wsURL('vnc', vm));
@@ -1669,7 +1709,10 @@ async function connectVNC(vm, body) {
     };
     rfb.addEventListener('disconnect', () => {
       if (tab === 'console') {
-        screen.innerHTML = `<p class="console-msg">Disconnected. Switch tabs to reconnect.</p>`;
+        screen.innerHTML = `<p class="console-msg">Console disconnected.<br>
+          <button class="btn sm" id="vnc-reconnect" style="margin-top:10px">${icon('play')} Reconnect</button></p>`;
+        const b = $('#vnc-reconnect');
+        if (b) b.onclick = () => connectVNC(vm, body);
       }
     });
   } catch (e) {

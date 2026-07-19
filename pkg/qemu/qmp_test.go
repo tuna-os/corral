@@ -94,6 +94,12 @@ func TestDecodePPM_MissingFile(t *testing.T) {
 // writes a real PPM to the requested path, mirroring what real QEMU does).
 func fakeQMPServer(t *testing.T, sockPath string) {
 	t.Helper()
+	// sun_path caps unix socket paths at ~108 bytes; a long TMPDIR/GOTMPDIR
+	// pushes t.TempDir past it and bind fails with EINVAL. Environmental,
+	// not a code defect — skip rather than fail.
+	if len(sockPath) > 100 {
+		t.Skipf("socket path too long for sun_path (%d bytes): %s", len(sockPath), sockPath)
+	}
 	ln, err := net.Listen("unix", sockPath)
 	if err != nil {
 		t.Fatalf("listening on fake QMP socket: %v", err)

@@ -1241,8 +1241,10 @@ func TestHandleDoctorFix_Error(t *testing.T) {
 	fx := NewTestFixture()
 	defer fx.Close()
 
-	// Bare cluster and the install applies fail (no response registered for
-	// kubectl apply) → doctor.Fix() errors → the handler must return 500.
+	// Reachable cluster (doctor's connectivity gate passes), but bare — and
+	// the install applies fail (no response registered for kubectl apply) →
+	// doctor.Fix() errors → the handler must return 500.
+	fx.Runner.AddResponse("kubectl get --raw /livez --request-timeout=3s", "ok", nil)
 	resp, err := http.Post(fx.Server.URL+"/api/doctor/fix", "application/json", nil)
 	if err != nil {
 		t.Fatal(err)

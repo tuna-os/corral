@@ -821,11 +821,57 @@ func TestActionsListItemsCT_NoHypervisorConcepts(t *testing.T) {
 // ── LAN bridge networking (issue #82) ────────────────────────────
 
 func TestNetworksAndAddNicCommands_Exist(t *testing.T) {
-	for _, name := range []string{"networks", "addnic"} {
+	for _, name := range []string{"networks", "addnic", "lanservice"} {
 		cmd, _, err := rootCmd.Find([]string{name})
 		if err != nil || cmd == rootCmd {
 			t.Errorf("expected subcommand %q, but not found", name)
 		}
+	}
+}
+
+func TestCreateCommand_LANServiceFlag(t *testing.T) {
+	cmd, _, err := rootCmd.Find([]string{"create"})
+	if err != nil || cmd == rootCmd {
+		t.Fatal("create command not found")
+	}
+	if cmd.Flags().Lookup("lan-service") == nil {
+		t.Error("expected --lan-service flag on create command")
+	}
+}
+
+func TestLanServiceCmd_NonexistentVM(t *testing.T) {
+	oldStore := registryStore
+	dir := t.TempDir()
+	registryStore = registry.NewStoreAt(filepath.Join(dir, "registry.json"))
+	defer func() { registryStore = oldStore }()
+
+	err := lanServiceCmd.RunE(lanServiceCmd, []string{"nonexistent-vm-xyzzzy"})
+	if err == nil {
+		t.Error("expected error for nonexistent VM")
+	}
+}
+
+func TestLanServiceCmd_AppliesForKnownVM(t *testing.T) {
+	dir := t.TempDir()
+	oldStore := registryStore
+	registryStore = registry.NewStoreAt(filepath.Join(dir, "registry.json"))
+	registryStore.Set("myvm", types.RegistryEntry{Backend: "kubevirt", Namespace: "corral-vms"})
+	defer func() { registryStore = oldStore }()
+
+	fake := shell.NewFake()
+	fake.AddResponseKV("kubectl", []string{"apply", "-f", "-"}, "applied", nil)
+	fake.AddResponseKV("kubectl", []string{"get", "svc", "myvm-lan", "-n", "corral-vms", "-o", "json"}, `{"status":{}}`, nil)
+	kubevirt.SetApplyRunner(fake)
+	kubevirt.SetPackageRunner(fake)
+	kubevirt.SetDefaultRunner(fake)
+	defer func() {
+		kubevirt.SetApplyRunner(shell.Real{})
+		kubevirt.SetPackageRunner(shell.Real{})
+		kubevirt.SetDefaultRunner(nil)
+	}()
+
+	if err := lanServiceCmd.RunE(lanServiceCmd, []string{"myvm"}); err != nil {
+		t.Fatalf("lanservice: %v", err)
 	}
 }
 
