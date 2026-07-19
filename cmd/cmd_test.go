@@ -971,3 +971,17 @@ func TestPerformCTAction_DispatchesToCTPackage(t *testing.T) {
 		t.Error("performCTAction(\"stop\") should have called kubectl delete pod via pkg/ct")
 	}
 }
+
+func TestCTCreate_PortsFlag(t *testing.T) {
+	f := ctCreateCmd.Flags().Lookup("ports")
+	if f == nil {
+		t.Fatal("ct create should have a --ports flag (#83)")
+	}
+	if err := ctCreateCmd.Flags().Set("ports", "8080,3000"); err != nil {
+		t.Fatalf("parsing --ports: %v", err)
+	}
+	t.Cleanup(func() { ctPorts = nil })
+	if len(ctPorts) != 2 || ctPorts[0] != 8080 || ctPorts[1] != 3000 {
+		t.Errorf("ctPorts = %v, want [8080 3000]", ctPorts)
+	}
+}
