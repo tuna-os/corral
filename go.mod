@@ -15,7 +15,7 @@ require (
 	github.com/tg123/go-htpasswd v1.2.5
 	golang.org/x/crypto v0.55.0 // GO-2026-5932: openpgp subpackage is unmaintained/unfixable; this repo only uses x/crypto/bcrypt (cmd/corral-auth), openpgp is not imported — see #193
 	golang.org/x/net v0.58.0
-	golang.org/x/oauth2 v0.36.0
+	golang.org/x/oauth2 v0.37.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
