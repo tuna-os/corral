@@ -36,8 +36,14 @@ vet:
     go vet ./...
     go vet -tags bootc ./...
 
-# The local pre-push gate — mirrors CI's `test` job.
-ci: fmt-check vet build test
+# Lint (both gates CI runs). Needs golangci-lint built with this repo's Go:
+#   go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2
+lint:
+    golangci-lint run --disable=errcheck ./...
+    golangci-lint run --default=none --enable=errcheck --new-from-merge-base=origin/main ./...
+
+# The local pre-push gate — mirrors CI's `test` and `lint` jobs.
+ci: fmt-check vet build test lint
 
 # Fail if anything isn't gofmt-clean (what CI checks).
 fmt-check:

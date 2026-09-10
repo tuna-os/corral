@@ -56,7 +56,8 @@ func TestRandomWindowsPassword_MeetsComplexity(t *testing.T) {
 }
 
 func TestRandomWindowsPassword_Uniqueness(t *testing.T) {
-	if RandomPassword() == RandomPassword() {
+	first, second := RandomPassword(), RandomPassword()
+	if first == second {
 		t.Error("expected two consecutive calls to produce different passwords")
 	}
 }

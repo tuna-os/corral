@@ -173,7 +173,7 @@ func (g *gateway) passkeyLoginFinish(w http.ResponseWriter, r *http.Request) {
 	}
 	user, credential, err := g.passkeys.web.FinishPasskeyLogin(handler, c.Data, r)
 	if err != nil {
-		http.Error(w, "passkey verification failed", 401)
+		http.Error(w, "passkey verification failed", http.StatusUnauthorized)
 		return
 	}
 	if matched == nil {
@@ -217,7 +217,7 @@ func (g *gateway) enrollmentIdentity(r *http.Request) (string, bool) {
 func (g *gateway) passkeyEnrollBegin(w http.ResponseWriter, r *http.Request) {
 	name, ok := g.enrollmentIdentity(r)
 	if !ok {
-		http.Error(w, "authenticated session or enrollment token required", 401)
+		http.Error(w, "authenticated session or enrollment token required", http.StatusUnauthorized)
 		return
 	}
 	g.passkeys.mu.Lock()

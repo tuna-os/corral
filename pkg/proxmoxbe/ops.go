@@ -195,7 +195,7 @@ func (c *Client) Scale(name string, cores int, mem string) error {
 // memoryMiB converts Corral's memory strings to the MiB integer PVE wants.
 func memoryMiB(mem string) (int, error) {
 	lower := strings.ToLower(strings.TrimSpace(mem))
-	multiplier := 1
+	var multiplier int
 	switch {
 	case strings.HasSuffix(lower, "gi"), strings.HasSuffix(lower, "g"), strings.HasSuffix(lower, "gb"):
 		multiplier = 1024

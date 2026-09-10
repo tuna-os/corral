@@ -1074,15 +1074,10 @@ func TestHandleRemovePlugin_Success(t *testing.T) {
 	fx := NewTestFixture()
 	defer fx.Close()
 
-	// Plugin remove calls plugin.Remove() which deletes a file
-	// On test systems without the plugin installed, this should return 500
-	resp, err := http.Post(fx.Server.URL+"/api/plugins/fakeplugin", "application/json", nil)
-	// The handler uses DELETE, but we'll use POST to trigger the handler
-	// Actually, looking at the route, it's DELETE not POST
-	_ = err
-
+	// Plugin remove deletes a file; with no such plugin installed the handler
+	// answers 500. The route is DELETE.
 	req, _ := http.NewRequest("DELETE", fx.Server.URL+"/api/plugins/fakeplugin", nil)
-	resp, err = http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}

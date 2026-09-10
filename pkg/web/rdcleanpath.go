@@ -5,7 +5,6 @@ import (
 	"crypto/x509"
 	"encoding/binary"
 	"io"
-	"net"
 
 	"golang.org/x/net/websocket"
 
@@ -83,17 +82,4 @@ func encodeRdCleanPath(certs []*x509.Certificate) []byte {
 		off += len(c.Raw)
 	}
 	return buf
-}
-
-// rdCleanPathDialer wraps the ConsoleDialer so the RDCleanPath bridge can
-// get a raw net.Conn (the TLS layer is added by rdCleanPathBridge itself,
-// not by the dialer).
-type rdCleanPathDialer struct {
-	inner kubevirt.ConsoleDialer
-	ns    string
-	name  string
-}
-
-func (d *rdCleanPathDialer) dial() (net.Conn, error) {
-	return d.inner.Dial(d.ns, d.name, kubevirt.RDP)
 }

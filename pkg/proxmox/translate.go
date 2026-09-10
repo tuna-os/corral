@@ -15,7 +15,7 @@ import (
 // Testable in isolation: given K8s/KubeVirt types, produce Proxmox
 // response shapes (or vice versa).
 
-// vmidFor derives a stable Proxmox-style numeric ID from the VM name.
+// VmidFor derives a stable Proxmox-style numeric ID from the VM name.
 // Proxmox VMIDs live in [100, 999999999]; crc32 keeps them deterministic
 // with no state to store. Collisions are theoretically possible but
 // irrelevant at homelab scale.
@@ -53,13 +53,13 @@ func MemBytes(s string) int64 {
 	return int64(num)
 }
 
-// upid fabricates a Proxmox task ID. Corral's operations are synchronous,
+// UPID fabricates a Proxmox task ID. Corral's operations are synchronous,
 // so the matching task-status endpoint always reports the task finished OK.
 func UPID(node, action string, vmid int) string {
 	return fmt.Sprintf("UPID:%s:00000000:00000000:00000000:%s:%d:corral@pve:", node, action, vmid)
 }
 
-// vmNode resolves a VM's Proxmox node. KubeVirt VMs may have no node when
+// VMNode resolves a VM's Proxmox node. KubeVirt VMs may have no node when
 // stopped (unplaced); Proxmox always expects a node, so we default to the
 // first ready node in the supplied list.
 func VMNode(vm *types.VM, nodes []NodeInfo) string {
@@ -74,7 +74,7 @@ func VMNode(vm *types.VM, nodes []NodeInfo) string {
 	return ""
 }
 
-// vmEntry builds a Proxmox VM row (for qemu lists and cluster/resources)
+// VMEntry builds a Proxmox VM row (for qemu lists and cluster/resources)
 // using an explicit vmid and node.
 func VMEntry(vm *types.VM, vmid int, node string) map[string]any {
 	return map[string]any{
@@ -215,7 +215,7 @@ func RBACGroupsToProxmox(groups []RBACGroup) []map[string]any {
 
 // ── Access control roles ─────────────────────────────────────────
 
-// k8sRolesToProxmox returns a fixed set of Proxmox roles mapped from
+// K8sRolesToProxmox returns a fixed set of Proxmox roles mapped from
 // well-known K8s ClusterRoles.  See docs/adr/0001-k8s-rbac-to-proxmox-privileges.md.
 func K8sRolesToProxmox() []map[string]any {
 	return []map[string]any{
@@ -246,7 +246,7 @@ func K8sRolesToProxmox() []map[string]any {
 	}
 }
 
-// allProxmoxPrivileges returns the complete Proxmox VE privilege set
+// AllProxmoxPrivileges returns the complete Proxmox VE privilege set
 // as a comma-separated string.
 func AllProxmoxPrivileges() string {
 	return strings.Join([]string{

@@ -259,7 +259,7 @@ func isRemoteURI(uri string) bool {
 
 type Incus struct{}
 
-// Formats: the native archive first, then qcow2 for a VM.
+// Formats returns the native archive first, then qcow2 for a VM.
 //
 // qcow2 is what makes an Incus VM movable to another backend (ADR-0010) — an
 // instance tarball restores only into Incus, so without this the whole Incus

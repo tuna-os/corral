@@ -105,23 +105,23 @@ func (g *gateway) callback(w http.ResponseWriter, r *http.Request) {
 	}
 	tok, err := g.oauth.Exchange(r.Context(), r.URL.Query().Get("code"), oauth2.VerifierOption(verifier))
 	if err != nil {
-		http.Error(w, "OIDC exchange failed", 401)
+		http.Error(w, "OIDC exchange failed", http.StatusUnauthorized)
 		return
 	}
 	raw, _ := tok.Extra("id_token").(string)
 	id, err := g.verifier.Verify(r.Context(), raw)
 	if err != nil {
-		http.Error(w, "invalid ID token", 401)
+		http.Error(w, "invalid ID token", http.StatusUnauthorized)
 		return
 	}
 	var claims map[string]any
 	if err := id.Claims(&claims); err != nil {
-		http.Error(w, "invalid claims", 401)
+		http.Error(w, "invalid claims", http.StatusUnauthorized)
 		return
 	}
 	gotNonce, _ := claims["nonce"].(string)
 	if gotNonce != nonce {
-		http.Error(w, "invalid OIDC nonce", 401)
+		http.Error(w, "invalid OIDC nonce", http.StatusUnauthorized)
 		return
 	}
 	subject := claim(claims, "sub")
@@ -132,7 +132,7 @@ func (g *gateway) callback(w http.ResponseWriter, r *http.Request) {
 	}
 	name := claim(claims, "name", "email", "preferred_username")
 	if login == "" {
-		http.Error(w, "OIDC identity has no usable subject", 401)
+		http.Error(w, "OIDC identity has no usable subject", http.StatusUnauthorized)
 		return
 	}
 	s.Values = map[interface{}]interface{}{"login": login, "name": name, "email": claim(claims, "email")}

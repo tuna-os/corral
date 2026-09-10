@@ -189,7 +189,8 @@ func TestMetricsCountsTasksByActionAndStatus(t *testing.T) {
 func TestMetricsBodyIsStableAcrossRenders(t *testing.T) {
 	snap := sampleSnapshot()
 	at := snap.taken.Add(time.Second)
-	if render(t, snap, at) != render(t, snap, at) {
+	first, second := render(t, snap, at), render(t, snap, at)
+	if first != second {
 		t.Fatal("two renders of one snapshot must be byte-identical")
 	}
 }

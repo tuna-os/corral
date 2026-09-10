@@ -151,8 +151,8 @@ func TestNewGateway_ValidUpstreamAndSecureFlag(t *testing.T) {
 	if !g.secure {
 		t.Error("secure = false, want true for https redirect URL")
 	}
-	if u := g.proxy.Director; u == nil {
-		t.Error("proxy director not configured")
+	if g.proxy == nil {
+		t.Error("proxy not configured")
 	}
 
 	// http redirect URL → insecure sessions.
@@ -165,19 +165,36 @@ func TestNewGateway_ValidUpstreamAndSecureFlag(t *testing.T) {
 	}
 }
 
+// The gateway must forward to the upstream it was given. Asserting that
+// through a real round-trip — rather than by reading the proxy's internals —
+// tests the behaviour operators depend on and survives net/http rearranging
+// its own fields.
 func TestNewGateway_ProxyTargetsUpstream(t *testing.T) {
 	key := []byte("01234567890123456789012345678901")
-	g, err := newGateway(context.Background(), "", "", "", "https://corral.example.com", "http://10.0.0.5:9090", key)
+
+	var got *http.Request
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Clone(r.Context())
+		w.WriteHeader(http.StatusTeapot)
+	}))
+	defer upstream.Close()
+
+	g, err := newGateway(context.Background(), "", "", "", "https://corral.example.com", upstream.URL, key)
 	if err != nil {
 		t.Fatalf("newGateway(): %v", err)
 	}
-	req, err := http.NewRequest("GET", "https://corral.example.com/foo", nil)
-	if err != nil {
-		t.Fatal(err)
+
+	rec := httptest.NewRecorder()
+	g.proxy.ServeHTTP(rec, httptest.NewRequest("GET", "https://corral.example.com/foo", nil))
+
+	if rec.Code != http.StatusTeapot {
+		t.Fatalf("upstream status = %d, want %d — the request never reached it", rec.Code, http.StatusTeapot)
 	}
-	g.proxy.Director(req)
-	if req.URL.Host != "10.0.0.5:9090" || req.URL.Scheme != "http" {
-		t.Errorf("proxied request host = %s (%s), want 10.0.0.5:9090 (http)", req.URL.Host, req.URL.Scheme)
+	if got == nil {
+		t.Fatal("upstream saw no request")
+	}
+	if got.URL.Path != "/foo" {
+		t.Errorf("upstream path = %q, want /foo", got.URL.Path)
 	}
 }
 

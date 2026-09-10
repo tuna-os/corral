@@ -14,7 +14,6 @@ import (
 )
 
 var registryStore *registry.Store
-var verbose bool
 var rootDemo bool
 var rootContext string
 var rootBackend string
