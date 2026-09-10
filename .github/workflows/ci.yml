@@ -10,6 +10,11 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Least privilege by default: the read-only token is all any job here needs
+# unless it says otherwise, and a job that needs more grants it for itself.
+permissions:
+  contents: read
+
 env:
   IMAGE: ghcr.io/${{ github.repository_owner }}/corral
   KUBECTL_VERSION: v1.36.1

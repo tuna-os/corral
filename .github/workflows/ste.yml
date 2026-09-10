@@ -34,6 +34,11 @@ on:
       - .github/workflows/ste.yml
   workflow_dispatch:
 
+# Least privilege by default: the read-only token is all any job here needs
+# unless it says otherwise, and a job that needs more grants it for itself.
+permissions:
+  contents: read
+
 jobs:
   ste:
     uses: tuna-os/.github/.github/workflows/ste-lint.yml@92decd7c408a246181cbcc798f734a2048608363 # main

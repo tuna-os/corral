@@ -62,6 +62,12 @@ type Entry struct {
 	Source            string           `json:"source,omitempty"`
 	SourceURL         string           `json:"-"`
 	SchemaVersion     string           `json:"-"`
+	// Unverified marks an entry that came from a source the operator
+	// explicitly opted out of integrity checks for. It is never set from
+	// index JSON — only fetchSource sets it, and only for a source carrying
+	// AllowUnverified. Zero value means "verify everything", so an Entry
+	// built anywhere else is checked.
+	Unverified bool `json:"-"`
 }
 
 type Index struct {
@@ -75,7 +81,11 @@ type Source struct {
 	Name    string `json:"name"`
 	URL     string `json:"url"`
 	Enabled bool   `json:"enabled"`
-	Trusted bool   `json:"trusted,omitempty"`
+	// AllowUnverified lets this source serve a pre-v2 index — one with no
+	// publisher, license or artifact digests. It is an operator decision
+	// recorded per source (`corral marketplace add --allow-unverified`),
+	// never something the index publisher can assert about itself.
+	AllowUnverified bool `json:"allowUnverified,omitempty"`
 }
 
 type InstalledState struct {
@@ -120,7 +130,7 @@ func Sources() []Source {
 	if legacy := os.Getenv("CORRAL_MARKETPLACE_URL"); legacy != "" {
 		return []Source{{Name: "environment", URL: legacy, Enabled: true}}
 	}
-	out := []Source{{Name: "corral", URL: DefaultMarketplaceURL, Enabled: true, Trusted: true}}
+	out := []Source{{Name: "corral", URL: DefaultMarketplaceURL, Enabled: true}}
 	data, err := os.ReadFile(sourcesPath())
 	if err != nil {
 		return out
@@ -292,13 +302,26 @@ func fetchSource(source Source) (*Index, error) {
 	if err := dec.Decode(&idx); err != nil {
 		return nil, fmt.Errorf("parsing marketplace: %w", err)
 	}
-	if idx.SchemaVersion == "" {
-		idx.SchemaVersion = "v1"
+	// A fetched index must declare v2 — the schema that requires a publisher,
+	// a license and a SHA-256 per artifact. Defaulting a silent index to "v1"
+	// let the party being verified pick its own security tier: deleting one
+	// line bought an install with no integrity check at all. Downgrading is
+	// now the operator's explicit, per-source decision instead.
+	if idx.SchemaVersion != MarketplaceAPIV2 {
+		if !source.AllowUnverified {
+			got := idx.SchemaVersion
+			if got == "" {
+				got = "none"
+			}
+			return nil, fmt.Errorf("marketplace %q declares schemaVersion %s, not %q: its artifacts carry no checksums — re-add the source with --allow-unverified to accept that", source.Name, got, MarketplaceAPIV2)
+		}
+		fmt.Fprintf(os.Stderr, "warning: marketplace %q is not %s — its plugins install with no publisher, license or checksum verification\n", source.Name, MarketplaceAPIV2)
 	}
 	for i := range idx.Plugins {
 		idx.Plugins[i].Source = source.Name
 		idx.Plugins[i].SourceURL = source.URL
 		idx.Plugins[i].SchemaVersion = idx.SchemaVersion
+		idx.Plugins[i].Unverified = idx.SchemaVersion != MarketplaceAPIV2
 		if err := idx.Plugins[i].Validate(); err != nil {
 			return nil, fmt.Errorf("plugin %d: %w", i, err)
 		}
@@ -334,7 +357,7 @@ func (e *Entry) Validate() error {
 		if _, err := semver.NewVersion(e.Version); err != nil {
 			return fmt.Errorf("invalid version %q", e.Version)
 		}
-	} else if e.SchemaVersion == MarketplaceAPIV2 {
+	} else if !e.Unverified {
 		return fmt.Errorf("%s has no version", e.Name)
 	}
 	if e.PluginAPI != "" && e.PluginAPI != PluginAPIV1 {
@@ -348,7 +371,7 @@ func (e *Entry) Validate() error {
 	if len(e.Platforms) == 0 {
 		return fmt.Errorf("%s has no platform artifacts", e.Name)
 	}
-	if e.SchemaVersion == MarketplaceAPIV2 {
+	if !e.Unverified {
 		if e.Publisher.Name == "" {
 			return fmt.Errorf("%s has no publisher", e.Name)
 		}
@@ -450,8 +473,8 @@ func (e *Entry) InstallPinned(pin bool) error {
 	if err := validateArtifactURL(b.URL); err != nil {
 		return err
 	}
-	if e.SchemaVersion == MarketplaceAPIV2 && len(b.SHA256) != 64 {
-		return fmt.Errorf("marketplace v2 requires a SHA-256 digest")
+	if !e.Unverified && len(b.SHA256) != 64 {
+		return fmt.Errorf("%s has no SHA-256 digest for %s: refusing to install an unverifiable artifact", e.Name, platformKey())
 	}
 	client := &http.Client{Timeout: 5 * time.Minute}
 	resp, err := client.Get(b.URL)

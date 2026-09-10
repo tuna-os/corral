@@ -25,6 +25,11 @@ on:
       - ".github/workflows/e2e.yml"
   workflow_dispatch:
 
+# Least privilege by default: the read-only token is all any job here needs
+# unless it says otherwise, and a job that needs more grants it for itself.
+permissions:
+  contents: read
+
 env:
   # Reverted v1.9.0-beta.0 (see git history on this line for that attempt) —
   # it made things worse: the containerDisk lifecycle test went from
