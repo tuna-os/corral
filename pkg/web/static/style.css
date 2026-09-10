@@ -57,14 +57,40 @@ header {
 
 .layout { display: flex; flex: 1; min-height: 0; }
 
+/* The sidebar width is an operator preference (#290): --tree-w is set by the
+   drag handle below and remembered in localStorage. The clamp keeps a stored
+   value usable on a screen it was not chosen on. */
+:root { --tree-w: 270px; }
+
 #tree {
-  width: 270px;
+  width: clamp(180px, var(--tree-w), 60vw);
   flex-shrink: 0;
+  min-width: 0;
   background: var(--panel);
   border-right: 1px solid var(--border);
   overflow-y: auto;
+  /* Rows truncate; the sidebar itself never scrolls sideways. */
+  overflow-x: hidden;
   padding: 10px 8px;
 }
+
+/* Drag handle. It is wider than the line it draws so it stays grabbable, and
+   it is focusable so the arrow keys can size the sidebar without a mouse. */
+#tree-resizer {
+  flex: none;
+  width: 6px;
+  margin-left: -3px;
+  cursor: col-resize;
+  background: transparent;
+  z-index: 5;
+}
+#tree-resizer:hover, #tree-resizer:focus-visible, #tree-resizer.dragging {
+  background: var(--accent);
+  outline: none;
+}
+/* While dragging, the pointer owns the page: no text selection, and the
+   cursor stays col-resize wherever it travels. */
+body.resizing { user-select: none; cursor: col-resize; }
 
 .tree-view-toggle {
   display: flex;
@@ -73,7 +99,10 @@ header {
   margin-bottom: 4px;
   border-bottom: 1px solid var(--border);
 }
-.tree-view-toggle .btn { flex: 1; }
+/* Three buttons in a narrow sidebar: let them wrap rather than push the
+   sidebar wider than it is. */
+.tree-view-toggle { flex-wrap: wrap; }
+.tree-view-toggle .btn { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tree-view-toggle .btn.active { background: var(--accent); border-color: var(--accent); color: #14100b; font-weight: 600; }
 
 .tree-item {
@@ -87,6 +116,11 @@ header {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* A long instance or pool name is ellipsized inside the row. Without a
+   min-width of 0 a flex item refuses to shrink below its text and pushes the
+   row past the sidebar edge instead. */
+.tree-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tree-item .muted { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .tree-item:hover { background: var(--panel-2); }
 .tree-item.selected { background: var(--accent); color: #14100b; font-weight: 600; }
 .tree-item.lvl-1 { margin-left: 16px; }
@@ -609,6 +643,9 @@ tr.ev-warn td { color: var(--yellow); }
     box-shadow: 4px 0 24px rgba(0,0,0,.5);
   }
   #tree.open { transform: translateX(0); }
+  /* The sidebar is a drawer at this width: fixed, so there is nothing to
+     drag against. */
+  #tree-resizer { display: none; }
   main { padding: 14px; }
   dl.props { grid-template-columns: 1fr; gap: 2px; }
   dl.props dt { margin-top: 8px; }

@@ -263,7 +263,11 @@ function setTreeView(v) {
 function treeRow({ lvl, icon, label, sub, sel, onclick, dot }) {
   const div = document.createElement('div');
   div.className = `tree-item lvl-${lvl}${sel ? ' selected' : ''}`;
-  div.innerHTML = `${dot ? `<span class="dot ${dot}"></span>` : ''}${icon} ${esc(label)}` +
+  // The label is its own element so it can be ellipsized: a bare text node is
+  // an anonymous flex item and refuses to shrink, which is how a long VM name
+  // used to push the row past the sidebar edge (#290).
+  div.innerHTML = `${dot ? `<span class="dot ${dot}"></span>` : ''}${icon}` +
+    ` <span class="tree-label">${esc(label)}</span>` +
     (sub ? ` <span class="muted">${esc(sub)}</span>` : '');
   div.onclick = () => { onclick(); closeDrawer(); };
   return div;
@@ -2561,6 +2565,69 @@ document.addEventListener('alpine:init', () => {
   }));
 });
 
+// ── Sidebar resizing ──────────────────────────────────────────────
+//
+// The tree holds pool names, VM names and backend rows an operator chose, so
+// no fixed width is right for everyone (#290). The width lives in a CSS
+// custom property, is clamped by the stylesheet, and is remembered per
+// browser. The handle is focusable: arrow keys resize it too.
+
+const TREE_WIDTH_KEY = 'corral.treeWidth';
+const TREE_WIDTH_DEFAULT = 270;
+const TREE_WIDTH_MIN = 180;
+
+function treeWidthMax() { return Math.max(TREE_WIDTH_MIN, Math.round(window.innerWidth * 0.6)); }
+
+function setTreeWidth(px, remember = true) {
+  const w = Math.min(treeWidthMax(), Math.max(TREE_WIDTH_MIN, Math.round(px)));
+  document.documentElement.style.setProperty('--tree-w', `${w}px`);
+  const resizer = $('#tree-resizer');
+  if (resizer) resizer.setAttribute('aria-valuenow', String(w));
+  if (remember) {
+    try { localStorage.setItem(TREE_WIDTH_KEY, String(w)); } catch { /* private mode */ }
+  }
+  return w;
+}
+
+function initTreeResizer() {
+  const resizer = $('#tree-resizer');
+  const tree = $('#tree');
+  if (!resizer || !tree) return;
+
+  let stored = null;
+  try { stored = localStorage.getItem(TREE_WIDTH_KEY); } catch { /* private mode */ }
+  setTreeWidth(Number(stored) || TREE_WIDTH_DEFAULT, false);
+
+  resizer.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    resizer.setPointerCapture(e.pointerId);
+    resizer.classList.add('dragging');
+    document.body.classList.add('resizing');
+    const left = tree.getBoundingClientRect().left;
+    const onMove = (ev) => setTreeWidth(ev.clientX - left);
+    const onUp = () => {
+      resizer.classList.remove('dragging');
+      document.body.classList.remove('resizing');
+      resizer.removeEventListener('pointermove', onMove);
+      resizer.removeEventListener('pointerup', onUp);
+      resizer.removeEventListener('pointercancel', onUp);
+    };
+    resizer.addEventListener('pointermove', onMove);
+    resizer.addEventListener('pointerup', onUp);
+    resizer.addEventListener('pointercancel', onUp);
+  });
+
+  resizer.addEventListener('dblclick', () => setTreeWidth(TREE_WIDTH_DEFAULT));
+
+  resizer.addEventListener('keydown', (e) => {
+    const step = e.shiftKey ? 40 : 10;
+    const current = tree.getBoundingClientRect().width;
+    if (e.key === 'ArrowLeft') { setTreeWidth(current - step); e.preventDefault(); }
+    if (e.key === 'ArrowRight') { setTreeWidth(current + step); e.preventDefault(); }
+    if (e.key === 'Home') { setTreeWidth(TREE_WIDTH_DEFAULT); e.preventDefault(); }
+  });
+}
+
 // ── Mobile drawer ─────────────────────────────────────────────────
 
 $('#btn-menu').onclick = () => $('#tree').classList.toggle('open');
@@ -2568,6 +2635,7 @@ function closeDrawer() { $('#tree').classList.remove('open'); }
 
 // ── Boot ──────────────────────────────────────────────────────────
 
+initTreeResizer();
 $('#btn-menu').innerHTML = icon('menu');
 $('#btn-create').innerHTML = `${icon('plus')} Create VM`;
 
