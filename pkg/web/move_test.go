@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tuna-os/corral/pkg/config"
+
 	"github.com/tuna-os/corral/pkg/folder"
 	"github.com/tuna-os/corral/pkg/move"
 	"github.com/tuna-os/corral/pkg/types"
@@ -282,9 +284,46 @@ func TestMoveDestinations_SaysWhichBackendsCanReceiveAndWhy(t *testing.T) {
 			reason string
 		}{d.Can, d.Reason}
 	}
-	for _, want := range []string{"qemu", "libvirt", "kubevirt", "proxmox", "incus"} {
+	// The demo cluster configures qemu, incus and kubevirt contexts; all three
+	// implement Ingester, so all three are live drop targets.
+	for _, want := range []string{"qemu", "kubevirt", "incus"} {
+		if _, listed := byName[want]; !listed {
+			t.Errorf("%s has a context in this installation and should be offered", want)
+			continue
+		}
 		if !byName[want].can {
 			t.Errorf("%s implements Ingester and should be a live drop target", want)
+		}
+	}
+	// A backend with no context here is not a place anything can move to, and
+	// listing it only clutters the pool tree (#289).
+	for _, absent := range []string{"libvirt", "proxmox"} {
+		if _, listed := byName[absent]; listed {
+			t.Errorf("%s has no configured context and should not be offered as a destination", absent)
+		}
+	}
+}
+
+func TestMoveDestinations_OnlyOffersConfiguredBackends(t *testing.T) {
+	srv := newDemoServer(t)
+
+	var out struct {
+		Destinations []struct {
+			Backend string `json:"backend"`
+		} `json:"destinations"`
+	}
+	getJSON(t, srv, "/api/move/destinations", &out)
+
+	configured := map[string]bool{}
+	for _, c := range config.Contexts() {
+		configured[c.Backend] = true
+	}
+	if len(out.Destinations) == 0 {
+		t.Fatal("a host always has at least its local qemu context")
+	}
+	for _, d := range out.Destinations {
+		if !configured[d.Backend] {
+			t.Errorf("destination %q has no configured context", d.Backend)
 		}
 	}
 }

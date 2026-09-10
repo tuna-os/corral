@@ -12,6 +12,31 @@ import (
 	"testing"
 )
 
+// v2Entry builds a marketplace-v2-shaped entry: everything Validate requires
+// of a verified publisher, so tests exercise the same path a fetched index
+// takes rather than the pre-v2 leniency.
+func v2Entry(name string, b Build) *Entry {
+	return &Entry{
+		Name:              name,
+		Description:       "test plugin",
+		Version:           "0.1.0",
+		License:           "Apache-2.0",
+		Publisher:         Publisher{Name: "tuna-os"},
+		SupportedBackends: []string{"all"},
+		SchemaVersion:     MarketplaceAPIV2,
+		Platforms:         map[string]Build{platformKey(): b},
+	}
+}
+
+// v2Index is the JSON an index server must now serve to be accepted.
+func v2Index(name, url, sha string) string {
+	return `{"schemaVersion":"corral.marketplace/v2","name":"test marketplace",` +
+		`"publisher":{"name":"tuna-os"},"plugins":[{"name":"` + name + `",` +
+		`"description":"test plugin","version":"0.1.0","license":"Apache-2.0",` +
+		`"publisher":{"name":"tuna-os"},"supportedBackends":["all"],` +
+		`"platforms":{"` + platformKey() + `":{"url":"` + url + `","sha256":"` + sha + `"}}}]}`
+}
+
 func TestVerifyBuildSignature(t *testing.T) {
 	pub, private, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -167,12 +192,7 @@ func TestInstall_NoPlatform(t *testing.T) {
 }
 
 func TestInstall_BadURL(t *testing.T) {
-	e := &Entry{
-		Name: "testplugin",
-		Platforms: map[string]Build{
-			platformKey(): {URL: "http://127.0.0.1:1/bad.zip"},
-		},
-	}
+	e := v2Entry("testplugin", Build{URL: "http://127.0.0.1:1/bad.zip", SHA256: strings.Repeat("a", 64)})
 	dir := t.TempDir()
 	t.Setenv("CORRAL_PLUGIN_DIR", dir)
 	err := e.Install()
@@ -227,7 +247,7 @@ func TestPlatformKey_NonEmpty(t *testing.T) {
 func TestFetchIndex_FromTestServer(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"plugins":[{"name":"bootc","description":"Boot container as VM","version":"0.1.0","platforms":{"linux/amd64":{"url":"https://example.com/bootc"}}}]}`))
+		w.Write([]byte(v2Index("bootc", "https://example.com/bootc", strings.Repeat("a", 64))))
 	}))
 	defer srv.Close()
 	t.Setenv("CORRAL_MARKETPLACE_URL", srv.URL)
@@ -284,12 +304,7 @@ func TestInstall_FromTestServer(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("CORRAL_PLUGIN_DIR", dir)
 
-	e := &Entry{
-		Name: "testbin",
-		Platforms: map[string]Build{
-			platformKey(): {URL: srv.URL},
-		},
-	}
+	e := v2Entry("testbin", Build{URL: srv.URL, SHA256: "bfdeaeb08cffb6a36438bcd12dda25417e3cdd36f1e7e482a2849d539225288b"})
 	err := e.Install()
 	if err != nil {
 		t.Fatalf("Install: %v", err)
@@ -324,12 +339,7 @@ func TestInstall_Non200Status(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("CORRAL_PLUGIN_DIR", dir)
 
-	e := &Entry{
-		Name: "testbin",
-		Platforms: map[string]Build{
-			platformKey(): {URL: srv.URL},
-		},
-	}
+	e := v2Entry("testbin", Build{URL: srv.URL, SHA256: strings.Repeat("a", 64)})
 	err := e.Install()
 	if err == nil {
 		t.Error("Install with 404 should return error")
@@ -348,12 +358,7 @@ func TestInstall_ChecksumMatch(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("CORRAL_PLUGIN_DIR", dir)
 
-	e := &Entry{
-		Name: "testbin",
-		Platforms: map[string]Build{
-			platformKey(): {URL: srv.URL, SHA256: expectedSum},
-		},
-	}
+	e := v2Entry("testbin", Build{URL: srv.URL, SHA256: expectedSum})
 	err := e.Install()
 	if err != nil {
 		t.Fatalf("Install with correct checksum: %v", err)
@@ -377,12 +382,7 @@ func TestInstall_ChecksumMismatch(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("CORRAL_PLUGIN_DIR", dir)
 
-	e := &Entry{
-		Name: "testbin",
-		Platforms: map[string]Build{
-			platformKey(): {URL: srv.URL, SHA256: badSum},
-		},
-	}
+	e := v2Entry("testbin", Build{URL: srv.URL, SHA256: badSum})
 	err := e.Install()
 	if err == nil {
 		t.Error("Install with wrong checksum should return error")
@@ -390,5 +390,85 @@ func TestInstall_ChecksumMismatch(t *testing.T) {
 	// Verify the file was NOT written
 	if _, err := os.Stat(filepath.Join(dir, "corral-testbin")); !os.IsNotExist(err) {
 		t.Error("plugin should NOT be installed when checksum mismatches")
+	}
+}
+
+func TestFetchIndex_RejectsIndexWithoutSchemaVersion(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"plugins":[{"name":"bootc","description":"Boot container as VM","version":"0.1.0","platforms":{"` + platformKey() + `":{"url":"https://example.com/bootc"}}}]}`))
+	}))
+	defer srv.Close()
+	t.Setenv("CORRAL_MARKETPLACE_URL", srv.URL)
+
+	_, err := FetchIndex()
+	if err == nil {
+		t.Fatal("an index omitting schemaVersion must not be accepted: integrity would be opt-out for the publisher")
+	}
+	if !strings.Contains(err.Error(), MarketplaceAPIV2) {
+		t.Errorf("error should name the required schema version, got %v", err)
+	}
+}
+
+func TestFetchIndex_RejectsUnknownSchemaVersion(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"schemaVersion":"corral.marketplace/v1","plugins":[]}`))
+	}))
+	defer srv.Close()
+	t.Setenv("CORRAL_MARKETPLACE_URL", srv.URL)
+
+	if _, err := FetchIndex(); err == nil {
+		t.Fatal("a v1 index must not be accepted from an ordinary source")
+	}
+}
+
+func TestFetchSource_AllowUnverifiedOptIn(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"plugins":[{"name":"legacy","description":"legacy plugin","platforms":{"` + platformKey() + `":{"url":"https://example.com/legacy"}}}]}`))
+	}))
+	defer srv.Close()
+
+	idx, err := fetchSource(Source{Name: "legacy", URL: srv.URL, Enabled: true, AllowUnverified: true})
+	if err != nil {
+		t.Fatalf("an explicitly unverified source should still fetch: %v", err)
+	}
+	if len(idx.Plugins) != 1 || !idx.Plugins[0].Unverified {
+		t.Fatalf("entries from an unverified source must be marked unverified, got %+v", idx.Plugins)
+	}
+}
+
+func TestInstall_RejectsMissingDigest(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("no digest here"))
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	t.Setenv("CORRAL_PLUGIN_DIR", dir)
+
+	e := v2Entry("testbin", Build{URL: srv.URL})
+	if err := e.Install(); err == nil {
+		t.Fatal("install without a digest must fail for a verified entry")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "corral-testbin")); !os.IsNotExist(err) {
+		t.Error("nothing should be written when the entry carries no digest")
+	}
+}
+
+func TestInstall_UnverifiedEntryStillChecksDeclaredDigest(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("no digest here"))
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	t.Setenv("CORRAL_PLUGIN_DIR", dir)
+
+	e := &Entry{
+		Name:       "legacy",
+		Unverified: true,
+		Platforms:  map[string]Build{platformKey(): {URL: srv.URL, SHA256: strings.Repeat("b", 64)}},
+	}
+	if err := e.Install(); err == nil {
+		t.Fatal("a digest that is present must be checked even on an unverified entry")
 	}
 }

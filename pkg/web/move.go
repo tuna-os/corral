@@ -25,6 +25,7 @@ import (
 	"net/http"
 
 	"github.com/tuna-os/corral/pkg/backend"
+	"github.com/tuna-os/corral/pkg/config"
 	"github.com/tuna-os/corral/pkg/fleet"
 	"github.com/tuna-os/corral/pkg/folder"
 	"github.com/tuna-os/corral/pkg/move"
@@ -178,18 +179,32 @@ func carryFolder(source, destination types.InstanceRef) (string, bool) {
 // GET /api/move/destinations — which backends can receive an instance, and why
 // the others cannot.
 //
-// The UI needs this to decide which drop targets are live before a drag starts.
-// Greying out a target the operator cannot use is kinder than accepting the
-// drop and refusing it afterwards, and the reason is carried so a hover can say
-// why rather than leaving it a mystery.
+// Only backends this installation actually has a context for are listed (#289).
+// backend.Backends is the set Corral can compile against, not the set an
+// operator runs: a host with one QEMU context was being offered Proxmox,
+// libvirt, Incus and KubeVirt drop targets it could never move anything to.
+// config.Contexts() is the same list the fleet, doctor and the dashboard use,
+// and it is careful not to invent a target the host never asked for.
+//
+// Within that set the UI still needs to know which targets are live before a
+// drag starts. Greying out a target the operator cannot use is kinder than
+// accepting the drop and refusing it afterwards, and the reason is carried so
+// a hover can say why rather than leaving it a mystery.
 func handleMoveDestinations(w http.ResponseWriter, r *http.Request) {
 	type entry struct {
 		Backend string `json:"backend"`
 		Can     bool   `json:"can"`
 		Reason  string `json:"reason,omitempty"`
 	}
+	configured := map[string]bool{}
+	for _, c := range config.Contexts() {
+		configured[c.Backend] = true
+	}
 	out := make([]entry, 0, len(backend.Backends))
 	for _, b := range backend.Backends {
+		if !configured[b] {
+			continue
+		}
 		out = append(out, entry{Backend: b, Can: backend.CanIngest(b), Reason: backend.IngestRefusal(b)})
 	}
 	jsonResp(w, http.StatusOK, map[string]any{"destinations": out})
