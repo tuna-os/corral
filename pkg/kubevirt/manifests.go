@@ -32,11 +32,6 @@ func GenerateVM(opts types.CreateOpts) map[string]any {
 	if cpu == 0 {
 		cpu = 2
 	}
-	diskSize := opts.Disk
-	if diskSize == "" {
-		diskSize = "20G"
-	}
-
 	volumes := []map[string]any{}
 	disks := []map[string]any{}
 
@@ -348,7 +343,7 @@ func GenerateBootDataVolume(name, namespace, url, size, storageClass string) map
 	return dv
 }
 
-// ProxyTags, when set, tags exposed VM devices on the tailnet
+// ProxyTags tags exposed VM devices on the tailnet when it is set
 // (tailscale.com/tags annotation), e.g. "tag:corral-vm".
 var ProxyTags string
 

@@ -32,15 +32,16 @@ import (
 	"testing"
 
 	"github.com/tuna-os/corral/pkg/shell"
+	"github.com/tuna-os/corral/pkg/testenv"
 )
 
 func requireIncus(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("incus"); err != nil {
-		t.Skip("incus not installed")
+		testenv.Skip(t, "incus", "not installed")
 	}
 	if exec.Command("incus", "query", "local:/1.0").Run() != nil {
-		t.Skip("no reachable local Incus daemon")
+		testenv.Skip(t, "incus", "no reachable local daemon")
 	}
 }
 

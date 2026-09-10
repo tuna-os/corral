@@ -69,12 +69,6 @@ const domStatsFirst = `Domain: 'web'
   balloon.rss=2097152
 `
 
-const domStatsSecond = `Domain: 'web'
-  cpu.time=1000500000
-  balloon.current=4194304
-  balloon.rss=2097152
-`
-
 // balloon.rss, not balloon.current. current is what the guest was *given* and
 // stays flat at its configured size — it looks like a working metric while
 // telling you nothing about what the host is spending.

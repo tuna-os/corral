@@ -2,6 +2,10 @@ package main
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -186,4 +190,91 @@ func TestAttachDrivers_VMNotFound(t *testing.T) {
 	if err := attachDrivers("ghost", "tailvm"); err == nil {
 		t.Fatal("attachDrivers should fail when the VM does not exist")
 	}
+}
+
+// ── context and ISO plumbing ──────────────────────────────────────
+//
+// The plugin binaries are shipped through the marketplace and installed on
+// operators' machines, and these are the parts of them that run before
+// anything else does: which context a command acts on, and where the
+// virtio-win ISO comes from. Both were untested.
+
+func TestTarget_DefaultsAndUnknownContext(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	// No context named: the default one, whatever the host is configured for.
+	got, err := target("")
+	if err != nil {
+		t.Fatalf("target(\"\"): %v", err)
+	}
+	if got.Backend == "" {
+		t.Error("the default context must name a backend")
+	}
+
+	// A name nothing matches is an error that says where to look, not a
+	// silent fall back to the default — creating a Windows VM on the wrong
+	// cluster is not a recoverable mistake.
+	_, err = target("no-such-context")
+	if err == nil {
+		t.Fatal("an unknown context must be an error")
+	}
+	if !strings.Contains(err.Error(), "corral context ls") {
+		t.Errorf("error = %v, want it to point at `corral context ls`", err)
+	}
+}
+
+func TestResolveVirtioISO_PrefersAnExplicitPath(t *testing.T) {
+	got, err := resolveVirtioISO("/isos/virtio-win.iso")
+	if err != nil {
+		t.Fatalf("resolveVirtioISO: %v", err)
+	}
+	if got != "/isos/virtio-win.iso" {
+		t.Errorf("resolveVirtioISO = %q, want the path the operator gave", got)
+	}
+}
+
+// A download that dies half way must not leave a truncated ISO in the cache:
+// it would be reused forever, and Windows Setup's failure would point at
+// virtio rather than at the broken file.
+func TestDownloadTo(t *testing.T) {
+	t.Run("writes the payload", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte("iso-bytes"))
+		}))
+		defer srv.Close()
+
+		dest := filepath.Join(t.TempDir(), "virtio-win.iso")
+		if err := downloadTo(srv.URL, dest); err != nil {
+			t.Fatalf("downloadTo: %v", err)
+		}
+		got, err := os.ReadFile(dest)
+		if err != nil {
+			t.Fatalf("reading %s: %v", dest, err)
+		}
+		if string(got) != "iso-bytes" {
+			t.Errorf("downloaded %q, want %q", got, "iso-bytes")
+		}
+		if _, err := os.Stat(dest + ".part"); !os.IsNotExist(err) {
+			t.Error("the .part file should be renamed away, not left behind")
+		}
+	})
+
+	t.Run("a non-200 leaves nothing behind", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+		}))
+		defer srv.Close()
+
+		dest := filepath.Join(t.TempDir(), "virtio-win.iso")
+		err := downloadTo(srv.URL, dest)
+		if err == nil {
+			t.Fatal("a 404 must be an error")
+		}
+		if !strings.Contains(err.Error(), "404") {
+			t.Errorf("error = %v, want the status in it", err)
+		}
+		if _, err := os.Stat(dest); !os.IsNotExist(err) {
+			t.Error("nothing should be written when the download fails")
+		}
+	})
 }

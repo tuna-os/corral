@@ -54,16 +54,26 @@ jobs:
           go build ./...
           go build -tags bootc ./...
 
-      - name: go test (race)
-        run: go test -race -count=1 -timeout 120s ./...
+      # -shuffle=on: the suite shares process-global seams (SetRunner, package
+      # stores, environment), so a test that only passes because another ran
+      # first is a real risk. Randomising the order surfaces that instead of
+      # letting it hide until someone adds a test in the middle.
+      - name: go test (race, shuffled)
+        env:
+          # The step above installs these on purpose, so a test that skips for
+          # a missing one is a broken runner, not an inapplicable test
+          # (pkg/testenv).
+          CORRAL_REQUIRE_TOOLS: qemu-img,rclone
+        run: go test -race -shuffle=on -count=1 -timeout 300s ./...
 
       - name: go test (bootc tag)
-        run: go test -tags bootc -race -count=1 -timeout 120s ./...
+        run: go test -tags bootc -race -shuffle=on -count=1 -timeout 300s ./...
 
       - name: coverage
         run: |
-          go test -count=1 -timeout 120s -coverprofile=cover.out ./...
-          go tool cover -func=cover.out | tail -1
+          go test -count=1 -timeout 300s -coverprofile=cover.out ./...
+          # Ratchet: fails if the total slips below .coverage-budget.
+          scripts/coverage-gate.sh cover.out | tee -a "$GITHUB_STEP_SUMMARY"
           {
             echo '### Test coverage'
             echo '```'
@@ -75,6 +85,42 @@ jobs:
         with:
           name: coverage
           path: cover.out
+
+  lint:
+    # golangci-lint, which this repo has had a config for and never run.
+    #
+    # Two gates, because a mature codebase cannot adopt a linter in one step
+    # without either a 700-line mechanical diff or an ignored red X:
+    #   1. everything except errcheck must be clean repo-wide, and is today;
+    #   2. errcheck runs on the diff only, so new code cannot add unchecked
+    #      errors while the existing backlog is paid down separately.
+    # This is the same ratchet idea as .ste-budget: seed at today's state,
+    # never let it get worse.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # --new-from-merge-base needs the history the merge base lives in.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+
+      # Installed from source rather than through the marketplace action: the
+      # binary must be built with a Go at least as new as go.mod's directive,
+      # and this way the toolchain already set up above is the one used.
+      - name: Install golangci-lint
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2
+
+      - name: Lint (repo-wide)
+        run: golangci-lint run --disable=errcheck ./...
+
+      - name: Lint new code (errcheck)
+        run: |
+          base="origin/${{ github.base_ref || 'main' }}"
+          git fetch --quiet origin "${{ github.base_ref || 'main' }}"
+          golangci-lint run --default=none --enable=errcheck --new-from-merge-base="$base" ./...
 
   publish-image:
     # corral-web image: the web UI served on the cluster (deploy/corral-web.yaml)

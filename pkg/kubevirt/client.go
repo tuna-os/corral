@@ -408,13 +408,10 @@ type vmiStatus struct {
 	AgentConnected bool
 }
 
-// vmiStatusIndex returns live per-VMI facts keyed by "namespace/name".
-// launcherRunningIndex maps "ns/vm" → true when the VM's virt-launcher pod is
+// vmiStatusIndexWithRunner returns live per-VMI facts keyed by "namespace/name".
+// launcherRunningIndexWithRunner maps "ns/vm" → true when the VM's virt-launcher pod is
 // Running with its compute container ready. Used to rescue kernel-boot VMs
 // whose VMI status is frozen (see parseVMList). One list call per refresh.
-func launcherRunningIndex() map[string]bool {
-	return launcherRunningIndexWithRunner(getPackageRunner())
-}
 func launcherRunningIndexWithRunner(r shell.Runner) map[string]bool {
 	out, err := r.Run("kubectl", "get", "pods", "-A",
 		"-l", "kubevirt.io=virt-launcher", "-o", "json")
@@ -454,9 +451,6 @@ func launcherRunningIndexWithRunner(r shell.Runner) map[string]bool {
 	return idx
 }
 
-func vmiStatusIndex() map[string]vmiStatus {
-	return vmiStatusIndexWithRunner(getPackageRunner())
-}
 func vmiStatusIndexWithRunner(r shell.Runner) map[string]vmiStatus {
 	out, err := r.Run("kubectl", "get", "vmis", "-A", "-o", "json")
 	if err != nil {

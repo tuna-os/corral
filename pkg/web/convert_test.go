@@ -5,6 +5,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/tuna-os/corral/pkg/testenv"
 )
 
 // Exercises the real qemu-img conversion end to end: a raw image in, a valid
@@ -13,7 +15,7 @@ import (
 func TestConvertRawToQcow2_Real(t *testing.T) {
 	qemuImg, err := exec.LookPath("qemu-img")
 	if err != nil {
-		t.Skip("qemu-img not installed")
+		testenv.Skip(t, "qemu-img", "not installed")
 	}
 	dir := t.TempDir()
 	raw := filepath.Join(dir, "in.raw")

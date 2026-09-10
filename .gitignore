@@ -39,3 +39,6 @@ corral-incus
 # Local build outputs (never commit)
 .tmp/
 .tmp/**
+
+# Coverage profiles (scripts/coverage-gate.sh, just cover)
+cover.out

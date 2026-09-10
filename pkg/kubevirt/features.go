@@ -175,10 +175,7 @@ func (c *Client) canLiveMigrate(name string) bool {
 	return hasMigrationTarget(s.Node, nodeVendorsWithRunner(c.runner()))
 }
 
-// nodeVendors maps each schedulable node to its KubeVirt CPU vendor label.
-func nodeVendors() map[string]string {
-	return nodeVendorsWithRunner(getPackageRunner())
-}
+// nodeVendorsWithRunner maps each schedulable node to its KubeVirt CPU vendor label.
 func nodeVendorsWithRunner(r shell.Runner) map[string]string {
 	out, err := r.Run("kubectl", "get", "nodes", "-o", "json")
 	if err != nil {

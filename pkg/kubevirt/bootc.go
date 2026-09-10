@@ -645,18 +645,6 @@ func waitForBuilderVM(name, namespace string, progress io.Writer) error {
 	return fmt.Errorf("timeout waiting for bootc build (%d minutes)", int(bootcBuildTimeout()/time.Minute))
 }
 
-// bootcDiskExists reports whether the built disk PVC for a builder is present —
-// the source of truth for "did the build produce a disk". builderName is the
-// builder VM's name (<vm>-bootc-builder); the disk PVC is <vm>-bootc-disk, so
-// we strip the builder suffix to recover the base name. Used to disambiguate a
-// clean builder poweroff whose success marker was lost to log truncation.
-func bootcDiskExists(builderName, namespace string) bool {
-	base := strings.TrimSuffix(builderName, "-bootc-builder")
-	err := shell.Command("kubectl", "get", "pvc", base+"-bootc-disk",
-		"-n", namespace).Run()
-	return err == nil
-}
-
 // bootcDiskSizeBytes checks the real data size of the built disk by launching a
 // short-lived pod that mounts the PVC and stats disk.img. Returns -1 if the
 // check fails (PVC doesn't exist, pod can't schedule, etc). This is the durable

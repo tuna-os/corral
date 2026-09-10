@@ -32,12 +32,9 @@ func resolveGenericImage(req *createRequest) error {
 	return nil
 }
 
-// createGeneric handles everything that isn't bootc or the Windows guided
-// flow: catalog images, container disks, import URLs, ISO installs, and
+// createGenericInContext handles everything that isn't bootc or the Windows
+// guided flow: catalog images, container disks, import URLs, ISO installs, and
 // PVC-backed creation.
-func createGeneric(req createRequest, ns string) error {
-	return createGenericInContext(req, ns, "")
-}
 func createGenericInContext(req createRequest, ns, context string) error {
 	if err := resolveGenericImage(&req); err != nil {
 		return err

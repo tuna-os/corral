@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	"github.com/tuna-os/corral/pkg/shell"
+	"github.com/tuna-os/corral/pkg/testenv"
 	"github.com/tuna-os/corral/pkg/types"
 )
 
@@ -138,7 +139,7 @@ func TestE2E_QEMUTargetAdoptsTheBuiltDisk(t *testing.T) {
 	SetRunner(shell.Real{})
 	t.Cleanup(func() { SetRunner(shell.Real{}) })
 	if _, err := exec.LookPath("qemu-img"); err != nil {
-		t.Skip("qemu-img not installed")
+		testenv.Skip(t, "qemu-img", "not installed")
 	}
 
 	// A stand-in disk: this test is about placement and adoption, not about
@@ -196,10 +197,10 @@ func TestE2E_LibvirtTargetDomainIsAccepted(t *testing.T) {
 	SetRunner(shell.Real{})
 	t.Cleanup(func() { SetRunner(shell.Real{}) })
 	if _, err := exec.LookPath("virsh"); err != nil {
-		t.Skip("virsh not installed")
+		testenv.Skip(t, "virsh", "not installed")
 	}
 	if _, err := exec.LookPath("qemu-img"); err != nil {
-		t.Skip("qemu-img not installed")
+		testenv.Skip(t, "qemu-img", "not installed")
 	}
 	uri := ""
 	for _, candidate := range []string{"qemu:///system", "qemu:///session"} {
@@ -209,7 +210,7 @@ func TestE2E_LibvirtTargetDomainIsAccepted(t *testing.T) {
 		}
 	}
 	if uri == "" {
-		t.Skip("no usable libvirt connection")
+		testenv.Skip(t, "libvirt", "no usable connection")
 	}
 
 	dir := t.TempDir()

@@ -68,3 +68,51 @@ func writeExecutable(t *testing.T, path, body string) {
 		t.Fatalf("writing %s: %v", path, err)
 	}
 }
+
+// Every first-party plugin must answer the handshake, because core execs it
+// for metadata on every discovery pass: a plugin that does not answer is
+// invisible in `corral plugin list` and its capabilities never reach the UI.
+//
+// The SDK unit tests cover the writer and TestMetadataHandshake_RoundTrip
+// covers the protocol; this covers the thing that actually ships. It builds
+// the real binaries, so it is skipped under -short.
+func TestFirstPartyPluginsAnswerTheHandshake(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds every plugin binary")
+	}
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("go toolchain not available")
+	}
+
+	// corral-incus is a command, not a marketplace plugin, and corral-bootc
+	// only builds under its own tag — the tagged build is covered by the bootc
+	// job in CI.
+	plugins := []string{"auth", "backup", "gpu", "proxmox", "schedule", "snapsched", "vdi", "windows"}
+
+	dir := t.TempDir()
+	t.Setenv("CORRAL_PLUGIN_DIR", dir)
+
+	for _, name := range plugins {
+		t.Run(name, func(t *testing.T) {
+			bin := filepath.Join(dir, "corral-"+name)
+			build := exec.Command("go", "build", "-o", bin, "../../cmd/corral-"+name)
+			if out, err := build.CombinedOutput(); err != nil {
+				t.Fatalf("building corral-%s: %v\n%s", name, err, out)
+			}
+
+			meta, err := Inspect(name)
+			if err != nil {
+				t.Fatalf("corral-%s does not answer --corral-plugin-metadata: %v", name, err)
+			}
+			if meta.Version == "" {
+				t.Error("metadata carries no version; `corral plugin list` shows it")
+			}
+			if len(meta.SupportedBackends) == 0 {
+				t.Error("metadata declares no supportedBackends — marketplace v2 requires it")
+			}
+			if meta.Description == "" {
+				t.Error("metadata carries no description")
+			}
+		})
+	}
+}

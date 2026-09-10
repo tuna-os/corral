@@ -733,7 +733,7 @@ type USBDevice struct {
 	BusyReason  string `json:"busyReason,omitempty"`
 }
 
-// FormatSelector returns the vendorID:productID or bus.dev selector.
+// Selector returns the vendorID:productID or bus.dev selector.
 func (d USBDevice) Selector() string {
 	if d.VendorID != "" && d.ProductID != "" {
 		return fmt.Sprintf("%s:%s", d.VendorID, d.ProductID)

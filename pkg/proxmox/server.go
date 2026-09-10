@@ -14,7 +14,7 @@ import (
 	"github.com/tuna-os/corral/pkg/types"
 )
 
-// server translates Proxmox-shaped requests onto the corral KubeVirt backend.
+// Server translates Proxmox-shaped requests onto the corral KubeVirt backend.
 type Server struct {
 	ns     string
 	token  string // shared API secret; "" = open (tailnet-is-auth)
@@ -310,11 +310,6 @@ func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
 func (s *Server) vmNode(vm *types.VM) string {
 	nodes, _ := s.nodes()
 	return VMNode(vm, nodes)
-}
-
-func (s *Server) vmEntry(vm *types.VM) map[string]any {
-	nodes, _ := s.nodes()
-	return VMEntry(vm, VmidFor(vm.Name), VMNode(vm, nodes))
 }
 
 func (s *Server) vmEntryWithID(vm *types.VM, vmid int) map[string]any {

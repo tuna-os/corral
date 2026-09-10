@@ -125,7 +125,8 @@ func TestBodyIsByteStableAcrossRuns(t *testing.T) {
 		}
 		return w.String()
 	}
-	if build() != build() {
+	first, second := build(), build()
+	if first != second {
 		t.Fatal("two identical snapshots must produce identical bodies")
 	}
 }

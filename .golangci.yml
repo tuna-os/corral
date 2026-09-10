@@ -1,3 +1,34 @@
 version: "2"
+
+# The bootc tag only ever adds files (there is no `!bootc` source), so linting
+# with it set covers the whole tree in one pass — and keeps `unused` honest
+# about code whose only callers live in bootc-tagged files.
+run:
+  build-tags:
+    - bootc
+
+# Report every finding: the defaults cap output at 50 per linter and 3 per
+# issue text, which silently hides work from a gate that is supposed to be
+# all-or-nothing.
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
 linters:
   default: standard
+  settings:
+    staticcheck:
+      # SA/ST/S1 are defect and convention checks and stay on. QF* are
+      # editor "quickfix" refactors — tagged switches, De Morgan rewrites —
+      # which are style preferences, not defects; a gate that fails on them
+      # trains people to stop reading it.
+      checks:
+        - all
+        - -QF1001
+        - -QF1002
+        - -QF1003
+        - -QF1006
+        - -QF1012
+        # ST1000 wants a package comment on every package. Worth doing, but as
+        # documentation work, not as a merge gate.
+        - -ST1000

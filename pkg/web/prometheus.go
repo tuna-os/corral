@@ -21,6 +21,7 @@ package web
 import (
 	"context"
 	"fmt"
+	"math"
 	"net/http"
 	"sort"
 	"strings"
@@ -450,6 +451,12 @@ func parseQuantity(s string) (int64, error) {
 	var n int64
 	if _, err := fmt.Sscanf(digits, "%d", &n); err != nil || n <= 0 {
 		return 0, fmt.Errorf("%q is not a memory size", s)
+	}
+	// A size the backend reports is not a size Corral chose: "9223372036854775807Ti"
+	// used to overflow int64 and come back negative, which /metrics would then
+	// export as a fleet with negative memory. Found by FuzzParseQuantity.
+	if n > math.MaxInt64/multiplier {
+		return 0, fmt.Errorf("%q overflows a 64-bit byte count", s)
 	}
 	return n * multiplier, nil
 }

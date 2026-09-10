@@ -22,10 +22,15 @@ install:
     go build -ldflags "{{_ldflags}}" -o "${XDG_DATA_HOME:-$HOME/.local/share}/corral/plugins/corral-incus" ./cmd/corral-incus
     @echo "✓ installed: $(~/.local/bin/corral version)"
 
-# Run the full test suite (both tag sets), race detector on.
+# Run the full test suite (both tag sets), race detector on, order shuffled.
 test:
-    go test -race -count=1 ./...
-    go test -race -count=1 -tags bootc ./...
+    go test -race -shuffle=on -count=1 ./...
+    go test -race -shuffle=on -count=1 -tags bootc ./...
+
+# Coverage with the ratchet gate CI runs (.coverage-budget).
+cover:
+    go test -count=1 -coverprofile=cover.out ./...
+    scripts/coverage-gate.sh cover.out
 
 # Format Go sources in place.
 fmt:
@@ -36,8 +41,14 @@ vet:
     go vet ./...
     go vet -tags bootc ./...
 
-# The local pre-push gate — mirrors CI's `test` job.
-ci: fmt-check vet build test
+# Lint (both gates CI runs). Needs golangci-lint built with this repo's Go:
+#   go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2
+lint:
+    golangci-lint run --disable=errcheck ./...
+    golangci-lint run --default=none --enable=errcheck --new-from-merge-base=origin/main ./...
+
+# The local pre-push gate — mirrors CI's `test` and `lint` jobs.
+ci: fmt-check vet build test lint
 
 # Fail if anything isn't gofmt-clean (what CI checks).
 fmt-check:

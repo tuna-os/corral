@@ -28,7 +28,7 @@ func createBackendVM(w http.ResponseWriter, req createRequest, target config.Con
 			image = req.Import
 		}
 		if req.ISO != "" || req.PVC != "" {
-			err = fmt.Errorf("Incus creation currently accepts an Incus image alias, not ISO or PVC sources")
+			err = fmt.Errorf("incus creation currently accepts an Incus image alias, not ISO or PVC sources")
 		} else {
 			err = incus.NewClient(target.Context).Create(incus.CreateOpts{Name: req.Name, Image: image, VM: true, CPU: req.CPU, Memory: req.Mem})
 		}
