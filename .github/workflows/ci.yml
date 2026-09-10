@@ -59,6 +59,11 @@ jobs:
       # first is a real risk. Randomising the order surfaces that instead of
       # letting it hide until someone adds a test in the middle.
       - name: go test (race, shuffled)
+        env:
+          # The step above installs these on purpose, so a test that skips for
+          # a missing one is a broken runner, not an inapplicable test
+          # (pkg/testenv).
+          CORRAL_REQUIRE_TOOLS: qemu-img,rclone
         run: go test -race -shuffle=on -count=1 -timeout 300s ./...
 
       - name: go test (bootc tag)

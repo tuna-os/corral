@@ -21,13 +21,14 @@ import (
 	"testing"
 
 	"github.com/tuna-os/corral/pkg/shell"
+	"github.com/tuna-os/corral/pkg/testenv"
 	"github.com/tuna-os/corral/pkg/types"
 )
 
 func requireBinary(t *testing.T, name string) {
 	t.Helper()
 	if _, err := exec.LookPath(name); err != nil {
-		t.Skipf("%s not installed", name)
+		testenv.Skip(t, name, "not installed")
 	}
 }
 
@@ -116,7 +117,7 @@ func TestE2E_Libvirt(t *testing.T) {
 		}
 	}
 	if uri == "" {
-		t.Skip("no usable libvirt connection (tried qemu:///session and qemu:///system)")
+		testenv.Skip(t, "libvirt", "no usable connection (tried qemu:///session and qemu:///system)")
 	}
 	t.Logf("using %s", uri)
 
@@ -142,7 +143,7 @@ func TestE2E_Libvirt(t *testing.T) {
 	xmlPath := filepath.Join(dir, "domain.xml")
 	writeFile(t, xmlPath, xml)
 	if out, err := exec.Command("virsh", "-c", uri, "define", xmlPath).CombinedOutput(); err != nil {
-		t.Skipf("cannot define a session domain here: %s: %v", out, err)
+		testenv.Skip(t, "libvirt", fmt.Sprintf("cannot define a session domain here: %s: %v", out, err))
 	}
 	t.Cleanup(func() {
 		exec.Command("virsh", "-c", uri, "undefine", domain, "--snapshots-metadata").Run()
@@ -160,12 +161,12 @@ func TestE2E_Incus(t *testing.T) {
 	realRunner(t)
 
 	if err := exec.Command("incus", "query", "local:/1.0").Run(); err != nil {
-		t.Skipf("no reachable local Incus remote: %v", err)
+		testenv.Skip(t, "incus", fmt.Sprintf("no reachable local remote: %v", err))
 	}
 
 	const instance = "corral-snap-e2e"
 	if out, err := exec.Command("incus", "launch", "images:ubuntu/22.04", instance).CombinedOutput(); err != nil {
-		t.Skipf("cannot launch an Incus instance here: %s: %v", out, err)
+		testenv.Skip(t, "incus", fmt.Sprintf("cannot launch an instance here: %s: %v", out, err))
 	}
 	t.Cleanup(func() {
 		exec.Command("incus", "delete", "--force", instance).Run()

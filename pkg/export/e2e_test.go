@@ -9,6 +9,7 @@ package export
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,13 +19,14 @@ import (
 	"github.com/tuna-os/corral/pkg/qemu"
 	"github.com/tuna-os/corral/pkg/shell"
 	"github.com/tuna-os/corral/pkg/snapshot"
+	"github.com/tuna-os/corral/pkg/testenv"
 	"github.com/tuna-os/corral/pkg/types"
 )
 
 // A real qcow2, a real qemu-img, both formats, and the running-VM refusal.
 func TestE2E_QEMUExport(t *testing.T) {
 	if _, err := exec.LookPath("qemu-img"); err != nil {
-		t.Skip("qemu-img not installed")
+		testenv.Skip(t, "qemu-img", "not installed")
 	}
 	SetRunner(shell.Real{})
 	t.Cleanup(func() { SetRunner(shell.Real{}) })
@@ -139,10 +141,10 @@ func verifyArtifact(t *testing.T, path string, format Format) {
 // Real virsh + a real domain with a real qcow2 disk.
 func TestE2E_LibvirtExport(t *testing.T) {
 	if _, err := exec.LookPath("virsh"); err != nil {
-		t.Skip("virsh not installed")
+		testenv.Skip(t, "virsh", "not installed")
 	}
 	if _, err := exec.LookPath("qemu-img"); err != nil {
-		t.Skip("qemu-img not installed")
+		testenv.Skip(t, "qemu-img", "not installed")
 	}
 	SetRunner(shell.Real{})
 	t.Cleanup(func() { SetRunner(shell.Real{}) })
@@ -155,7 +157,7 @@ func TestE2E_LibvirtExport(t *testing.T) {
 		}
 	}
 	if uri == "" {
-		t.Skip("no usable libvirt connection")
+		testenv.Skip(t, "libvirt", "no usable connection")
 	}
 
 	dir := t.TempDir()
@@ -174,7 +176,7 @@ func TestE2E_LibvirtExport(t *testing.T) {
   </disk></devices>
 </domain>`), 0o644)
 	if out, err := exec.Command("virsh", "-c", uri, "define", xmlPath).CombinedOutput(); err != nil {
-		t.Skipf("cannot define a domain here: %s: %v", out, err)
+		testenv.Skip(t, "libvirt", fmt.Sprintf("cannot define a domain here: %s: %v", out, err))
 	}
 	t.Cleanup(func() { exec.Command("virsh", "-c", uri, "undefine", domain).Run() })
 
@@ -196,17 +198,17 @@ func TestE2E_LibvirtExport(t *testing.T) {
 // instance archive, not a bootable disk image.
 func TestE2E_IncusExport(t *testing.T) {
 	if _, err := exec.LookPath("incus"); err != nil {
-		t.Skip("incus not installed")
+		testenv.Skip(t, "incus", "not installed")
 	}
 	SetRunner(shell.Real{})
 	t.Cleanup(func() { SetRunner(shell.Real{}) })
 
 	if exec.Command("incus", "query", "local:/1.0").Run() != nil {
-		t.Skip("no reachable local Incus remote")
+		testenv.Skip(t, "incus", "no reachable local remote")
 	}
 	const instance = "corral-export-e2e"
 	if out, err := exec.Command("incus", "launch", "images:ubuntu/22.04", instance).CombinedOutput(); err != nil {
-		t.Skipf("cannot launch an Incus instance here: %s: %v", out, err)
+		testenv.Skip(t, "incus", fmt.Sprintf("cannot launch an instance here: %s: %v", out, err))
 	}
 	t.Cleanup(func() { exec.Command("incus", "delete", "--force", instance).Run() })
 

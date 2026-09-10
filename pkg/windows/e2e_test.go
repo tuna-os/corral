@@ -27,20 +27,21 @@ import (
 	"testing"
 
 	"github.com/tuna-os/corral/pkg/shell"
+	"github.com/tuna-os/corral/pkg/testenv"
 	"github.com/tuna-os/corral/pkg/types"
 )
 
 func libvirtURI(t *testing.T) string {
 	t.Helper()
 	if _, err := exec.LookPath("virsh"); err != nil {
-		t.Skip("virsh not installed")
+		testenv.Skip(t, "virsh", "not installed")
 	}
 	for _, candidate := range []string{"qemu:///system", "qemu:///session"} {
 		if exec.Command("virsh", "-c", candidate, "connect").Run() == nil {
 			return candidate
 		}
 	}
-	t.Skip("no usable libvirt connection")
+	testenv.Skip(t, "libvirt", "no usable connection")
 	return ""
 }
 
@@ -53,7 +54,7 @@ func TestE2E_WindowsLibvirtDomainIsAccepted(t *testing.T) {
 	t.Cleanup(func() { SetRunner(shell.Real{}) })
 	uri := libvirtURI(t)
 	if _, err := exec.LookPath("qemu-img"); err != nil {
-		t.Skip("qemu-img not installed")
+		testenv.Skip(t, "qemu-img", "not installed")
 	}
 
 	dir := t.TempDir()

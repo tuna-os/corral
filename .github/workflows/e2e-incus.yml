@@ -115,24 +115,20 @@ jobs:
       # Each subtest skips if its backend is missing, so a runner without one
       # degrades instead of failing.
       - name: Backend adapters against real backends
+        env:
+          # This runner installed all three, so a test that skips for a missing
+          # one verified nothing and the green tick would be lying. Naming them
+          # here turns that skip into a failure (pkg/testenv). It replaces a
+          # hand-maintained list of test names that had to be updated every
+          # time a subtest was added — and silently covered nothing when it
+          # wasn't.
+          CORRAL_REQUIRE_TOOLS: incus,libvirt,virsh,qemu-img
         run: |
           # pipefail, or `go test | tee` reports tee's exit status and a real
           # test failure lands as a green tick. Found exactly that way: an
           # Incus device-discovery failure passed this step unnoticed.
           set -o pipefail
           go test -count=1 -tags e2esnapshot -v -run TestE2E ./pkg/snapshot/ ./pkg/export/ ./pkg/device/ ./pkg/windows/ | tee /tmp/snap-e2e.txt
-          # The subtests skip when their backend is missing, which keeps the
-          # file runnable on a laptop — but this runner installs all three, so
-          # a skip here means the test verified nothing and the green tick
-          # would be lying. Fail on it.
-          for backend in QEMU Libvirt Incus QEMUExport LibvirtExport IncusExport \
-                         LibvirtDeviceDiscovery IncusDeviceDiscovery \
-                         WindowsLibvirtDomainIsAccepted WindowsAnswerISO; do
-            if grep -q "SKIP: TestE2E_${backend}\b" /tmp/snap-e2e.txt; then
-              echo "::error::TestE2E_${backend} skipped on a runner that has that backend installed"
-              exit 1
-            fi
-          done
 
       # The bootc targets, under their own build tag: this suite also contains a
       # privileged `bootc install to-disk` that pulls a multi-gigabyte image, so

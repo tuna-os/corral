@@ -35,6 +35,7 @@ import (
 	"testing"
 
 	"github.com/tuna-os/corral/pkg/shell"
+	"github.com/tuna-os/corral/pkg/testenv"
 	"github.com/tuna-os/corral/pkg/types"
 )
 
@@ -47,14 +48,14 @@ func realRunner(t *testing.T) {
 func libvirtURI(t *testing.T) string {
 	t.Helper()
 	if _, err := exec.LookPath("virsh"); err != nil {
-		t.Skip("virsh not installed")
+		testenv.Skip(t, "virsh", "not installed")
 	}
 	for _, candidate := range []string{"qemu:///system", "qemu:///session"} {
 		if exec.Command("virsh", "-c", candidate, "connect").Run() == nil {
 			return candidate
 		}
 	}
-	t.Skip("no usable libvirt connection")
+	testenv.Skip(t, "libvirt", "no usable connection")
 	return ""
 }
 
@@ -127,7 +128,7 @@ func TestE2E_LibvirtHostdevXMLIsAccepted(t *testing.T) {
   <os><type arch='x86_64'>hvm</type></os>
 </domain>`), 0o644)
 	if out, err := exec.Command("virsh", "-c", uri, "define", xmlPath).CombinedOutput(); err != nil {
-		t.Skipf("cannot define a domain here: %s: %v", out, err)
+		testenv.Skip(t, "libvirt", fmt.Sprintf("cannot define a domain here: %s: %v", out, err))
 	}
 	t.Cleanup(func() { exec.Command("virsh", "-c", uri, "undefine", domain).Run() })
 
@@ -175,10 +176,10 @@ func TestE2E_LibvirtHostdevXMLIsAccepted(t *testing.T) {
 func TestE2E_IncusDeviceDiscovery(t *testing.T) {
 	realRunner(t)
 	if _, err := exec.LookPath("incus"); err != nil {
-		t.Skip("incus not installed")
+		testenv.Skip(t, "incus", "not installed")
 	}
 	if exec.Command("incus", "query", "local:/1.0").Run() != nil {
-		t.Skip("no reachable local Incus remote")
+		testenv.Skip(t, "incus", "no reachable local remote")
 	}
 
 	devices, err := (Incus{}).List("local")
@@ -240,10 +241,10 @@ func TestE2E_IncusDeviceDiscovery(t *testing.T) {
 func TestE2E_IncusDeviceSyntaxIsRecognised(t *testing.T) {
 	realRunner(t)
 	if _, err := exec.LookPath("incus"); err != nil {
-		t.Skip("incus not installed")
+		testenv.Skip(t, "incus", "not installed")
 	}
 	if exec.Command("incus", "query", "local:/1.0").Run() != nil {
-		t.Skip("no reachable local Incus remote")
+		testenv.Skip(t, "incus", "no reachable local remote")
 	}
 
 	devices, err := (Incus{}).List("local")
@@ -265,7 +266,7 @@ func TestE2E_IncusDeviceSyntaxIsRecognised(t *testing.T) {
 	// --empty so no image is downloaded, and init rather than launch so the
 	// instance never starts and nothing is ever bound away from the host.
 	if out, err := exec.Command("incus", "init", "--empty", "--vm", instance).CombinedOutput(); err != nil {
-		t.Skipf("cannot init an Incus VM here: %s: %v", out, err)
+		testenv.Skip(t, "incus", fmt.Sprintf("cannot init a VM here: %s: %v", out, err))
 	}
 	t.Cleanup(func() { exec.Command("incus", "delete", "--force", instance).Run() })
 

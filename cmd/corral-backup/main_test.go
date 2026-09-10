@@ -8,6 +8,7 @@ import (
 
 	"github.com/tuna-os/corral/pkg/kubevirt"
 	"github.com/tuna-os/corral/pkg/shell"
+	"github.com/tuna-os/corral/pkg/testenv"
 )
 
 func TestRootCmd_Subcommands(t *testing.T) {
@@ -55,7 +56,7 @@ func TestEnsureRclone(t *testing.T) {
 // installs it so this runs there).
 func TestRclone_RealCopytoRoundTrip(t *testing.T) {
 	if _, err := exec.LookPath("rclone"); err != nil {
-		t.Skip("rclone not installed")
+		testenv.Skip(t, "rclone", "not installed")
 	}
 	orig := runner
 	runner = shell.Real{}
