@@ -23,8 +23,34 @@ forms, doctor, help) and `cmd/tui_views_test.go` (snapshots, events, template
 mark, CT scaling) — keypress in, state and rendered output out, against the
 in-memory demo cluster or a scripted `shell.Fake`.
 
-Remaining known gaps: plugin marketplace fetch/download, `config/` and
-`catalog/` remain thin, and nothing exercises real KVM hardware in CI.
+## Gates (refreshed 2026-09-10)
+
+Four gates hold the line. Each one is a ratchet, seeded from this repo's own
+state:
+
+- **Lint** (`just lint`, the `lint` job). Every linter but errcheck must be
+  clean across the repo. errcheck examines only the diff
+  (`--new-from-merge-base`). New code cannot add an unchecked error. The older
+  ones go away in their own time.
+- **Coverage** (`just cover`). `.coverage-budget` holds the floor. CI fails
+  when the total goes below it. CI also tells you to raise the floor when the
+  total goes above it.
+- **Order independence.** The suite uses `-shuffle=on`. Much state in the
+  process is global, and the tests share it. A test that passes only after
+  some other test ran is a real risk here. A shuffle makes it fail the first
+  time.
+- **Loud skips.** `CORRAL_REQUIRE_TOOLS` names what an environment supplies
+  (see `pkg/testenv`). A test that skips for a tool on that list fails
+  instead. A runner that drops `incus` can no longer show green while it runs
+  nothing.
+
+Fuzz targets run their seed corpus with the normal suite. The nightly workflow
+gives each target two minutes. That workflow also runs the `@live-only`
+Playwright tier when `CORRAL_E2E_URL` points at the isolated e2e instance.
+
+Known gaps: `config/` and `catalog/` remain thin. The adapter tests do not
+reach the QMP and journal code in `pkg/qemu`, which needs a seam of its own
+first. No CI job uses real KVM hardware.
 
 ---
 

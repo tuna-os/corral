@@ -57,3 +57,51 @@ func TestJobNames(t *testing.T) {
 		t.Errorf("job names: %q / %q", startJobName("dev"), stopJobName("dev"))
 	}
 }
+
+// ── reference resolution ──────────────────────────────────────────
+//
+// A schedule stops and starts somebody's instance on a timer, so the reference
+// it stores has to be exactly right and has to be rejected when it is not:
+// a malformed one would fire against nothing, silently, forever.
+
+func TestResolveRef(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	t.Run("default context supplies the backend", func(t *testing.T) {
+		ref, err := resolveRef("web-1", "", "corral-vms")
+		if err != nil {
+			t.Fatalf("resolveRef: %v", err)
+		}
+		if ref.Name != "web-1" {
+			t.Errorf("ref = %+v, want name web-1", ref)
+		}
+		if ref.Backend == "" {
+			t.Error("a reference with no backend cannot be acted on later")
+		}
+	})
+
+	t.Run("unknown context is refused", func(t *testing.T) {
+		_, err := resolveRef("web-1", "no-such-context", "")
+		if err == nil {
+			t.Fatal("an unknown context must be an error")
+		}
+		if !strings.Contains(err.Error(), "corral context ls") {
+			t.Errorf("error = %v, want it to point at `corral context ls`", err)
+		}
+	})
+
+	t.Run("an unnamed instance is refused", func(t *testing.T) {
+		if _, err := resolveRef("", "", ""); err == nil {
+			t.Fatal("a reference with no instance name must not validate")
+		}
+	})
+}
+
+func TestOrDash(t *testing.T) {
+	if got := orDash(""); got != "—" {
+		t.Errorf("orDash(\"\") = %q, want an em dash so a column never renders empty", got)
+	}
+	if got := orDash("0 9 * * 1-5"); got != "0 9 * * 1-5" {
+		t.Errorf("orDash passed through wrongly: %q", got)
+	}
+}

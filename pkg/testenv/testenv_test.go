@@ -32,7 +32,9 @@ func TestRequired(t *testing.T) {
 // failing half is checked through a sub-test so this test can observe it
 // without dying itself.
 func TestSkip_FailsOnlyForAPromisedTool(t *testing.T) {
-	os.Unsetenv(RequireEnv)
+	if err := os.Unsetenv(RequireEnv); err != nil {
+		t.Fatalf("unsetting %s: %v", RequireEnv, err)
+	}
 
 	skipped := testing.RunTests(func(string, string) (bool, error) { return true, nil }, []testing.InternalTest{{
 		Name: "unpromised",

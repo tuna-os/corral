@@ -1,0 +1,109 @@
+name: Nightly
+
+# The two tiers that cannot run on every push, and so ran nowhere.
+#
+# - Fuzzing: seed corpora run in the normal suite, but finding anything new
+#   needs minutes, not milliseconds. Nightly is where those minutes are.
+# - The @live-only Playwright tier: consoles, SSH, RDP, snapshots, bootc —
+#   the features hardest to unit-test — need a real cluster, so CI's kind +
+#   emulated KubeVirt cannot run them. Until now they ran when a human
+#   remembered.
+
+on:
+  schedule:
+    # 04:17 UTC: off the hour, so this is not queued behind everyone else's
+    # midnight cron.
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+
+      # One target at a time: `go test -fuzz` takes a single target, and a
+      # failure names which parser broke rather than which package.
+      - name: Fuzz the parsers
+        run: |
+          set -o pipefail
+          fail=0
+          fuzz() {
+            pkg=$1 target=$2
+            echo "::group::$target"
+            if ! go test "$pkg" -run xxx -fuzz "$target" -fuzztime 120s; then
+              echo "::error::$target found a failing input (see the testdata written above)"
+              fail=1
+            fi
+            echo "::endgroup::"
+          }
+          fuzz ./pkg/web/ FuzzParseQuantity
+          fuzz ./pkg/proxmoxbe/ FuzzMemoryMiB
+          exit $fail
+
+      # A crasher is written to testdata/fuzz/<target>/ next to the test. It is
+      # the reproduction, so it has to leave the runner.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: failure()
+        with:
+          name: fuzz-crashers
+          path: "**/testdata/fuzz/**"
+
+  live-e2e:
+    # The @live-only tier against the isolated e2e instance (never production:
+    # corral-vms is production, deploy/corral-web-e2e.yaml is the separate
+    # instance this points at). Configure the repository variable
+    # CORRAL_E2E_URL to enable it; with none set the job says so and stops,
+    # because a red X for "no lab configured" teaches people to ignore red Xs.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Check the lab is configured
+        id: lab
+        env:
+          CORRAL_E2E_URL: ${{ vars.CORRAL_E2E_URL }}
+        run: |
+          if [ -z "$CORRAL_E2E_URL" ]; then
+            echo "::notice::CORRAL_E2E_URL is not set — skipping the live tier. Set it to the isolated e2e instance (see e2e/corral.spec.js) to enable this job."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        if: steps.lab.outputs.configured == 'true'
+        with:
+          node-version: 24
+
+      - name: Install Playwright
+        if: steps.lab.outputs.configured == 'true'
+        working-directory: e2e
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Run the @live-only tier
+        if: steps.lab.outputs.configured == 'true'
+        working-directory: e2e
+        env:
+          CORRAL_URL: ${{ vars.CORRAL_E2E_URL }}
+          CORRAL_NS: ${{ vars.CORRAL_E2E_NAMESPACE || 'corral-e2e' }}
+        run: npx playwright test --grep "@live-only" --reporter=line
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: failure() && steps.lab.outputs.configured == 'true'
+        with:
+          name: live-e2e-artifacts
+          # The config keeps screenshots on failure and a trace on first retry;
+          # both land under test-results/. No html reporter is configured, so
+          # there is no report directory to collect.
+          path: e2e/test-results/
+          if-no-files-found: ignore

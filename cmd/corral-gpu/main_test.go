@@ -1,9 +1,12 @@
 package main
 
 import (
+	"os"
 	"strings"
 	"testing"
 
+	"github.com/tuna-os/corral/pkg/config"
+	"github.com/tuna-os/corral/pkg/device"
 	"github.com/tuna-os/corral/pkg/shell"
 )
 
@@ -159,5 +162,92 @@ func TestDetachGPU_NotFound(t *testing.T) {
 
 	if err := detachGPU("web", "tailvm", "gpu9"); err == nil {
 		t.Fatal("detaching a nonexistent GPU should fail")
+	}
+}
+
+// ── context and reference plumbing ────────────────────────────────
+
+func TestTarget_DefaultsAndUnknownContext(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	got, err := target("")
+	if err != nil {
+		t.Fatalf("target(\"\"): %v", err)
+	}
+	if got.Backend == "" {
+		t.Error("the default context must name a backend")
+	}
+
+	// Passing a device through to a VM on the wrong host takes the device away
+	// from that host, so an unknown context has to stop rather than default.
+	_, err = target("no-such-context")
+	if err == nil {
+		t.Fatal("an unknown context must be an error")
+	}
+	if !strings.Contains(err.Error(), "corral context ls") {
+		t.Errorf("error = %v, want it to point at `corral context ls`", err)
+	}
+}
+
+// A namespace only means something on KubeVirt. Carrying one onto a libvirt or
+// Incus reference would make two references to the same instance compare
+// unequal, and the registry keys off exactly this.
+func TestInstanceRef_NamespaceOnlyForKubevirt(t *testing.T) {
+	kube := instanceRef(config.ContextConfig{Backend: "kubevirt", Context: "prod"}, "web-1", "corral-vms")
+	if kube.Namespace != "corral-vms" {
+		t.Errorf("kubevirt ref lost its namespace: %+v", kube)
+	}
+	if kube.Backend != "kubevirt" || kube.Context != "prod" || kube.Name != "web-1" {
+		t.Errorf("kubevirt ref = %+v", kube)
+	}
+
+	for _, backend := range []string{"libvirt", "incus", "qemu"} {
+		ref := instanceRef(config.ContextConfig{Backend: backend}, "vm-1", "corral-vms")
+		if ref.Namespace != "" {
+			t.Errorf("%s ref carries a namespace it has no concept of: %+v", backend, ref)
+		}
+	}
+}
+
+func TestOrDash(t *testing.T) {
+	if got := orDash(""); got != "—" {
+		t.Errorf("orDash(\"\") = %q, want an em dash so a column never renders empty", got)
+	}
+	if got := orDash("nvidia"); got != "nvidia" {
+		t.Errorf("orDash(%q) = %q", "nvidia", got)
+	}
+}
+
+// --yes is what unattended callers pass. Without it, confirm reads stdin — and
+// an empty answer means no, because the default for "take this device away
+// from the host" cannot be yes.
+func TestConfirm_AssumeYesSkipsThePrompt(t *testing.T) {
+	dev := device.Device{ID: "0000:01:00.0", Description: "NVIDIA GPU"}
+	if err := confirm(dev, []device.Consequence{"the host loses this device"}, true); err != nil {
+		t.Fatalf("confirm with --yes: %v", err)
+	}
+}
+
+func TestConfirm_EmptyAnswerCancels(t *testing.T) {
+	stdin, err := os.CreateTemp(t.TempDir(), "stdin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stdin.WriteString("\n"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stdin.Seek(0, 0); err != nil {
+		t.Fatal(err)
+	}
+	orig := os.Stdin
+	os.Stdin = stdin
+	t.Cleanup(func() { os.Stdin = orig })
+
+	err = confirm(device.Device{ID: "0000:01:00.0"}, nil, false)
+	if err == nil {
+		t.Fatal("an empty answer must cancel, not proceed")
+	}
+	if !strings.Contains(err.Error(), "cancelled") {
+		t.Errorf("error = %v, want a cancellation", err)
 	}
 }
