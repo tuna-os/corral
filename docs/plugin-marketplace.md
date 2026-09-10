@@ -63,13 +63,13 @@ Test the binary directly, test the metadata handshake, then test dispatch with
 5. Host the index over HTTPS and test it with
    `corral marketplace add <source> <url>`.
 
-Corral only accepts an index that declares
-`"schemaVersion": "corral.marketplace/v2"`. An index without that declaration
-is refused, because it carries no publisher, no license, and no artifact
-digest. An operator who accepts that risk can add the source with
+Corral accepts only an index that declares
+`"schemaVersion": "corral.marketplace/v2"`. Corral rejects an index without
+that declaration, because it has no publisher, no license, and no digest. An
+operator who accepts that danger can add the source with
 `corral marketplace add <source> <url> --allow-unverified`. Corral then prints
-a warning at fetch time and at install time, and `corral marketplace list`
-shows the source as `unverified`.
+a warning when it reads the index and again at install time, and
+`corral marketplace list` shows the source as `unverified`.
 
 Duplicate plugin names must be selected as `source/name`. Installation shows
 the publisher, requested permissions, and requires explicit permission
