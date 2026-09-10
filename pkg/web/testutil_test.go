@@ -24,6 +24,7 @@ type TestFixture struct {
 // kubevirt client and the web package runner. Caller should defer
 // fixture.Close().
 func NewTestFixture() *TestFixture {
+	resetActivity()
 	runner := shell.NewFake()
 
 	// Always succeed at looking up virtctl

@@ -54,16 +54,21 @@ jobs:
           go build ./...
           go build -tags bootc ./...
 
-      - name: go test (race)
-        run: go test -race -count=1 -timeout 120s ./...
+      # -shuffle=on: the suite shares process-global seams (SetRunner, package
+      # stores, environment), so a test that only passes because another ran
+      # first is a real risk. Randomising the order surfaces that instead of
+      # letting it hide until someone adds a test in the middle.
+      - name: go test (race, shuffled)
+        run: go test -race -shuffle=on -count=1 -timeout 300s ./...
 
       - name: go test (bootc tag)
-        run: go test -tags bootc -race -count=1 -timeout 120s ./...
+        run: go test -tags bootc -race -shuffle=on -count=1 -timeout 300s ./...
 
       - name: coverage
         run: |
-          go test -count=1 -timeout 120s -coverprofile=cover.out ./...
-          go tool cover -func=cover.out | tail -1
+          go test -count=1 -timeout 300s -coverprofile=cover.out ./...
+          # Ratchet: fails if the total slips below .coverage-budget.
+          scripts/coverage-gate.sh cover.out | tee -a "$GITHUB_STEP_SUMMARY"
           {
             echo '### Test coverage'
             echo '```'

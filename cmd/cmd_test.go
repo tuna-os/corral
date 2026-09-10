@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	ctpkg "github.com/tuna-os/corral/pkg/ct"
+	"github.com/tuna-os/corral/pkg/incus"
 	"github.com/tuna-os/corral/pkg/kubevirt"
 	"github.com/tuna-os/corral/pkg/registry"
 	"github.com/tuna-os/corral/pkg/shell"
@@ -960,6 +961,16 @@ func TestPerformCTAction_DispatchesToCTPackage(t *testing.T) {
 	fake.AddResponseKV("kubectl", []string{"delete", "pod", "web1", "-n", "corral-ct", "--ignore-not-found"}, "", nil)
 	ctpkg.SetRunner(fake)
 	defer ctpkg.SetRunner(shell.Real{})
+
+	// ct.Stop asks Incus first and only falls through to kubectl when the
+	// name is not an Incus container — and that probe reads pkg/incus's own
+	// package runner, not the one set above. Pin it to a fake that answers
+	// "no such instance", or this test passes or fails depending on what an
+	// earlier test left in that global (found by `go test -shuffle=on`).
+	incusFake := shell.NewFake()
+	incusFake.AddResponse("incus", "", fmt.Errorf("instance not found"))
+	incus.SetRunner(incusFake)
+	defer incus.SetRunner(shell.Real{})
 
 	m := &tuiModel{isCT: true, selectedCT: ctpkg.CT{Name: "web1", Namespace: "corral-ct"}}
 	m.performCTAction("stop")

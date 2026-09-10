@@ -146,7 +146,7 @@ file. The Go server starts on a random port, Playwright opens Chrome and
 exercises the UI.
 
 ```javascript
-// test/e2e/corral.spec.js
+// e2e/corral.spec.js
 test('create dialog shows catalog images', async ({ page }) => {
     await page.goto('http://localhost:PORT');
     await page.click('#btn-create');
@@ -229,7 +229,7 @@ happy-path and one error-path case.
 
 ### Phase 5 — Frontend tests (1-2 sessions)
 
-1. Install Playwright, write a `test/e2e/` directory with config.
+1. Install Playwright, write an `e2e/` directory with config. (Done: `e2e/`.)
 2. Write the test server (starts Go server with FakeRunner on random port).
 3. Write ~10 Playwright scenarios covering the critical UI paths.
 4. Wire into `just test-e2e` or `npm test` in the project root.
@@ -307,7 +307,7 @@ func fakeVMIList() []byte      // running VMIs with IPs
 func fakeNodeList() []byte     // 2 nodes, 1 ready
 ```
 
-### `test/e2e/helpers.js`
+### `e2e/` helpers
 
 ```javascript
 // Start the test server, navigate, provide common selectors

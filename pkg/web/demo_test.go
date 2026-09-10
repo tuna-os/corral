@@ -25,6 +25,7 @@ func newDemoServer(t *testing.T) *httptest.Server {
 	// context that nothing stubs. Claiming the variable first makes the test
 	// framework put it back afterwards.
 	t.Setenv("CORRAL_INCUS_REMOTE", "")
+	resetActivity()
 	EnableDemo()
 	tmpDir := t.TempDir()
 	store = registry.NewStoreAt(tmpDir + "/registry.json")

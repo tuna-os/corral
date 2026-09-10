@@ -34,6 +34,18 @@ type taskLog struct {
 
 var activity = &taskLog{started: map[int64]time.Time{}}
 
+// resetActivity empties the ring. The task log is process-global by design —
+// it documents this server's activity — which makes it shared state between
+// tests: one test's failed move is visible to the next test that reads
+// /api/tasklog. Test fixtures call this so each starts from an empty log.
+func resetActivity() {
+	activity.mu.Lock()
+	defer activity.mu.Unlock()
+	activity.entries = nil
+	activity.nextID = 0
+	activity.started = map[int64]time.Time{}
+}
+
 // begin records a running task and returns a finish func to call with the
 // outcome. Usage: done := taskBegin("start", ns+"/"+name); …; done(err)
 func taskBegin(action, target string) func(error) {
