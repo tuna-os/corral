@@ -340,6 +340,7 @@ that matter in practice:
 | SSH never answers but the build reported OK | KubeVirt VMs are created **stopped** — `corral start <name>` first; then check the DM/sshd actually exist in the image |
 | Cluster ssh works, CI ssh refused at `127.0.0.1` | expected: without a tailnet the hostfwd binds loopback, which is where `--wait-ssh` probes; interactive `corral ssh` needs the tailnet |
 | `vmtest` exits 2 | the runner cannot host a VM at all: no podman, no qemu, no `/dev/loop-control`, or corral is not root. The message names the missing one |
+| `Re-exec in host mountns: ... Permission denied` | `bootc install` needs the host's mount namespace, and a container inside a container does not have one. Run corral on the runner, not in a container on it |
 | `vmtest` exits 6 and `serial.log` is empty | the guest never reached the bootloader, or the VM predates console capture. Recreate it — the console karg is installed by `vmtest` itself, so a VM built another way may not have one |
 | `vmtest` exits 6 and the console stops in dracut | an ostree install on the wrong filesystem. Composefs images need btrfs, and the local builder refuses them for that reason — build those on a KubeVirt context |
 | `vmtest` exits 7 | the first-boot hook failed. Its own output is in `result.json` under `hook.log`, and on the console between the `CORRAL_POSTBOOT_FAIL` and `CORRAL_VM_READY` markers |

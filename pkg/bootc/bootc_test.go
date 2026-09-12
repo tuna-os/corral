@@ -406,3 +406,36 @@ func TestInstallArgs_Kargs(t *testing.T) {
 		t.Errorf("a blank karg must not reach bootc: %s", args)
 	}
 }
+
+// bootc re-execs in the host's mount namespace, which a container inside a
+// container does not have. Its own message names a pid and a permission and
+// leaves the reader guessing, so the build adds where to run it instead.
+func TestBuild_ExplainsANestedContainer(t *testing.T) {
+	fake := shell.NewFake()
+	SetRunner(fake)
+	t.Cleanup(func() { SetRunner(shell.Real{}) })
+
+	fake.AddPrefixResponse("podman pull", "", nil)
+	fake.AddPrefixResponse("podman create", "probe\n", nil)
+	fake.AddPrefixResponse("podman cp probe:/usr/sbin/bootupctl", "", nil)
+	fake.AddPrefixResponse("podman cp", "", errors.New("no such file"))
+	fake.AddPrefixResponse("podman rm", "", nil)
+	fake.AddPrefixResponse("podman run",
+		"error: Re-exec in host mountns: open pid1 mountns: Permission denied (os error 13)",
+		errors.New("exit 1"))
+
+	_, err := LocalBuilder{}.Build(BuildRequest{
+		Image: "example.com/os:1",
+		Dest:  filepath.Join(t.TempDir(), "disk.raw"),
+		Size:  "1G",
+	}, nil)
+	if err == nil {
+		t.Fatal("expected the install to fail")
+	}
+	if !strings.Contains(err.Error(), "mount namespace") {
+		t.Errorf("the error should explain what the guest needs: %v", err)
+	}
+	if !strings.Contains(err.Error(), "os error 13") {
+		t.Errorf("bootc's own message should survive: %v", err)
+	}
+}
