@@ -464,8 +464,16 @@ report() {
   echo "` + ReadyMarker + `"
 }
 # The status file and the markers must be written even when a script kills the
-# hook, or a harness waiting on them waits for the whole timeout instead.
+# hook, or a harness waiting on them waits for the whole timeout instead. TERM
+# is systemd's own timeout: without it a hook that runs long reports nothing at
+# all, and the run cannot tell a slow hook from a broken one.
 trap report EXIT
+# systemd sends TERM at TimeoutStartSec. bash defers a trap until the running
+# foreground command returns, so each script below runs in the background and is
+# waited for: a TERM interrupts the wait at once, and the report is written
+# while the hook still can. Without that, a hook stuck on a command that never
+# returns is killed with nothing recorded — which is the case this exists for.
+trap 'rc=124; [ -n "${script_pid:-}" ] && kill "$script_pid" 2>/dev/null; report; exit 124' TERM INT
 
 echo "corral: post-boot hook starting on $(date -Is)"
 `)
@@ -474,9 +482,11 @@ echo "corral: post-boot hook starting on $(date -Is)"
 		// Run it, then read $? on its own line. `if ! cmd; then rc=$?` reads the
 		// status of the negation, which is always 0 — a failing script would
 		// report success, which is the one thing a test harness must never do.
-		b.WriteString("bash -euo pipefail <<'CORRAL_SCRIPT_EOF'\n")
+		b.WriteString("bash -euo pipefail <<'CORRAL_SCRIPT_EOF' &\n")
 		b.WriteString(strings.TrimRight(script, "\n") + "\n")
 		b.WriteString("CORRAL_SCRIPT_EOF\n")
+		b.WriteString("script_pid=$!\n")
+		b.WriteString("wait \"$script_pid\"\n")
 		b.WriteString("rc=$?\n")
 		b.WriteString(fmt.Sprintf("if [ \"$rc\" -ne 0 ]; then\n  echo \"corral: provision script %d failed with $rc\"\n  exit \"$rc\"\nfi\n", i+1))
 	}
@@ -484,12 +494,28 @@ echo "corral: post-boot hook starting on $(date -Is)"
 	return b.String()
 }
 
+// HookTimeout bounds the post-boot hook.
+//
+// Not a number pulled from the air: systemd waits for this unit before it calls
+// the boot finished, so an unbounded hook is an unbounded boot. Ten minutes is
+// long enough for a hook that installs something over a slow mirror, and short
+// enough that a hung one becomes a reported failure rather than a run that sits
+// there until the harness gives up on it.
+const HookTimeout = "10min"
+
 // postBootUnitFile is the unit that runs the hook.
 //
 // Ordering matters: after the network and after sshd, so a hook that installs
 // something can reach a mirror and a harness that sees the marker knows SSH is
 // already up. journal+console puts the output on the serial log, which is the
 // only channel a guest with no SSH has.
+//
+// Because systemd waits for this unit, a hook must never wait for the boot to
+// finish. "systemctl is-system-running --wait" inside one deadlocks: the boot
+// is not finished until the hook returns, and the hook does not return until
+// the boot is finished. TimeoutStartSec turns that into a verdict rather than a
+// hang — this cost a CI run, with the hook's own first line on the console and
+// nothing after it.
 func postBootUnitFile() string {
 	return `[Unit]
 Description=corral vmtest post-boot hook
@@ -502,7 +528,7 @@ RemainAfterExit=yes
 ExecStart=/usr/libexec/corral-postboot
 StandardOutput=journal+console
 StandardError=journal+console
-TimeoutStartSec=0
+TimeoutStartSec=` + HookTimeout + `
 
 [Install]
 WantedBy=multi-user.target

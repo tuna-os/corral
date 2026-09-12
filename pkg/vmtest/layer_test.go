@@ -477,3 +477,35 @@ func findCommand(script, command string) (string, bool) {
 	}
 	return "", false
 }
+
+// systemd waits for this unit before it calls the boot finished, so the unit
+// has to be bounded. It was not, and a hook that waited for the boot to finish
+// hung the whole run: the console showed its first line and nothing after.
+func TestPostBootUnit_IsBounded(t *testing.T) {
+	unit := postBootUnitFile()
+	if strings.Contains(unit, "TimeoutStartSec=0") {
+		t.Error("an unbounded hook is an unbounded boot")
+	}
+	if !strings.Contains(unit, "TimeoutStartSec="+HookTimeout) {
+		t.Errorf("the unit should bound the hook at %s:\n%s", HookTimeout, unit)
+	}
+}
+
+// And when systemd does time it out, the hook still has to report: a run that
+// cannot tell a slow hook from a broken one has learned nothing.
+func TestPostBootScript_ReportsOnATimeout(t *testing.T) {
+	script := postBootScript([]string{"sleep 1"})
+	if !strings.Contains(script, "TERM INT") || !strings.Contains(script, "rc=124") {
+		t.Errorf("the hook must report when systemd kills it:\n%s", script)
+	}
+	// bash defers a trap until the running foreground command returns, so the
+	// script has to be waited on rather than run in the foreground. Without
+	// this, a TERM to a hook stuck on a command that never returns is recorded
+	// nowhere at all.
+	if !strings.Contains(script, "<<'CORRAL_SCRIPT_EOF' &") {
+		t.Errorf("each provision script must run in the background:\n%s", script)
+	}
+	if !strings.Contains(script, `wait "$script_pid"`) {
+		t.Errorf("the hook must wait on its script, so a signal interrupts the wait:\n%s", script)
+	}
+}

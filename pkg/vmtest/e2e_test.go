@@ -64,7 +64,9 @@ func TestE2E_BootAndCustomize(t *testing.T) {
 	// tree, not jq: the base image already ships jq, so an assertion on it
 	// would pass even if the layer installed nothing at all.
 	spec.Packages = []string{"tree"}
-	spec.Provision = []Provision{{Script: "systemctl is-system-running --wait || true\ntest -f /etc/os-release"}}
+	// Not "systemctl is-system-running --wait": the hook is part of the boot,
+	// so waiting for the boot to finish inside it deadlocks.
+	spec.Provision = []Provision{{Script: "systemctl is-active sshd\ntest -f /etc/os-release"}}
 	spec.Checks = []string{
 		// The layer really installed something.
 		"command -v tree",

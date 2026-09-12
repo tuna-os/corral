@@ -27,6 +27,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // layerEngine returns the container engine to build with, or skips.
@@ -208,5 +209,50 @@ func TestE2ELayer_HookReportsAFailure(t *testing.T) {
 	}
 	if !strings.Contains(text, "rc=9\n9") {
 		t.Errorf("the status file should hold 9:\n%s", text)
+	}
+}
+
+// systemd's timeout has to leave a verdict behind. The hook is part of the
+// boot, so a hook that waits for the boot deadlocks — systemd then kills it,
+// and if that killed the report too, the run could not tell a slow hook from a
+// broken one. This sends the same signal systemd would.
+func TestE2ELayer_HookReportsWhenKilled(t *testing.T) {
+	engine := layerEngine(t)
+	image := layerTestImage()
+
+	spec := &Spec{Name: "hookkill", Bootc: image}
+	spec.Provision = []Provision{{Script: "sleep 120"}}
+	spec.WithDefaults()
+
+	dir := t.TempDir()
+	ctx, err := newBuildContext(spec, image, "")
+	if err != nil {
+		t.Fatalf("newBuildContext: %v", err)
+	}
+	if err := ctx.write(dir); err != nil {
+		t.Fatal(err)
+	}
+	hook := filepath.Join(dir, "system_files", "usr", "libexec", "corral-postboot")
+
+	// Start the hook, let it reach the sleep, then TERM it as systemd does at
+	// TimeoutStartSec, and read what it left behind.
+	started := time.Now()
+	out, _ := exec.Command(engine, "run", "--rm", "-v", hook+":/hook:ro", image, "bash", "-c",
+		"/hook & hookpid=$!; sleep 3; kill -TERM $hookpid; wait $hookpid; echo rc=$?; cat "+StatusFile).CombinedOutput()
+	text := string(out)
+	// The report has to come when the signal does. bash defers a trap until the
+	// running foreground command returns, so a hook that waited on its script
+	// rather than backgrounding it would sit here for the whole sleep.
+	if elapsed := time.Since(started); elapsed > 30*time.Second {
+		t.Errorf("the hook took %s to report a TERM: it is not waiting on its script", elapsed)
+	}
+	if !strings.Contains(text, HookFailMarker+" rc=124") {
+		t.Errorf("a killed hook should report a timeout on the console:\n%s", text)
+	}
+	if !strings.Contains(text, ReadyMarker) {
+		t.Errorf("the readiness marker must print even when the hook is killed:\n%s", text)
+	}
+	if !strings.Contains(text, "rc=124\n124") {
+		t.Errorf("the status file should hold 124 for the harness to read:\n%s", text)
 	}
 }

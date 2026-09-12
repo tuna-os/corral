@@ -97,6 +97,12 @@ The layer adds:
   Its output reaches the artifact directory, and its markers reach the serial
   console. A guest that never answers SSH therefore still reports.
 
+  The hook is part of the boot, so it must never wait for the boot to finish.
+  `systemctl is-system-running --wait` inside one deadlocks: systemd waits for
+  the hook, and the hook waits for systemd. corral bounds the unit at 10
+  minutes, so you get exit 7 instead of a hang. Assert a state
+  (`systemctl is-active sshd`); do not wait for one.
+
 Where a host has [remora](https://github.com/tuna-os/remora), corral asks
 remora to generate the layer's Containerfile. remora is the same project's tool
 for local layers. It knows six package managers. It resolves a package
@@ -344,6 +350,7 @@ that matter in practice:
 | `vmtest` exits 6 and `serial.log` is empty | the guest never reached the bootloader, or the VM predates console capture. Recreate it — the console karg is installed by `vmtest` itself, so a VM built another way may not have one |
 | `vmtest` exits 6 and the console stops in dracut | an ostree install on the wrong filesystem. Composefs images need btrfs, and the local builder refuses them for that reason — build those on a KubeVirt context |
 | `vmtest` exits 7 | the first-boot hook failed. Its own output is in `result.json` under `hook.log`, and on the console between the `CORRAL_POSTBOOT_FAIL` and `CORRAL_VM_READY` markers |
+| `vmtest` exits 7 and the console shows the hook starting and nothing after | the hook waits for something that waits for the hook. `systemctl is-system-running --wait` is the usual one. Assert a unit's state instead of waiting for the boot |
 | `vmtest` exits 9 | the guest booted and painted nothing. Look at `ready.png` and the last frames: a greeter that crashed looks exactly like this |
 
 Every row above was hit for real while gating TunaOS images — this table is

@@ -123,7 +123,7 @@ jobs:
             --bootc "$IMAGE" \
             --user tester --password corral-ci --sudo-user \
             --package tree \
-            --post-boot 'systemctl is-system-running --wait || true' \
+            --post-boot 'systemctl is-active sshd && test -f /etc/os-release' \
             --check 'command -v tree' \
             --check 'id tester' \
             --check 'sudo -u tester sudo -n true' \

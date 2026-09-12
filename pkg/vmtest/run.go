@@ -179,7 +179,10 @@ func Run(spec *Spec, out io.Writer) (*Result, error) {
 	// Verdicts, in the order a reader cares about them.
 	switch {
 	case result.Hook != nil && !result.Hook.Ran:
-		return result, result.fail(ExitHook, fmt.Errorf("the post-boot hook never reported — see %s in the guest and the console log", StatusFile))
+		return result, result.fail(ExitHook, fmt.Errorf(
+			"the post-boot hook never reported — see %s in the guest, and the console log. "+
+				"A hook that waits for the boot to finish (systemctl is-system-running --wait) "+
+				"never returns: the hook is part of the boot", StatusFile))
 	case result.Hook != nil && result.Hook.ExitCode != 0:
 		return result, result.fail(ExitHook, fmt.Errorf("the post-boot hook failed (exit %d)", result.Hook.ExitCode))
 	case !sshReachable && len(spec.Checks) > 0:
