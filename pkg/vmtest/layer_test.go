@@ -356,12 +356,92 @@ func TestGeneratedShell_NoInstallD(t *testing.T) {
 			t.Errorf("%s uses `install -d`, which Rust uutils refuses when the parent exists: %s", path, line)
 		}
 	}
-	// And the directories it needs are still created, with their modes.
+	// And the directories it needs are still created, with their modes,
+	// through the helper that survives a symlinked component.
 	accounts := ctx.BuildScripts["10-corral-accounts.sh"]
-	for _, want := range []string{`mkdir -p "$home/.ssh"`, `chmod 0700 "$home/.ssh"`, "mkdir -p /etc/sudoers.d"} {
+	for _, want := range []string{
+		`corral_mkdir "$home/.ssh"`,
+		`chmod 0700 "$home/.ssh"`,
+		"corral_mkdir /etc/sudoers.d",
+		`corral_mkdir "/var/home/$name"`,
+	} {
 		if !strings.Contains(accounts, want) {
 			t.Errorf("the account script is missing %q", want)
 		}
+	}
+	// Every script that creates a directory carries the helper.
+	for _, name := range []string{"10-corral-accounts.sh", "20-corral-services.sh"} {
+		if !strings.Contains(ctx.BuildScripts[name], "corral_mkdir() {") {
+			t.Errorf("%s calls corral_mkdir without defining it", name)
+		}
+	}
+}
+
+// The failure this reproduces cost two CI runs. On a bootc system /root is a
+// symlink to /var/roothome, and these images ship Rust uutils, whose `mkdir -p`
+// (and `install -d`) refuse a path with a symlinked component:
+//
+//	mkdir: cannot create directory '/root': File exists
+//
+// GNU mkdir walks straight through it, so no test on this machine could see the
+// problem. A shim that fails exactly the way uutils fails can.
+func TestAccountScript_SurvivesAUutilsMkdir(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skipf("no bash: %v", err)
+	}
+	root := t.TempDir()
+
+	// The guest's layout: a real /var/roothome, and /root pointing at it.
+	realHome := filepath.Join(root, "var", "roothome")
+	if err := os.MkdirAll(realHome, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	home := filepath.Join(root, "root")
+	if err := os.Symlink(realHome, home); err != nil {
+		t.Fatal(err)
+	}
+
+	// A mkdir that refuses a symlinked component, as uutils does.
+	bin := filepath.Join(root, "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	shim := `#!/bin/sh
+for arg in "$@"; do
+  case "$arg" in -*) continue ;; esac
+  parent=$(dirname "$arg")
+  if [ -L "$parent" ]; then
+    echo "mkdir: cannot create directory '$parent': File exists" >&2
+    exit 1
+  fi
+done
+exec /bin/mkdir "$@"
+`
+	if err := os.WriteFile(filepath.Join(bin, "mkdir"), []byte(shim), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	script := "#!/usr/bin/env bash\nset -euo pipefail\n" + accountHelpers +
+		"corral_authorize root " + shellQuote(home) + " 'ssh-ed25519 AAAAkey corral'\n"
+	path := filepath.Join(root, "accounts.sh")
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command(bash, path)
+	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"))
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("the account script failed where mkdir refuses a symlink: %v\n%s", err, out)
+	}
+
+	// The key has to land in the real home, reachable through the symlink.
+	keys, err := os.ReadFile(filepath.Join(realHome, ".ssh", "authorized_keys"))
+	if err != nil {
+		t.Fatalf("no authorized_keys in the real home: %v", err)
+	}
+	if !strings.Contains(string(keys), "AAAAkey") {
+		t.Errorf("authorized_keys = %q", keys)
 	}
 }
 
