@@ -16,13 +16,22 @@
   `pkg/web`/`pkg/demo` change (`scripts/ui-smoke.mjs`).
 - **Cluster e2e** (`.github/workflows/e2e.yml`): kind + emulated KubeVirt on
   GitHub runners — real `kubectl`/`virtctl` against a real API server.
-- **A real bootc boot** (`.github/workflows/vmtest.yml`, and
-  `just vmtest-e2e`): `corral vmtest` builds a real image into a disk and boots
-  it with KVM. It adds a test account and a package, then asserts inside the
-  guest over SSH. It runs weekly and on demand, never on a push: it pulls
-  gigabytes and boots a VM. The Go suite behind it is `pkg/vmtest/e2e_test.go`,
-  behind the `e2evmtest` build tag. `pkg/bootc` uses `e2ebootc` for the same
-  reason.
+- **The generated layer, in a real bootc image** (`just vmtest-layer`, the
+  `layer` job in `.github/workflows/vmtest.yml`). It builds what `pkg/vmtest`
+  generates on top of `quay.io/fedora/fedora-bootc:41`. Then it asserts inside
+  the image: the accounts, the keys, the passwords, the modes, the units. A
+  container engine and a minute — no KVM, no root. It runs on every pull request
+  that touches the harness. Build tag `e2elayer`.
+- **A real bootc boot** (`just vmtest-e2e`, the `boot` job): `corral vmtest`
+  builds a real image into a disk and boots it with KVM, then asserts inside
+  the guest over SSH. Weekly and on demand, never on a push — it pulls
+  gigabytes and boots a VM. Build tag `e2evmtest`, as `pkg/bootc` uses
+  `e2ebootc`.
+
+  The split between those two is not tidiness. Three runs of the boot job died
+  in the same container build step, for three variations of one shell mistake.
+  Nothing cheaper ever ran the generated shell against a real image. The layer
+  tier costs a minute and catches that whole class.
 
 The TUI's update loop is driven directly in `cmd/tui_flows_test.go` (list,
 context cycling, quick keys, actions gating, confirm/clone/ports/hardware
@@ -114,7 +123,7 @@ any cluster state without a real cluster.
 ### Layer 2 — Integration tests (needs cluster, opt-in)
 
 **Goal:** verify that real kubectl/virtctl commands produce real VMs that
-actually boot, accept SSH, and respond to lifecycle operations.
+boot, accept SSH, and respond to lifecycle operations.
 
 **Approach:** Go build tag `//go:build integration`. Run only when a
 KubeVirt cluster is available (CI on a schedule or manual trigger, never on

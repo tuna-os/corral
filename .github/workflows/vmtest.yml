@@ -21,8 +21,7 @@ on:
         description: "Bootc image to boot"
         default: quay.io/fedora/fedora-bootc:41
   pull_request:
-    # Only when the harness itself changes: the test costs minutes, and a
-    # docs-only PR learns nothing from it.
+    # The `layer` job runs here; `boot` does not (see its own condition).
     paths:
       - "pkg/vmtest/**"
       - "pkg/qemu/**"
@@ -34,7 +33,41 @@ permissions:
   contents: read
 
 jobs:
+  # The layer, built in the image it targets. A minute, a container engine, no
+  # KVM and no privileges — so this one does run on a pull request.
+  #
+  # It exists because of what its absence cost: three runs of the `boot` job
+  # died in the same container build step, for three variations of one shell
+  # mistake, and each round took minutes. The build step that keeps breaking
+  # needs none of the machinery around it.
+  layer:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+
+      - name: Install podman
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq podman
+
+      - name: Build the layer in a real bootc image
+        env:
+          CORRAL_LAYER_ENGINE: podman
+          CORRAL_VMTEST_IMAGE: ${{ inputs.image || 'quay.io/fedora/fedora-bootc:41' }}
+        run: go test -tags e2elayer -count=1 -timeout 15m -v ./pkg/vmtest/
+
+  # The whole harness against a real image: pull, layer, disk, boot, assert.
+  #
+  # Never on a push or a pull request. It pulls gigabytes and boots a VM, which
+  # is the same reason tunaOS's luks-e2e.yml runs on a schedule and on demand
+  # only. The `layer` job above covers what a PR can usefully learn in a minute.
   boot:
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:

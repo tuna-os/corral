@@ -259,33 +259,34 @@ func accountScript(spec *Spec, authorizedKey string) (string, error) {
 // /var from the image is copied in once at install time. A home directory
 // created here therefore reaches the installed system, and one created on first
 // boot would not survive a rebuild.
-const mkdirHelper = `# corral_mkdir is mkdir -p that survives this family of images.
+const mkdirHelper = `# corral_mkdir creates a directory whose parent may be a dangling symlink.
 #
-# Three facts about a bootc image defeat a plain mkdir -p here.
+# One fact about a bootc image defeats plain mkdir -p: /root is a symlink to
+# var/roothome — relative — and the image does not ship that target, because
+# bootc creates root's home at install time. Any tool that walks the path then
+# stops at the link itself:
 #
-#  1. /root is a symlink to /var/roothome.
-#  2. That target does not exist in the image: bootc ships an empty /var and
-#     creates root's home at install time. The symlink dangles.
-#  3. The image may ship Rust uutils, whose mkdir -p reports "cannot create
-#     directory '/root': File exists" for a symlinked component where GNU mkdir
-#     walks through it. install -d refuses the same path, and readlink -f
-#     resolves nothing unless every component exists already.
+#   $ mkdir -p /root/.ssh
+#   mkdir: cannot create directory '/root': File exists
 #
-# So: skip the work where the directory is there; try mkdir; then read the link
-# itself — plain readlink, which reports a dangling target happily — and create
-# the target before the directory inside it. "cd ... && pwd -P" is the last
-# resort for a resolvable parent, and needs no coreutils at all.
+# GNU coreutils reports that, not some unusual userland: mkdir stats /root,
+# gets nothing, tries to create it, and hits the symlink. install -d fails the
+# same way, and readlink -f resolves nothing because a component below the last
+# one is missing.
 #
-# Writes through the original path follow the symlink by themselves, so only
-# the create has to know any of this.
+# So read the link itself — plain readlink, which prints a dangling target
+# happily — make that target, and then the directory inside it. Every write
+# afterwards goes through the original path and follows the link, so only the
+# create has to know about any of this.
 corral_mkdir() {
-  local dir="$1" parent base target resolved
+  local dir="$1" parent base target
   [ -d "$dir" ] && return 0
   mkdir -p "$dir" 2>/dev/null && return 0
   parent="$(dirname "$dir")"
   base="$(basename "$dir")"
   if [ -L "$parent" ]; then
     target="$(readlink "$parent" 2>/dev/null || true)"
+    # A relative target is relative to the link's own directory.
     case "$target" in
       "") ;;
       /*) ;;
@@ -295,12 +296,8 @@ corral_mkdir() {
       return 0
     fi
   fi
-  resolved="$(cd "$parent" 2>/dev/null && pwd -P)" || resolved=""
-  if [ -z "$resolved" ]; then
-    echo "corral: cannot create $dir: $parent does not resolve to a directory" >&2
-    return 1
-  fi
-  [ -d "$resolved/$base" ] || mkdir -p "$resolved/$base"
+  echo "corral: cannot create $dir" >&2
+  return 1
 }
 `
 
@@ -323,17 +320,45 @@ corral_adduser() {
     echo "corral: this image has neither useradd nor adduser; cannot create $name" >&2
     exit 1
   fi
-  if [ -n "$groups" ]; then
-    if command -v usermod >/dev/null 2>&1; then
-      usermod -aG "$groups" "$name"
-    else
-      local g
-      for g in ${groups//,/ }; do addgroup "$name" "$g" 2>/dev/null || true; done
-    fi
-  fi
+  corral_addgroups "$name" "$groups"
   corral_mkdir "/var/home/$name"
   chmod 0700 "/var/home/$name"
   chown "$name:$name" "/var/home/$name" 2>/dev/null || true
+}
+
+# corral_addgroups adds an account to each group and checks that it worked.
+#
+# The check is not paranoia. A bootc image keeps its system groups in
+# /usr/lib/group (systemd-sysusers), not /etc/group, and "usermod -aG video"
+# against such a group exits 0 and changes nothing at all. So the group is
+# copied into /etc/group first, and membership is confirmed afterwards: a group
+# the spec asked for and did not get is a failed build, not a silent surprise in
+# a booted guest.
+corral_addgroups() {
+  local name="$1" groups="$2" g
+  [ -n "$groups" ] || return 0
+  for g in ${groups//,/ }; do
+    corral_group_to_etc "$g"
+    if command -v usermod >/dev/null 2>&1; then
+      usermod -aG "$g" "$name"
+    else
+      addgroup "$name" "$g" 2>/dev/null || true
+    fi
+    if ! id -nG "$name" | tr ' ' '\n' | grep -qx "$g"; then
+      echo "corral: could not add $name to the group $g" >&2
+      return 1
+    fi
+  done
+}
+
+# corral_group_to_etc copies a group that exists only in the image's
+# /usr/lib/group into /etc/group, which is the only file usermod edits.
+corral_group_to_etc() {
+  local g="$1" entry
+  grep -q "^$g:" /etc/group 2>/dev/null && return 0
+  entry="$(getent group "$g" 2>/dev/null || true)"
+  [ -n "$entry" ] || return 0
+  printf '%s\n' "$entry" >> /etc/group
 }
 
 corral_setpass() {
@@ -359,13 +384,8 @@ corral_authorize() {
 }
 
 corral_admin() {
-  local name="$1" group
-  group="$(corral_admin_group)"
-  if command -v usermod >/dev/null 2>&1; then
-    usermod -aG "$group" "$name"
-  else
-    addgroup "$name" "$group" 2>/dev/null || true
-  fi
+  local name="$1"
+  corral_addgroups "$name" "$(corral_admin_group)"
   corral_sudoers "$name"
 }
 
@@ -433,8 +453,10 @@ func postBootScript(scripts []string) string {
 	b.WriteString("#!/usr/bin/env bash\n")
 	b.WriteString("# Generated by corral vmtest — runs once, on first boot and every boot after.\n")
 	b.WriteString(`set -o pipefail
+# Both directories before anything writes to them: an image's /var carries
+# almost nothing, and tee to a missing directory loses the whole log.
+mkdir -p "$(dirname ` + HookLogFile + `)" "$(dirname ` + StatusFile + `)"
 exec > >(tee -a ` + HookLogFile + `) 2>&1
-mkdir -p "$(dirname ` + StatusFile + `)"
 rc=0
 report() {
   echo "$rc" > ` + StatusFile + `
@@ -449,10 +471,14 @@ echo "corral: post-boot hook starting on $(date -Is)"
 `)
 	for i, script := range scripts {
 		b.WriteString(fmt.Sprintf("\necho 'corral: provision script %d'\n", i+1))
-		b.WriteString("if ! bash -euo pipefail <<'CORRAL_SCRIPT_EOF'\n")
+		// Run it, then read $? on its own line. `if ! cmd; then rc=$?` reads the
+		// status of the negation, which is always 0 — a failing script would
+		// report success, which is the one thing a test harness must never do.
+		b.WriteString("bash -euo pipefail <<'CORRAL_SCRIPT_EOF'\n")
 		b.WriteString(strings.TrimRight(script, "\n") + "\n")
 		b.WriteString("CORRAL_SCRIPT_EOF\n")
-		b.WriteString(fmt.Sprintf("then rc=$?; echo \"corral: provision script %d failed with $rc\"; exit $rc; fi\n", i+1))
+		b.WriteString("rc=$?\n")
+		b.WriteString(fmt.Sprintf("if [ \"$rc\" -ne 0 ]; then\n  echo \"corral: provision script %d failed with $rc\"\n  exit \"$rc\"\nfi\n", i+1))
 	}
 	b.WriteString("\necho 'corral: post-boot hook finished'\nexit 0\n")
 	return b.String()

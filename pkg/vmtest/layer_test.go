@@ -148,8 +148,17 @@ func TestAccountScript(t *testing.T) {
 	if strings.Contains(script, "'video,$(corral_admin_group)'") {
 		t.Error("the administrator group must be resolved by the guest, not quoted into a list")
 	}
-	if !strings.Contains(script, `group="$(corral_admin_group)"`) {
+	if !strings.Contains(script, `corral_addgroups "$name" "$(corral_admin_group)"`) {
 		t.Error("the administrator group is named by the base image, not by us")
+	}
+	// A group the spec asked for and did not get must fail the build: on a bootc
+	// image `usermod -aG` against a /usr/lib/group group exits 0 and does
+	// nothing.
+	if !strings.Contains(script, "could not add $name to the group $g") {
+		t.Error("group membership must be verified, not assumed")
+	}
+	if !strings.Contains(script, "corral_group_to_etc") {
+		t.Error("a group that lives only in /usr/lib/group has to reach /etc/group first")
 	}
 
 	// Passwords are hashed on the host. A plain one would sit in the image.
@@ -337,10 +346,10 @@ func TestDerivedTag(t *testing.T) {
 	}
 }
 
-// The account script runs inside the image, whose coreutils may be Rust
-// uutils. uutils' `install -d /root/.ssh` fails with "cannot create directory
-// '/root': File exists", which took out a whole CI run. Nothing generated here
-// may use `install -d` again.
+// `install -d /root/.ssh` fails in a bootc image with "cannot create directory
+// '/root': File exists", because /root is a dangling symlink to var/roothome.
+// It took out a CI run. Nothing generated here may use it again: corral_mkdir
+// is the only way these scripts create a directory.
 func TestGeneratedShell_NoInstallD(t *testing.T) {
 	ctx, err := newBuildContext(testSpec(), "base", "ssh-ed25519 AAAArun")
 	if err != nil {
@@ -348,12 +357,12 @@ func TestGeneratedShell_NoInstallD(t *testing.T) {
 	}
 	for name, script := range ctx.BuildScripts {
 		if line, found := findCommand(script, "install -d"); found {
-			t.Errorf("%s uses `install -d`, which Rust uutils refuses when the parent exists: %s", name, line)
+			t.Errorf("%s uses `install -d`, which fails on a dangling symlink: %s", name, line)
 		}
 	}
 	for path, file := range ctx.SystemFiles {
 		if line, found := findCommand(file.Content, "install -d"); found {
-			t.Errorf("%s uses `install -d`, which Rust uutils refuses when the parent exists: %s", path, line)
+			t.Errorf("%s uses `install -d`, which fails on a dangling symlink: %s", path, line)
 		}
 	}
 	// And the directories it needs are still created, with their modes,
@@ -377,65 +386,32 @@ func TestGeneratedShell_NoInstallD(t *testing.T) {
 	}
 }
 
-// The failure this reproduces cost two CI runs. On a bootc system /root is a
-// symlink to /var/roothome, and these images ship Rust uutils, whose `mkdir -p`
-// (and `install -d`) refuse a path with a symlinked component:
-//
-//	mkdir: cannot create directory '/root': File exists
-//
-// GNU mkdir walks straight through it, so no test on this machine could see the
-// problem. A shim that fails exactly the way uutils fails can.
-func TestAccountScript_SurvivesAUutilsMkdir(t *testing.T) {
+// The failure this reproduces cost three CI runs, and the cause is one fact:
+// on a bootc image /root is a symlink to the relative path var/roothome, and
+// the image does not ship that target. Every tool that walks the path stops at
+// the link — GNU mkdir -p included, with "cannot create directory '/root': File
+// exists". No fake tools are needed to see it; real coreutils do it.
+func TestAccountScript_SurvivesADanglingHomeSymlink(t *testing.T) {
 	bash, err := exec.LookPath("bash")
 	if err != nil {
 		t.Skipf("no bash: %v", err)
 	}
 	root := t.TempDir()
 
-	// The image's real layout: /root is a symlink to /var/roothome, and that
-	// target does not exist yet — bootc ships an empty /var and creates root's
-	// home at install time, so the link dangles during the build.
+	// The image's layout: /var exists, /var/roothome does not, /root points at
+	// it by a relative path.
 	if err := os.MkdirAll(filepath.Join(root, "var"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	realHome := filepath.Join(root, "var", "roothome")
 	home := filepath.Join(root, "root")
-	if err := os.Symlink(realHome, home); err != nil {
+	if err := os.Symlink("var/roothome", home); err != nil {
 		t.Fatal(err)
 	}
 
-	// A mkdir that refuses a symlinked component, as uutils does.
-	bin := filepath.Join(root, "bin")
-	if err := os.MkdirAll(bin, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	mkdirShim := `#!/bin/sh
-for arg in "$@"; do
-  case "$arg" in -*) continue ;; esac
-  parent=$(dirname "$arg")
-  if [ -L "$parent" ]; then
-    echo "mkdir: cannot create directory '$parent': File exists" >&2
-    exit 1
-  fi
-done
-exec /bin/mkdir "$@"
-`
-	if err := os.WriteFile(filepath.Join(bin, "mkdir"), []byte(mkdirShim), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	// uutils' readlink -f resolves nothing unless every component already
-	// exists, which is how the second attempt still failed. The plain form —
-	// read this one link, dangling or not — works, so the shim refuses only -f.
-	readlinkShim := `#!/bin/sh
-for arg in "$@"; do
-  case "$arg" in
-    -*f*) echo "readlink: cannot resolve: No such file or directory" >&2; exit 1 ;;
-  esac
-done
-exec /bin/readlink "$@"
-`
-	if err := os.WriteFile(filepath.Join(bin, "readlink"), []byte(readlinkShim), 0o755); err != nil {
-		t.Fatal(err)
+	// The premise: a plain mkdir -p really does fail here. If this ever stops
+	// being true, the helper below is solving a problem that no longer exists.
+	if out, err := exec.Command("mkdir", "-p", filepath.Join(home, ".ssh")).CombinedOutput(); err == nil {
+		t.Skipf("mkdir -p walks a dangling symlink on this host, so the case cannot be reproduced: %s", out)
 	}
 
 	script := "#!/usr/bin/env bash\nset -euo pipefail\n" + accountHelpers +
@@ -444,15 +420,12 @@ exec /bin/readlink "$@"
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-
-	cmd := exec.Command(bash, path)
-	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"))
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("the account script failed where mkdir refuses a symlink: %v\n%s", err, out)
+	if out, err := exec.Command(bash, path).CombinedOutput(); err != nil {
+		t.Fatalf("the account script failed on a dangling home symlink: %v\n%s", err, out)
 	}
 
-	// The key has to land in the real home, reachable through the symlink.
-	keys, err := os.ReadFile(filepath.Join(realHome, ".ssh", "authorized_keys"))
+	// The key lands in the real home, reachable through the link.
+	keys, err := os.ReadFile(filepath.Join(root, "var", "roothome", ".ssh", "authorized_keys"))
 	if err != nil {
 		t.Fatalf("no authorized_keys in the real home: %v", err)
 	}
