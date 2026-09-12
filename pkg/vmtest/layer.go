@@ -261,20 +261,30 @@ func accountScript(spec *Spec, authorizedKey string) (string, error) {
 // boot would not survive a rebuild.
 const mkdirHelper = `# corral_mkdir is mkdir -p that survives this family of images.
 #
-# On a bootc system /root is a symlink to /var/roothome, and these images ship
-# Rust uutils, whose mkdir -p reports "cannot create directory '/root': File
-# exists" for a symlinked component where GNU mkdir walks through it. Its
-# install -d refuses the same path. So: skip the work where the directory is
-# already there, and where mkdir still refuses, resolve the symlink and create
-# the real path. Writes through $home afterwards follow the link by themselves.
+# Two facts about a bootc image make plain mkdir -p unreliable here. /root is a
+# symlink to /var/roothome. And the image may ship Rust uutils, whose mkdir -p
+# reports "cannot create directory '/root': File exists" for a symlinked
+# component, where GNU mkdir walks through it; install -d refuses the same
+# path, and readlink -f wants every component to exist before it resolves
+# anything.
+#
+# So: skip the work where the directory is already there; try mkdir; and where
+# mkdir refuses, resolve the parent with the shell itself. "cd ... && pwd -P"
+# needs no coreutils at all. Writes through the original path follow the
+# symlink by themselves, so only the create has to know about any of this.
 corral_mkdir() {
-  local dir="$1" resolved
+  local dir="$1" parent base resolved
   [ -d "$dir" ] && return 0
   mkdir -p "$dir" 2>/dev/null && return 0
-  resolved="$(readlink -f "$dir" 2>/dev/null || echo "$dir")"
-  [ -d "$resolved" ] || mkdir -p "$resolved"
+  parent="$(dirname "$dir")"
+  base="$(basename "$dir")"
+  resolved="$(cd "$parent" 2>/dev/null && pwd -P)" || resolved=""
+  if [ -z "$resolved" ]; then
+    echo "corral: cannot create $dir: $parent does not resolve to a directory" >&2
+    return 1
+  fi
+  [ -d "$resolved/$base" ] || mkdir -p "$resolved/$base"
 }
-
 `
 
 const accountHelpers = mkdirHelper + `corral_admin_group() {

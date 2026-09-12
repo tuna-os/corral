@@ -407,7 +407,7 @@ func TestAccountScript_SurvivesAUutilsMkdir(t *testing.T) {
 	if err := os.MkdirAll(bin, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	shim := `#!/bin/sh
+	mkdirShim := `#!/bin/sh
 for arg in "$@"; do
   case "$arg" in -*) continue ;; esac
   parent=$(dirname "$arg")
@@ -418,7 +418,17 @@ for arg in "$@"; do
 done
 exec /bin/mkdir "$@"
 `
-	if err := os.WriteFile(filepath.Join(bin, "mkdir"), []byte(shim), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(bin, "mkdir"), []byte(mkdirShim), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// uutils' readlink -f resolves nothing unless every component already
+	// exists. The second CI run failed because the fallback leaned on it, so the
+	// shim refuses it outright: the script must not need readlink at all.
+	readlinkShim := `#!/bin/sh
+echo "readlink: cannot resolve: No such file or directory" >&2
+exit 1
+`
+	if err := os.WriteFile(filepath.Join(bin, "readlink"), []byte(readlinkShim), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
