@@ -767,3 +767,31 @@ func TestSSHArgs_IdentityAndCommand(t *testing.T) {
 		t.Errorf("expected -p 2222 in args, got %v", args)
 	}
 }
+
+func TestGenerateUnit_SerialLog(t *testing.T) {
+	unit := generateUnit(generateUnitOpts{
+		Name:        "testvm",
+		QemuPath:    "/usr/bin/qemu-system-x86_64",
+		Mem:         "4G",
+		CPU:         2,
+		DiskPath:    "/tmp/test.qcow2",
+		TailscaleIP: "127.0.0.1",
+		SerialLog:   "/state/testvm/serial.log",
+	})
+	if !strings.Contains(unit, "-chardev file,id=serial0,path=/state/testvm/serial.log,append=on") {
+		t.Errorf("the unit should capture the guest console:\n%s", unit)
+	}
+	if !strings.Contains(unit, "-serial chardev:serial0") {
+		t.Error("the chardev must be wired to the guest's serial port")
+	}
+	// append=on: a restart must not erase the record of the boot that failed.
+	if strings.Contains(unit, "append=off") {
+		t.Error("console capture should append across restarts")
+	}
+
+	// And a VM asked for without one gets no serial arguments at all.
+	plain := generateUnit(generateUnitOpts{Name: "testvm", QemuPath: "q", Mem: "4G", CPU: 1, DiskPath: "/d"})
+	if strings.Contains(plain, "-serial") {
+		t.Errorf("no serial log requested should mean no -serial:\n%s", plain)
+	}
+}

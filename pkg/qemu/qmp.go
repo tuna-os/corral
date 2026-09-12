@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"image"
 	"image/color"
-	"image/png"
 	"io"
 	"net"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -92,42 +92,12 @@ func qmpExecute(conn net.Conn, reader *bufio.Reader, command string, args map[st
 // "<name>-screenshot.png" in the current directory). The VM must have been
 // created with this corral version (older units lack the -qmp socket) and
 // must be running.
+//
+// Capture is the same thing with a verdict on what the frame shows — use that
+// one when nobody is going to look at the file.
 func Screenshot(name, outPath string) error {
-	vmDir := filepath.Join(VMHome(), name)
-	sockPath := filepath.Join(vmDir, "qmp.sock")
-	if _, err := os.Stat(sockPath); err != nil {
-		return fmt.Errorf("no QMP socket for %q — is it running? if it was created with an older corral, recreate it (corral create --force ...) to pick up QMP support", name)
-	}
-
-	conn, reader, err := qmpDial(sockPath)
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
-
-	// screendump writes a PPM file directly via the QEMU process — since the
-	// QEMU backend and the corral CLI share a host, a path next to the VM's
-	// other state is reachable from both sides.
-	ppmPath := filepath.Join(vmDir, "screenshot.ppm")
-	defer os.Remove(ppmPath)
-	if _, err := qmpExecute(conn, reader, "screendump", map[string]any{"filename": ppmPath}); err != nil {
-		return fmt.Errorf("screendump: %w", err)
-	}
-
-	img, err := decodePPM(ppmPath)
-	if err != nil {
-		return fmt.Errorf("decoding screendump: %w", err)
-	}
-
-	if outPath == "" {
-		outPath = name + "-screenshot.png"
-	}
-	f, err := os.Create(outPath)
-	if err != nil {
-		return fmt.Errorf("creating %s: %w", outPath, err)
-	}
-	defer f.Close()
-	return png.Encode(f, img)
+	_, err := Capture(name, outPath)
+	return err
 }
 
 // decodePPM reads a binary PPM (P6), the format QEMU's screendump command
@@ -255,4 +225,98 @@ func qmpSimple(name, command, verb string) error {
 		return fmt.Errorf("qmp %s: %w", command, err)
 	}
 	return nil
+}
+
+// ── console input ─────────────────────────────────────────────────
+//
+// A guest with no SSH is not out of reach: QEMU's send-key injects scancodes
+// at the emulated keyboard, which is the only way into a LUKS passphrase
+// prompt, a greeter, or a login shell on a production image that ships sshd
+// off. TunaOS's iso-e2e.sh drives its published-media tests this way.
+
+// SendKeys types text at the guest's console, one key at a time.
+//
+// Only the characters a US keyboard produces without a modifier beyond shift
+// are typed; anything else is reported rather than silently dropped, because a
+// passphrase that is quietly missing a character fails in a way that looks
+// like the guest's fault.
+func SendKeys(name, text string) error {
+	var combos [][]string
+	for _, r := range text {
+		keys, ok := qcodesFor(r)
+		if !ok {
+			return fmt.Errorf("cannot type %q at the console: no US-keyboard mapping", r)
+		}
+		combos = append(combos, keys)
+	}
+	return sendKeyCombos(name, combos)
+}
+
+// SendKey presses one combination of named QEMU key codes together, e.g.
+// SendKey("vm", "ret") or SendKey("vm", "ctrl", "alt", "f2").
+func SendKey(name string, keys ...string) error {
+	if len(keys) == 0 {
+		return fmt.Errorf("no keys given")
+	}
+	return sendKeyCombos(name, [][]string{keys})
+}
+
+// sendKeyCombos opens one monitor connection for the whole sequence: a
+// connection per character turns typing a passphrase into a hundred handshakes.
+func sendKeyCombos(name string, combos [][]string) error {
+	sockPath := filepath.Join(VMHome(), name, "qmp.sock")
+	if _, err := os.Stat(sockPath); err != nil {
+		return fmt.Errorf("no QMP socket for %q — is it running? if it was created with an older corral, recreate it (corral create --force ...) to pick up QMP support", name)
+	}
+	conn, reader, err := qmpDial(sockPath)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	for _, combo := range combos {
+		keys := make([]map[string]any, 0, len(combo))
+		for _, key := range combo {
+			keys = append(keys, map[string]any{"type": "qcode", "data": key})
+		}
+		if _, err := qmpExecute(conn, reader, "send-key", map[string]any{"keys": keys}); err != nil {
+			return fmt.Errorf("send-key %v: %w", combo, err)
+		}
+		// The guest's keyboard driver drops keys sent faster than it polls.
+		time.Sleep(30 * time.Millisecond)
+	}
+	return nil
+}
+
+// shiftedQcodes maps the characters that need shift to the unshifted key.
+var shiftedQcodes = map[rune]string{
+	'!': "1", '@': "2", '#': "3", '$': "4", '%': "5", '^': "6", '&': "7",
+	'*': "8", '(': "9", ')': "0", '_': "minus", '+': "equal", '{': "bracket_left",
+	'}': "bracket_right", '|': "backslash", ':': "semicolon", '"': "apostrophe",
+	'<': "comma", '>': "dot", '?': "slash", '~': "grave_accent",
+}
+
+// plainQcodes maps the punctuation that needs no modifier.
+var plainQcodes = map[rune]string{
+	' ': "spc", '-': "minus", '=': "equal", '[': "bracket_left", ']': "bracket_right",
+	'\\': "backslash", ';': "semicolon", '\'': "apostrophe", ',': "comma",
+	'.': "dot", '/': "slash", '`': "grave_accent", '\n': "ret", '\t': "tab",
+}
+
+// qcodesFor returns the QEMU key codes that produce r, shift included.
+func qcodesFor(r rune) ([]string, bool) {
+	switch {
+	case r >= 'a' && r <= 'z':
+		return []string{string(r)}, true
+	case r >= 'A' && r <= 'Z':
+		return []string{"shift", strings.ToLower(string(r))}, true
+	case r >= '0' && r <= '9':
+		return []string{string(r)}, true
+	}
+	if key, ok := plainQcodes[r]; ok {
+		return []string{key}, true
+	}
+	if key, ok := shiftedQcodes[r]; ok {
+		return []string{"shift", key}, true
+	}
+	return nil, false
 }

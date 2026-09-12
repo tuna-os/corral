@@ -200,6 +200,50 @@ implements that; half of it would produce a desktop image that builds and does
 not boot. Incus is refused too — an Incus VM boots from Incus's own image store
 and cannot adopt a foreign pre-partitioned disk.
 
+### VM test harness (vmtest)
+
+Testing a bootc image is a different job from creating a VM, and `pkg/vmtest`
+owns it: image reference in, booted and asserted system out, evidence on disk.
+`corral vmtest` is the CLI over it. See
+[ADR-0012](docs/adr/0012-bootc-vm-test-harness.md) and
+[docs/ci-boot-gate.md](docs/ci-boot-gate.md).
+
+**Customisation is a derived image, not an edited disk.** Accounts, passwords,
+packages, files and the post-boot hook become one layer built `FROM` the
+reference under test. A spec that asks for nothing builds no layer, so the
+default run tests the published bytes. Passwords are hashed on the host — a
+plain one would sit in the image. Home directories go under `/var/home`,
+because `/home` on a bootc system is a symlink into `/var` and only the image's
+`/var` reaches the installed disk.
+
+**The layer's Containerfile has two generators.** remora
+([tuna-os/remora](https://github.com/tuna-os/remora)) when it is installed: it
+knows six package managers and resolves a package lockfile. A built-in
+generator otherwise, over the same build context — remora's `build_files/*.sh`
+and `system_files/` shape. `--layer-engine` forces one.
+
+**Readiness is SSH or a console marker.** An image with sshd disabled — every
+production desktop image — cannot answer an SSH probe, so `readyMarker` waits
+for a regular expression on the serial console instead. Every local VM now
+captures its console to `serial.log`, and vmtest installs `console=ttyS0` as a
+kernel argument at install time so the log survives reboots.
+
+**The post-boot hook reports twice.** A systemd oneshot writes its exit code to
+`/var/lib/corral/postboot.status` for SSH to read, and prints
+`CORRAL_POSTBOOT_OK` / `CORRAL_POSTBOOT_FAIL rc=N` and `CORRAL_VM_READY` to the
+console for when SSH never happens. A hook that never reported is a failed run,
+not a passing one.
+
+**Blankness is a number.** The framebuffer arrives as a PPM over QMP, so the
+standard deviation of its luminance is computed in Go. At or under 0.02 the
+frame is blank: the guest is up and nothing painted. `requirePaint` makes that
+a failure, which is the only way a desktop image's worst failure gets an exit
+code.
+
+**One exit code per failure class** (2 host, 3 layer, 4 disk, 5 start, 6 not
+ready, 7 hook, 8 check, 9 blank). A gate that reports every failure as 1 gets
+ignored, and "this runner has no KVM" is not the image's fault.
+
 ### Windows guests
 
 Windows needs three things no other guest does, and each is delivered

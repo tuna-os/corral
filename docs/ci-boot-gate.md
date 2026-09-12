@@ -12,7 +12,210 @@ is [tuna-os/tunaOS](https://github.com/tuna-os/tunaOS), which gates GHCR tag
 promotion on a QEMU boot of every image (see its `docs/PIPELINE.md`), with
 the same checks runnable against a KubeVirt cluster for local development.
 
-## The one-liner (QEMU backend, any KVM machine or CI runner)
+Start with `corral vmtest`, below. It is the full harness: it customises the
+image, boots it, collects evidence, and hands back a running system to test.
+`corral create --wait-ssh` is the smaller gate — one exit code, no artifacts —
+and it is still there for a pipeline that only asks "did it boot".
+
+## `corral vmtest` — the whole job in one command
+
+`corral vmtest` builds the disk, boots it, waits for the guest, runs your
+assertions, and leaves the VM running so the next step can test it. It also
+adds what a test needs and the published image does not have: accounts,
+passwords, packages, files, and a first-boot hook.
+
+```bash
+corral vmtest gate --bootc ghcr.io/tuna-os/yellowfin:gnome-testing \
+  --user tester --password hunter2 --sudo-user \
+  --package jq \
+  --check 'systemctl is-active sshd' \
+  --check 'systemctl --failed --no-legend' \
+  --video
+# exit 0 → the image booted, the hook passed, every check passed
+ssh -i corral-vmtest-out/ssh/id_ed25519 -p 2242 tester@127.0.0.1
+corral delete gate
+```
+
+Add `--rm` for a pure gate, where nothing runs after it.
+
+### What it writes
+
+Every run fills an artifact directory (`--artifacts`, default
+`corral-vmtest-out/`). Upload it from CI and a failure is diagnosable without
+a second run:
+
+| File | What it tells you |
+|---|---|
+| `result.json` | the whole run: verdict, boot time, each check, each frame |
+| `serial.log` | the guest console, from the firmware to the readiness marker |
+| `frames/f*.png` | one screenshot per `--screenshot-interval` during the boot |
+| `ready.png` / `failure.png` | the screen at the moment the run ended |
+| `timelapse.webm` | the boot as a video (`--video`, needs ffmpeg) |
+| `diagnostics/` | failed units, `bootc status`, journal warnings |
+| `layer/Containerfile` | exactly what the run added to the image |
+| `ssh/id_ed25519` | the run's own keypair |
+
+### Exit codes
+
+One code per failure class, so a pipeline can branch on the answer:
+
+| Code | Meaning |
+|---|---|
+| 0 | passed |
+| 1 | the spec cannot run (no image, a bad regular expression) |
+| 2 | this host cannot run it (no podman, no qemu, no loop device) |
+| 3 | the layer build failed (a package that does not exist) |
+| 4 | the disk build failed (`bootc install`) |
+| 5 | the VM did not start |
+| 6 | the guest never became ready |
+| 7 | the post-boot hook failed |
+| 8 | a check failed |
+| 9 | the guest painted nothing, and `--require-paint` was set |
+
+Code 2 is the important one. It separates a broken runner from a broken image,
+which is the distinction a red pipeline usually hides.
+
+### Users, passwords and packages: the derived layer
+
+Anything the spec asks for goes into a thin image layer built **on top of** the
+reference under test. The published image is never modified. With no
+customisation asked for, corral builds no layer at all and boots the image
+exactly as published.
+
+The layer adds:
+
+- **Accounts.** `--user tester --password hunter2 --sudo-user` creates the
+  account, sets the password, and gives it passwordless sudo. The home
+  directory goes in `/var/home`, because `/home` on a bootc system is a symlink
+  into `/var` and only `/var` from the image reaches the installed disk.
+  Passwords are hashed on the host, so no plain password reaches the image.
+- **Packages.** `--package jq` installs with the base image's own package
+  manager. corral reads the image filesystem to find out which one it is — dnf,
+  zypper, apt, pacman, or apk.
+- **A first-boot hook.** `--post-boot ./firstboot.sh` runs in the booted guest
+  as a systemd oneshot unit. Its exit code is the run's verdict, its output goes
+  to the artifact directory, and its markers go to the serial console — so a
+  guest that never answers SSH still reports.
+
+Where [remora](https://github.com/tuna-os/remora) is installed, corral asks it
+to generate the layer's Containerfile instead of writing one itself. remora is
+the same project's layering tool: it knows six package managers, resolves a
+package lockfile so an unchanged rebuild is free, and lints the result. Pick
+one explicitly with `--layer-engine remora|builtin`.
+
+### Images with no sshd
+
+A production desktop image ships sshd disabled, so an SSH probe cannot gate it.
+Gate on the console instead:
+
+```bash
+corral vmtest desk --bootc "$IMAGE" --ready-marker 'Reached target Graphical' \
+  --require-paint
+```
+
+`--ready-marker` waits for a regular expression on the guest's serial console.
+`--require-paint` fails the run when the last frame is blank — the standard
+deviation of its luminance is at or under 0.02. A guest that boots and never
+draws is the failure a passing SSH probe hides, and one that no exit code
+catches unless somebody looks at a picture.
+
+You can also drive the console keyboard directly, which is the only way into a
+LUKS passphrase prompt or a greeter:
+
+```bash
+corral screenshot desk -o greeter.png
+corral type desk 'correct horse battery staple' --enter
+corral key desk ctrl alt f2
+```
+
+### The spec file (Lima-shaped)
+
+Everything above fits in a file, and corral reads the Lima field names it
+shares:
+
+```yaml
+# verify.yaml
+bootc: ghcr.io/tuna-os/yellowfin:gnome-testing
+cpus: 4
+memory: 4GiB
+disk: 32GiB
+timeout: 20m
+
+users:
+  - name: tester
+    password: hunter2
+    sudo: true
+
+packages: [jq, htop]
+extraRun:
+  - dnf config-manager --set-enabled crb
+
+files:
+  - path: /etc/corral-test.conf
+    content: |
+      test=1
+    mode: "0644"
+
+provision:
+  - mode: image            # runs at build time, in the layer
+    script: systemctl mask systemd-resolved
+  - mode: system           # runs in the booted guest (Lima's own meaning)
+    script: |
+      systemctl is-system-running --wait
+
+checks:
+  - systemctl is-active sshd
+  - bootc status --format json
+
+screenshots:
+  interval: 5s
+  video: true
+  requirePaint: false
+```
+
+```bash
+corral vmtest gate -f verify.yaml
+```
+
+A flag beats the file, and only when you pass it. An unknown field in the file
+is an error, not a warning: a misspelled `packages:` that installs nothing
+wastes the whole run.
+
+### GitHub Actions
+
+```yaml
+jobs:
+  boot-gate:
+    runs-on: ubuntu-24.04        # hosted runners have KVM
+    steps:
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+
+      - name: Install corral
+        run: go install github.com/tuna-os/corral@latest
+
+      - name: Boot gate
+        run: |
+          sudo -E "$(which corral)" vmtest gate --bootc "$IMAGE" \
+            --check 'systemctl --failed --no-legend' \
+            --video --rm
+
+      - name: Upload the evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: boot-gate
+          path: corral-vmtest-out/
+```
+
+`sudo` is not optional: `bootc install` partitions a disk and installs a
+bootloader. Run corral as root, or pass `--sudo` to let it call podman through
+sudo itself.
+
+## The smaller gate: `corral create --wait-ssh`
 
 ```bash
 corral create gate --bootc ghcr.io/tuna-os/yellowfin:gnome-testing \
@@ -40,6 +243,10 @@ locally; `localhost/` refs error early with a `podman save | sudo podman
 load` hint if the image is only in your rootless store.)
 
 ### Declarative form (Lima-style YAML)
+
+Note that `corral create` runs `provision:` scripts **offline**, chrooted into
+the installed disk. `corral vmtest` follows Lima's own meaning and runs them in
+the booted guest, unless you mark one `mode: image`.
 
 Corral reads Lima YAML natively; `bootc:` plus `provision:` covers the
 common CI need — enable sshd or drop test hooks **chrooted into the
@@ -132,6 +339,11 @@ that matter in practice:
 | ostree: `min-free-space-percent '3%' would be exceeded` | target disk too small for the extracted image + reserve — desktop images generally want ≥ 32G |
 | SSH never answers but the build reported OK | KubeVirt VMs are created **stopped** — `corral start <name>` first; then check the DM/sshd actually exist in the image |
 | Cluster ssh works, CI ssh refused at `127.0.0.1` | expected: without a tailnet the hostfwd binds loopback, which is where `--wait-ssh` probes; interactive `corral ssh` needs the tailnet |
+| `vmtest` exits 2 | the runner cannot host a VM at all: no podman, no qemu, no `/dev/loop-control`, or corral is not root. The message names the missing one |
+| `vmtest` exits 6 and `serial.log` is empty | the guest never reached the bootloader, or the VM predates console capture. Recreate it — the console karg is installed by `vmtest` itself, so a VM built another way may not have one |
+| `vmtest` exits 6 and the console stops in dracut | an ostree install on the wrong filesystem. Composefs images need btrfs, and the local builder refuses them for that reason — build those on a KubeVirt context |
+| `vmtest` exits 7 | the first-boot hook failed. Its own output is in `result.json` under `hook.log`, and on the console between the `CORRAL_POSTBOOT_FAIL` and `CORRAL_VM_READY` markers |
+| `vmtest` exits 9 | the guest booted and painted nothing. Look at `ready.png` and the last frames: a greeter that crashed looks exactly like this |
 
 Every row above was hit for real while gating TunaOS images — this table is
 field notes, not speculation.

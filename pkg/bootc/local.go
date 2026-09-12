@@ -238,6 +238,11 @@ func (b LocalBuilder) installArgs(req BuildRequest, backend Backend, keyPath str
 		// nothing to preserve.
 		"--wipe",
 	)
+	for _, karg := range req.Kargs {
+		if karg = strings.TrimSpace(karg); karg != "" {
+			args = append(args, "--karg", karg)
+		}
+	}
 	if keyPath != "" {
 		args = append(args, "--root-ssh-authorized-keys", "/buildkey.pub")
 	}

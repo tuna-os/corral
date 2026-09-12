@@ -16,6 +16,13 @@
   `pkg/web`/`pkg/demo` change (`scripts/ui-smoke.mjs`).
 - **Cluster e2e** (`.github/workflows/e2e.yml`): kind + emulated KubeVirt on
   GitHub runners — real `kubectl`/`virtctl` against a real API server.
+- **A real bootc boot** (`.github/workflows/vmtest.yml`, and
+  `just vmtest-e2e`): `corral vmtest` builds a real image into a disk, boots
+  it with KVM, layers in a test account and a package, and asserts inside the
+  guest over SSH. It runs weekly, on demand, and on a change to the harness —
+  it pulls gigabytes and boots a VM, so not on every push. The suite behind it
+  is `pkg/vmtest/e2e_test.go`, behind the `e2evmtest` build tag for the same
+  reason `pkg/bootc` uses `e2ebootc`.
 
 The TUI's update loop is driven directly in `cmd/tui_flows_test.go` (list,
 context cycling, quick keys, actions gating, confirm/clone/ports/hardware
@@ -49,8 +56,10 @@ gives each target two minutes. That workflow also runs the `@live-only`
 Playwright tier when `CORRAL_E2E_URL` points at the isolated e2e instance.
 
 Known gaps: `config/` and `catalog/` remain thin. The adapter tests do not
-reach the QMP and journal code in `pkg/qemu`, which needs a seam of its own
-first. No CI job uses real KVM hardware.
+reach the journal code in `pkg/qemu`. The QMP code now has a fake monitor
+(`fakeQMPServer`), which the frame and screenshot tests drive.
+
+`.github/workflows/vmtest.yml` is the first job that uses real KVM.
 
 ---
 

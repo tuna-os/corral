@@ -386,3 +386,23 @@ func TestMemoryMiB(t *testing.T) {
 		}
 	}
 }
+
+func TestInstallArgs_Kargs(t *testing.T) {
+	// Kernel arguments are baked into the installed bootloader entry, which is
+	// what makes a console=ttyS0 survive the reboot a -append would not.
+	args := strings.Join(LocalBuilder{}.installArgs(BuildRequest{
+		Image: "example.com/os:1",
+		Dest:  "/tmp/disk.raw",
+		Kargs: []string{"console=ttyS0,115200n8", "  ", "systemd.log_level=debug"},
+	}, ostreeBackend, ""), " ")
+
+	if !strings.Contains(args, "--karg console=ttyS0,115200n8") {
+		t.Errorf("the console karg is missing: %s", args)
+	}
+	if !strings.Contains(args, "--karg systemd.log_level=debug") {
+		t.Errorf("a second karg should be passed too: %s", args)
+	}
+	if strings.Count(args, "--karg") != 2 {
+		t.Errorf("a blank karg must not reach bootc: %s", args)
+	}
+}

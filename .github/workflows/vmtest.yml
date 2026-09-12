@@ -1,0 +1,114 @@
+name: VM test harness
+
+# Proves `corral vmtest` really boots a real bootc image on a hosted runner —
+# the exact thing the docs tell other repositories to do in their pipelines.
+#
+# It cannot run on every push: it pulls a multi-gigabyte image, runs a
+# privileged `bootc install to-disk`, and boots a VM. That is minutes of
+# runtime and a registry pull per run, so it runs on a schedule and on demand.
+#
+# Modelled on tuna-os/tunaOS's luks-e2e.yml and wootc's e2e-kvm.yml, which gate
+# their images the same way. Their harnesses are bash; this one is the tool
+# those harnesses would use.
+
+on:
+  schedule:
+    # 05:23 UTC, off the hour so it is not queued behind everyone's midnight.
+    - cron: "23 5 * * 1"
+  workflow_dispatch:
+    inputs:
+      image:
+        description: "Bootc image to boot"
+        default: quay.io/fedora/fedora-bootc:41
+  pull_request:
+    # Only when the harness itself changes: the test costs minutes, and a
+    # docs-only PR learns nothing from it.
+    paths:
+      - "pkg/vmtest/**"
+      - "pkg/qemu/**"
+      - "pkg/bootc/**"
+      - "cmd/vmtest.go"
+      - ".github/workflows/vmtest.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  boot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      IMAGE: ${{ inputs.image || 'quay.io/fedora/fedora-bootc:41' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+
+      # Hosted runners have KVM, but /dev/kvm is not world-writable. Without
+      # it the boot runs under software emulation and the timeout decides the
+      # verdict instead of the image.
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          test -r /dev/kvm
+
+      - name: Install the tools the harness drives
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq podman qemu-system-x86 qemu-utils ffmpeg
+
+      - name: Build corral
+        run: go build -o /usr/local/bin/corral .
+
+      # Root, not --sudo: bootc install partitions a disk and installs a
+      # bootloader, and the derived image must land in root podman storage —
+      # the same store the privileged install pulls from.
+      #
+      # --rm because nothing follows this step. A pipeline that tests the guest
+      # afterwards leaves the VM up (the default) and deletes it at the end.
+      - name: Boot the image and test it
+        run: |
+          sudo -E corral vmtest gate \
+            --bootc "$IMAGE" \
+            --user tester --password corral-ci --sudo-user \
+            --package jq \
+            --post-boot 'systemctl is-system-running --wait || true' \
+            --check 'command -v jq' \
+            --check 'id tester' \
+            --check 'sudo -u tester sudo -n true' \
+            --check 'bootc status --format json' \
+            --artifacts vmtest-out \
+            --video \
+            --timeout 20m \
+            --rm
+
+      # The run was root, so the artifacts are root-owned and the upload step
+      # (which is not) cannot read them.
+      - name: Take ownership of the artifacts
+        if: always()
+        run: sudo chown -R "$(id -u):$(id -g)" vmtest-out || true
+
+      # Evidence on every run, especially the failed ones: the console log and
+      # the frames are what turn "it did not boot" into a cause.
+      - name: Upload the evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: vmtest-evidence
+          path: vmtest-out/
+          retention-days: 14
+
+      - name: Summarise
+        if: always()
+        run: |
+          {
+            echo '### corral vmtest'
+            echo '```json'
+            cat vmtest-out/result.json 2>/dev/null || echo '{}'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

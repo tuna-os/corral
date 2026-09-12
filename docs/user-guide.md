@@ -205,6 +205,25 @@ corral bootc create my-node --image quay.io/centos-bootc/centos-bootc:stream9
 - Builds a bootable OS disk on-cluster using `bootc install to-disk`.
 - Upgrade guest OS images using `corral bootc upgrade <vm-name>`.
 
+#### Testing a bootc image (`corral vmtest`)
+
+`corral vmtest` boots an image locally and tests it. It needs no plugin, and
+it is what a CI pipeline should call:
+
+```bash
+corral vmtest gate --bootc ghcr.io/tuna-os/yellowfin:latest \
+  --user tester --password hunter2 --sudo-user \
+  --check 'systemctl --failed --no-legend'
+ssh -i corral-vmtest-out/ssh/id_ed25519 -p 2242 tester@127.0.0.1
+```
+
+The run leaves the VM running, so the next step tests a real machine over SSH.
+It also writes the guest's serial console, a screenshot of every stage of the
+boot, an optional WebM timelapse, and `result.json`. Accounts, passwords,
+packages and first-boot hooks go into a layer built on top of the image, which
+is never modified. Full reference:
+[docs/ci-boot-gate.md](ci-boot-gate.md).
+
 ---
 
 ### 4. Proxmox VE API Compatibility Layer
