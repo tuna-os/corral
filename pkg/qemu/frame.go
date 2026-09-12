@@ -44,13 +44,13 @@ func Capture(name, outPath string) (Frame, error) {
 	if err != nil {
 		return Frame{}, err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	// screendump writes a PPM file directly via the QEMU process — since the
 	// QEMU backend and the corral CLI share a host, a path next to the VM's
 	// other state is reachable from both sides.
 	ppmPath := filepath.Join(vmDir, "screenshot.ppm")
-	defer os.Remove(ppmPath)
+	defer func() { _ = os.Remove(ppmPath) }()
 	if _, err := qmpExecute(conn, reader, "screendump", map[string]any{"filename": ppmPath}); err != nil {
 		return Frame{}, fmt.Errorf("screendump: %w", err)
 	}
@@ -72,9 +72,15 @@ func Capture(name, outPath string) (Frame, error) {
 	if err != nil {
 		return Frame{}, fmt.Errorf("creating %s: %w", outPath, err)
 	}
-	defer f.Close()
+	// Closed rather than deferred-and-ignored: the encode writes through a
+	// buffer, so a full disk shows up in Close and nowhere else. A truncated
+	// PNG that the result calls evidence is worse than no PNG.
 	if err := png.Encode(f, img); err != nil {
-		return Frame{}, err
+		_ = f.Close()
+		return Frame{}, fmt.Errorf("encoding %s: %w", outPath, err)
+	}
+	if err := f.Close(); err != nil {
+		return Frame{}, fmt.Errorf("writing %s: %w", outPath, err)
 	}
 	bounds := img.Bounds()
 	return Frame{

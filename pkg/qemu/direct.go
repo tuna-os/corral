@@ -122,7 +122,9 @@ func startDirect(name string) error {
 	if err != nil {
 		return fmt.Errorf("opening %s: %w", logPath, err)
 	}
-	defer logFile.Close()
+	// The QEMU child holds its own descriptor, so this close only releases
+	// ours; nothing reads the result.
+	defer func() { _ = logFile.Close() }()
 
 	cmd := exec.Command(command.Binary, command.Args...)
 	cmd.Stdout, cmd.Stderr = logFile, logFile
@@ -149,7 +151,7 @@ func startDirect(name string) error {
 	// for a dead process is worse than an error.
 	select {
 	case waitErr := <-exited:
-		os.Remove(filepath.Join(vmDir, pidFile))
+		_ = os.Remove(filepath.Join(vmDir, pidFile))
 		output, _ := os.ReadFile(logPath)
 		return fmt.Errorf("QEMU exited immediately (%v): %s", waitErr, lastLines(string(output), 10))
 	case <-time.After(750 * time.Millisecond):
@@ -190,7 +192,7 @@ func stopDirect(name string) error {
 	pid, alive := directPID(name)
 	path := filepath.Join(VMHome(), name, pidFile)
 	if !alive {
-		os.Remove(path)
+		_ = os.Remove(path)
 		return nil
 	}
 	process, err := os.FindProcess(pid)
@@ -203,14 +205,14 @@ func stopDirect(name string) error {
 	deadline := time.Now().Add(20 * time.Second)
 	for time.Now().Before(deadline) {
 		if _, alive := directPID(name); !alive {
-			os.Remove(path)
+			_ = os.Remove(path)
 			return nil
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
 	// A guest that ignores ACPI shutdown is normal, not exceptional.
 	_ = process.Signal(syscall.SIGKILL)
-	os.Remove(path)
+	_ = os.Remove(path)
 	return nil
 }
 

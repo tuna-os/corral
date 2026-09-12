@@ -29,7 +29,7 @@ func Run(spec *Spec, out io.Writer) (*Result, error) {
 	if out == nil {
 		out = io.Discard
 	}
-	progress := func(msg string) { fmt.Fprintln(out, "==> "+msg) }
+	progress := func(msg string) { _, _ = fmt.Fprintln(out, "==> "+msg) }
 
 	spec.WithDefaults()
 	if err := spec.Validate(); err != nil {
@@ -56,7 +56,7 @@ func Run(spec *Spec, out io.Writer) (*Result, error) {
 	// happens — including a panic-free early return three lines from here.
 	defer func() {
 		if path, err := result.Write(artifacts); err != nil {
-			fmt.Fprintf(out, "warning: could not write the result file: %v\n", err)
+			_, _ = fmt.Fprintf(out, "warning: could not write the result file: %v\n", err)
 		} else {
 			progress("result: " + path)
 		}
@@ -246,7 +246,9 @@ func buildAndImport(spec *Spec, layered Layered, keys Keypair, progress func(str
 	if err != nil {
 		return err
 	}
-	defer os.Remove(built.Path)
+	// The disk is consumed by Import, which converts it into the backend's own
+	// storage; what is left is a copy nothing reads again.
+	defer func() { _ = os.Remove(built.Path) }()
 
 	// Import creates the VM, and Create refuses to overwrite. A test VM is
 	// disposable by definition, so the old one goes.
@@ -271,12 +273,12 @@ func buildAndImport(spec *Spec, layered Layered, keys Keypair, progress func(str
 func recordInRegistry(spec *Spec, out io.Writer) {
 	store, err := registry.NewStore()
 	if err != nil {
-		fmt.Fprintf(out, "warning: %s is not in the registry: %v\n", spec.Name, err)
+		_, _ = fmt.Fprintf(out, "warning: %s is not in the registry: %v\n", spec.Name, err)
 		return
 	}
 	entry := types.RegistryEntry{Backend: "qemu", Password: spec.RootPassword}
 	if err := store.Set(spec.Name, entry); err != nil {
-		fmt.Fprintf(out, "warning: %s is not in the registry: %v\n", spec.Name, err)
+		_, _ = fmt.Fprintf(out, "warning: %s is not in the registry: %v\n", spec.Name, err)
 	}
 }
 

@@ -272,7 +272,7 @@ func sendKeyCombos(name string, combos [][]string) error {
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	for _, combo := range combos {
 		keys := make([]map[string]any, 0, len(combo))
 		for _, key := range combo {
