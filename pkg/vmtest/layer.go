@@ -261,23 +261,40 @@ func accountScript(spec *Spec, authorizedKey string) (string, error) {
 // boot would not survive a rebuild.
 const mkdirHelper = `# corral_mkdir is mkdir -p that survives this family of images.
 #
-# Two facts about a bootc image make plain mkdir -p unreliable here. /root is a
-# symlink to /var/roothome. And the image may ship Rust uutils, whose mkdir -p
-# reports "cannot create directory '/root': File exists" for a symlinked
-# component, where GNU mkdir walks through it; install -d refuses the same
-# path, and readlink -f wants every component to exist before it resolves
-# anything.
+# Three facts about a bootc image defeat a plain mkdir -p here.
 #
-# So: skip the work where the directory is already there; try mkdir; and where
-# mkdir refuses, resolve the parent with the shell itself. "cd ... && pwd -P"
-# needs no coreutils at all. Writes through the original path follow the
-# symlink by themselves, so only the create has to know about any of this.
+#  1. /root is a symlink to /var/roothome.
+#  2. That target does not exist in the image: bootc ships an empty /var and
+#     creates root's home at install time. The symlink dangles.
+#  3. The image may ship Rust uutils, whose mkdir -p reports "cannot create
+#     directory '/root': File exists" for a symlinked component where GNU mkdir
+#     walks through it. install -d refuses the same path, and readlink -f
+#     resolves nothing unless every component exists already.
+#
+# So: skip the work where the directory is there; try mkdir; then read the link
+# itself — plain readlink, which reports a dangling target happily — and create
+# the target before the directory inside it. "cd ... && pwd -P" is the last
+# resort for a resolvable parent, and needs no coreutils at all.
+#
+# Writes through the original path follow the symlink by themselves, so only
+# the create has to know any of this.
 corral_mkdir() {
-  local dir="$1" parent base resolved
+  local dir="$1" parent base target resolved
   [ -d "$dir" ] && return 0
   mkdir -p "$dir" 2>/dev/null && return 0
   parent="$(dirname "$dir")"
   base="$(basename "$dir")"
+  if [ -L "$parent" ]; then
+    target="$(readlink "$parent" 2>/dev/null || true)"
+    case "$target" in
+      "") ;;
+      /*) ;;
+      *) target="$(dirname "$parent")/$target" ;;
+    esac
+    if [ -n "$target" ] && mkdir -p "$target/$base" 2>/dev/null; then
+      return 0
+    fi
+  fi
   resolved="$(cd "$parent" 2>/dev/null && pwd -P)" || resolved=""
   if [ -z "$resolved" ]; then
     echo "corral: cannot create $dir: $parent does not resolve to a directory" >&2

@@ -392,11 +392,13 @@ func TestAccountScript_SurvivesAUutilsMkdir(t *testing.T) {
 	}
 	root := t.TempDir()
 
-	// The guest's layout: a real /var/roothome, and /root pointing at it.
-	realHome := filepath.Join(root, "var", "roothome")
-	if err := os.MkdirAll(realHome, 0o700); err != nil {
+	// The image's real layout: /root is a symlink to /var/roothome, and that
+	// target does not exist yet — bootc ships an empty /var and creates root's
+	// home at install time, so the link dangles during the build.
+	if err := os.MkdirAll(filepath.Join(root, "var"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	realHome := filepath.Join(root, "var", "roothome")
 	home := filepath.Join(root, "root")
 	if err := os.Symlink(realHome, home); err != nil {
 		t.Fatal(err)
@@ -422,11 +424,15 @@ exec /bin/mkdir "$@"
 		t.Fatal(err)
 	}
 	// uutils' readlink -f resolves nothing unless every component already
-	// exists. The second CI run failed because the fallback leaned on it, so the
-	// shim refuses it outright: the script must not need readlink at all.
+	// exists, which is how the second attempt still failed. The plain form —
+	// read this one link, dangling or not — works, so the shim refuses only -f.
 	readlinkShim := `#!/bin/sh
-echo "readlink: cannot resolve: No such file or directory" >&2
-exit 1
+for arg in "$@"; do
+  case "$arg" in
+    -*f*) echo "readlink: cannot resolve: No such file or directory" >&2; exit 1 ;;
+  esac
+done
+exec /bin/readlink "$@"
 `
 	if err := os.WriteFile(filepath.Join(bin, "readlink"), []byte(readlinkShim), 0o755); err != nil {
 		t.Fatal(err)
