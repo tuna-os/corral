@@ -45,11 +45,14 @@ for artifact in "$dist"/corral-*-linux-*; do
   arch=${filename##*-linux-}
   sha=$(sha256sum "$artifact" | awk '{print $1}')
   next=$(mktemp)
-  jq --arg plugin "$plugin" --arg platform "linux/$arch" \
+  if ! jq --arg plugin "$plugin" --arg platform "linux/$arch" \
      --arg url "https://github.com/$repo/releases/download/$tag/$filename" \
      --arg sha "$sha" \
      '(.plugins[] | select(.name == $plugin) | .platforms[$platform]) = {url: $url, sha256: $sha}' \
-     "$output" > "$next"
+     "$output" > "$next"; then
+    rm -f "$next"
+    exit 1
+  fi
   mv "$next" "$output"
 done
 
