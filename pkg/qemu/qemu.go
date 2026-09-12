@@ -28,26 +28,44 @@ func VMHome() string {
 var (
 	vmHomeOverride  string
 	unitDirOverride string
-	systemctlRun    = func(args ...string) ([]byte, error) {
+	realSystemctl   = func(args ...string) ([]byte, error) {
 		return exec.Command("systemctl", append([]string{"--user"}, args...)...).CombinedOutput()
 	}
+	systemctlRun = realSystemctl
 )
 
 // SetStateDirs overrides where VM state and systemd units live ("" = default).
 func SetStateDirs(vmHome, unitDir string) { vmHomeOverride, unitDirOverride = vmHome, unitDir }
 
-// SetSystemctl overrides the systemd --user command runner.
-func SetSystemctl(f func(args ...string) ([]byte, error)) { systemctlRun = f }
+// SetSystemctl overrides the systemd --user command runner. Passing nil
+// restores the real one: a test that left it nil used to be harmless and is
+// not any more, since the lifecycle now asks systemd whether it is even there.
+func SetSystemctl(f func(args ...string) ([]byte, error)) {
+	if f == nil {
+		systemctlRun = realSystemctl
+		return
+	}
+	systemctlRun = f
+}
 
 // journalRun reads the journal. Its own seam rather than systemctlRun's,
 // because it is a different binary with different arguments and tests script
 // the two independently.
-var journalRun = func(args ...string) ([]byte, error) {
+var realJournalctl = func(args ...string) ([]byte, error) {
 	return exec.Command("journalctl", args...).CombinedOutput()
 }
 
-// SetJournalctl overrides the journal reader (for tests).
-func SetJournalctl(f func(args ...string) ([]byte, error)) { journalRun = f }
+var journalRun = realJournalctl
+
+// SetJournalctl overrides the journal reader (for tests). Passing nil restores
+// the real one.
+func SetJournalctl(f func(args ...string) ([]byte, error)) {
+	if f == nil {
+		journalRun = realJournalctl
+		return
+	}
+	journalRun = f
+}
 
 // systemdUserDir returns the systemd user unit directory.
 func systemdUserDir() string {
@@ -88,9 +106,7 @@ func List() ([]types.VM, error) {
 			continue
 		}
 
-		svc := "corral-" + e.Name()
-		out, _ := systemctlRun("is-active", svc)
-		running := strings.TrimSpace(string(out)) == "active"
+		running := IsRunning(e.Name())
 
 		status := "○ Stopped"
 		if running {
@@ -202,8 +218,18 @@ func Create(opts types.CreateOpts) error {
 	// wants programmatic monitor access) talk to the VM without a VNC client.
 	qmpSocket := filepath.Join(vmDir, "qmp.sock")
 
+	// Serial console log. The guest's ttyS0 is written to a file next to the
+	// VM's other state, so a boot that never reaches SSH still leaves evidence
+	// — the panic, the dracut emergency shell, the failed unit. `-display
+	// none` means nobody is watching the console otherwise, and a CI job that
+	// only reports "SSH never answered" wastes the run.
+	//
+	// The guest also needs a console=ttyS0 kernel argument to write there;
+	// pkg/vmtest passes one at install time.
+	serialLog := filepath.Join(vmDir, "serial.log")
+
 	// Systemd unit
-	unit := generateUnit(generateUnitOpts{
+	unitOpts := generateUnitOpts{
 		Name:        name,
 		QemuPath:    qemuPath,
 		Mem:         mem,
@@ -215,7 +241,16 @@ func Create(opts types.CreateOpts) error {
 		VncDisplay:  vncDisplay,
 		SSHPort:     sshPort,
 		QMPSocket:   qmpSocket,
-	})
+		SerialLog:   serialLog,
+	}
+	unit := generateUnit(unitOpts)
+
+	// Recorded next to the VM's state, so it can be started without a systemd
+	// user session — a CI runner has none (see direct.go).
+	if err := writeLaunchCommand(vmDir, qemuPath, qemuArgs(unitOpts)); err != nil {
+		return fmt.Errorf("recording the QEMU command: %w", err)
+	}
+
 	unitPath := filepath.Join(systemdUserDir(), "corral-"+name+".service")
 	if err := os.MkdirAll(systemdUserDir(), 0755); err != nil {
 		return err
@@ -239,6 +274,7 @@ func Create(opts types.CreateOpts) error {
 		"tailscale_ip": tailscaleIP,
 		"iso":          isoPath,
 		"has_iso":      hasISO,
+		"serial_log":   serialLog,
 	}
 	data, _ := json.MarshalIndent(meta, "", "  ")
 	os.WriteFile(filepath.Join(vmDir, "metadata.json"), data, 0644)
@@ -250,8 +286,17 @@ func Create(opts types.CreateOpts) error {
 	return nil
 }
 
-// Start starts a QEMU VM via systemd.
+// Start starts a QEMU VM: through systemd where there is a user session, and
+// as a detached process where there is not.
 func Start(name string) error {
+	if !userSystemd() {
+		// No unit can run here, so the VM's own state directory is what says
+		// whether it exists.
+		if !Exists(name) {
+			return fmt.Errorf("VM %q does not exist", name)
+		}
+		return startDirect(name)
+	}
 	svc := "corral-" + name
 	unitPath := filepath.Join(systemdUserDir(), svc+".service")
 	if _, err := os.Stat(unitPath); err != nil {
@@ -277,8 +322,15 @@ func Start(name string) error {
 	return nil
 }
 
-// Stop stops a QEMU VM.
+// Stop stops a QEMU VM, whichever way it was started.
 func Stop(name string) error {
+	if _, alive := directPID(name); alive || !userSystemd() {
+		if err := stopDirect(name); err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "VM %q stopped.\n", name)
+		return nil
+	}
 	svc := "corral-" + name
 	if out, err := systemctlRun("stop", svc); err != nil {
 		return fmt.Errorf("stopping VM: %w: %s", err, strings.TrimSpace(string(out)))
@@ -289,6 +341,9 @@ func Stop(name string) error {
 
 // Delete removes a QEMU VM and its files.
 func Delete(name string) error {
+	// A directly started VM has no unit to stop, and leaving the process
+	// running while its disk is deleted is the worst of both.
+	_ = stopDirect(name)
 	svc := "corral-" + name
 	systemctlRun("stop", svc)
 	systemctlRun("disable", svc)
@@ -425,6 +480,7 @@ type vmMetadata struct {
 	VncPort   int    `json:"vnc_port"`
 	SSHPort   int    `json:"ssh_port"`
 	Tailscale string `json:"tailscale_ip"`
+	SerialLog string `json:"serial_log"`
 }
 
 // readMetadata parses the VM metadata.json file.
@@ -550,32 +606,74 @@ type generateUnitOpts struct {
 	VncDisplay                                          int
 	SSHPort                                             int
 	QMPSocket                                           string
+	SerialLog                                           string
 }
 
-func generateUnit(opts generateUnitOpts) string {
-	isoPart := ""
-	if opts.HasISO && opts.ISOPath != "" {
-		isoPart = fmt.Sprintf(" -cdrom %s -boot once=d,menu=on", opts.ISOPath)
-	}
-
-	hostfwd := ""
-	if opts.SSHPort != 0 {
-		hostfwd = fmt.Sprintf(",hostfwd=tcp:%s:%d-:22", opts.TailscaleIP, opts.SSHPort)
-	}
-
+// qemuArgs is the VM's argv, one place. The systemd unit renders it into
+// ExecStart and the direct launcher execs it, so a VM started either way is
+// the same VM — a second copy of this list would drift the day someone adds a
+// device to one of them.
+func qemuArgs(opts generateUnitOpts) []string {
 	mem := opts.Mem
 	if !strings.HasSuffix(mem, "M") && !strings.HasSuffix(mem, "G") {
 		mem += "G"
 	}
 
-	qmpPart := ""
+	args := []string{"-name", opts.Name, "-m", mem}
+	args = append(args, accelArgs(opts.CPU)...)
+	args = append(args,
+		"-drive", fmt.Sprintf("file=%s,if=virtio,format=qcow2", opts.DiskPath),
+		"-vnc", fmt.Sprintf("%s:%d", opts.TailscaleIP, opts.VncDisplay),
+		"-vga", "virtio",
+		"-display", "none",
+	)
+
+	netdev := "user,id=net0"
+	if opts.SSHPort != 0 {
+		netdev += fmt.Sprintf(",hostfwd=tcp:%s:%d-:22", opts.TailscaleIP, opts.SSHPort)
+	}
+	args = append(args,
+		"-netdev", netdev,
+		"-device", "virtio-net-pci,netdev=net0",
+		"-device", "virtio-rng-pci",
+	)
+
+	if opts.HasISO && opts.ISOPath != "" {
+		args = append(args, "-cdrom", opts.ISOPath, "-boot", "once=d,menu=on")
+	}
 	if opts.QMPSocket != "" {
 		// server,nowait: QEMU listens and accepts connect/disconnect any
 		// number of times over the VM's life, rather than requiring a client
 		// at startup.
-		qmpPart = fmt.Sprintf(" \\\n  -qmp unix:%s,server,nowait", opts.QMPSocket)
+		args = append(args, "-qmp", "unix:"+opts.QMPSocket+",server,nowait")
 	}
+	if opts.SerialLog != "" {
+		// append=on: a restart adds to the log rather than truncating it, so
+		// the record of a failed first boot survives the retry that follows.
+		args = append(args,
+			"-chardev", fmt.Sprintf("file,id=serial0,path=%s,append=on", opts.SerialLog),
+			"-serial", "chardev:serial0",
+		)
+	}
+	return args
+}
 
+// accelArgs picks the accelerator and the CPU model together, because they are
+// one decision: KVM can pass the host CPU through, TCG cannot model it at all
+// and needs "max" instead.
+//
+// A runner with no /dev/kvm is the case that matters. Hard-coding accel=kvm
+// there produces a VM that will not start, and `-cpu host` under TCG produces
+// one that starts and then cannot find its CPU model — both read as a broken
+// image rather than a machine that cannot nest.
+func accelArgs(cpu int) []string {
+	if _, err := os.Stat("/dev/kvm"); err != nil {
+		return []string{"-cpu", "max", "-smp", fmt.Sprintf("%d", cpu), "-machine", "q35,accel=tcg"}
+	}
+	return []string{"-cpu", "host", "-smp", fmt.Sprintf("%d", cpu), "-machine", "q35,accel=kvm"}
+}
+
+func generateUnit(opts generateUnitOpts) string {
 	return fmt.Sprintf(`[Unit]
 Description=TailVM: %s
 After=network-online.target
@@ -583,25 +681,12 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=%s \
-  -name %s \
-  -m %s \
-  -cpu host \
-  -smp %d \
-  -machine q35,accel=kvm \
-  -drive file=%s,if=virtio,format=qcow2 \
-  -vnc %s:%d \
-  -vga virtio \
-  -display none \
-  -netdev user,id=net0%s \
-  -device virtio-net-pci,netdev=net0 \
-  -device virtio-rng-pci%s%s
+ExecStart=%s %s
 Restart=no
 StandardOutput=journal
 StandardError=journal
 
 [Install]
 WantedBy=default.target
-`, opts.Name, opts.QemuPath, opts.Name, mem, opts.CPU,
-		opts.DiskPath, opts.TailscaleIP, opts.VncDisplay, hostfwd, isoPart, qmpPart)
+`, opts.Name, opts.QemuPath, strings.Join(qemuArgs(opts), " "))
 }

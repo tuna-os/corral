@@ -1,0 +1,160 @@
+name: VM test harness
+
+# Proves `corral vmtest` really boots a real bootc image on a hosted runner —
+# the exact thing the docs tell other repositories to do in their pipelines.
+#
+# It cannot run on every push: it pulls a multi-gigabyte image, runs a
+# privileged `bootc install to-disk`, and boots a VM. That is minutes of
+# runtime and a registry pull per run, so it runs on a schedule and on demand.
+#
+# Modelled on tuna-os/tunaOS's luks-e2e.yml and wootc's e2e-kvm.yml, which gate
+# their images the same way. Their harnesses are bash; this one is the tool
+# those harnesses would use.
+
+on:
+  schedule:
+    # 05:23 UTC, off the hour so it is not queued behind everyone's midnight.
+    - cron: "23 5 * * 1"
+  workflow_dispatch:
+    inputs:
+      image:
+        description: "Bootc image to boot"
+        default: quay.io/fedora/fedora-bootc:41
+  pull_request:
+    # The `layer` job runs here; `boot` does not (see its own condition).
+    paths:
+      - "pkg/vmtest/**"
+      - "pkg/qemu/**"
+      - "pkg/bootc/**"
+      - "cmd/vmtest.go"
+      - ".github/workflows/vmtest.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  # The layer, built in the image it targets. A minute, a container engine, no
+  # KVM and no privileges — so this one does run on a pull request.
+  #
+  # It exists because of what its absence cost: three runs of the `boot` job
+  # died in the same container build step, for three variations of one shell
+  # mistake, and each round took minutes. The build step that keeps breaking
+  # needs none of the machinery around it.
+  layer:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+
+      - name: Install podman
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq podman
+
+      - name: Build the layer in a real bootc image
+        env:
+          CORRAL_LAYER_ENGINE: podman
+          CORRAL_VMTEST_IMAGE: ${{ inputs.image || 'quay.io/fedora/fedora-bootc:41' }}
+        run: go test -tags e2elayer -count=1 -timeout 15m -v ./pkg/vmtest/
+
+  # The whole harness against a real image: pull, layer, disk, boot, assert.
+  #
+  # Never on a push or a pull request. It pulls gigabytes and boots a VM, which
+  # is the same reason tunaOS's luks-e2e.yml runs on a schedule and on demand
+  # only. The `layer` job above covers what a PR can usefully learn in a minute.
+  boot:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      IMAGE: ${{ inputs.image || 'quay.io/fedora/fedora-bootc:41' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+
+      # Widen /dev/kvm where the runner has one: it arrives as root:kvm 0660,
+      # and the QEMU child has to open it. Every command here is best-effort.
+      # A runner with no udev daemon, or none with KVM at all, is a slow run
+      # (TCG) and not a broken one — but the job must say which it got, because
+      # "it timed out" reads as a broken image otherwise.
+      - name: Enable KVM
+        id: kvm
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules || true
+          sudo udevadm trigger --name-match=kvm || true
+          [ -e /dev/kvm ] && sudo chmod 0666 /dev/kvm || true
+          ls -l /dev/kvm || true
+          if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
+            echo "accel=kvm — the guest boots at hardware speed"
+            echo "boot-timeout=20m" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::no usable /dev/kvm — the guest runs under TCG, which is far slower"
+            echo "boot-timeout=35m" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install the tools the harness drives
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq podman qemu-system-x86 qemu-utils ffmpeg
+
+      # Built into the workspace, not /usr/local/bin: the runner user cannot
+      # write there, and `sudo -E ./corral` reaches the same binary.
+      - name: Build corral
+        run: go build -o ./corral .
+
+      # Root, not --sudo: bootc install partitions a disk and installs a
+      # bootloader, and the derived image must land in root podman storage —
+      # the same store the privileged install pulls from.
+      #
+      # --rm because nothing follows this step. A pipeline that tests the guest
+      # afterwards leaves the VM up (the default) and deletes it at the end.
+      - name: Boot the image and test it
+        run: |
+          sudo -E ./corral vmtest gate \
+            --bootc "$IMAGE" \
+            --user tester --password corral-ci --sudo-user \
+            --package tree \
+            --post-boot 'systemctl is-active sshd && test -f /etc/os-release' \
+            --check 'command -v tree' \
+            --check 'id tester' \
+            --check 'sudo -u tester sudo -n true' \
+            --check 'bootc status --format json' \
+            --artifacts vmtest-out \
+            --video \
+            --timeout ${{ steps.kvm.outputs.boot-timeout }} \
+            --rm
+
+      # The run was root, so the artifacts are root-owned and the upload step
+      # (which is not) cannot read them.
+      - name: Take ownership of the artifacts
+        if: always()
+        run: sudo chown -R "$(id -u):$(id -g)" vmtest-out || true
+
+      # Evidence on every run, especially the failed ones: the console log and
+      # the frames are what turn "it did not boot" into a cause.
+      - name: Upload the evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: vmtest-evidence
+          path: vmtest-out/
+          retention-days: 14
+
+      - name: Summarise
+        if: always()
+        run: |
+          {
+            echo '### corral vmtest'
+            echo '```json'
+            cat vmtest-out/result.json 2>/dev/null || echo '{}'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

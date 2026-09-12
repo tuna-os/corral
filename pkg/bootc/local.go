@@ -76,13 +76,8 @@ func (b LocalBuilder) Build(req BuildRequest, progress func(string)) (BuildResul
 		}
 	}
 
-	// Pull first, as its own step. It is the slow part by far, and a failure
-	// here means "bad image reference or no network", which is worth telling
-	// apart from a failure during the install.
-	report("pulling " + req.Image)
-	name, args := b.podman("pull", req.Image)
-	if out, err := runner.Run(name, args...); err != nil {
-		return BuildResult{}, fmt.Errorf("podman pull %s: %s", req.Image, commandError(out, err))
+	if err := b.fetch(req.Image, report); err != nil {
+		return BuildResult{}, err
 	}
 
 	backend, err := b.DetectBackend(req.Image)
@@ -124,12 +119,12 @@ func (b LocalBuilder) Build(req BuildRequest, progress func(string)) (BuildResul
 	}
 
 	report("running bootc install to-disk (this takes a few minutes)")
-	name, args = b.podman(b.installArgs(req, backend, keyPath)...)
+	name, args := b.podman(b.installArgs(req, backend, keyPath)...)
 	if out, err := runner.Run(name, args...); err != nil {
 		// Leave nothing half-written: a truncated disk that looks like a disk
 		// is worse than no disk.
 		os.Remove(req.Dest)
-		return BuildResult{}, fmt.Errorf("bootc install to-disk: %s", commandError(out, err))
+		return BuildResult{}, installError(out, err)
 	}
 
 	info, err := os.Stat(req.Dest)
@@ -138,6 +133,83 @@ func (b LocalBuilder) Build(req BuildRequest, progress func(string)) (BuildResul
 	}
 	report(fmt.Sprintf("built %s (%d bytes)", req.Dest, info.Size()))
 	return BuildResult{Path: req.Dest, Format: "raw", Bytes: info.Size(), Backend: backend.Kind}, nil
+}
+
+// fetch makes sure the image is in local storage, pulling it if it has to.
+//
+// Its own method, like installArgs, so a test can exercise it on any host: the
+// decisions here are about references and storage, and none of them need the
+// root and the loop devices that Build as a whole does.
+//
+// Pulling is its own step because it is the slow part by far, and a failure
+// here means "bad reference or no network" — worth telling apart from a failure
+// during the install.
+func (b LocalBuilder) fetch(image string, progress func(string)) error {
+	report := func(msg string) {
+		if progress != nil {
+			progress(msg)
+		}
+	}
+	// A localhost/ reference names an image that only exists in local storage.
+	// podman reads it as a registry called "localhost" and fails against
+	// https://localhost/v2/. A locally built image is the whole point of
+	// `podman build` then `bootc install`, so it must not be pulled.
+	if isLocalRef(image) {
+		report("using " + image + " from local storage")
+		return nil
+	}
+	report("pulling " + image)
+	name, args := b.podman("pull", image)
+	out, err := runner.Run(name, args...)
+	if err == nil {
+		return nil
+	}
+	// A pull that fails over an image already in storage is a network problem,
+	// not a missing image. Say so and carry on rather than discarding a usable
+	// local copy.
+	if !b.imageExists(image) {
+		return fmt.Errorf("podman pull %s: %s", image, commandError(out, err))
+	}
+	report(fmt.Sprintf("could not pull %s (%s); using the copy in local storage",
+		image, firstLineOf(commandError(out, err))))
+	return nil
+}
+
+// installError turns a failed `bootc install` into the error a reader can act
+// on. Pure, so a test needs no container.
+func installError(out []byte, err error) error {
+	message := commandError(out, err)
+	// bootc re-execs itself in the host's mount namespace, which a nested
+	// container does not have. The error it prints names a pid and a
+	// permission, and says nothing about where to run this instead.
+	if strings.Contains(message, "mountns") || strings.Contains(message, "mount namespace") {
+		return fmt.Errorf("bootc install to-disk: %s\n"+
+			"bootc install needs the host's mount namespace, which a container inside a container does not have — "+
+			"run this on the host, or on a CI runner rather than in a container on one", message)
+	}
+	return fmt.Errorf("bootc install to-disk: %s", message)
+}
+
+// isLocalRef reports whether a reference names an image that exists only in
+// local storage, which no registry can serve.
+func isLocalRef(image string) bool {
+	return strings.HasPrefix(image, "localhost/") || strings.HasPrefix(image, "containers-storage:")
+}
+
+// imageExists reports whether podman already has the image.
+func (b LocalBuilder) imageExists(image string) bool {
+	name, args := b.podman("image", "exists", image)
+	_, err := runner.Run(name, args...)
+	return err == nil
+}
+
+// firstLineOf keeps an error message to one line: podman's pull failures are
+// several lines of retries that say the same thing.
+func firstLineOf(msg string) string {
+	if line, _, found := strings.Cut(msg, "\n"); found {
+		return line
+	}
+	return msg
 }
 
 // Backend is the bootc storage backend an image needs. It is a property of
@@ -238,6 +310,11 @@ func (b LocalBuilder) installArgs(req BuildRequest, backend Backend, keyPath str
 		// nothing to preserve.
 		"--wipe",
 	)
+	for _, karg := range req.Kargs {
+		if karg = strings.TrimSpace(karg); karg != "" {
+			args = append(args, "--karg", karg)
+		}
+	}
 	if keyPath != "" {
 		args = append(args, "--root-ssh-authorized-keys", "/buildkey.pub")
 	}
@@ -328,6 +405,13 @@ func (QEMUTarget) Import(ref types.InstanceRef, disk string, opts CreateOpts) er
 		SSHPublicKey: opts.SSHKey,
 		// The disk is already built and populated; Create must adopt it.
 		ExistingDisk: true,
+		// And Create must not refuse the directory this function just made.
+		// Exists() is true the moment the disk is written into it, so without
+		// Force every import fails with "VM already exists" — a VM that only
+		// exists because we are in the middle of creating it. Whether an older
+		// VM of the same name may be replaced is the caller's decision, taken
+		// before the build; by here the disk is built and the name is claimed.
+		Force: true,
 	})
 }
 

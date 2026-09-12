@@ -312,6 +312,13 @@ func TestQEMUTarget_AdoptsRatherThanRecreates(t *testing.T) {
 	if !got.ExistingDisk {
 		t.Error("Create was not told the disk already exists — it would overwrite the build")
 	}
+	// Import makes the VM directory itself, so qemu.Exists() is true by the
+	// time Create runs. Without Force every import fails with "VM already
+	// exists" — a VM that exists only because this function is creating it.
+	// A CI run reached exactly that point and stopped there.
+	if !got.Force {
+		t.Error("Create must be forced: Import created the VM directory it is about to be refused for")
+	}
 
 	// The conversion has to target where pkg/qemu looks for a VM's disk.
 	var converted bool
@@ -384,5 +391,128 @@ func TestMemoryMiB(t *testing.T) {
 		if got := memoryMiB(input); got != want {
 			t.Errorf("memoryMiB(%q) = %q, want %q", input, got, want)
 		}
+	}
+}
+
+func TestInstallArgs_Kargs(t *testing.T) {
+	// Kernel arguments are baked into the installed bootloader entry, which is
+	// what makes a console=ttyS0 survive the reboot a -append would not.
+	args := strings.Join(LocalBuilder{}.installArgs(BuildRequest{
+		Image: "example.com/os:1",
+		Dest:  "/tmp/disk.raw",
+		Kargs: []string{"console=ttyS0,115200n8", "  ", "systemd.log_level=debug"},
+	}, ostreeBackend, ""), " ")
+
+	if !strings.Contains(args, "--karg console=ttyS0,115200n8") {
+		t.Errorf("the console karg is missing: %s", args)
+	}
+	if !strings.Contains(args, "--karg systemd.log_level=debug") {
+		t.Errorf("a second karg should be passed too: %s", args)
+	}
+	if strings.Count(args, "--karg") != 2 {
+		t.Errorf("a blank karg must not reach bootc: %s", args)
+	}
+}
+
+// A locally built image must never be pulled: podman reads "localhost/..." as a
+// registry named localhost and fails against https://localhost/v2/, which is how
+// a CI run died after its layer built perfectly.
+//
+// These exercise fetch and installError rather than Build. Build refuses to run
+// without root and loop devices, so a test that drove it passed on a root shell
+// and proved nothing on a CI runner — which is exactly what the first version of
+// this test did.
+func TestFetch_DoesNotPullALocalReference(t *testing.T) {
+	fake := shell.NewFake()
+	SetRunner(fake)
+	t.Cleanup(func() { SetRunner(shell.Real{}) })
+
+	var progress []string
+	if err := (LocalBuilder{}).fetch("localhost/corral-vmtest/gate:latest", func(m string) {
+		progress = append(progress, m)
+	}); err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	if len(fake.Calls()) != 0 {
+		t.Errorf("a localhost/ reference needs no commands at all, ran %v", fake.Calls())
+	}
+	if len(progress) != 1 || !strings.Contains(progress[0], "from local storage") {
+		t.Errorf("progress = %v", progress)
+	}
+}
+
+// A pull that fails over an image already in storage is a network problem, not a
+// missing image.
+func TestFetch_ToleratesAFailedPullWhenTheImageIsLocal(t *testing.T) {
+	fake := shell.NewFake()
+	SetRunner(fake)
+	t.Cleanup(func() { SetRunner(shell.Real{}) })
+	fake.AddPrefixResponse("podman pull", "no route to host", errors.New("exit 125"))
+	fake.AddPrefixResponse("podman image exists", "", nil)
+
+	var progress []string
+	if err := (LocalBuilder{}).fetch("example.com/os:1", func(m string) {
+		progress = append(progress, m)
+	}); err != nil {
+		t.Fatalf("fetch should carry on with a local copy: %v", err)
+	}
+	var noted bool
+	for _, msg := range progress {
+		if strings.Contains(msg, "using the copy in local storage") {
+			noted = true
+		}
+	}
+	if !noted {
+		t.Errorf("the run should say it fell back to local storage: %v", progress)
+	}
+}
+
+// And a pull that fails with no local copy is still a failure.
+func TestFetch_FailsWhenThePullFailsAndNothingIsLocal(t *testing.T) {
+	fake := shell.NewFake()
+	SetRunner(fake)
+	t.Cleanup(func() { SetRunner(shell.Real{}) })
+	fake.AddPrefixResponse("podman pull", "manifest unknown", errors.New("exit 125"))
+	fake.AddPrefixResponse("podman image exists", "", errors.New("exit 1"))
+
+	err := (LocalBuilder{}).fetch("example.com/nope:1", nil)
+	if err == nil || !strings.Contains(err.Error(), "manifest unknown") {
+		t.Fatalf("expected the pull failure to fail the fetch, got %v", err)
+	}
+}
+
+func TestIsLocalRef(t *testing.T) {
+	for ref, want := range map[string]bool{
+		"localhost/corral-vmtest/gate:latest": true,
+		"containers-storage:localhost/x":      true,
+		"quay.io/fedora/fedora-bootc:41":      false,
+		"ghcr.io/tuna-os/yellowfin:latest":    false,
+	} {
+		if got := isLocalRef(ref); got != want {
+			t.Errorf("isLocalRef(%q) = %v, want %v", ref, got, want)
+		}
+	}
+}
+
+// bootc re-execs in the host's mount namespace, which a container inside a
+// container does not have. Its own message names a pid and a permission and
+// leaves the reader guessing, so the build says where to run it instead.
+func TestInstallError_ExplainsANestedContainer(t *testing.T) {
+	err := installError([]byte("error: Re-exec in host mountns: open pid1 mountns: Permission denied (os error 13)"),
+		errors.New("exit 1"))
+	if !strings.Contains(err.Error(), "mount namespace") {
+		t.Errorf("the error should explain what the install needs: %v", err)
+	}
+	if !strings.Contains(err.Error(), "os error 13") {
+		t.Errorf("bootc's own message should survive: %v", err)
+	}
+
+	// Any other failure passes through as it is.
+	plain := installError([]byte("error: no space left on device"), errors.New("exit 1"))
+	if strings.Contains(plain.Error(), "mount namespace") {
+		t.Errorf("an unrelated failure should not gain that explanation: %v", plain)
+	}
+	if !strings.Contains(plain.Error(), "no space left") {
+		t.Errorf("plain = %v", plain)
 	}
 }

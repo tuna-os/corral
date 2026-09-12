@@ -64,6 +64,17 @@ VMs are cattle. Stop treating each one like a networking project.
   on-cluster with `bootc install to-disk`, then boots it as a first-class VM.
   `corral bootc upgrade` rolls the VM to the image's next build — your VM
   fleet updates like containers do. No other VM platform has this.
+- **A bootc image tester for CI.** `corral vmtest --bootc ghcr.io/...` builds
+  the image into a disk and boots it. It waits for the guest, runs your
+  assertions, then hands the VM over for your own tests. Test accounts,
+  passwords, extra packages and a boot hook go into a layer above the published
+  image. corral never changes that image. It writes the evidence as it goes:
+  the serial console, screenshots of the boot, a timelapse, and `result.json`.
+  It measures whether the screen
+  painted at all. A desktop that boots to nothing therefore fails. Each failure
+  class gets its own exit code. A pipeline can then tell a runner with no KVM
+  from an image that will not boot. See
+  [docs/ci-boot-gate.md](docs/ci-boot-gate.md).
 - **Containers (CT) — distrobox on Kubernetes.** Proxmox-style pet pods
   alongside VMs (`corral ct create`). A privileged CT seeds a full root
   filesystem onto its own volume and `chroot`s into it on boot — `apt` /

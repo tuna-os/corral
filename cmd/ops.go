@@ -20,6 +20,7 @@ var (
 	exportVolume     string
 	exportOutput     string
 	screenshotOutput string
+	screenshotPaint  bool
 	addNicNAD        string
 	addNicIface      string
 )
@@ -62,12 +63,18 @@ var screenshotCmd = &cobra.Command{
 	Short: "Capture a screenshot of a QEMU VM's framebuffer",
 	Long: `Capture the current framebuffer of a running QEMU VM over its QMP
 monitor socket and save it as a PNG — no VNC client needed. Useful as boot
-evidence in CI (a black/blank screen is easy to catch programmatically:
-compare pixel variance against a threshold).
+evidence in CI.
+
+The capture reports the frame's size and the standard deviation of its
+luminance. A deviation at or under the blank threshold means nothing painted:
+the guest is up and the compositor never drew, which is the failure a passing
+SSH probe hides. --require-paint turns that into a nonzero exit, so one command
+is a desktop gate.
 
 KubeVirt VMs aren't supported here — use ` + "`corral viewer`" + ` for VNC instead.`,
 	Example: `  corral screenshot myvm
-  corral screenshot myvm -o boot-evidence.png`,
+  corral screenshot myvm -o boot-evidence.png
+  corral screenshot myvm --require-paint   # fail if the screen is blank`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name, err := qemuOnly(args, "screenshot")
@@ -78,11 +85,78 @@ KubeVirt VMs aren't supported here — use ` + "`corral viewer`" + ` for VNC ins
 		if out == "" {
 			out = name + "-screenshot.png"
 		}
-		if err := qemu.Screenshot(name, out); err != nil {
+		frame, err := qemu.Capture(name, out)
+		if err != nil {
 			return err
 		}
-		fmt.Printf("Screenshot written to %s\n", out)
+		verdict := "painted"
+		if frame.Blank() {
+			verdict = "blank"
+		}
+		fmt.Printf("Screenshot written to %s (%dx%d, deviation %.4f — %s)\n",
+			frame.Path, frame.Width, frame.Height, frame.StdDev, verdict)
+		if screenshotPaint && frame.Blank() {
+			return fmt.Errorf("%s painted nothing: framebuffer deviation %.4f is at or under %.2f",
+				name, frame.StdDev, qemu.BlankStdDev)
+		}
 		return nil
+	},
+}
+
+// The console keyboard. A guest that cannot answer SSH is not out of reach:
+// QEMU injects scancodes at the emulated keyboard, which is the only way into a
+// LUKS passphrase prompt, a greeter, or a login shell on an image that ships
+// sshd off. TunaOS's published-media tests are driven this way.
+
+var typeEnter bool
+
+var typeCmd = &cobra.Command{
+	Use:   "type <name> <text>",
+	Short: "Type text at a QEMU VM's console",
+	Long: `Type text at a running QEMU VM's emulated keyboard, through its QMP
+monitor — no VNC client, and no SSH in the guest.
+
+Use it to answer what only a keyboard can answer: a LUKS passphrase prompt, a
+greeter, a login on an image that ships sshd disabled. Pair it with
+` + "`corral screenshot`" + ` to see what the guest is showing first.
+
+Only characters a US keyboard produces are typed; anything else is refused
+rather than silently dropped, because a passphrase missing one character fails
+as if the guest were at fault.`,
+	Example: `  corral screenshot vm -o before.png
+  corral type vm 'correct horse battery staple' --enter
+  corral key vm ctrl alt f2`,
+	Args: cobra.ExactArgs(2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		name, err := qemuOnly(args[:1], "type")
+		if err != nil {
+			return err
+		}
+		if err := qemu.SendKeys(name, args[1]); err != nil {
+			return err
+		}
+		if typeEnter {
+			return qemu.SendKey(name, "ret")
+		}
+		return nil
+	},
+}
+
+var keyCmd = &cobra.Command{
+	Use:   "key <name> <key>...",
+	Short: "Press a key combination at a QEMU VM's console",
+	Long: `Press one combination of QEMU key names together at a running QEMU
+VM's emulated keyboard, e.g. "ret", "esc", or "ctrl alt f2" to switch virtual
+console.`,
+	Example: `  corral key vm ret
+  corral key vm ctrl alt delete`,
+	Args: cobra.MinimumNArgs(2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		name, err := qemuOnly(args[:1], "key")
+		if err != nil {
+			return err
+		}
+		return qemu.SendKey(name, args[1:]...)
 	},
 }
 
@@ -484,7 +558,8 @@ var snapshotDeleteCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.AddCommand(restartCmd, pauseCmd, unpauseCmd, migrateCmd, scaleCmd, addDiskCmd, rmDiskCmd, exportCmd, snapshotCmd, templateCmd, screenshotCmd, networksCmd, addNicCmd, lanServiceCmd)
+	rootCmd.AddCommand(restartCmd, pauseCmd, unpauseCmd, migrateCmd, scaleCmd, addDiskCmd, rmDiskCmd, exportCmd, snapshotCmd, templateCmd, screenshotCmd, typeCmd, keyCmd, networksCmd, addNicCmd, lanServiceCmd)
+	typeCmd.Flags().BoolVar(&typeEnter, "enter", false, "Press Return after the text")
 	templateCmd.AddCommand(templateMarkCmd, templateUnmarkCmd, templateListCmd, templateNewCmd)
 
 	migrateCmd.Flags().StringVar(&migrateNode, "node", "", "Target node (default: scheduler chooses)")
@@ -495,6 +570,7 @@ func init() {
 	exportCmd.Flags().StringVar(&exportVolume, "volume", "", "Volume/PVC to export (default: primary disk)")
 	exportCmd.Flags().StringVarP(&exportOutput, "output", "o", "", "Output file (default: <name>.img.gz)")
 	screenshotCmd.Flags().StringVarP(&screenshotOutput, "output", "o", "", "Output PNG path (default: <name>-screenshot.png)")
+	screenshotCmd.Flags().BoolVar(&screenshotPaint, "require-paint", false, "Exit nonzero when the captured frame is blank")
 	addNicCmd.Flags().StringVar(&addNicNAD, "network-nad", "", "NetworkAttachmentDefinition to bridge onto (\"ns/name\"); default: the cluster's only one")
 	addNicCmd.Flags().StringVar(&addNicIface, "iface", "", "Guest interface name for the new NIC (default: net1)")
 

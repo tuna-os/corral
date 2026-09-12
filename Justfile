@@ -27,6 +27,17 @@ test:
     go test -race -shuffle=on -count=1 ./...
     go test -race -shuffle=on -count=1 -tags bootc ./...
 
+# The generated layer, built inside a real bootc image. Needs podman or docker
+# and about a minute — no KVM, no root. Run this before touching the shell
+# pkg/vmtest generates: it is where three CI failures in a row actually lived.
+vmtest-layer image="quay.io/fedora/fedora-bootc:41":
+    CORRAL_VMTEST_IMAGE={{image}} go test -tags e2elayer -timeout 15m -count=1 -v ./pkg/vmtest/
+
+# The whole bootc VM tester against a real image. Needs root (or --sudo), KVM,
+# and podman: it pulls a multi-gigabyte image and boots it. Minutes, not seconds.
+vmtest-e2e image="quay.io/fedora/fedora-bootc:41":
+    sudo -E CORRAL_VMTEST_IMAGE={{image}} go test -tags e2evmtest -timeout 45m -count=1 -v ./pkg/vmtest/
+
 # Coverage with the ratchet gate CI runs (.coverage-budget).
 cover:
     go test -count=1 -coverprofile=cover.out ./...

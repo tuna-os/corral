@@ -48,6 +48,11 @@ type BuildRequest struct {
 	// right answer almost always: the backend decides, because composefs
 	// images ship a btrfs-only initramfs and ostree images want xfs.
 	Filesystem string
+	// Kargs are kernel arguments baked into the installed bootloader entry,
+	// e.g. "console=ttyS0,115200n8" so the guest writes its boot log where a
+	// test harness can read it. They are installed once and survive reboots,
+	// which a -append on the hypervisor side would not.
+	Kargs []string
 }
 
 // BuildResult describes the disk produced.
