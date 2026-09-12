@@ -1,28 +1,28 @@
 # Corral as a CI boot gate for bootc images
 
-Building a bootc OS image proves it *assembles*. It does not prove it
-*boots* — bootloader installs, initramfs contents, display-manager wiring,
-and compression formats all fail in ways `podman build` can't see. Corral
-turns "does this image actually boot?" into one command with an exit code,
-which makes it a publish gate: image builds → corral boots it → only then do
-tags get promoted or ISOs uploaded.
+A build of a bootc OS image proves that it *assembles*. It does not prove that
+it *boots*. Bootloader installs, initramfs contents, display-manager wiring and
+compression formats all fail in ways `podman build` cannot see. Corral turns
+"does this image boot?" into one command with an exit code. That makes it a
+publish gate: the image builds, corral boots it, and only then does the
+pipeline promote a tag or upload an ISO.
 
-This page documents that use case on both backends. The reference consumer
-is [tuna-os/tunaOS](https://github.com/tuna-os/tunaOS), which gates GHCR tag
-promotion on a QEMU boot of every image (see its `docs/PIPELINE.md`), with
-the same checks runnable against a KubeVirt cluster for local development.
+This page documents that use case on both backends. The reference consumer is
+[tuna-os/tunaOS](https://github.com/tuna-os/tunaOS). It gates every promotion
+of a GHCR tag on a QEMU boot of the image (see its `docs/PIPELINE.md`). The
+same checks run against a KubeVirt cluster for local development.
 
-Start with `corral vmtest`, below. It is the full harness: it customises the
-image, boots it, collects evidence, and hands back a running system to test.
-`corral create --wait-ssh` is the smaller gate — one exit code, no artifacts —
-and it is still there for a pipeline that only asks "did it boot".
+Start with `corral vmtest`, below. It is the full harness. It customises the
+image, boots it, collects the evidence, and hands the VM over for your tests.
+`corral create --wait-ssh` is the smaller gate: one exit code, no artifacts. It
+is still there for a pipeline that only asks "did it boot".
 
 ## `corral vmtest` — the whole job in one command
 
-`corral vmtest` builds the disk, boots it, waits for the guest, runs your
-assertions, and leaves the VM running so the next step can test it. It also
+`corral vmtest` builds the disk, boots it, waits for the guest, and runs your
+assertions. It then leaves the VM up, so the next step can test it. It also
 adds what a test needs and the published image does not have: accounts,
-passwords, packages, files, and a first-boot hook.
+passwords, packages, files, and a hook for the first boot.
 
 ```bash
 corral vmtest gate --bootc ghcr.io/tuna-os/yellowfin:gnome-testing \
@@ -85,28 +85,28 @@ exactly as published.
 The layer adds:
 
 - **Accounts.** `--user tester --password hunter2 --sudo-user` creates the
-  account, sets the password, and gives it passwordless sudo. The home
-  directory goes in `/var/home`, because `/home` on a bootc system is a symlink
-  into `/var` and only `/var` from the image reaches the installed disk.
-  Passwords are hashed on the host, so no plain password reaches the image.
+  account, sets the password, and grants sudo with no password. The home
+  directory lands in `/var/home`. On a bootc system `/home` is a symlink into
+  `/var`, and only the image's `/var` reaches the installed disk. corral hashes
+  every password on the host, so no plain password reaches the image.
 - **Packages.** `--package jq` installs with the base image's own package
   manager. corral reads the image filesystem to find out which one it is — dnf,
   zypper, apt, pacman, or apk.
-- **A first-boot hook.** `--post-boot ./firstboot.sh` runs in the booted guest
-  as a systemd oneshot unit. Its exit code is the run's verdict, its output goes
-  to the artifact directory, and its markers go to the serial console — so a
-  guest that never answers SSH still reports.
+- **A hook for the first boot.** `--post-boot ./firstboot.sh` runs in the
+  booted guest as a systemd oneshot unit. Its exit code is the run's verdict.
+  Its output reaches the artifact directory, and its markers reach the serial
+  console. A guest that never answers SSH therefore still reports.
 
-Where [remora](https://github.com/tuna-os/remora) is installed, corral asks it
-to generate the layer's Containerfile instead of writing one itself. remora is
-the same project's layering tool: it knows six package managers, resolves a
-package lockfile so an unchanged rebuild is free, and lints the result. Pick
-one explicitly with `--layer-engine remora|builtin`.
+Where a host has [remora](https://github.com/tuna-os/remora), corral asks
+remora to generate the layer's Containerfile. remora is the same project's tool
+for local layers. It knows six package managers. It resolves a package
+lockfile, so an unchanged rebuild costs nothing. It also lints the result. Pick
+one engine with `--layer-engine remora|builtin`.
 
 ### Images with no sshd
 
-A production desktop image ships sshd disabled, so an SSH probe cannot gate it.
-Gate on the console instead:
+A production desktop image ships sshd in a disabled state. No SSH probe can
+gate such an image. Gate on the console instead:
 
 ```bash
 corral vmtest desk --bootc "$IMAGE" --ready-marker 'Reached target Graphical' \
@@ -114,10 +114,10 @@ corral vmtest desk --bootc "$IMAGE" --ready-marker 'Reached target Graphical' \
 ```
 
 `--ready-marker` waits for a regular expression on the guest's serial console.
-`--require-paint` fails the run when the last frame is blank — the standard
+`--require-paint` fails the run when the last frame is blank: the standard
 deviation of its luminance is at or under 0.02. A guest that boots and never
-draws is the failure a passing SSH probe hides, and one that no exit code
-catches unless somebody looks at a picture.
+draws is the failure an SSH probe hides. Without this flag, no exit code
+catches it and somebody has to look at a picture.
 
 You can also drive the console keyboard directly, which is the only way into a
 LUKS passphrase prompt or a greeter:
@@ -225,9 +225,9 @@ corral create gate --bootc ghcr.io/tuna-os/yellowfin:gnome-testing \
 corral delete gate
 ```
 
-`--wait-ssh` implies starting the VM and blocks until a root SSH probe over
-the forwarded port succeeds. The SSH key is injected at install time with
-`--root-ssh-authorized-keys` — the published image is never modified.
+`--wait-ssh` starts the VM, then blocks until a root SSH probe over the
+forwarded port succeeds. bootc install injects the SSH key with
+`--root-ssh-authorized-keys`, and nothing changes the published image.
 
 ### Locally built images
 
@@ -320,14 +320,14 @@ that matter in practice:
 - **Storage**: disk PVCs are Filesystem-mode file-backed disks, so any
   provisioner works — including `local-path`. Block-mode provisioners are
   not required.
-- **Registry cache**: deploy `deploy/registry-cache.yaml` (a ghcr.io
-  pull-through cache) and builders use it automatically — multi-GB desktop
-  images pull at LAN speed after the first fetch. `CORRAL_REGISTRY_MIRROR=off`
-  disables detection; note the cache is one-upstream-per-instance, so a
-  quay-pointed registry:2 cannot serve ghcr content.
-- **Interrupted builds**: if the builder finished but the final VM step was
-  lost, `corral bootc create --resume <name>` reuses the completed disk PVC
-  instead of rebuilding.
+- **Registry cache**: deploy `deploy/registry-cache.yaml`, a pull-through cache
+  for ghcr.io. Builders then use it on their own, and a desktop image of several
+  gigabytes pulls at LAN speed after the first fetch.
+  `CORRAL_REGISTRY_MIRROR=off` turns the detection off. One instance serves one
+  upstream, so a registry:2 aimed at quay cannot serve content from ghcr.
+- **Interrupted builds**: where the builder finished but the final VM step was
+  lost, `corral bootc create --resume <name>` reuses the disk PVC that the
+  builder completed. It does not build the disk again.
 
 ## Troubleshooting the gate
 

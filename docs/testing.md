@@ -17,12 +17,12 @@
 - **Cluster e2e** (`.github/workflows/e2e.yml`): kind + emulated KubeVirt on
   GitHub runners — real `kubectl`/`virtctl` against a real API server.
 - **A real bootc boot** (`.github/workflows/vmtest.yml`, and
-  `just vmtest-e2e`): `corral vmtest` builds a real image into a disk, boots
-  it with KVM, layers in a test account and a package, and asserts inside the
-  guest over SSH. It runs weekly, on demand, and on a change to the harness —
-  it pulls gigabytes and boots a VM, so not on every push. The suite behind it
-  is `pkg/vmtest/e2e_test.go`, behind the `e2evmtest` build tag for the same
-  reason `pkg/bootc` uses `e2ebootc`.
+  `just vmtest-e2e`): `corral vmtest` builds a real image into a disk and boots
+  it with KVM. It adds a test account and a package, then asserts inside the
+  guest over SSH. It runs weekly and on demand, never on a push: it pulls
+  gigabytes and boots a VM. The Go suite behind it is `pkg/vmtest/e2e_test.go`,
+  behind the `e2evmtest` build tag. `pkg/bootc` uses `e2ebootc` for the same
+  reason.
 
 The TUI's update loop is driven directly in `cmd/tui_flows_test.go` (list,
 context cycling, quick keys, actions gating, confirm/clone/ports/hardware

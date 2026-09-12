@@ -36,7 +36,7 @@ permissions:
 jobs:
   boot:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
       IMAGE: ${{ inputs.image || 'quay.io/fedora/fedora-bootc:41' }}
     steps:
@@ -46,24 +46,37 @@ jobs:
         with:
           go-version-file: go.mod
 
-      # Hosted runners have KVM, but /dev/kvm is not world-writable. Without
-      # it the boot runs under software emulation and the timeout decides the
-      # verdict instead of the image.
+      # Widen /dev/kvm where the runner has one: it arrives as root:kvm 0660,
+      # and the QEMU child has to open it. Every command here is best-effort.
+      # A runner with no udev daemon, or none with KVM at all, is a slow run
+      # (TCG) and not a broken one — but the job must say which it got, because
+      # "it timed out" reads as a broken image otherwise.
       - name: Enable KVM
+        id: kvm
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
             | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-          test -r /dev/kvm
+          sudo udevadm control --reload-rules || true
+          sudo udevadm trigger --name-match=kvm || true
+          [ -e /dev/kvm ] && sudo chmod 0666 /dev/kvm || true
+          ls -l /dev/kvm || true
+          if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
+            echo "accel=kvm — the guest boots at hardware speed"
+            echo "boot-timeout=20m" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::no usable /dev/kvm — the guest runs under TCG, which is far slower"
+            echo "boot-timeout=35m" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Install the tools the harness drives
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq podman qemu-system-x86 qemu-utils ffmpeg
 
+      # Built into the workspace, not /usr/local/bin: the runner user cannot
+      # write there, and `sudo -E ./corral` reaches the same binary.
       - name: Build corral
-        run: go build -o /usr/local/bin/corral .
+        run: go build -o ./corral .
 
       # Root, not --sudo: bootc install partitions a disk and installs a
       # bootloader, and the derived image must land in root podman storage —
@@ -73,7 +86,7 @@ jobs:
       # afterwards leaves the VM up (the default) and deletes it at the end.
       - name: Boot the image and test it
         run: |
-          sudo -E corral vmtest gate \
+          sudo -E ./corral vmtest gate \
             --bootc "$IMAGE" \
             --user tester --password corral-ci --sudo-user \
             --package jq \
@@ -84,7 +97,7 @@ jobs:
             --check 'bootc status --format json' \
             --artifacts vmtest-out \
             --video \
-            --timeout 20m \
+            --timeout ${{ steps.kvm.outputs.boot-timeout }} \
             --rm
 
       # The run was root, so the artifacts are root-owned and the upload step
