@@ -286,7 +286,9 @@ corral_adduser() {
       for g in ${groups//,/ }; do addgroup "$name" "$g" 2>/dev/null || true; done
     fi
   fi
-  install -d -m 0700 -o "$name" -g "$name" "/var/home/$name"
+  mkdir -p "/var/home/$name"
+  chmod 0700 "/var/home/$name"
+  chown "$name:$name" "/var/home/$name" 2>/dev/null || true
 }
 
 corral_setpass() {
@@ -304,7 +306,10 @@ corral_setpass() {
 
 corral_authorize() {
   local name="$1" home="$2" key="$3"
-  install -d -m 0700 "$home/.ssh"
+  # mkdir -p, not install -d: these images ship Rust uutils, whose install
+  # refuses "/root/.ssh" because /root already exists.
+  mkdir -p "$home/.ssh"
+  chmod 0700 "$home/.ssh"
   printf '%s\n' "$key" >> "$home/.ssh/authorized_keys"
   chmod 0600 "$home/.ssh/authorized_keys"
   chown -R "$name:$name" "$home/.ssh" 2>/dev/null || true
@@ -323,7 +328,8 @@ corral_admin() {
 
 corral_sudoers() {
   local name="$1"
-  install -d -m 0750 /etc/sudoers.d
+  mkdir -p /etc/sudoers.d
+  chmod 0750 /etc/sudoers.d
   printf '%s ALL=(ALL) NOPASSWD: ALL\n' "$name" > "/etc/sudoers.d/90-corral-$name"
   chmod 0440 "/etc/sudoers.d/90-corral-$name"
 }
@@ -347,7 +353,7 @@ done
 		// Password logins are off in most bootc images. The spec asked for
 		// passwords, so they are turned on for this disposable test VM — and
 		// only in the derived image, never in the published one.
-		b.WriteString(`install -d -m 0755 /etc/ssh/sshd_config.d
+		b.WriteString(`mkdir -p /etc/ssh/sshd_config.d
 cat > /etc/ssh/sshd_config.d/30-corral-vmtest.conf <<'EOF'
 # corral vmtest: this VM is a disposable test target.
 PasswordAuthentication yes

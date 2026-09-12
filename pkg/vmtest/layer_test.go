@@ -2,6 +2,7 @@ package vmtest
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -334,4 +335,76 @@ func TestDerivedTag(t *testing.T) {
 	if got := DerivedTag("gate"); got != "localhost/corral-vmtest/gate:latest" {
 		t.Errorf("DerivedTag = %q", got)
 	}
+}
+
+// The account script runs inside the image, whose coreutils may be Rust
+// uutils. uutils' `install -d /root/.ssh` fails with "cannot create directory
+// '/root': File exists", which took out a whole CI run. Nothing generated here
+// may use `install -d` again.
+func TestGeneratedShell_NoInstallD(t *testing.T) {
+	ctx, err := newBuildContext(testSpec(), "base", "ssh-ed25519 AAAArun")
+	if err != nil {
+		t.Fatalf("newBuildContext: %v", err)
+	}
+	for name, script := range ctx.BuildScripts {
+		if line, found := findCommand(script, "install -d"); found {
+			t.Errorf("%s uses `install -d`, which Rust uutils refuses when the parent exists: %s", name, line)
+		}
+	}
+	for path, file := range ctx.SystemFiles {
+		if line, found := findCommand(file.Content, "install -d"); found {
+			t.Errorf("%s uses `install -d`, which Rust uutils refuses when the parent exists: %s", path, line)
+		}
+	}
+	// And the directories it needs are still created, with their modes.
+	accounts := ctx.BuildScripts["10-corral-accounts.sh"]
+	for _, want := range []string{`mkdir -p "$home/.ssh"`, `chmod 0700 "$home/.ssh"`, "mkdir -p /etc/sudoers.d"} {
+		if !strings.Contains(accounts, want) {
+			t.Errorf("the account script is missing %q", want)
+		}
+	}
+}
+
+// The generated shell has to be valid shell. `bash -n` parses it without
+// running it, which catches an unbalanced heredoc or quote in a script that
+// otherwise only fails four minutes into a container build.
+func TestGeneratedShell_Parses(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skipf("no bash: %v", err)
+	}
+	ctx, err := newBuildContext(testSpec(), "base", "ssh-ed25519 AAAArun")
+	if err != nil {
+		t.Fatalf("newBuildContext: %v", err)
+	}
+	scripts := map[string]string{}
+	for name, script := range ctx.BuildScripts {
+		scripts[name] = shebang(script)
+	}
+	scripts["corral-postboot"] = ctx.SystemFiles["/usr/libexec/corral-postboot"].Content
+
+	for name, script := range scripts {
+		path := filepath.Join(t.TempDir(), "script.sh")
+		if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if out, err := exec.Command(bash, "-n", path).CombinedOutput(); err != nil {
+			t.Errorf("%s is not valid shell: %v\n%s\n%s", name, err, out, script)
+		}
+	}
+}
+
+// findCommand reports whether a script runs the given command, ignoring the
+// comment lines that may name it while telling the reader not to use it.
+func findCommand(script, command string) (string, bool) {
+	for _, line := range strings.Split(script, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if strings.Contains(trimmed, command) {
+			return trimmed, true
+		}
+	}
+	return "", false
 }

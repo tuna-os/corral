@@ -89,9 +89,9 @@ jobs:
           sudo -E ./corral vmtest gate \
             --bootc "$IMAGE" \
             --user tester --password corral-ci --sudo-user \
-            --package jq \
+            --package tree \
             --post-boot 'systemctl is-system-running --wait || true' \
-            --check 'command -v jq' \
+            --check 'command -v tree' \
             --check 'id tester' \
             --check 'sudo -u tester sudo -n true' \
             --check 'bootc status --format json' \

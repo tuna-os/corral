@@ -61,11 +61,13 @@ func e2eSpec(t *testing.T, name string) *Spec {
 func TestE2E_BootAndCustomize(t *testing.T) {
 	spec := e2eSpec(t, "corral-e2e-vmtest")
 	spec.Users = []User{{Name: "tester", Password: "corral-e2e", Sudo: true}}
-	spec.Packages = []string{"jq"}
+	// tree, not jq: the base image already ships jq, so an assertion on it
+	// would pass even if the layer installed nothing at all.
+	spec.Packages = []string{"tree"}
 	spec.Provision = []Provision{{Script: "systemctl is-system-running --wait || true\ntest -f /etc/os-release"}}
 	spec.Checks = []string{
 		// The layer really installed something.
-		"command -v jq",
+		"command -v tree",
 		// The account really exists, with real sudo.
 		"id tester",
 		"sudo -u tester sudo -n true",
