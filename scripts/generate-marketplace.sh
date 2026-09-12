@@ -10,8 +10,9 @@ dist=$1
 tag=$2
 output=$3
 repo=${GITHUB_REPOSITORY:-tuna-os/corral}
-tmp=$(mktemp)
-trap 'rm -f "$tmp"' EXIT
+tmp_dir=$(mktemp -d)
+trap 'rm -rf "$tmp_dir"' EXIT
+tmp="$tmp_dir/market.json"
 
 jq --arg tag "$tag" --arg repo "$repo" '
   {
@@ -44,7 +45,7 @@ for artifact in "$dist"/corral-*-linux-*; do
   plugin=${filename#corral-}; plugin=${plugin%-linux-*}
   arch=${filename##*-linux-}
   sha=$(sha256sum "$artifact" | awk '{print $1}')
-  next=$(mktemp)
+  next="$tmp_dir/next.json"
   jq --arg plugin "$plugin" --arg platform "linux/$arch" \
      --arg url "https://github.com/$repo/releases/download/$tag/$filename" \
      --arg sha "$sha" \
