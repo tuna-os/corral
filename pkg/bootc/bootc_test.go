@@ -312,6 +312,13 @@ func TestQEMUTarget_AdoptsRatherThanRecreates(t *testing.T) {
 	if !got.ExistingDisk {
 		t.Error("Create was not told the disk already exists — it would overwrite the build")
 	}
+	// Import makes the VM directory itself, so qemu.Exists() is true by the
+	// time Create runs. Without Force every import fails with "VM already
+	// exists" — a VM that exists only because this function is creating it.
+	// A CI run reached exactly that point and stopped there.
+	if !got.Force {
+		t.Error("Create must be forced: Import created the VM directory it is about to be refused for")
+	}
 
 	// The conversion has to target where pkg/qemu looks for a VM's disk.
 	var converted bool

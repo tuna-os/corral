@@ -405,6 +405,13 @@ func (QEMUTarget) Import(ref types.InstanceRef, disk string, opts CreateOpts) er
 		SSHPublicKey: opts.SSHKey,
 		// The disk is already built and populated; Create must adopt it.
 		ExistingDisk: true,
+		// And Create must not refuse the directory this function just made.
+		// Exists() is true the moment the disk is written into it, so without
+		// Force every import fails with "VM already exists" — a VM that only
+		// exists because we are in the middle of creating it. Whether an older
+		// VM of the same name may be replaced is the caller's decision, taken
+		// before the build; by here the disk is built and the name is claimed.
+		Force: true,
 	})
 }
 
