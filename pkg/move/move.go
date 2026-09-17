@@ -16,6 +16,8 @@ package move
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -504,6 +506,14 @@ func joinFormats(formats []export.Format) string {
 	return strings.Join(names, ", ")
 }
 
+// artifactName is the scratch file the disk is exported to.
+//
+// The random token is not decoration. The default scratch directory is
+// os.TempDir(), which on a shared host is world-writable: a name derived only
+// from the backend and the instance is one any other local user can predict
+// and pre-create as a symlink, so the export would follow it and write a disk
+// image over whatever it points at. A token they cannot guess closes that,
+// and the name still says which instance and format it holds.
 func artifactName(ref types.InstanceRef, format export.Format) string {
 	name := ref.Name
 	if name == "" {
@@ -513,7 +523,19 @@ func artifactName(ref types.InstanceRef, format export.Format) string {
 	if ext == "" {
 		ext = "img"
 	}
-	return fmt.Sprintf("corral-move-%s-%s.%s", ref.Backend, name, ext)
+	return fmt.Sprintf("corral-move-%s-%s-%s.%s", ref.Backend, name, randomToken(), ext)
+}
+
+// randomToken is 8 hex characters from crypto/rand.
+//
+// crypto/rand.Read "never returns an error, and always fills b entirely" — it
+// crashes the program rather than hand back a short read — so there is no
+// error path here and, more to the point, no way to silently fall back to a
+// predictable name.
+func randomToken() string {
+	var b [4]byte
+	_, _ = rand.Read(b[:])
+	return hex.EncodeToString(b[:])
 }
 
 func firstNonEmpty(values ...string) string {

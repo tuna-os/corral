@@ -721,3 +721,36 @@ func TestInspectSeamDefaultsToTheRealInspector(t *testing.T) {
 		t.Errorf("an unreachable host must not be reported as UEFI: %+v", got)
 	}
 }
+
+// The default scratch directory is os.TempDir(), which is world-writable on a
+// shared host. An artifact name derived only from the backend and the instance
+// is one any other local user can predict and pre-create as a symlink, so the
+// export would follow it and write a disk image over the target. The name has
+// to carry something unguessable.
+func TestPreflightArtifactNameIsNotPredictable(t *testing.T) {
+	newStub(t)
+	target := to("qemu")
+
+	first := Preflight(sourceVM(), target)
+	second := Preflight(sourceVM(), target)
+	if first.Artifact == second.Artifact {
+		t.Fatalf("two plans for the same move produced the same scratch path: %q", first.Artifact)
+	}
+
+	// It still has to say what it holds — the point is unpredictability, not
+	// an opaque name an operator cannot recognise in a directory listing.
+	for _, plan := range []Plan{first, second} {
+		base := filepath.Base(plan.Artifact)
+		if !strings.HasPrefix(base, "corral-move-kubevirt-web-1-") {
+			t.Errorf("the name no longer identifies the move: %q", base)
+		}
+		if !strings.HasSuffix(base, ".qcow2") {
+			t.Errorf("the name no longer carries the format: %q", base)
+		}
+		// Long enough that guessing is not a practical attack.
+		token := strings.TrimSuffix(strings.TrimPrefix(base, "corral-move-kubevirt-web-1-"), ".qcow2")
+		if len(token) < 8 {
+			t.Errorf("the random token is too short to matter: %q", token)
+		}
+	}
+}
