@@ -256,3 +256,65 @@ func TestE2ELayer_HookReportsWhenKilled(t *testing.T) {
 		t.Errorf("the status file should hold 124 for the harness to read:\n%s", text)
 	}
 }
+
+// The probes, against a real engine and a real image that has no CMD.
+//
+// This is the cheap half of what issue #303 reported: `podman create` refuses
+// an image with neither CMD nor ENTRYPOINT, which is every bootc OS image. It
+// needs no network and no bootc base — a two-line scratch image has exactly
+// the shape that broke. It also covers #304, because a `localhost/` tag is the
+// only way to have such an image.
+func TestE2ELayer_ProbesACommandlessLocalImage(t *testing.T) {
+	engine := layerEngine(t)
+	if engine != "podman" {
+		t.Skip("the probes shell out to podman by name")
+	}
+
+	// FROM scratch with one file and no CMD: the minimum that reproduces it.
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "marker"), []byte("corral\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	containerfile := "FROM scratch\nCOPY marker /marker\n"
+	if err := os.WriteFile(filepath.Join(dir, "Containerfile"), []byte(containerfile), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tag := "localhost/corral-probe-nocmd:test"
+	build := exec.Command(engine, "build", "--tag", tag, "--file", filepath.Join(dir, "Containerfile"), dir)
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("building the probe image: %v\n%s", err, out)
+	}
+	t.Cleanup(func() { _ = exec.Command(engine, "rmi", "-f", tag).Run() })
+
+	// Plain `podman create` must still fail, or this test proves nothing.
+	if out, err := exec.Command(engine, "create", tag).CombinedOutput(); err == nil {
+		t.Skipf("%s now accepts a CMD-less image; the placeholder is harmless but this test is moot", engine)
+	} else if !strings.Contains(string(out), "no command or entrypoint") {
+		t.Logf("create failed for another reason, continuing: %s", strings.TrimSpace(string(out)))
+	}
+
+	// The real probe: it must reach the filesystem rather than die at create.
+	// A scratch image has no package manager, so "cannot tell" is the right
+	// answer — and it is a different error from the one the bug produced.
+	_, err := DetectPackageManager(tag, false)
+	if err == nil {
+		t.Fatal("a scratch image has no package manager")
+	}
+	if strings.Contains(err.Error(), "no command or entrypoint") {
+		t.Errorf("the probe still cannot create a container from a CMD-less image: %v", err)
+	}
+	if !strings.Contains(err.Error(), "cannot tell how") {
+		t.Errorf("the probe failed before it read the filesystem: %v", err)
+	}
+
+	// And fetchBase must not try to pull the local tag.
+	if err := fetchBase(tag, false, nil); err != nil {
+		t.Errorf("fetchBase on a locally built image: %v", err)
+	}
+	// A local tag that is genuinely absent still has to be reported.
+	if err := fetchBase("localhost/corral-probe-absent:test", false, nil); err == nil {
+		t.Error("an absent local tag should be an error")
+	} else if !strings.Contains(err.Error(), "not in local podman storage") {
+		t.Errorf("wrong error for an absent local tag: %v", err)
+	}
+}

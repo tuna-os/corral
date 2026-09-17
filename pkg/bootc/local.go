@@ -190,8 +190,25 @@ func installError(out []byte, err error) error {
 	return fmt.Errorf("bootc install to-disk: %s", message)
 }
 
-// isLocalRef reports whether a reference names an image that exists only in
+// probeCommand is the placeholder argv given to `podman create` when the only
+// purpose is to copy files back out of the image.
+//
+// A bootc OS image is not an application container, so it ships neither CMD
+// nor ENTRYPOINT, and `podman create` refuses such an image outright: "no
+// command or entrypoint provided, and no CMD or ENTRYPOINT from image". That
+// rejected the whole Universal Blue family — the images these probes were
+// written for.
+//
+// Any argv satisfies podman, because nothing here ever starts the container.
+// The path deliberately does not exist, so a container that somehow did start
+// would fail loudly rather than run something real. `--entrypoint ""` does not
+// work: podman still reports the image as having no command.
+var probeCommand = []string{"/corral-probe-does-not-execute"}
+
+// IsLocalRef reports whether a reference names an image that exists only in
 // local storage, which no registry can serve.
+func IsLocalRef(image string) bool { return isLocalRef(image) }
+
 func isLocalRef(image string) bool {
 	return strings.HasPrefix(image, "localhost/") || strings.HasPrefix(image, "containers-storage:")
 }
@@ -239,7 +256,7 @@ var (
 // --entrypoint cannot dispatch, so any "run a binary in the image" probe
 // misdetects exactly the images this matters most for.
 func (b LocalBuilder) DetectBackend(image string) (Backend, error) {
-	name, args := b.podman("create", image)
+	name, args := b.podman(append([]string{"create", image}, probeCommand...)...)
 	out, err := runner.Run(name, args...)
 	if err != nil {
 		return Backend{}, fmt.Errorf("podman create %s: %s", image, commandError(out, err))

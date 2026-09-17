@@ -284,3 +284,114 @@ func TestCommandOutput_PrefersTheCommandsOwnMessage(t *testing.T) {
 		t.Errorf("commandOutput = %q", got)
 	}
 }
+
+// A locally built image is already local. Pulling it is the one way to fail:
+// podman reads `localhost/` as a registry and dials https://localhost/v2/.
+//
+// The bug this pins: `corral vmtest` against an image the CI job just built
+// worked until the spec asked for a user, a package or a hook — the fields
+// that need a layer — and then died with a network error naming a registry
+// nobody meant to contact.
+func TestBuildLayer_DoesNotPullALocalReference(t *testing.T) {
+	for _, ref := range []string{
+		"localhost/bluefin-compass:ci",
+		"containers-storage:localhost/bluefin-compass:ci",
+	} {
+		fake := fakeRunner(t)
+		noRemora(t)
+		fake.AddPrefixResponse("podman image exists", "", nil)
+		fake.AddPrefixResponse("podman create", "cafef00d\n", nil)
+		fake.AddPrefixResponse("podman cp cafef00d:/usr/bin/dnf", "", nil)
+		fake.AddPrefixResponse("podman cp", "", errors.New("no such file"))
+		fake.AddPrefixResponse("podman rm", "", nil)
+		fake.AddPrefixResponse("podman build", "", nil)
+		// Any pull at all is the failure, so make one fail the way podman does.
+		fake.AddPrefixResponse("podman pull", "", errors.New(
+			`pinging container registry localhost: dial tcp [::1]:443: connect: connection refused`))
+
+		spec := testSpec()
+		spec.Bootc = ref
+		if _, err := BuildLayer(spec, "ssh-ed25519 AAAA", t.TempDir(), nil); err != nil {
+			t.Fatalf("%s: BuildLayer: %v", ref, err)
+		}
+		for _, call := range fake.Calls() {
+			if call.Name == "podman" && len(call.Args) > 0 && call.Args[0] == "pull" {
+				t.Errorf("%s: the layer builder pulled a local reference: %v", ref, call.Args)
+			}
+		}
+	}
+}
+
+// A local tag that is not in storage has to say so. Left to podman it becomes
+// a TLS dial failure, which sends the reader looking for a network problem
+// they do not have.
+func TestBuildLayer_LocalReferenceMustExist(t *testing.T) {
+	fake := fakeRunner(t)
+	noRemora(t)
+	fake.AddPrefixResponse("podman image exists", "", errors.New("exit status 1"))
+
+	spec := testSpec()
+	spec.Bootc = "localhost/typo:ci"
+	_, err := BuildLayer(spec, "ssh-ed25519 AAAA", t.TempDir(), nil)
+	if err == nil {
+		t.Fatal("expected an error for a local reference that is not in storage")
+	}
+	if !strings.Contains(err.Error(), "not in local podman storage") {
+		t.Errorf("the error should name the real problem: %v", err)
+	}
+}
+
+// A pull that fails over an image already in storage is a network problem,
+// not a missing image — the offline-runner case.
+func TestBuildLayer_KeepsAStoredImageWhenThePullFails(t *testing.T) {
+	fake := fakeRunner(t)
+	noRemora(t)
+	fake.AddPrefixResponse("podman pull", "", errors.New("no route to host"))
+	fake.AddPrefixResponse("podman image exists", "", nil)
+	fake.AddPrefixResponse("podman create", "cafef00d\n", nil)
+	fake.AddPrefixResponse("podman cp cafef00d:/usr/bin/dnf", "", nil)
+	fake.AddPrefixResponse("podman cp", "", errors.New("no such file"))
+	fake.AddPrefixResponse("podman rm", "", nil)
+	fake.AddPrefixResponse("podman build", "", nil)
+
+	spec := testSpec()
+	layered, err := BuildLayer(spec, "ssh-ed25519 AAAA", t.TempDir(), nil)
+	if err != nil {
+		t.Fatalf("a stored image should survive a failed pull: %v", err)
+	}
+	if !layered.Derived {
+		t.Error("the layer should still have been built")
+	}
+}
+
+// A bootc OS image ships no CMD and no ENTRYPOINT, and `podman create` refuses
+// such an image outright. That rejected the Universal Blue family — the images
+// this probe was written for. The container is never started, so a placeholder
+// argv is enough.
+func TestDetectPackageManager_CreatesWithACommand(t *testing.T) {
+	fake := fakeRunner(t)
+	fake.AddPrefixResponse("podman create", "cafef00d\n", nil)
+	fake.AddPrefixResponse("podman cp cafef00d:/usr/bin/dnf", "", nil)
+	fake.AddPrefixResponse("podman cp", "", errors.New("no such file"))
+	fake.AddPrefixResponse("podman rm", "", nil)
+
+	if _, err := DetectPackageManager("ghcr.io/ublue-os/bluefin:stable", false); err != nil {
+		t.Fatalf("DetectPackageManager: %v", err)
+	}
+	var created *shell.Call
+	for i, call := range fake.Calls() {
+		if call.Name == "podman" && len(call.Args) > 0 && call.Args[0] == "create" {
+			created = &fake.Calls()[i]
+		}
+	}
+	if created == nil {
+		t.Fatal("podman create never ran")
+	}
+	// The image is the second argument; anything after it is the placeholder.
+	if len(created.Args) < 3 {
+		t.Fatalf("podman create got no command after the image: %v", created.Args)
+	}
+	if created.Args[len(created.Args)-1] != probeCommand[len(probeCommand)-1] {
+		t.Errorf("the placeholder argv is missing: %v", created.Args)
+	}
+}

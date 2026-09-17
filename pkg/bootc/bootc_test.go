@@ -516,3 +516,40 @@ func TestInstallError_ExplainsANestedContainer(t *testing.T) {
 		t.Errorf("plain = %v", plain)
 	}
 }
+
+// A bootc OS image is not an application container: it ships neither CMD nor
+// ENTRYPOINT, and `podman create` refuses such an image with "no command or
+// entrypoint provided, and no CMD or ENTRYPOINT from image". That made the
+// backend probe fatal (exit 4) for the whole Universal Blue family — the
+// images the probe was written for.
+//
+// The container is never started, so a placeholder argv satisfies podman and
+// changes nothing else. `--entrypoint ""` does not work: podman still reports
+// the image as having no command.
+func TestDetectBackend_GivesPodmanACommandToRecord(t *testing.T) {
+	fake := withFake(t)
+	fake.AddPrefixResponse("podman create", "container123", nil)
+	fake.AddPrefixResponse("podman rm", "", nil)
+	fake.AddPrefixResponse("podman cp", "", errors.New("absent"))
+
+	if _, err := (LocalBuilder{}).DetectBackend("ghcr.io/ublue-os/bluefin:stable"); err != nil {
+		t.Fatal(err)
+	}
+	var created []string
+	for _, call := range fake.Calls() {
+		if len(call.Args) > 0 && call.Args[0] == "create" {
+			created = call.Args
+		}
+	}
+	if created == nil {
+		t.Fatal("podman create never ran")
+	}
+	if len(created) < 3 || created[len(created)-1] != probeCommand[len(probeCommand)-1] {
+		t.Errorf("podman create got no placeholder command: %v", created)
+	}
+	// It must stay a path nothing can run, so a container that somehow started
+	// would fail loudly rather than execute something real.
+	if !strings.HasPrefix(probeCommand[0], "/corral-probe") {
+		t.Errorf("the placeholder should be an obviously fake path: %q", probeCommand[0])
+	}
+}

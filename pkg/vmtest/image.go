@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/tuna-os/corral/pkg/bootc"
 	"github.com/tuna-os/corral/pkg/shell"
 )
 
@@ -83,10 +84,8 @@ func BuildLayer(spec *Spec, authorizedKey, contextDir string, progress func(stri
 	result.Derived = true
 
 	// The base image has to be local before anything can be read out of it.
-	report(progress, "pulling %s", spec.Bootc)
-	name, args := podmanCmd(spec.Sudo, "pull", spec.Bootc)
-	if out, err := runner.Run(name, args...); err != nil {
-		return result, fmt.Errorf("podman pull %s: %s", spec.Bootc, commandOutput(out, err))
+	if err := fetchBase(spec.Bootc, spec.Sudo, progress); err != nil {
+		return result, err
 	}
 
 	pm, err := DetectPackageManager(spec.Bootc, spec.Sudo)
@@ -121,7 +120,7 @@ func BuildLayer(spec *Spec, authorizedKey, contextDir string, progress func(stri
 
 	tag := DerivedTag(spec.Name)
 	report(progress, "building %s from %s (%s engine)", tag, spec.Bootc, engine)
-	name, args = podmanCmd(spec.Sudo, "build", "--tag", tag, "--file",
+	name, args := podmanCmd(spec.Sudo, "build", "--tag", tag, "--file",
 		filepath.Join(contextDir, "Containerfile"), contextDir)
 	if out, err := runner.Run(name, args...); err != nil {
 		return result, fmt.Errorf("building the derived image: %s", commandOutput(out, err))
@@ -161,6 +160,63 @@ func generateWithRemora(ctx *buildContext, pm packageManager, contextDir string,
 	return nil
 }
 
+// probeCommand is the placeholder argv for a `podman create` whose container
+// is never started. See bootc.DetectBackend for why it is needed: a bootc OS
+// image ships no CMD and no ENTRYPOINT, and podman refuses to create a
+// container from such an image without one.
+var probeCommand = []string{"/corral-probe-does-not-execute"}
+
+// fetchBase makes sure the base image is in local storage, without insisting
+// it come from a registry.
+//
+// A `localhost/` reference already is local, and pulling it is the one way to
+// fail: podman reads it as a registry called "localhost" and dials
+// https://localhost/v2/. Building an image and then testing it is a normal CI
+// shape, so the layer builder has to accept the result of that build. The disk
+// builder in pkg/bootc has always done this; this is the same guard, applied
+// where a spec that asks for users, packages or a hook would otherwise die
+// with a network error.
+func fetchBase(image string, sudo bool, progress func(string)) error {
+	if bootc.IsLocalRef(image) {
+		if !imageExists(image, sudo) {
+			// Worth its own message: a mistyped local tag otherwise surfaces
+			// later as a confusing build failure against a missing base.
+			return fmt.Errorf("%s is not in local podman storage — build or tag it first, "+
+				"or name an image a registry can serve", image)
+		}
+		report(progress, "using %s from local storage", image)
+		return nil
+	}
+	report(progress, "pulling %s", image)
+	name, args := podmanCmd(sudo, "pull", image)
+	out, err := runner.Run(name, args...)
+	if err == nil {
+		return nil
+	}
+	// A pull that fails over an image already in storage is a network problem,
+	// not a missing image — the offline-runner case.
+	if imageExists(image, sudo) {
+		report(progress, "could not pull %s (%s); using the copy in local storage",
+			image, firstLine(commandOutput(out, err)))
+		return nil
+	}
+	return fmt.Errorf("podman pull %s: %s", image, commandOutput(out, err))
+}
+
+// imageExists reports whether podman already holds the image.
+func imageExists(image string, sudo bool) bool {
+	name, args := podmanCmd(sudo, "image", "exists", image)
+	_, err := runner.Run(name, args...)
+	return err == nil
+}
+
+func firstLine(msg string) string {
+	if line, _, found := strings.Cut(msg, "\n"); found {
+		return line
+	}
+	return msg
+}
+
 // DetectPackageManager reports how the image installs software, by looking for
 // the binary in the image filesystem.
 //
@@ -169,7 +225,7 @@ func generateWithRemora(ctx *buildContext, pm packageManager, contextDir string,
 // exactly the images this matters most for. pkg/bootc detects its storage
 // backend the same way and for the same reason.
 func DetectPackageManager(image string, sudo bool) (packageManager, error) {
-	name, args := podmanCmd(sudo, "create", image)
+	name, args := podmanCmd(sudo, append([]string{"create", image}, probeCommand...)...)
 	out, err := runner.Run(name, args...)
 	if err != nil {
 		return packageManager{}, fmt.Errorf("podman create %s: %s", image, commandOutput(out, err))
