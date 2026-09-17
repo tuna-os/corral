@@ -228,7 +228,7 @@ TS=$(date +%%Y%%m%%d%%H%%M%%S)
 FNAME="%[1]s-$TS.img.gz"
 kubectl delete vmexport %[1]s-export -n %[2]s --ignore-not-found
 virtctl vmexport download %[1]s-export --namespace=%[2]s --vm=%[1]s --volume="$VOL" \
-  --output=/tmp/"$FNAME" --format=gzip --insecure --port-forward
+  --output=/tmp/"$FNAME" --format=gzip --port-forward
 rclone copyto /tmp/"$FNAME" "%[3]s/$FNAME"
 rm -f /tmp/"$FNAME"
 kubectl delete vmexport %[1]s-export -n %[2]s --ignore-not-found
