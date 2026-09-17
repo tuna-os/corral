@@ -186,7 +186,12 @@ jobs:
           # pseudo-version a bare `go build` produces. git-describe's
           # "v0.4.0-5-g<sha>" becomes semver build metadata "v0.4.0+5.g<sha>",
           # which compares equal to v0.4.0 for constraint checks.
-          VERSION="$(git describe --tags --always --dirty 2>/dev/null | sed -E 's/-([0-9]+)-g/+\1.g/')"
+          # --match 'v*' is load-bearing. publish-plugins tags every push to main
+          # as plugins-<sha>, and those now outnumber the release tags 106 to 9,
+          # so a bare `git describe --tags` always lands on one: this stamped
+          # "plugins-45109e27...+2.gb48539b", which is not a version at all.
+          # Matching v* walks past them to the real release tag.
+          VERSION="$(git describe --tags --always --dirty --match 'v*' 2>/dev/null | sed -E 's/-([0-9]+)-g/+\1.g/')"
           echo "Stamping version: ${VERSION:-<empty>}"
           # macOS is built because the installer and the README both offer it.
           # Until now they offered a URL that did not exist: scripts/install.sh
