@@ -116,8 +116,9 @@ VMs are cattle. Stop treating each one like a networking project.
 
 ## Install
 
-One line — detects OS/arch, installs the rolling-release binary to
-`~/.local/bin`, and wires up shell completions (bash/zsh/fish):
+One line — detects OS/arch, verifies the download against the release's
+`SHA256SUMS`, installs the rolling-release binary to `~/.local/bin`, and wires
+up shell completions (bash/zsh/fish). Linux and macOS, amd64 and arm64:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/tuna-os/corral/main/scripts/install.sh | sh
