@@ -44,4 +44,4 @@ locally if you touch that code path, or rely on CI to run them.
 ## Questions?
 
 - [TunaOS Documentation](https://tunaos.org)
-- [GitHub Issues](https://github.com/tuna-os/tunaOS/issues)
+- [GitHub Issues](https://github.com/tuna-os/corral/issues)
