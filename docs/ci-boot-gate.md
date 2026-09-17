@@ -109,6 +109,12 @@ for local layers. It knows six package managers. It resolves a package
 lockfile, so an unchanged rebuild costs nothing. It also lints the result. Pick
 one engine with `--layer-engine remora|builtin`.
 
+An image that the same job built is a normal case. Give `--bootc` the
+`localhost/` tag that the build wrote. corral reads such a tag from local
+podman storage. It does not pull it, because no registry can serve it. The
+layer builds on it in the usual way, so `users:`, `packages:` and `provision:`
+all apply to a locally built image.
+
 ### Images with no sshd
 
 A production desktop image ships sshd in a disabled state. No SSH probe can
