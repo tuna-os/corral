@@ -71,19 +71,18 @@ var staticImages = []Image{
 		URL: "https://repo.almalinux.org/almalinux/10/cloud/x86_64/images/AlmaLinux-10-GenericCloud-latest.x86_64.qcow2", DefaultUser: "almalinux", Source: "almalinux.org", Logo: "almalinux", Variant: "server"},
 
 	// TurnKey Linux appliances — installer ISOs (finish the install over VNC).
-	// TurnKey's mirror serves plain HTTP only; releases are GPG-signed upstream.
 	{Name: "turnkey-core", Description: "TurnKey Core 18.1 — minimal Debian appliance base (installer ISO)",
-		ISO: "http://mirror.turnkeylinux.org/turnkeylinux/images/iso/turnkey-core-18.1-bookworm-amd64.iso", DefaultUser: "root", Source: "turnkeylinux.org", Logo: "", Variant: "appliance"},
+		ISO: "https://mirror.turnkeylinux.org/turnkeylinux/images/iso/turnkey-core-18.1-bookworm-amd64.iso", DefaultUser: "root", Source: "turnkeylinux.org", Logo: "", Variant: "appliance"},
 	{Name: "turnkey-lamp", Description: "TurnKey LAMP 18.1 — Apache/MySQL/PHP stack (installer ISO)",
-		ISO: "http://mirror.turnkeylinux.org/turnkeylinux/images/iso/turnkey-lamp-18.1-bookworm-amd64.iso", DefaultUser: "root", Source: "turnkeylinux.org", Logo: "", Variant: "appliance"},
-	{Name: "turnkey-wordpress", Description: "TurnKey WordPress 18.1 (installer ISO)",
-		ISO: "http://mirror.turnkeylinux.org/turnkeylinux/images/iso/turnkey-wordpress-18.1-bookworm-amd64.iso", DefaultUser: "root", Source: "turnkeylinux.org", Logo: "wordpress", Variant: "appliance"},
+		ISO: "https://mirror.turnkeylinux.org/turnkeylinux/images/iso/turnkey-lamp-18.1-bookworm-amd64.iso", DefaultUser: "root", Source: "turnkeylinux.org", Logo: "", Variant: "appliance"},
+	{Name: "turnkey-wordpress", Description: "TurnKey WordPress 18.2 (installer ISO)",
+		ISO: "https://mirror.turnkeylinux.org/turnkeylinux/images/iso/turnkey-wordpress-18.2-bookworm-amd64.iso", DefaultUser: "root", Source: "turnkeylinux.org", Logo: "wordpress", Variant: "appliance"},
 	{Name: "turnkey-nextcloud", Description: "TurnKey Nextcloud 18.1 (installer ISO)",
-		ISO: "http://mirror.turnkeylinux.org/turnkeylinux/images/iso/turnkey-nextcloud-18.1-bookworm-amd64.iso", DefaultUser: "root", Source: "turnkeylinux.org", Logo: "nextcloud", Variant: "appliance"},
+		ISO: "https://mirror.turnkeylinux.org/turnkeylinux/images/iso/turnkey-nextcloud-18.1-bookworm-amd64.iso", DefaultUser: "root", Source: "turnkeylinux.org", Logo: "nextcloud", Variant: "appliance"},
 	{Name: "turnkey-gitlab", Description: "TurnKey GitLab 18.1 (installer ISO)",
-		ISO: "http://mirror.turnkeylinux.org/turnkeylinux/images/iso/turnkey-gitlab-18.1-bookworm-amd64.iso", DefaultUser: "root", Source: "turnkeylinux.org", Logo: "gitlab", Variant: "appliance"},
-	{Name: "turnkey-fileserver", Description: "TurnKey File Server 18.1 — Samba/WebDAV NAS (installer ISO)",
-		ISO: "http://mirror.turnkeylinux.org/turnkeylinux/images/iso/turnkey-fileserver-18.1-bookworm-amd64.iso", DefaultUser: "root", Source: "turnkeylinux.org", Logo: "", Variant: "appliance"},
+		ISO: "https://mirror.turnkeylinux.org/turnkeylinux/images/iso/turnkey-gitlab-18.1-bookworm-amd64.iso", DefaultUser: "root", Source: "turnkeylinux.org", Logo: "gitlab", Variant: "appliance"},
+	{Name: "turnkey-fileserver", Description: "TurnKey File Server 18.0 — Samba/WebDAV NAS (installer ISO)",
+		ISO: "https://mirror.turnkeylinux.org/turnkeylinux/images/iso/turnkey-fileserver-18.0-bookworm-amd64.iso", DefaultUser: "root", Source: "turnkeylinux.org", Logo: "", Variant: "appliance"},
 
 	// Desktop images — installer ISOs for GUI-focused virtual machines.
 	{Name: "fedora-workstation", Description: "Fedora 42 Workstation (GNOME) — live installer ISO",
