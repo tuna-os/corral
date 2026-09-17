@@ -3,7 +3,7 @@
 
 # Version stamp for `corral version`. Defaults to the current git describe;
 # a plain `go build` still self-reports via the toolchain's VCS stamps.
-export CORRAL_VERSION := `git describe --tags --always --dirty 2>/dev/null || echo dev`
+export CORRAL_VERSION := `git describe --tags --always --dirty --match 'v*' 2>/dev/null || echo dev`
 _ldflags := "-X github.com/tuna-os/corral/cmd.version=" + CORRAL_VERSION
 
 _default:
