@@ -200,3 +200,47 @@ func TestCreateLocalVM_Validation(t *testing.T) {
 		t.Fatalf("want 202 downloading, got %d %+v", resp.StatusCode, body)
 	}
 }
+
+func TestLocalVMs_CreatingStateAppearsInList(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := filepath.Join(home, ".local", "share", "corral", "vms", "buildingvm")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	meta := `{"name":"buildingvm","cpu":4,"memory":"8G","disk_size":"40G","status":"Creating"}`
+	if err := os.WriteFile(filepath.Join(dir, "metadata.json"), []byte(meta), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	fx := NewTestFixture()
+	defer fx.Close()
+	fx.Runner.AddResponse("kubectl get vms -A -o json", `{"items":[]}`, nil)
+	fx.Runner.AddResponse("kubectl get vmis -A -o json", `{"items":[]}`, nil)
+	fx.Runner.AddPrefixResponse("kubectl get pods -A -l kubevirt.io=virt-launcher", `{"items":[]}`, nil)
+	fx.Runner.AddPrefixResponse("kubectl get nodes -o json", `{"items":[]}`, nil)
+	fx.Runner.AddPrefixResponse("kubectl get pvc -A -l corral.dev/ct=true", `{"items":[]}`, nil)
+
+	resp, err := http.Get(fx.Server.URL + "/api/vms")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var vms []map[string]any
+	json.NewDecoder(resp.Body).Decode(&vms)
+	found := false
+	for _, v := range vms {
+		if v["name"] == "buildingvm" {
+			found = true
+			if v["status"] != "◐ Creating" {
+				t.Errorf("expected status '◐ Creating', got %v", v["status"])
+			}
+			if v["ready"] == true || v["running"] == true {
+				t.Errorf("creating VM should not be ready or running: %+v", v)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("creating VM missing from /api/vms: %+v", vms)
+	}
+}

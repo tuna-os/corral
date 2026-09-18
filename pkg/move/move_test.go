@@ -43,7 +43,7 @@ func newStub(t *testing.T) *stub {
 	t.Helper()
 	s := &stub{
 		ingestable: map[string]bool{"qemu": true, "libvirt": true, "kubevirt": true, "proxmox": true, "incus": true},
-		uefiOK:     map[string]bool{"libvirt": true, "kubevirt": true, "proxmox": true, "incus": true},
+		uefiOK:     map[string]bool{"qemu": true, "libvirt": true, "kubevirt": true, "proxmox": true, "incus": true},
 		formats: map[string][]export.Format{
 			"kubevirt": {export.RawGz, export.Qcow2},
 			"qemu":     {export.Qcow2, export.RawGz},
@@ -265,7 +265,8 @@ func TestPreflightAllowsProxmoxAsExportSource(t *testing.T) {
 }
 
 func TestPreflightRefusesUEFIOntoABIOSOnlyDestination(t *testing.T) {
-	newStub(t)
+	s := newStub(t)
+	s.uefiOK["qemu"] = false // simulate a destination without UEFI support
 	src := sourceVM()
 	src.UEFI = true
 
@@ -293,6 +294,7 @@ func TestPreflightSkipsTheSpaceCheckWhenFreeSpaceIsUnknown(t *testing.T) {
 
 func TestPreflightReportsEveryRefusalAtOnce(t *testing.T) {
 	s := newStub(t)
+	s.uefiOK["qemu"] = false
 	s.free = 1 << 20
 	src := sourceVM()
 	src.UEFI = true
@@ -665,7 +667,8 @@ func stubInspect(t *testing.T, info backend.GuestInfo) {
 // which is indistinguishable from "this guest is BIOS". A UEFI guest moved to
 // qemu was accepted and produced a VM that boots to a blank screen.
 func TestInspectCarriesFirmwareIntoTheRefusal(t *testing.T) {
-	newStub(t)
+	s := newStub(t)
+	s.uefiOK["qemu"] = false // simulate a destination without UEFI support
 	stubInspect(t, backend.GuestInfo{UEFI: true})
 
 	src := Inspect(sourceVM().VM, false)

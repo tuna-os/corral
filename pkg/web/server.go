@@ -416,6 +416,8 @@ type createRequest struct {
 	Windows       bool   `json:"windows"`      // Windows installer flow (windows plugin)
 	StorageClass  string `json:"storageClass"` // overrides the cluster-preferred StorageClass
 	Target        string `json:"target"`       // named Corral context; legacy "cluster" and "local" remain accepted
+	Firmware      string `json:"firmware"`     // "uefi" or "bios"
+	UEFI          bool   `json:"uefi"`         // UEFI boot
 }
 
 // buildTask tracks a long-running bootc build kicked off from the UI.

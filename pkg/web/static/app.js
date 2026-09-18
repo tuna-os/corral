@@ -1031,7 +1031,7 @@ function vmTable(list) {
     ${list.map((v) => `<tr data-key="${esc(vmKey(v))}">
       <td class="check"><input type="checkbox" class="vm-check" value="${esc(vmKey(v))}"></td>
       <td>${esc(v.name)}${(v.tags || []).map((t) => `<span class="chip mini">${esc(t)}</span>`).join('')}</td>
-      <td><span class="dot ${v.ready ? 'on' : v.running ? 'mid' : 'off'}"></span> ${esc(v.status)}</td>
+      <td><span class="dot ${v.ready ? 'on' : (v.running || (v.status && (v.status.includes('Starting') || v.status.includes('Creating')))) ? 'mid' : 'off'}"></span> ${esc(v.status)}</td>
       <td>${esc(v.node || '—')}</td><td>${esc(v.namespace)}</td>
       <td>${v.cpu}</td><td>${esc(v.mem)}</td><td>${esc(v.ip || '—')}</td>
     </tr>`).join('')}
@@ -1160,7 +1160,7 @@ function renderVM(main, vm) {
   main.innerHTML = `
     <div class="page-head">
       <h1>${icon('cube')} ${esc(vm.name)}</h1>
-      <span class="pill ${vm.ready ? 'on' : 'off'}">${esc(vm.status)}</span>
+      <span class="pill ${vm.ready ? 'on' : (vm.running || (vm.status && (vm.status.includes('Starting') || vm.status.includes('Creating')))) ? 'mid' : 'off'}">${esc(vm.status)}</span>
       ${isLocal ? '<span class="pill">local · qemu</span>' : ''}
       <div class="toolbar">
         ${capability.start ? `<button class="btn" data-act="start" ${vm.running ? 'disabled' : ''}>${icon('play')} Start</button>` : ''}

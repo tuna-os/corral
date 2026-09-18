@@ -32,10 +32,10 @@ jobs:
 
       # Real-tool tests (qcow2 conversion, rclone round-trip) run here instead of
       # skipping — see TestConvertRawToQcow2_Real / TestRclone_RealCopytoRoundTrip.
-      - name: Install test tools (qemu-img, rclone)
+      - name: Install test tools (qemu-img, rclone, ovmf)
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq qemu-utils rclone
+          sudo apt-get install -y -qq qemu-utils rclone ovmf
 
       - name: gofmt
         run: |

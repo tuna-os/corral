@@ -91,6 +91,7 @@ func createLocalVM(w http.ResponseWriter, req createRequest) {
 	opts := types.CreateOpts{
 		Name: req.Name, Backend: "qemu",
 		CPU: req.CPU, Mem: req.Mem, Disk: req.Disk,
+		UEFI: req.Firmware == "uefi" || req.UEFI,
 	}
 	assign := func(path string) {
 		if qcow {
@@ -101,13 +102,17 @@ func createLocalVM(w http.ResponseWriter, req createRequest) {
 	}
 
 	if strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://") {
-		// Download (cached) then create — async, visible in the task panel.
+		// Download (cached) then create — async, visible in the task panel and VM inventory.
+		_ = qemu.RecordCreating(req.Name, opts)
 		done := taskBegin("create local (download)", localNS+"/"+req.Name)
 		go func() {
 			path, err := downloadToCache(src)
 			if err == nil {
 				assign(path)
 				err = qemu.Create(opts)
+			}
+			if err != nil {
+				os.RemoveAll(filepath.Join(qemu.VMHome(), req.Name))
 			}
 			done(err)
 		}()
@@ -116,8 +121,12 @@ func createLocalVM(w http.ResponseWriter, req createRequest) {
 	}
 
 	assign(src)
+	_ = qemu.RecordCreating(req.Name, opts)
 	done := taskBegin("create local", localNS+"/"+req.Name)
 	err := qemu.Create(opts)
+	if err != nil {
+		os.RemoveAll(filepath.Join(qemu.VMHome(), req.Name))
+	}
 	done(err)
 	if err != nil {
 		errResp(w, http.StatusInternalServerError, err)
