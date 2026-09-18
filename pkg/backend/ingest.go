@@ -80,14 +80,13 @@ func CanIngest(backend string) bool {
 
 func (a qemuAdapter) Ingest(ref types.InstanceRef, disk string, shape Shape) error {
 	return bootc.QEMUTarget{}.Import(ref, disk, bootc.CreateOpts{
-		CPU: shape.CPU, Memory: shape.Mem, Disk: shape.Disk, SSHKey: shape.SSHKey,
+		CPU: shape.CPU, Memory: shape.Mem, Disk: shape.Disk, SSHKey: shape.SSHKey, UEFI: shape.UEFI,
 	})
 }
 
-// AcceptsUEFI is false until the generated unit gains an OVMF firmware path.
-// Saying so is the point: a UEFI guest moved here would boot to nothing, and the
-// preflight refuses instead of producing one.
-func (qemuAdapter) AcceptsUEFI() bool { return false }
+// AcceptsUEFI: the generated QEMU unit selects OVMF firmware when UEFI is requested,
+// so a UEFI guest has somewhere to land.
+func (qemuAdapter) AcceptsUEFI() bool { return true }
 
 // ── libvirt ───────────────────────────────────────────────────────
 

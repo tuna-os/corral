@@ -101,8 +101,23 @@ func List() ([]types.VM, error) {
 			Disk      string `json:"disk_size"`
 			VncPort   int    `json:"vnc_port"`
 			Tailscale string `json:"tailscale_ip"`
+			Status    string `json:"status"`
 		}
 		if json.Unmarshal(data, &meta) != nil {
+			continue
+		}
+
+		if meta.Status == "Creating" {
+			vms = append(vms, types.VM{
+				Name:    meta.Name,
+				Backend: "qemu",
+				Status:  "◐ Creating",
+				Ready:   false,
+				Running: false,
+				CPU:     meta.CPU,
+				Mem:     meta.Memory,
+				Disk:    meta.Disk,
+			})
 			continue
 		}
 
@@ -133,6 +148,40 @@ func List() ([]types.VM, error) {
 func Exists(name string) bool {
 	info, err := os.Stat(filepath.Join(VMHome(), name))
 	return err == nil && info.IsDir()
+}
+
+// RecordCreating writes an initial metadata.json recording that the VM is
+// currently being created, so that corral list and the web UI can display
+// it as in-progress rather than invisible during long image builds.
+func RecordCreating(name string, opts types.CreateOpts) error {
+	vmDir := filepath.Join(VMHome(), name)
+	if err := os.MkdirAll(vmDir, 0755); err != nil {
+		return err
+	}
+	mem := opts.Mem
+	if mem == "" {
+		mem = "4G"
+	}
+	cpu := opts.CPU
+	if cpu == 0 {
+		cpu = 2
+	}
+	diskSize := opts.Disk
+	if diskSize == "" {
+		diskSize = "20G"
+	}
+	meta := map[string]any{
+		"name":      name,
+		"cpu":       cpu,
+		"memory":    mem,
+		"disk_size": diskSize,
+		"status":    "Creating",
+	}
+	data, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(vmDir, "metadata.json"), data, 0644)
 }
 
 // Create creates a new QEMU VM.
@@ -228,6 +277,26 @@ func Create(opts types.CreateOpts) error {
 	// pkg/vmtest passes one at install time.
 	serialLog := filepath.Join(vmDir, "serial.log")
 
+	var uefiCode, uefiVars string
+	firmware := "bios"
+	if opts.UEFI {
+		code, varsTmpl, err := FindUEFIFirmware()
+		if err != nil {
+			return fmt.Errorf("UEFI requested: %w", err)
+		}
+		uefiCode = code
+		firmware = "uefi"
+		if varsTmpl != "" {
+			vmVarsPath := filepath.Join(vmDir, "vars.fd")
+			if _, err := os.Stat(vmVarsPath); os.IsNotExist(err) {
+				if err := copyFile(varsTmpl, vmVarsPath); err != nil {
+					return fmt.Errorf("copying UEFI vars template: %w", err)
+				}
+			}
+			uefiVars = vmVarsPath
+		}
+	}
+
 	// Systemd unit
 	unitOpts := generateUnitOpts{
 		Name:        name,
@@ -242,6 +311,8 @@ func Create(opts types.CreateOpts) error {
 		SSHPort:     sshPort,
 		QMPSocket:   qmpSocket,
 		SerialLog:   serialLog,
+		UEFICode:    uefiCode,
+		UEFIVars:    uefiVars,
 	}
 	unit := generateUnit(unitOpts)
 
@@ -275,6 +346,7 @@ func Create(opts types.CreateOpts) error {
 		"iso":          isoPath,
 		"has_iso":      hasISO,
 		"serial_log":   serialLog,
+		"firmware":     firmware,
 	}
 	data, _ := json.MarshalIndent(meta, "", "  ")
 	os.WriteFile(filepath.Join(vmDir, "metadata.json"), data, 0644)
@@ -481,6 +553,8 @@ type vmMetadata struct {
 	SSHPort   int    `json:"ssh_port"`
 	Tailscale string `json:"tailscale_ip"`
 	SerialLog string `json:"serial_log"`
+	Firmware  string `json:"firmware,omitempty"`
+	Status    string `json:"status,omitempty"`
 }
 
 // readMetadata parses the VM metadata.json file.
@@ -607,6 +681,8 @@ type generateUnitOpts struct {
 	SSHPort                                             int
 	QMPSocket                                           string
 	SerialLog                                           string
+	UEFICode                                            string
+	UEFIVars                                            string
 }
 
 // qemuArgs is the VM's argv, one place. The systemd unit renders it into
@@ -627,6 +703,13 @@ func qemuArgs(opts generateUnitOpts) []string {
 		"-vga", "virtio",
 		"-display", "none",
 	)
+
+	if opts.UEFICode != "" {
+		args = append(args, "-drive", fmt.Sprintf("if=pflash,format=raw,readonly=on,file=%s", opts.UEFICode))
+		if opts.UEFIVars != "" {
+			args = append(args, "-drive", fmt.Sprintf("if=pflash,format=raw,file=%s", opts.UEFIVars))
+		}
+	}
 
 	netdev := "user,id=net0"
 	if opts.SSHPort != 0 {

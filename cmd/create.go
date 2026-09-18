@@ -483,6 +483,7 @@ func attachLANBridge(ns, name string) error {
 }
 
 func runQemuCreate(name string) error {
+	useUEFI := createFirmware == "uefi"
 	if err := qemu.Create(types.CreateOpts{
 		Name:  name,
 		Mem:   createMem,
@@ -491,6 +492,7 @@ func runQemuCreate(name string) error {
 		ISO:   createISO,
 		QCOW:  createQCOW,
 		Force: createForce,
+		UEFI:  useUEFI,
 	}); err != nil {
 		return err
 	}
@@ -593,6 +595,28 @@ func runLocalBootcCreate(name string) error {
 	if diskSize == "" {
 		diskSize = "20G"
 	}
+	mem := createMem
+	if mem == "" {
+		mem = "4G"
+	}
+	cpu := createCPU
+	if cpu == 0 {
+		cpu = 2
+	}
+
+	_ = qemu.RecordCreating(name, types.CreateOpts{
+		Name: name,
+		CPU:  cpu,
+		Mem:  mem,
+		Disk: diskSize,
+	})
+
+	var created bool
+	defer func() {
+		if !created {
+			_ = os.RemoveAll(vmDir)
+		}
+	}()
 
 	diskPath := filepath.Join(vmDir, "disk.raw")
 	out, err := exec.Command("truncate", "-s", diskSize, diskPath).CombinedOutput()
@@ -705,6 +729,7 @@ mkdir -p /mnt && mount "${DISK}p3" /mnt %s && umount /mnt`, loopDev, provisionAr
 	// ExistingDisk: the qcow2 we just built IS the boot disk — without it
 	// qemu.Create would recreate disk.qcow2 empty and the VM would boot
 	// into nothing.
+	useUEFI := createFirmware != "bios"
 	if err := qemu.Create(types.CreateOpts{
 		Name:         name,
 		Mem:          createMem,
@@ -712,9 +737,11 @@ mkdir -p /mnt && mount "${DISK}p3" /mnt %s && umount /mnt`, loopDev, provisionAr
 		Disk:         createDisk,
 		Force:        true,
 		ExistingDisk: true,
+		UEFI:         useUEFI,
 	}); err != nil {
 		return err
 	}
+	created = true
 	if registryStore != nil {
 		registryStore.Set(name, types.RegistryEntry{Backend: "qemu"})
 	}
