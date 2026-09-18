@@ -614,7 +614,7 @@ func runLocalBootcCreate(name string) error {
 	var created bool
 	defer func() {
 		if !created {
-			os.RemoveAll(vmDir)
+			_ = os.RemoveAll(vmDir)
 		}
 	}()
 

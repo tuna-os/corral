@@ -112,7 +112,7 @@ func createLocalVM(w http.ResponseWriter, req createRequest) {
 				err = qemu.Create(opts)
 			}
 			if err != nil {
-				os.RemoveAll(filepath.Join(qemu.VMHome(), req.Name))
+				_ = os.RemoveAll(filepath.Join(qemu.VMHome(), req.Name))
 			}
 			done(err)
 		}()
@@ -125,7 +125,7 @@ func createLocalVM(w http.ResponseWriter, req createRequest) {
 	done := taskBegin("create local", localNS+"/"+req.Name)
 	err := qemu.Create(opts)
 	if err != nil {
-		os.RemoveAll(filepath.Join(qemu.VMHome(), req.Name))
+		_ = os.RemoveAll(filepath.Join(qemu.VMHome(), req.Name))
 	}
 	done(err)
 	if err != nil {

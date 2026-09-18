@@ -225,9 +225,11 @@ func TestLocalVMs_CreatingStateAppearsInList(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var vms []map[string]any
-	json.NewDecoder(resp.Body).Decode(&vms)
+	if err := json.NewDecoder(resp.Body).Decode(&vms); err != nil {
+		t.Fatal(err)
+	}
 	found := false
 	for _, v := range vms {
 		if v["name"] == "buildingvm" {
