@@ -219,7 +219,7 @@ func BackupScript(vm, ns, dest string, keep int) string {
 	return fmt.Sprintf(`KV_VERSION=$(kubectl get kubevirt kubevirt -n kubevirt -o jsonpath='{.status.observedKubeVirtVersion}')
 curl -sL -o /usr/local/bin/virtctl "https://github.com/kubevirt/kubevirt/releases/download/${KV_VERSION}/virtctl-${KV_VERSION}-linux-amd64"
 chmod +x /usr/local/bin/virtctl
-curl -s https://rclone.org/install.sh | bash >/dev/null
+curl -sSL https://rclone.org/rclone-current-linux-amd64.deb -o /tmp/rclone.deb && dpkg -i /tmp/rclone.deb && rm -f /tmp/rclone.deb
 
 VOL=$(kubectl get vm %[1]s -n %[2]s -o jsonpath='{.spec.template.spec.volumes[?(@.persistentVolumeClaim)].persistentVolumeClaim.claimName}' | awk '{print $1}')
 if [ -z "$VOL" ]; then echo "no persistent disk on %[1]s — nothing to back up" >&2; exit 1; fi

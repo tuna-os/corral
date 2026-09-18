@@ -116,7 +116,7 @@ func TestBackupScript(t *testing.T) {
 	for _, want := range []string{
 		"observedKubeVirtVersion",
 		"virtctl-${KV_VERSION}-linux-amd64",
-		"rclone.org/install.sh",
+		"rclone-current-linux-amd64.deb",
 		"kubectl get vm web -n tailvm",
 		"persistentVolumeClaim.claimName",
 		"virtctl vmexport download web-export",
