@@ -120,7 +120,8 @@ start_web() {
 	if curl -fsS --max-time 2 "http://$addr/" >/dev/null 2>&1; then
 		echo "$addr"; return
 	fi
-	nohup corral web --addr "$addr" >/tmp/corral-web.log 2>&1 &
+	local log_file="${TMPDIR:-/tmp}/corral-web-${USER:-$(id -u)}.log"
+	nohup corral web --addr "$addr" >"$log_file" 2>&1 &
 	for _ in $(seq 1 20); do
 		curl -fsS --max-time 1 "http://$addr/" >/dev/null 2>&1 && break
 		sleep 0.5
