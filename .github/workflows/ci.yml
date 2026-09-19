@@ -22,7 +22,7 @@ env:
 
 jobs:
   test:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -96,7 +96,7 @@ jobs:
     #      errors while the existing backlog is paid down separately.
     # This is the same ratchet idea as .ste-budget: seed at today's state,
     # never let it get worse.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -125,7 +125,7 @@ jobs:
   publish-image:
     # corral-web image: the web UI served on the cluster (deploy/corral-web.yaml)
     needs: test
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
       packages: write
@@ -189,7 +189,7 @@ jobs:
     # https://github.com/tuna-os/corral/releases/download/binaries/corral-<os>-<arch>
     needs: test
     if: github.event_name != 'pull_request'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
     steps:
@@ -248,7 +248,7 @@ jobs:
     # "plugins" release that marketplace/index.json points at.
     needs: test
     if: github.event_name != 'pull_request'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
     steps:
