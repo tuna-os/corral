@@ -105,6 +105,73 @@ func Exec(name, command string, opts ExecOpts) ([]byte, error) {
 	return sshRun(sshBin, args...)
 }
 
+// ExecViaVsock runs one command in the guest over AF_VSOCK and returns its
+// combined output. It uses the per-VM vsock keypair and socat ProxyCommand,
+// mirroring tuna-os/tunaos iso-e2e.sh's use_vsock_transport() path. Use this
+// when the guest's TCP sshd is disabled (published-media / live ISO).
+func ExecViaVsock(name, command string, opts ExecOpts) ([]byte, error) {
+	meta, err := readMetadata(name)
+	if err != nil {
+		return nil, err
+	}
+	if !meta.Vsock {
+		return nil, fmt.Errorf("VM %q has no vsock — create with --vsock", name)
+	}
+	sshBin, err := sshLookPath("ssh")
+	if err != nil {
+		return nil, fmt.Errorf("the OpenSSH client is not installed, so %q cannot be reached", name)
+	}
+	user := opts.User
+	if user == "" {
+		user = "root"
+	}
+	timeout := opts.Timeout
+	if timeout <= 0 {
+		timeout = 60 * time.Second
+	}
+	// Build vsock ProxyCommand args.
+	vsockArgs, err := VsockSSHArgs(name, meta.VsockCID, user)
+	if err != nil {
+		return nil, err
+	}
+	// Insert ConnectTimeout before the ProxyCommand host.
+	// vsockArgs already contains IdentitiesOnly, StrictHostKeyChecking etc.
+	// Prepend BatchMode/ConnectTimeout/LogLevel that probeArgs would add.
+	base := []string{
+		"-o", "BatchMode=yes",
+		"-o", fmt.Sprintf("ConnectTimeout=%d", int(timeout.Seconds())),
+		"-o", "LogLevel=ERROR",
+	}
+	// vsockArgs ends with "user@e2e-vsock"; replace with command handling.
+	// The ssh binary expects: ssh [options] user@host [command]
+	// vsockArgs already has the destination as last element.
+	if len(vsockArgs) == 0 {
+		return nil, fmt.Errorf("no vsock args")
+	}
+	dest := vsockArgs[len(vsockArgs)-1]
+	vsockArgs = vsockArgs[:len(vsockArgs)-1]
+	args := append(base, vsockArgs...)
+	args = append(args, dest, command)
+	return sshRun(sshBin, args...)
+}
+
+// WaitVsock polls until `ssh via vsock true` succeeds, or timeout elapses.
+func WaitVsock(name, user string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for {
+		out, err := ExecViaVsock(name, "true", ExecOpts{User: user, Timeout: 10 * time.Second})
+		if err == nil {
+			return nil
+		}
+		lastErr = fmt.Errorf("%s: %w", strings.TrimSpace(string(out)), err)
+		if time.Now().After(deadline) {
+			return fmt.Errorf("VM %q not reachable via vsock within %s (last error: %v)", name, timeout, lastErr)
+		}
+		time.Sleep(3 * time.Second)
+	}
+}
+
 // probeArgs is the argv every non-interactive probe shares. BatchMode keeps a
 // key-less guest from blocking on a password prompt, and the throwaway
 // known-hosts file keeps a rebuilt VM on a reused port from tripping the

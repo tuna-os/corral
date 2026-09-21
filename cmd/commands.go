@@ -24,6 +24,7 @@ var (
 	sshPort          int
 	sshPassword      string
 	sshLocalForwards []string
+	sshVsock         bool
 )
 
 var startCmd = &cobra.Command{
@@ -320,15 +321,28 @@ something the VM has listening on its own port 80.`,
 		if backend == "libvirt" {
 			return libvirt.NewClient("").SSH(name, sshCommand)
 		}
+		if sshVsock {
+			return qemu.SSHViaVsock(name, user, sshCommand)
+		}
 		return qemu.SSH(name, user, sshIdentity, sshCommand, sshPort, password, sshLocalForwards)
 	},
 }
 
+var (
+	logsSerial bool
+	logsTail   int
+)
+
 var logsCmd = &cobra.Command{
 	Use:     "logs [name]",
 	Short:   "Tail VM logs",
-	Example: `  corral logs myvm`,
-	Args:    cobra.MaximumNArgs(1),
+	Long: `Tail VM logs. For QEMU VMs, --serial streams the guest console
+(serial.log) instead of the systemd journal — the evidence that survives a
+boot that never reaches SSH (panic, dracut emergency shell, failed unit).
+This is the log iso-e2e.sh gates on; corral diagnose bundles it.`,
+	Example: `  corral logs myvm
+  corral logs myvm --serial --tail 100`,
+	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name, err := requireOrPrompt(args, "view logs for")
 		if err != nil {
@@ -341,6 +355,9 @@ var logsCmd = &cobra.Command{
 		if backend == "kubevirt" {
 			ns, _ := resolveNamespace(name)
 			return kubevirt.NewClient(ns).Logs(name)
+		}
+		if logsSerial {
+			return qemu.LogsSerial(name, logsTail)
 		}
 		return qemu.Logs(name)
 	},
@@ -362,6 +379,9 @@ func init() {
 	sshCmd.Flags().IntVarP(&sshPort, "port", "p", 22, "SSH port")
 	sshCmd.Flags().StringVar(&sshPassword, "password", "", "SSH password (uses cloud-init password if empty)")
 	sshCmd.Flags().StringArrayVarP(&sshLocalForwards, "local-forward", "L", nil, "Forward a local port through the VM: [bind_address:]port:host:hostport (repeatable)")
+	sshCmd.Flags().BoolVar(&sshVsock, "vsock", false, "Use AF_VSOCK transport (guest CID via vsock, not TCP hostfwd — for live ISOs with sshd disabled)")
+	logsCmd.Flags().BoolVar(&logsSerial, "serial", false, "Show guest serial console (serial.log) instead of journal")
+	logsCmd.Flags().IntVar(&logsTail, "tail", 0, "When --serial, show last N lines (0=all)")
 }
 
 func requireOrPrompt(args []string, action string) (string, error) {
