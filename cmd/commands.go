@@ -334,8 +334,8 @@ var (
 )
 
 var logsCmd = &cobra.Command{
-	Use:     "logs [name]",
-	Short:   "Tail VM logs",
+	Use:   "logs [name]",
+	Short: "Tail VM logs",
 	Long: `Tail VM logs. For QEMU VMs, --serial streams the guest console
 (serial.log) instead of the systemd journal — the evidence that survives a
 boot that never reaches SSH (panic, dracut emergency shell, failed unit).

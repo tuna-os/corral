@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/tuna-os/corral/pkg/move"
 )
 
 // TestMain gives the package a private HOME and a stub kubeconfig.
@@ -22,7 +24,12 @@ import (
 //
 // Nothing here talks to a real cluster: every kubectl call goes through the
 // fake runner wired up by NewTestFixture.
+//
+// Scratch space is stubbed ample for the same reason: move planning refuses
+// when the probe reports less room than the provisioned disk, and the real
+// answer depends on the developer's or runner's filesystem, not the code.
 func TestMain(m *testing.M) {
+	move.SetFreeSpaceFunc(func(string) (int64, error) { return 1 << 40, nil })
 	dir, err := os.MkdirTemp("", "corral-web-home-*")
 	if err != nil {
 		panic(err)

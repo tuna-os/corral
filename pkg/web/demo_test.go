@@ -110,6 +110,9 @@ func TestDemoMode_EndToEnd(t *testing.T) {
 		if local := map[string]bool{
 			"QEMU (local backend)": true, "KVM acceleration": true,
 			"Tailscale CLI": true, "virtctl CLI": true,
+			// VSOCK support depends on the host's socat build, not our
+			// code: hosted runners and minimal containers lack it.
+			"VSOCK host support": true,
 		}; local[c["name"].(string)] {
 			continue
 		}

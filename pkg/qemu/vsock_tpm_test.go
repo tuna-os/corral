@@ -128,5 +128,3 @@ func TestDiagnosticBundleCreatesFiles(t *testing.T) {
 		}
 	}
 }
-
-
