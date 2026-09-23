@@ -202,6 +202,11 @@ var (
 	freeSpace    = availableBytes
 )
 
+// SetFreeSpaceFunc overrides the filesystem free-space probe used by
+// Preflight. Tests set it so planning assertions do not depend on the size
+// of the developer's or runner's scratch filesystem.
+func SetFreeSpaceFunc(f func(string) (int64, error)) { freeSpace = f }
+
 // destinationAcceptsUEFI asks the destination adapter directly rather than
 // keeping a second table of which backends have firmware paths.
 func destinationAcceptsUEFI(dst types.InstanceRef) bool {
