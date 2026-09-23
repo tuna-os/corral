@@ -17,7 +17,17 @@ func withFake(t *testing.T) *shell.Fake {
 	statDevKVM = func() error { return nil }
 	prevNested := nestedVirtEnabled
 	nestedVirtEnabled = func() (bool, bool) { return false, false } // absent unless a test opts in
-	t.Cleanup(func() { SetRunner(shell.Real{}); statDevKVM = prevKVM; nestedVirtEnabled = prevNested })
+	prevVsock := vsockHostCheck
+	vsockHostCheck = func() (bool, string) { return true, "fake vsock ok" }
+	prevOVMF := ovmfAvailable
+	ovmfAvailable = func() bool { return true }
+	t.Cleanup(func() {
+		SetRunner(shell.Real{})
+		statDevKVM = prevKVM
+		nestedVirtEnabled = prevNested
+		vsockHostCheck = prevVsock
+		ovmfAvailable = prevOVMF
+	})
 	return fake
 }
 
@@ -164,6 +174,8 @@ func TestRun_EmptyCluster_OnlyInstallsFixable(t *testing.T) {
 	local := map[string]bool{
 		"QEMU (local backend)": true, "KVM acceleration": true,
 		"Tailscale CLI": true, "virtctl CLI": true,
+		"VSOCK host support": true, "swtpm (TPM emulation)": true,
+		"OVMF firmware": true, "socat": true, "qemu-img": true,
 	}
 	installable := map[string]bool{"KubeVirt installed": true, "CDI installed": true, "metrics-server": true}
 	for _, c := range checks {

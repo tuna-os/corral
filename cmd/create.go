@@ -55,6 +55,9 @@ var (
 	createBridgeIface       string
 	createLANService        bool
 	createFirmware          string
+	createVsock             bool
+	createVsockCID          uint32
+	createTPM               bool
 )
 
 // limaFile is the Lima YAML format — corral reads Lima files natively.
@@ -360,6 +363,9 @@ func init() {
 	createCmd.Flags().StringVar(&createNetworkNAD, "network-nad", "", "[kubevirt] NetworkAttachmentDefinition to bridge onto (\"ns/name\"); implies --lan")
 	createCmd.Flags().StringVar(&createBridgeIface, "bridge-iface", "", "[kubevirt] Guest interface name for the LAN bridge (default: net1)")
 	createCmd.Flags().BoolVar(&createLANService, "lan-service", false, "[kubevirt] Expose via a LoadBalancer Service instead of a secondary NIC (no Multus needed — works with Cilium L2/BGP or MetalLB)")
+	createCmd.Flags().BoolVar(&createVsock, "vsock", false, "[qemu] Enable AF_VSOCK via vhost-vsock-pci + SMBIOS credentials (fallback SSH for live ISOs, like tuna-os/tunaos iso-e2e.sh)")
+	createCmd.Flags().Uint32Var(&createVsockCID, "vsock-cid", 0, "[qemu] Guest CID for vsock (3..0xFFFFFFFF, 0=auto from name; implies --vsock)")
+	createCmd.Flags().BoolVar(&createTPM, "tpm", false, "[qemu] Enable emulated TPM 2.0 (swtpm + tpm-crb) for LUKS/measured-boot testing")
 }
 
 func runIncusCreate(name string) error {
@@ -483,14 +489,23 @@ func attachLANBridge(ns, name string) error {
 }
 
 func runQemuCreate(name string) error {
+	useUEFI := createFirmware == "uefi"
+	vsock := createVsock || createVsockCID != 0
+	if createVsockCID != 0 {
+		vsock = true
+	}
 	if err := qemu.Create(types.CreateOpts{
-		Name:  name,
-		Mem:   createMem,
-		CPU:   createCPU,
-		Disk:  createDisk,
-		ISO:   createISO,
-		QCOW:  createQCOW,
-		Force: createForce,
+		Name:     name,
+		Mem:      createMem,
+		CPU:      createCPU,
+		Disk:     createDisk,
+		ISO:      createISO,
+		QCOW:     createQCOW,
+		Force:    createForce,
+		UEFI:     useUEFI,
+		Vsock:    vsock,
+		VsockCID: createVsockCID,
+		TPM:      createTPM,
 	}); err != nil {
 		return err
 	}
@@ -593,6 +608,28 @@ func runLocalBootcCreate(name string) error {
 	if diskSize == "" {
 		diskSize = "20G"
 	}
+	mem := createMem
+	if mem == "" {
+		mem = "4G"
+	}
+	cpu := createCPU
+	if cpu == 0 {
+		cpu = 2
+	}
+
+	_ = qemu.RecordCreating(name, types.CreateOpts{
+		Name: name,
+		CPU:  cpu,
+		Mem:  mem,
+		Disk: diskSize,
+	})
+
+	var created bool
+	defer func() {
+		if !created {
+			_ = os.RemoveAll(vmDir)
+		}
+	}()
 
 	diskPath := filepath.Join(vmDir, "disk.raw")
 	out, err := exec.Command("truncate", "-s", diskSize, diskPath).CombinedOutput()
@@ -705,6 +742,11 @@ mkdir -p /mnt && mount "${DISK}p3" /mnt %s && umount /mnt`, loopDev, provisionAr
 	// ExistingDisk: the qcow2 we just built IS the boot disk — without it
 	// qemu.Create would recreate disk.qcow2 empty and the VM would boot
 	// into nothing.
+	useUEFI := createFirmware != "bios"
+	vsock := createVsock || createVsockCID != 0
+	if createVsockCID != 0 {
+		vsock = true
+	}
 	if err := qemu.Create(types.CreateOpts{
 		Name:         name,
 		Mem:          createMem,
@@ -712,9 +754,14 @@ mkdir -p /mnt && mount "${DISK}p3" /mnt %s && umount /mnt`, loopDev, provisionAr
 		Disk:         createDisk,
 		Force:        true,
 		ExistingDisk: true,
+		UEFI:         useUEFI,
+		Vsock:        vsock,
+		VsockCID:     createVsockCID,
+		TPM:          createTPM,
 	}); err != nil {
 		return err
 	}
+	created = true
 	if registryStore != nil {
 		registryStore.Set(name, types.RegistryEntry{Backend: "qemu"})
 	}

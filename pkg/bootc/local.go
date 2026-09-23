@@ -429,6 +429,7 @@ func (QEMUTarget) Import(ref types.InstanceRef, disk string, opts CreateOpts) er
 		// VM of the same name may be replaced is the caller's decision, taken
 		// before the build; by here the disk is built and the name is claimed.
 		Force: true,
+		UEFI:  opts.UEFI,
 	})
 }
 

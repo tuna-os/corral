@@ -101,8 +101,23 @@ func List() ([]types.VM, error) {
 			Disk      string `json:"disk_size"`
 			VncPort   int    `json:"vnc_port"`
 			Tailscale string `json:"tailscale_ip"`
+			Status    string `json:"status"`
 		}
 		if json.Unmarshal(data, &meta) != nil {
+			continue
+		}
+
+		if meta.Status == "Creating" {
+			vms = append(vms, types.VM{
+				Name:    meta.Name,
+				Backend: "qemu",
+				Status:  "◐ Creating",
+				Ready:   false,
+				Running: false,
+				CPU:     meta.CPU,
+				Mem:     meta.Memory,
+				Disk:    meta.Disk,
+			})
 			continue
 		}
 
@@ -133,6 +148,40 @@ func List() ([]types.VM, error) {
 func Exists(name string) bool {
 	info, err := os.Stat(filepath.Join(VMHome(), name))
 	return err == nil && info.IsDir()
+}
+
+// RecordCreating writes an initial metadata.json recording that the VM is
+// currently being created, so that corral list and the web UI can display
+// it as in-progress rather than invisible during long image builds.
+func RecordCreating(name string, opts types.CreateOpts) error {
+	vmDir := filepath.Join(VMHome(), name)
+	if err := os.MkdirAll(vmDir, 0755); err != nil {
+		return err
+	}
+	mem := opts.Mem
+	if mem == "" {
+		mem = "4G"
+	}
+	cpu := opts.CPU
+	if cpu == 0 {
+		cpu = 2
+	}
+	diskSize := opts.Disk
+	if diskSize == "" {
+		diskSize = "20G"
+	}
+	meta := map[string]any{
+		"name":      name,
+		"cpu":       cpu,
+		"memory":    mem,
+		"disk_size": diskSize,
+		"status":    "Creating",
+	}
+	data, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(vmDir, "metadata.json"), data, 0644)
 }
 
 // Create creates a new QEMU VM.
@@ -228,6 +277,61 @@ func Create(opts types.CreateOpts) error {
 	// pkg/vmtest passes one at install time.
 	serialLog := filepath.Join(vmDir, "serial.log")
 
+	var uefiCode, uefiVars string
+	firmware := "bios"
+	if opts.UEFI {
+		code, varsTmpl, err := FindUEFIFirmware()
+		if err != nil {
+			return fmt.Errorf("UEFI requested: %w", err)
+		}
+		uefiCode = code
+		firmware = "uefi"
+		if varsTmpl != "" {
+			vmVarsPath := filepath.Join(vmDir, "vars.fd")
+			if _, err := os.Stat(vmVarsPath); os.IsNotExist(err) {
+				if err := copyFile(varsTmpl, vmVarsPath); err != nil {
+					return fmt.Errorf("copying UEFI vars template: %w", err)
+				}
+			}
+			uefiVars = vmVarsPath
+		}
+	}
+
+	// Vsock: per-VM CID + keypair, args add vhost-vsock-pci + SMBIOS credentials
+	var vsockCID uint32
+	var vsockArgs []string
+	if opts.Vsock {
+		vsockCID = VsockCID(name, opts.VsockCID)
+		// Best-effort modprobe like iso-e2e.sh
+		if _, err := os.Stat("/dev/vhost-vsock"); err != nil {
+			_ = exec.Command("modprobe", "vhost_vsock").Run()
+			_ = exec.Command("sudo", "-n", "modprobe", "vhost_vsock").Run()
+		}
+		if ok, reason := VsockHostAvailable(); !ok {
+			return fmt.Errorf("vsock requested but not available: %s (install socat with vsock, ensure /dev/vhost-vsock is writable, and install ssh-keygen)", reason)
+		}
+		if _, err := EnsureVsockKey(name); err != nil {
+			return fmt.Errorf("preparing vsock key: %w", err)
+		}
+		if args, err := VsockArgs(name, vsockCID); err != nil {
+			return err
+		} else {
+			vsockArgs = args
+		}
+	}
+
+	// TPM: per-VM swtpm state dir + device args
+	var tpmArgs []string
+	if opts.TPM {
+		if ok, reason := TPMHostAvailable(); !ok {
+			return fmt.Errorf("tpm requested but not available: %s", reason)
+		}
+		if err := EnsureTPMDir(name, false); err != nil {
+			return fmt.Errorf("preparing TPM dir: %w", err)
+		}
+		tpmArgs = TPMArgs(name)
+	}
+
 	// Systemd unit
 	unitOpts := generateUnitOpts{
 		Name:        name,
@@ -242,6 +346,11 @@ func Create(opts types.CreateOpts) error {
 		SSHPort:     sshPort,
 		QMPSocket:   qmpSocket,
 		SerialLog:   serialLog,
+		UEFICode:    uefiCode,
+		UEFIVars:    uefiVars,
+		VsockCID:    vsockCID,
+		VsockArgs:   vsockArgs,
+		TPMArgs:     tpmArgs,
 	}
 	unit := generateUnit(unitOpts)
 
@@ -275,6 +384,10 @@ func Create(opts types.CreateOpts) error {
 		"iso":          isoPath,
 		"has_iso":      hasISO,
 		"serial_log":   serialLog,
+		"firmware":     firmware,
+		"vsock":        opts.Vsock,
+		"vsock_cid":    vsockCID,
+		"tpm":          opts.TPM,
 	}
 	data, _ := json.MarshalIndent(meta, "", "  ")
 	os.WriteFile(filepath.Join(vmDir, "metadata.json"), data, 0644)
@@ -289,6 +402,15 @@ func Create(opts types.CreateOpts) error {
 // Start starts a QEMU VM: through systemd where there is a user session, and
 // as a detached process where there is not.
 func Start(name string) error {
+	// TPM daemon must be up before QEMU tries to connect to its socket.
+	if meta, err := readMetadata(name); err == nil && meta.TPM {
+		if err := EnsureTPMDir(name, true); err != nil {
+			return err
+		}
+		if err := StartSwtpm(name); err != nil {
+			return err
+		}
+	}
 	if !userSystemd() {
 		// No unit can run here, so the VM's own state directory is what says
 		// whether it exists.
@@ -328,6 +450,7 @@ func Stop(name string) error {
 		if err := stopDirect(name); err != nil {
 			return err
 		}
+		_ = StopSwtpm(name)
 		fmt.Fprintf(os.Stderr, "VM %q stopped.\n", name)
 		return nil
 	}
@@ -335,6 +458,7 @@ func Stop(name string) error {
 	if out, err := systemctlRun("stop", svc); err != nil {
 		return fmt.Errorf("stopping VM: %w: %s", err, strings.TrimSpace(string(out)))
 	}
+	_ = StopSwtpm(name)
 	fmt.Fprintf(os.Stderr, "VM %q stopped.\n", name)
 	return nil
 }
@@ -481,6 +605,11 @@ type vmMetadata struct {
 	SSHPort   int    `json:"ssh_port"`
 	Tailscale string `json:"tailscale_ip"`
 	SerialLog string `json:"serial_log"`
+	Firmware  string `json:"firmware,omitempty"`
+	Status    string `json:"status,omitempty"`
+	VsockCID  uint32 `json:"vsock_cid,omitempty"`
+	Vsock     bool   `json:"vsock,omitempty"`
+	TPM       bool   `json:"tpm,omitempty"`
 }
 
 // readMetadata parses the VM metadata.json file.
@@ -559,6 +688,57 @@ func Logs(name string) error {
 	return cmd.Run()
 }
 
+// LogsSerial prints the guest serial console log. tail==0 prints all; else last N lines.
+// Falls back to reporting the missing-log error that tells how to recreate the VM.
+func LogsSerial(name string, tail int) error {
+	data, err := SerialLog(name)
+	if err != nil {
+		return err
+	}
+	text := string(data)
+	if tail > 0 {
+		lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
+		if len(lines) > tail {
+			lines = lines[len(lines)-tail:]
+		}
+		text = strings.Join(lines, "\n") + "\n"
+	}
+	_, _ = os.Stdout.WriteString(text)
+	return nil
+}
+
+// SSHViaVsock opens an SSH session via AF_VSOCK using the per-VM keypair.
+// This is the fallback transport for live ISO / published-media guests whose
+// TCP sshd is disabled and which instead listen via systemd-ssh-generator's
+// AF_VSOCK listener (tuna-os/tunaos iso-e2e.sh setup_vsock).
+func SSHViaVsock(name, username, command string) error {
+	meta, err := readMetadata(name)
+	if err != nil {
+		return fmt.Errorf("VM %q not found: %w", name, err)
+	}
+	if !meta.Vsock {
+		return fmt.Errorf("VM %q has no vsock — create with --vsock (or --vsock-cid)", name)
+	}
+	sshBin, _ := exec.LookPath("ssh")
+	if sshBin == "" {
+		return fmt.Errorf("ssh not found in PATH")
+	}
+	// Build vsock ProxyCommand args; VsockSSHArgs returns [ -i key -o ... user@host ]
+	vsockArgs, err := VsockSSHArgs(name, meta.VsockCID, username)
+	if err != nil {
+		return err
+	}
+	// Append command if given.
+	if command != "" {
+		vsockArgs = append(vsockArgs, command)
+	}
+	cmd := exec.Command(sshBin, vsockArgs...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
 func findQEMU() (qemu, qemuImg string, err error) {
 	// PATH first — covers any install location (and lets tests inject fakes).
 	if q, e1 := exec.LookPath("qemu-system-x86_64"); e1 == nil {
@@ -607,6 +787,11 @@ type generateUnitOpts struct {
 	SSHPort                                             int
 	QMPSocket                                           string
 	SerialLog                                           string
+	UEFICode                                            string
+	UEFIVars                                            string
+	VsockCID                                            uint32
+	VsockArgs                                           []string
+	TPMArgs                                             []string
 }
 
 // qemuArgs is the VM's argv, one place. The systemd unit renders it into
@@ -627,6 +812,13 @@ func qemuArgs(opts generateUnitOpts) []string {
 		"-vga", "virtio",
 		"-display", "none",
 	)
+
+	if opts.UEFICode != "" {
+		args = append(args, "-drive", fmt.Sprintf("if=pflash,format=raw,readonly=on,file=%s", opts.UEFICode))
+		if opts.UEFIVars != "" {
+			args = append(args, "-drive", fmt.Sprintf("if=pflash,format=raw,file=%s", opts.UEFIVars))
+		}
+	}
 
 	netdev := "user,id=net0"
 	if opts.SSHPort != 0 {
@@ -654,6 +846,12 @@ func qemuArgs(opts generateUnitOpts) []string {
 			"-chardev", fmt.Sprintf("file,id=serial0,path=%s,append=on", opts.SerialLog),
 			"-serial", "chardev:serial0",
 		)
+	}
+	if len(opts.VsockArgs) > 0 {
+		args = append(args, opts.VsockArgs...)
+	}
+	if len(opts.TPMArgs) > 0 {
+		args = append(args, opts.TPMArgs...)
 	}
 	return args
 }

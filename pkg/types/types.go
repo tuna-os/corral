@@ -225,6 +225,24 @@ type CreateOpts struct {
 	// that cannot express this must refuse rather than create something that
 	// looks fine until it is started (ADR-0010).
 	UEFI bool
+	// Vsock enables AF_VSOCK on the guest via vhost-vsock-pci. When true the
+	// guest gets an additional SSH transport that does not depend on TCP
+	// hostfwd or on sshd being enabled on the host network — it is the
+	// fallback systemd-ssh-generator's AF_VSOCK listener exists for (tunaOS
+	// live ISO / published-media mode), authenticated by a per-VM keypair
+	// delivered via SMBIOS credentials. Matches tuna-os/tunaos
+	// scripts/iso-e2e.sh setup_vsock().
+	Vsock bool
+	// VsockCID is the guest CID for AF_VSOCK (3..0xFFFFFFFF, 0 = auto-derive
+	// from VM name hash). 0-2 are reserved (hypervisor/loopback/host).
+	VsockCID uint32
+	// TPM enables an emulated TPM 2.0 (swtpm + tpm-crb). Required for LUKS
+	// tpm2-luks enrollment and measured-boot paths that OVMF/AAVMF measures
+	// into — the emulated device tuna-os/tunaos luks-e2e.sh drives via
+	// start_swtpm(). When true QEMU is wired with -tpmdev emulator via a
+	// per-VM swtpm socket; the swtpm daemon is managed alongside the VM
+	// lifecycle.
+	TPM bool
 }
 
 // PortMap maps protocol names to port numbers.

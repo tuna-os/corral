@@ -320,3 +320,35 @@ func qcodesFor(r rune) ([]string, bool) {
 	}
 	return nil, false
 }
+
+// QMPExec sends a raw QMP command with optional JSON args and returns the raw
+// return value as JSON. Used for diagnostics like query-status, query-block.
+func QMPExec(name, command string, args []string) ([]byte, error) {
+	sockPath := filepath.Join(VMHome(), name, "qmp.sock")
+	if _, err := os.Stat(sockPath); err != nil {
+		return nil, fmt.Errorf("no QMP socket for %q — is it running? if it was created with an older corral, recreate it (corral create --force ...) to pick up QMP support", name)
+	}
+	conn, reader, err := qmpDial(sockPath)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+	var argMap map[string]any
+	if len(args) > 0 {
+		// Try parse first arg as JSON object, else ignore.
+		var parsed map[string]any
+		if json.Unmarshal([]byte(args[0]), &parsed) == nil {
+			argMap = parsed
+		}
+	}
+	raw, err := qmpExecute(conn, reader, command, argMap)
+	if err != nil {
+		return nil, err
+	}
+	if raw == nil {
+		return []byte("null\n"), nil
+	}
+	out, _ := json.MarshalIndent(json.RawMessage(raw), "", "  ")
+	out = append(out, '\n')
+	return out, nil
+}

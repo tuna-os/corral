@@ -83,6 +83,7 @@ type CreateOpts struct {
 	// a target may grow it but must never shrink it.
 	Disk   string
 	SSHKey string
+	UEFI   bool
 }
 
 // Target puts a built disk onto a backend as a runnable instance.

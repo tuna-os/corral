@@ -427,8 +427,8 @@ func TestIngestRefusalsAreExplained(t *testing.T) {
 // screen, and the preflight only knows to stop it if this stays honest.
 func TestIngestersDeclareTheirFirmwareSupport(t *testing.T) {
 	for backend, want := range map[string]bool{
-		// qemu's generated systemd unit has no OVMF path yet.
-		"qemu": false,
+		// qemu's generated systemd unit selects OVMF firmware when requested.
+		"qemu": true,
 		// libvirt's domain XML selects firmware; KubeVirt sets
 		// firmware.bootloader.efi; PVE sets bios=ovmf plus an EFI vars disk.
 		"libvirt": true, "kubevirt": true, "proxmox": true, "incus": true,

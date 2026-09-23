@@ -2,6 +2,7 @@ package qemu
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -793,5 +794,150 @@ func TestGenerateUnit_SerialLog(t *testing.T) {
 	plain := generateUnit(generateUnitOpts{Name: "testvm", QemuPath: "q", Mem: "4G", CPU: 1, DiskPath: "/d"})
 	if strings.Contains(plain, "-serial") {
 		t.Errorf("no serial log requested should mean no -serial:\n%s", plain)
+	}
+}
+
+func TestList_WithCreatingVM(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	vmDir := filepath.Join(VMHome(), "buildingvm")
+	if err := os.MkdirAll(vmDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	meta := map[string]any{
+		"name":      "buildingvm",
+		"cpu":       4,
+		"memory":    "8G",
+		"disk_size": "40G",
+		"status":    "Creating",
+	}
+	data, _ := json.Marshal(meta)
+	if err := os.WriteFile(filepath.Join(vmDir, "metadata.json"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	vms, err := List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(vms) != 1 {
+		t.Fatalf("List should return 1 VM, got %d", len(vms))
+	}
+	if vms[0].Status != "◐ Creating" {
+		t.Errorf("expected status '◐ Creating', got %q", vms[0].Status)
+	}
+	if vms[0].Running || vms[0].Ready {
+		t.Errorf("creating VM should not be running or ready: %+v", vms[0])
+	}
+	if vms[0].CPU != 4 || vms[0].Mem != "8G" || vms[0].Disk != "40G" {
+		t.Errorf("creating VM should preserve sizing specs: %+v", vms[0])
+	}
+}
+
+func TestRecordCreating(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	err := RecordCreating("myvm", types.CreateOpts{
+		Name: "myvm",
+		CPU:  2,
+		Mem:  "4G",
+		Disk: "20G",
+	})
+	if err != nil {
+		t.Fatalf("RecordCreating: %v", err)
+	}
+
+	vms, err := List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(vms) != 1 || vms[0].Name != "myvm" || vms[0].Status != "◐ Creating" {
+		t.Fatalf("unexpected list result after RecordCreating: %+v", vms)
+	}
+}
+
+func TestCreate_UEFI(t *testing.T) {
+	cleanup := setupFakeQEMU(t)
+	defer cleanup()
+
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	codeFd := filepath.Join(tmp, "fake-code.fd")
+	varsFd := filepath.Join(tmp, "fake-vars.fd")
+	if err := os.WriteFile(codeFd, []byte("code"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(varsFd, []byte("vars"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CORRAL_OVMF_CODE", codeFd)
+	t.Setenv("CORRAL_OVMF_VARS", varsFd)
+
+	opts := types.CreateOpts{
+		Name: "uefivm",
+		CPU:  2,
+		Mem:  "4G",
+		Disk: "10G",
+		UEFI: true,
+	}
+
+	err := Create(opts)
+	if err != nil {
+		t.Fatalf("Create returned unexpected error: %v", err)
+	}
+
+	vmDir := filepath.Join(VMHome(), "uefivm")
+	metaData, err := os.ReadFile(filepath.Join(vmDir, "metadata.json"))
+	if err != nil {
+		t.Fatalf("reading metadata.json: %v", err)
+	}
+	var meta map[string]any
+	if err := json.Unmarshal(metaData, &meta); err != nil {
+		t.Fatalf("unmarshaling metadata.json: %v", err)
+	}
+	if meta["firmware"] != "uefi" {
+		t.Errorf("metadata firmware should be 'uefi', got %v", meta["firmware"])
+	}
+
+	// Vars file should have been copied to VM directory
+	copiedVars := filepath.Join(vmDir, "vars.fd")
+	if _, err := os.Stat(copiedVars); err != nil {
+		t.Errorf("vars.fd not copied to VM directory: %v", err)
+	}
+
+	// Unit file should reference code.fd and vars.fd via -drive if=pflash
+	unitPath := filepath.Join(systemdUserDir(), "corral-uefivm.service")
+	unitData, err := os.ReadFile(unitPath)
+	if err != nil {
+		t.Fatalf("reading unit file: %v", err)
+	}
+	unitStr := string(unitData)
+	if !strings.Contains(unitStr, fmt.Sprintf("-drive if=pflash,format=raw,readonly=on,file=%s", codeFd)) {
+		t.Errorf("unit file missing UEFI code pflash drive:\n%s", unitStr)
+	}
+	if !strings.Contains(unitStr, fmt.Sprintf("-drive if=pflash,format=raw,file=%s", copiedVars)) {
+		t.Errorf("unit file missing UEFI vars pflash drive:\n%s", unitStr)
+	}
+}
+
+func TestFindUEFIFirmware_Override(t *testing.T) {
+	tmp := t.TempDir()
+	codeFd := filepath.Join(tmp, "ovmf.code")
+	varsFd := filepath.Join(tmp, "ovmf.vars")
+	_ = os.WriteFile(codeFd, []byte("c"), 0644)
+	_ = os.WriteFile(varsFd, []byte("v"), 0644)
+
+	t.Setenv("CORRAL_OVMF_CODE", codeFd)
+	t.Setenv("CORRAL_OVMF_VARS", varsFd)
+
+	code, vars, err := FindUEFIFirmware()
+	if err != nil {
+		t.Fatalf("FindUEFIFirmware failed: %v", err)
+	}
+	if code != codeFd || vars != varsFd {
+		t.Errorf("got (%q, %q), want (%q, %q)", code, vars, codeFd, varsFd)
 	}
 }

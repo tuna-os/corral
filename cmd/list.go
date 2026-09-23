@@ -72,6 +72,8 @@ func printVMList(vms []types.VM) {
 			status = runningStyle.Render("● Running")
 		} else if vm.Running {
 			status = "◐ Starting"
+		} else if vm.Status != "" {
+			status = vm.Status
 		}
 
 		ns := vm.Namespace
