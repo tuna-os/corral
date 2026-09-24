@@ -84,7 +84,7 @@ VMs are cattle. Stop treating each one like a networking project.
 - **SSH that just works.** Your public key is injected at create time, a
   fallback password is generated and stored locally, and `corral ssh` picks
   the right path: a Kubernetes API tunnel for cluster VMs, a Tailscale-bound
-  port-forward for local ones. Zero config files touched.
+  port-forward for local ones (or `--vsock` for QEMU AF_VSOCK transport on live ISOs). Zero config files touched.
 - **VMs that join the tailnet themselves.** Drop a Tailscale auth key in
   `~/.config/tailvm/config.yaml` (or `TS_AUTHKEY`) and every cloud-init VM
   runs `tailscale up` on first boot — it shows up as a real machine on your
