@@ -2,23 +2,23 @@
 
 **Herd your VMs — and containers — into your tailnet.**
 
-Your VMs have escaped. Quick ones on your laptop, big ones on the Kubernetes
-cluster in the closet, an Incus server that's too useful to replace, a libvirt
-host that answers over SSH, a Proxmox node you never got around to retiring.
-Five sets of tooling, five networking stories, and none of it reachable from
-the couch.
+Your VMs have escaped. Quick ones sit on your laptop, and big ones sit on the
+Kubernetes cluster in the closet. There is an Incus server that's too useful to
+replace, and a libvirt host that answers over SSH. There is also a Proxmox node
+that you still mean to retire one day. Five sets of tooling, five networking
+stories, and none of it reachable from the couch.
 
-Corral fixes that. One command, every backend — local QEMU/KVM, KubeVirt,
-Incus, libvirt, Proxmox VE, or a federated Corral peer — and every VM lands
-inside the one network all your devices already share — your Tailscale
-tailnet.
+Corral fixes that. One command works on every backend: local QEMU/KVM,
+KubeVirt, Incus, libvirt, Proxmox VE, or a federated Corral peer. And every VM
+lands inside the one network that all your devices already share — your
+Tailscale tailnet.
 
 ```bash
 corral create web --kubevirt --container-disk quay.io/containerdisks/fedora:42
 corral ssh web        # from this machine, your laptop, or your phone's terminal
 ```
 
-VMs are cattle. Stop treating each one like a networking project.
+VMs are cattle. Don't treat each one like a networking project.
 
 ![Corral demo tour — datacenter view, tag filters, VM summary, live actions, cluster health](docs/screenshots/demo.gif)
 
@@ -36,34 +36,35 @@ VMs are cattle. Stop treating each one like a networking project.
 ## Why you'll like it
 
 - **Same commands everywhere.** `create` / `start` / `ssh` / `viewer` /
-  `clone` / `delete` work identically across every backend context — local
+  `clone` / `delete` work the same on every backend context. That means local
   QEMU/KVM, KubeVirt on your cluster, Incus, libvirt, or a federated Corral
-  peer (advertised/direct guest endpoints first, HTTP/WebSocket relay as
-  fallback — see [backend support matrix](docs/backend-support.md)). Corral
-  remembers which is which — you never specify it again.
-- **One fleet, not five tabs.** Every configured context is aggregated at
-  once: `corral list`, the TUI and the dashboard show the whole fleet, and
-  `corral context use NAME` only chooses where *new* work lands — it never
+  peer. A peer tries advertised or direct guest endpoints first, and falls
+  back to an HTTP/WebSocket relay. See the
+  [backend support matrix](docs/backend-support.md). Corral remembers which
+  is which, so you never specify it again.
+- **One fleet, not five tabs.** Corral aggregates every configured context at
+  once. `corral list`, the TUI and the dashboard show the whole fleet.
+  `corral context use NAME` only chooses where *new* work lands. It never
   hides the rest, and it never mutates kubectl's or Incus's own global config.
-  Authentication stays boring on purpose: an existing Incus remote's trust, a
-  `qemu+ssh://` URI through your OpenSSH agent and config, a PVE API token.
-  `corral doctor` runs scoped checks against every target and `--context NAME`
-  narrows it to one.
+  Authentication stays boring on purpose. It reuses an existing Incus remote's
+  trust, a `qemu+ssh://` URI through your OpenSSH agent and config, or a PVE
+  API token. `corral doctor` runs scoped checks against every target and
+  `--context NAME` narrows it to one.
 - **Move a VM to a different backend.** `corral move <vm> --to <backend>`
-  exports the disk, converts it, ingests it on the destination and verifies
-  the result. It's *cold* and never pretends otherwise — the guest stops, and
+  exports the disk, converts it, and ingests it on the destination. Then it
+  verifies the result. It's *cold* and never pretends otherwise — the guest stops, and
   `corral migrate` remains the live, within-one-backend kind. Preflight
-  refuses before anything is touched and reports every reason at once
-  (firmware, disk bus, free space, the new MAC/IP), `--dry-run` just prints
-  the plan, and the source is left **stopped, not deleted** unless you pass
+  refuses before it touches anything. It reports every reason at once:
+  firmware, disk bus, free space, the new MAC/IP. `--dry-run` only prints the
+  plan. Corral leaves the source **stopped, not deleted** unless you pass
   `--delete-source`. Disk export works on every backend on its own too —
   qcow2, raw.gz, or an Incus tarball. See
   [ADR-0010](docs/adr/0010-cross-backend-move.md).
 - **Your OS is a container image.** Point Corral at a *bootable container*
-  (`corral create dev --bootc ghcr.io/...`) and it builds the OS disk
+  (`corral create dev --bootc ghcr.io/...`). Corral builds the OS disk
   on-cluster with `bootc install to-disk`, then boots it as a first-class VM.
-  `corral bootc upgrade` rolls the VM to the image's next build — your VM
-  fleet updates like containers do. No other VM platform has this.
+  `corral bootc upgrade` rolls the VM to the image's next build — so your
+  fleet of VMs updates the same way containers do. No other VM platform has this.
 - **A bootc image tester for CI.** `corral vmtest --bootc ghcr.io/...` builds
   the image into a disk and boots it. It waits for the guest, runs your
   assertions, then hands the VM over for your own tests. Test accounts,
@@ -77,48 +78,52 @@ VMs are cattle. Stop treating each one like a networking project.
   [docs/ci-boot-gate.md](docs/ci-boot-gate.md).
 - **Containers (CT) — distrobox on Kubernetes.** Proxmox-style pet pods
   alongside VMs (`corral ct create`). A privileged CT seeds a full root
-  filesystem onto its own volume and `chroot`s into it on boot — `apt` /
-  `dnf` / `apk` installs and dotfiles survive Stop/Start, the same way a
-  real distrobox container survives being stopped and re-entered.
-  Unprivileged (default) CTs get a simple `/data`-only mount instead.
-- **SSH that just works.** Your public key is injected at create time, a
-  fallback password is generated and stored locally, and `corral ssh` picks
-  the right path: a Kubernetes API tunnel for cluster VMs, a Tailscale-bound
-  port-forward for local ones (or `--vsock` for QEMU AF_VSOCK transport on live ISOs). Zero config files touched.
+  filesystem onto its own volume, and `chroot`s into it on boot. So `apt` /
+  `dnf` / `apk` installs and dotfiles survive Stop/Start. It works the same way
+  in a real distrobox container when you stop it and enter it again.
+  Unprivileged (default) CTs get only a simple mount of `/data` instead.
+- **SSH that works out of the box.** Corral injects your public key at create
+  time. It also generates a fallback password and stores it locally.
+  `corral ssh` picks the right path: a Kubernetes API tunnel for cluster VMs,
+  a Tailscale-bound port-forward for local ones. Or use `--vsock` for QEMU
+  AF_VSOCK transport on live ISOs. It changes no config files.
 - **VMs that join the tailnet themselves.** Drop a Tailscale auth key in
-  `~/.config/tailvm/config.yaml` (or `TS_AUTHKEY`) and every cloud-init VM
-  runs `tailscale up` on first boot — it shows up as a real machine on your
+  `~/.config/tailvm/config.yaml` (or `TS_AUTHKEY`). Then every cloud-init VM
+  runs `tailscale up` on first boot. It shows up as a real machine on your
   tailnet, MagicDNS name and all.
 - **Extensions with a marketplace.** Niche features ship as plugins:
-  `corral plugin search`, `corral plugin install bootc`, then `corral bootc
-  create dev --image ghcr.io/...` builds an OS disk *on the cluster* from a
-  bootable container image and boots it as a VM. Browse/install from the web
-  UI's **Extensions** tab too. The core binary stays lean.
-- **Point-and-shoot TUI.** Run `corral` bare for a Bubble Tea interface:
-  pick a VM, hit Start / Stop / SSH / VNC / Delete, browse and restore
-  **snapshots** on any backend that has them, read a VM's **events**, mark a
-  **template**, resize CPU/RAM (VMs *and* CTs), or toggle which ports
-  (SSH, VNC, RDP, HTTP, …) are published to the tailnet as
+  `corral plugin search`, then `corral plugin install bootc`. Then
+  `corral bootc create dev --image ghcr.io/...` builds an OS disk *on the
+  cluster* from a bootable container image. It boots that disk as a VM.
+  Browse/install from the web UI's **Extensions** tab too. The core binary
+  stays lean.
+- **Point-and-shoot TUI.** Run `corral` bare for a Bubble Tea interface. Pick
+  a VM and hit Start / Stop / SSH / VNC / Delete. Browse and restore
+  **snapshots** on any backend that has them, or read a VM's **events**. Mark
+  a **template**, or resize CPU/RAM (VMs *and* CTs). Toggle which ports
+  (SSH, VNC, RDP, HTTP, …) Corral publishes to the tailnet as
   `<name>-vm.your-tailnet.ts.net`.
 - **A Proxmox-style web UI.** `corral web` serves a dark, mobile-friendly
-  dashboard: datacenter → node → VM tree, live status, create wizard,
-  start/stop/restart/pause, **one-click live migration** with a target-node
-  picker, **multi-select bulk start/stop**, **tags** (chips + tree filter), a
-  per-VM **CPU usage sparkline**, disk **export** (qcow2 or raw.gz),
-  **your own image/ISO sources** alongside the built-in catalog (saved in a
-  ConfigMap), and *real consoles in the browser* — noVNC graphics and an
-  xterm.js serial TTY. It also
-  runs **on the cluster itself** (`deploy/corral-web.yaml`), exposed to your
-  tailnet by the Tailscale operator. CLI, TUI, and web all share the same state.
-- **One static Go binary.** No daemons, no controllers to install, no
+  dashboard. It has a datacenter → node → VM tree, live status, a create
+  wizard, and start/stop/restart/pause. It offers **one-click live
+  migration** with a target-node picker, and **multi-select bulk
+  start/stop**. It shows **tags** (chips + tree filter) and a per-VM **CPU
+  usage sparkline**. It does disk **export** (qcow2 or raw.gz). You can add
+  **your own image/ISO sources** alongside the built-in catalog, and Corral
+  saves them in a ConfigMap. And it gives you *real consoles in the browser*:
+  noVNC graphics and an xterm.js serial TTY. It also runs **on the cluster
+  itself** (`deploy/corral-web.yaml`), and the Tailscale operator exposes it
+  to your tailnet. CLI, TUI, and web all share the same state.
+- **One static binary, written in Go.** No daemons, no controllers to install, no
   client-side K8s SDK. It drives `kubectl`/`virtctl`/`systemctl` — the tools
   you already trust — and gets out of the way.
 
 ## Install
 
-One line — detects OS/arch, verifies the download against the release's
-`SHA256SUMS`, installs the rolling-release binary to `~/.local/bin`, and wires
-up shell completions (bash/zsh/fish). Linux and macOS, amd64 and arm64:
+One line does it all. The script detects OS/arch and verifies the download
+against the release's `SHA256SUMS`. It installs the newest binary, rebuilt on
+every push, to `~/.local/bin`, and wires up shell completions (bash/zsh/fish).
+It works on Linux and macOS, amd64 and arm64:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/tuna-os/corral/main/scripts/install.sh | sh
@@ -137,8 +142,8 @@ brew install tuna-os/tap/corral-vm
 
 <details><summary>…or grab the binary yourself</summary>
 
-Rolling release, rebuilt from `main` on every push — not a CI artifact, so
-no GitHub login or expiry:
+This release rolls forward: CI rebuilds it from `main` on every push. It is
+not a CI artifact, so there is no GitHub login or expiry:
 
 ```bash
 curl -fsSL -o corral \
@@ -167,8 +172,8 @@ install corral ~/.local/bin/
 
 <details><summary>…or pull the container image</summary>
 
-The same image that runs `corral web` in-cluster also ships the CLI binary:
-It is published for both `linux/amd64` and `linux/arm64`.
+The same image that runs `corral web` in-cluster also ships the CLI binary.
+The image is available for both `linux/amd64` and `linux/arm64`.
 
 ```bash
 podman create --name corral-extract ghcr.io/tuna-os/corral:latest
@@ -190,13 +195,14 @@ corral web service install --system \        # or machine-wide (run under sudo)
 corral web service status                    # / uninstall / print
 ```
 
-Per-user units need lingering to run while logged out:
+For a per-user unit to run after you log out, enable linger:
 `sudo loginctl enable-linger "$USER"`.
 
-Development tasks run through [`just`](https://github.com/casey/just): `just`
-lists them — `build`, `test`, `vet`, `ci` (the pre-push gate), and
-`regen-catalog` (refresh the Universal Blue / Bluefin / TunaOS bootc catalog
-from ghcr, dropping anything not rebuilt in ~60 days).
+Development tasks run through [`just`](https://github.com/casey/just), and a
+bare `just` lists them. They include `build`, `test`, `vet`, `ci` (the
+pre-push gate), and `regen-catalog`. That last one refreshes the Universal
+Blue / Bluefin / TunaOS bootc catalog from ghcr. It drops any image with no
+rebuild in ~60 days.
 
 ## Try it in 30 seconds — no cluster needed
 
@@ -249,8 +255,8 @@ corral ct create myproj --devcontainer ./myproj
 | Published ports | — (host is already on the tailnet) | per-VM proxy Service tagged `tailscale.com/expose` → `<name>-vm.<tailnet>.ts.net` |
 | VM on the tailnet itself | — | automatic via cloud-init when an auth key is configured |
 
-Nothing is ever bound to `0.0.0.0` — local VM ports attach to the host's
-Tailscale IP only.
+Corral never binds anything to `0.0.0.0`. Ports of local VMs attach only to
+the host's Tailscale IP.
 
 ## Extensions & the marketplace
 
@@ -270,26 +276,27 @@ The web UI has an **Extensions** tab to browse and install the same plugins.
 ### The bootc plugin
 
 The flagship extension, `corral bootc`, turns a bootable container image into a
-running VM without any local tooling:
+VM that runs, without any local tooling:
 
-1. Corral provisions a block-mode PVC and runs a short-lived **builder VM**
-   (not a pod) that runs `bootc install to-disk` onto it — so the VM's own
-   kernel does the filesystem work. This is what lets it install images the
-   node kernel can't handle, e.g. Universal Blue desktops (bluefin/dakota) that
-   need **btrfs + composefs**. The right backend (ostree vs composefs) and
-   filesystem are auto-detected from the image; your SSH key is baked in and
-   sshd enabled.
+1. Corral provisions a block-mode PVC. Then it runs a short-lived **builder
+   VM** (not a pod) that runs `bootc install to-disk` onto it. So the VM's own
+   kernel does the filesystem work. That lets it install images that the node
+   kernel can't handle. An example is Universal Blue desktops (bluefin/dakota)
+   that need **btrfs + composefs**. Corral auto-detects the right backend
+   (ostree vs composefs) and filesystem from the image. It bakes in your SSH
+   key and enables sshd.
 2. Build logs stream to your terminal live.
 3. The finished disk is self-bootable (GPT + ESP + bootloader), so the final VM
    **UEFI-boots** it — no kernelBoot, no bootloader gymnastics.
 
-`corral bootc rebuild|upgrade|switch` re-bakes the disk from a new image (the
-SSH key is re-applied across the `--wipe`). Rebuild your OS in CI, `corral
-create` it as a VM in minutes.
+`corral bootc rebuild|upgrade|switch` re-bakes the disk from a new image
+(Corral applies the SSH key again across the `--wipe`). Rebuild your OS in CI,
+`corral create` it as a VM in minutes.
 
 **Faster builds:** deploy `deploy/registry-cache.yaml` (an on-cluster
-pull-through cache for ghcr.io) and the builder routes image pulls through it
-automatically — no config. Disable with `CORRAL_REGISTRY_MIRROR=off`.
+pull-through cache for ghcr.io). The builder then pulls images through it
+automatically, with no config. To turn it off, set
+`CORRAL_REGISTRY_MIRROR=off`.
 
 ### The backup plugin
 
@@ -313,19 +320,19 @@ bespoke image required.
 
 ### The Windows plugin
 
-`corral windows` sets up UEFI/TPM/virtio for a first-class Windows guest —
-KubeVirt VMs default to a Linux-tuned devices set that Windows Setup
-can't boot from without extra help:
+`corral windows` sets up UEFI/TPM/virtio for a first-class Windows guest.
+KubeVirt VMs default to a Linux-tuned devices set, and Windows Setup can't
+boot from it without extra help:
 
 ```bash
 corral plugin install windows
 corral windows create win11 --iso https://example/Win11.iso --cpu 4 --mem 8Gi
 ```
 
-Imports the installer ISO via CDI, provisions a UEFI+TPM+q35 VM with
-Hyper-V enlightenments and the virtio-win driver ISO attached as a second
-CD-ROM (so Setup can see the virtio disk/network), and attaches proper
-console access.
+The plugin imports the installer ISO via CDI. It provisions a UEFI+TPM+q35 VM
+with Hyper-V enlightenments. It attaches the virtio-win driver ISO as a second
+CD-ROM, so Setup can see the virtio disk/network. It also sets up proper
+access to the console.
 
 ### The VDI plugin
 
@@ -341,9 +348,9 @@ corral vdi connect devpool-1
 corral vdi unassign devpool-1
 ```
 
-No broker, no self-serve web page, no idle reclaim yet (see the RFC and
-[issue #69](https://github.com/tuna-os/corral/issues/69) for what's next)
-— pool membership and assignment are plain K8s labels on the VM objects,
+There is no broker, no self-serve web page, and no idle reclaim yet. See the
+RFC and [issue #69](https://github.com/tuna-os/corral/issues/69) for what's
+next. Pool membership and assignment are plain K8s labels on the VM objects,
 nothing more.
 
 ## Bootc images as a CI boot gate
@@ -379,9 +386,9 @@ provision:
 corral create gate -f verify.yaml --wait-ssh --timeout 900
 ```
 
-`provision` scripts are chrooted into the installed disk **before first
-boot**, so they can enable services, drop test users, or plant readiness
-markers without touching the published image. The disk is installed with
+Corral chroots `provision` scripts into the installed disk **before first
+boot**. So they can enable services, drop test users, or plant readiness
+markers. The published image stays untouched. Corral installs the disk with
 `bootc install to-disk --generic-image`, so it boots under plain
 SeaBIOS/OVMF anywhere.
 
@@ -396,10 +403,10 @@ On GitHub-hosted runners, enable KVM first:
 
 ## Ephemeral VMs & garbage collection
 
-Scratch/build VMs (a `--bootc` builder, a one-off boot-gate test, a CI
-throwaway) are easy to create and easy to forget — they don't clean
-themselves up if you `Ctrl+C` out or just walk away. `--ephemeral` marks a
-VM for `corral gc` instead of relying on you to remember:
+Scratch/build VMs are easy to create and easy to forget: a `--bootc`
+builder, a one-off boot-gate test, a CI throwaway. They don't clean
+themselves up if you `Ctrl+C` out or walk away. `--ephemeral` marks a VM for
+`corral gc`, so you don't have to remember it:
 
 ```bash
 corral create scratch --kubevirt --image bluefin --ephemeral --ttl 2h
@@ -410,40 +417,42 @@ corral gc --dry-run     # preview without touching anything
 
 Two stages, on purpose:
 
-1. **TTL expires → stopped.** Reclaims the scarce resource (cluster CPU/RAM)
-   immediately; the disk is untouched, so `corral start scratch` brings it
-   right back if you did need it after all.
+1. **TTL expires → stopped.** This frees the scarce resource (cluster
+   CPU/RAM) at once. The disk stays untouched. If you did need the VM after
+   all, `corral start scratch` brings it right back.
 2. **Stopped by gc, past the grace period (default 72h, `--delete-after`
-   to change it) → deleted.** VM and PVCs, for real. Only VMs *gc itself*
-   stopped are eligible — stopping one yourself doesn't start this clock,
-   so an intentionally-parked VM is never swept up by surprise.
+   to change it) → deleted.** VM and PVCs, for real. Only VMs that *gc
+   itself* stopped are eligible. If you stop one yourself, this clock doesn't
+   start. So gc never sweeps up an intentionally-parked VM by surprise.
 
-Run `corral gc` by hand, or point a CronJob at it for hands-off cleanup.
-Non-`--ephemeral` VMs are never touched.
+Run `corral gc` by hand, or point a CronJob at it for hands-off cleanup. gc
+never touches a VM without `--ephemeral`.
 
 ## Dev containers (scoped MVP)
 
 `corral ct create --devcontainer <path>` reads a project's
-`.devcontainer/devcontainer.json` and provisions a Container (CT) from it —
-`image` (or an error pointing you at `--image` if it's `build.dockerfile`
-instead), `postCreateCommand`, `remoteUser`, and `forwardPorts`:
+`.devcontainer/devcontainer.json` and provisions a Container (CT) from it. It
+reads `image`, `postCreateCommand`, `remoteUser`, and `forwardPorts`. If the
+file uses `build.dockerfile` in place of `image`, you get an error that points
+you at `--image`:
 
 ```bash
 corral ct create myproj --devcontainer ./myproj
 corral ct console myproj
 ```
 
-`<path>` is the devcontainer.json itself, or a directory containing
-`.devcontainer/devcontainer.json`/`.devcontainer.json`. Runs privileged
-(persistent rootfs) by default — that's the whole point of a dev
-container — unless you pass `--privileged=false`; any of `--image`,
-`--cpu`, `--mem`, etc. still override what the json would otherwise set.
+`<path>` is the devcontainer.json itself, or a directory that contains
+`.devcontainer/devcontainer.json`/`.devcontainer.json`. The CT runs
+privileged (persistent rootfs) by default, because that's the whole point of
+a dev container. Pass `--privileged=false` to turn that off. Any of
+`--image`, `--cpu`, `--mem`, etc. still override what the json would
+otherwise set.
 
-This is a scoped MVP, not full devcontainer-spec/VS Code support:
-**Features**, `build.dockerfile`, and `postCreateCommand`'s object form
-(several named commands run in parallel) aren't implemented — see the
-tracking issue for the fuller story (VS Code's "Reopen in Container"
-recognizing Corral natively, etc.).
+This is a scoped MVP, not full devcontainer-spec/VS Code support. Corral
+does not support **Features**, `build.dockerfile`, or `postCreateCommand`'s
+object form (several named commands that run in parallel). The issue that
+tracks this work has the fuller story. For example, VS Code's "Reopen in
+Container" could recognize Corral natively.
 
 ## Configuration
 
@@ -454,8 +463,8 @@ tailscale:
 ```
 
 `corral config` shows what's active. State lives in
-`~/.local/share/tailvm/` (registry + local VM disks) — shared with the
-legacy `tailvm` tool, so existing VMs keep working.
+`~/.local/share/tailvm/` (registry + local VM disks). The legacy `tailvm`
+tool shares this directory, so existing VMs still work.
 
 Environment overrides (handy for the in-cluster web deployment):
 
@@ -482,13 +491,13 @@ kubectl apply -f deploy/corral-web.yaml
 
 > **Setting up from scratch?** [**Build your own KubeVirt "Proxmox"**](docs/kubevirt-proxmox-setup.md)
 > walks through the whole stack — KubeVirt + CDI, the feature gates,
-> Longhorn + snapshots, Multus, and deploying Corral.
+> Longhorn + snapshots, Multus, and Corral itself.
 
 Tailnet membership *is* the authentication — never bind a public interface.
 For **authorization**, set `CORRAL_ADMINS` to a comma-separated list of tailnet
-logins: listed users can mutate; everyone else gets a **read-only** UI and
-mutating API calls are rejected (403). Unset = single-user/open (the default).
-Identity comes from the Tailscale ingress headers — see
+logins. Listed users can mutate; everyone else gets a **read-only** UI, and the
+API rejects any call from them that mutates state (403). Unset =
+single-user/open (the default). Identity comes from the Tailscale ingress headers — see
 [ADR-0003](docs/adr/0003-identity-source.md). Feature roadmap:
 [SPEC.md](SPEC.md) and [docs/api.md](docs/api.md).
 
@@ -546,17 +555,19 @@ corral vdi connect <member>
 
 Corral exposes the Proxmox-style operations above through both the CLI/TUI and
 the web UI (editable Hardware tab, Snapshots tab, in-browser consoles). What
-actually works depends on the cluster:
+works depends on the cluster:
 
-- **Change CPU / RAM** — always works. On a genuinely live-migratable VM it is
-  hotplugged with no downtime; otherwise Corral applies it in a single
-  stop→patch→start. New VMs are created sockets-based with `maxSockets` /
-  `maxGuest` headroom so they *can* hotplug.
-- **Live migration / live hotplug** — needs `vmRolloutStrategy: LiveUpdate`,
-  masquerade networking (Corral sets this), migratable storage (RWX), **and a
-  target node with the same CPU vendor**. You cannot live-migrate a running VM
-  between an Intel and an AMD host, so on a mixed-vendor cluster Corral detects
-  this and falls back to the offline path instead of hanging.
+- **Change CPU / RAM** — always works. On a VM that is truly
+  live-migratable, Corral hotplugs the change with no downtime. Otherwise
+  Corral applies it in a single stop→patch→start. Corral creates new VMs
+  sockets-based, with `maxSockets` / `maxGuest` headroom, so they *can*
+  hotplug.
+- **Live migration / live hotplug** — needs `vmRolloutStrategy: LiveUpdate`
+  and masquerade networking (Corral sets this). It also needs migratable
+  storage (RWX), **and a target node with the same CPU vendor**. You cannot
+  live-migrate a VM between an Intel host and an AMD host while it runs. On a
+  mixed-vendor cluster, Corral detects this and falls back to the offline
+  path, so it does not hang.
 - **Add disk (hotplug)** — needs the `HotplugVolumes` feature gate.
 - **Online disk expansion** — needs a StorageClass with
   `allowVolumeExpansion: true`.
@@ -568,18 +579,18 @@ Full design document: [SPEC.md](SPEC.md).
 
 ## Documentation
 
-- **[CONTRIBUTING.md](CONTRIBUTING.md)** — building, testing (`just ci`, the `-tags bootc` set), code style, and how to submit a change
-- **[SPEC.md](SPEC.md)** — full specification (commands, flags, types, backends, registry)
-- **[docs/api.md](docs/api.md)** — complete REST API reference
-- **[docs/architecture.md](docs/architecture.md)** — package map, design decisions, data flow, build system
-- **[docs/backend-support.md](docs/backend-support.md)** — what each backend context can do (local QEMU, KubeVirt, Incus, libvirt, Proxmox VE, Corral peer)
-- **[docs/backend-parity.md](docs/backend-parity.md)** — per-operation parity matrix, generated from `pkg/backend.Matrix` and enforced by conformance tests
-- **[docs/ci-boot-gate.md](docs/ci-boot-gate.md)** — gating CI publishes on bootc images actually booting (QEMU + KubeVirt), with field-tested troubleshooting
-- **[docs/kubevirt-proxmox-setup.md](docs/kubevirt-proxmox-setup.md)** — from-scratch KubeVirt + Longhorn + Corral setup guide
-- **[docs/testing.md](docs/testing.md)** — testing strategy & plan (unit, integration, E2E)
-- **[docs/vdi.md](docs/vdi.md)** — VDI plugin setup guide (desktop pools)
-- **[docs/vdi-epic-status.md](docs/vdi-epic-status.md)** — VDI epic dependency chain & hardware gating status (#69)
-- **[docs/rfc/0001-vdi-plugin.md](docs/rfc/0001-vdi-plugin.md)** — VDI plugin design + phased roadmap
+- **[`CONTRIBUTING.md`](CONTRIBUTING.md)** — how to build and test (`just ci`, the `-tags bootc` set), code style, and how to submit a change
+- **[`SPEC.md`](SPEC.md)** — full specification (commands, flags, types, backends, registry)
+- **[`docs/api.md`](docs/api.md)** — the complete reference for the REST API
+- **[`docs/architecture.md`](docs/architecture.md)** — package map, design decisions, data flow, build system
+- **[`docs/backend-support.md`](docs/backend-support.md)** — what each backend context can do (local QEMU, KubeVirt, Incus, libvirt, Proxmox VE, Corral peer)
+- **[`docs/backend-parity.md`](docs/backend-parity.md)** — per-operation parity matrix, generated from `pkg/backend.Matrix` and enforced by conformance tests
+- **[`docs/ci-boot-gate.md`](docs/ci-boot-gate.md)** — how to gate CI publishes on bootc images that boot (QEMU + KubeVirt), with field-tested fixes for failures
+- **[`docs/kubevirt-proxmox-setup.md`](docs/kubevirt-proxmox-setup.md)** — from-scratch KubeVirt + Longhorn + Corral setup guide
+- **[`docs/testing.md`](docs/testing.md)** — test strategy & plan (unit, integration, E2E)
+- **[`docs/vdi.md`](docs/vdi.md)** — setup guide for the VDI plugin (desktop pools)
+- **[`docs/vdi-epic-status.md`](docs/vdi-epic-status.md)** — status of the VDI epic: dependency chain & hardware gates (#69)
+- **[`docs/rfc/0001-vdi-plugin.md`](docs/rfc/0001-vdi-plugin.md)** — VDI plugin design + phased roadmap
 
 ## Requirements
 

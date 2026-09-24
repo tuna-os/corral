@@ -1,7 +1,7 @@
 # Corral Architecture
 
 > Full project docs: [README.md](../README.md), [SPEC.md](../SPEC.md),
-> [API reference](api.md), [testing plan](testing.md), [setup guide](kubevirt-proxmox-setup.md)
+> [API reference](api.md), [test plan](testing.md), [setup guide](kubevirt-proxmox-setup.md)
 
 ## Package map
 
@@ -95,7 +95,7 @@ unacceptable.
 `corral` is one Go binary that serves three interfaces:
 
 1. **CLI** — Cobra subcommands (`corral create`, `corral ssh`, etc.)
-2. **TUI** — Bubble Tea interactive terminal UI (bare `corral`)
+2. **TUI** — interactive terminal UI in Bubble Tea (bare `corral`)
 3. **Web** — Embedded SPA served at `corral web --addr :8006`
 
 All three share the same `pkg/kubevirt` backend and
@@ -105,29 +105,29 @@ immediately `corral ssh`-able and vice versa.
 ### Embedded SPA — no JS build step
 
 The web UI is vanilla JavaScript and CSS embedded via `//go:embed`. There is
-no Node, no bundler, no build step. xterm.js and noVNC are loaded from CDN
-at runtime (they're only needed on the console pages and are too large to
-embed). Heroicons are inline SVGs.
+no Node, no bundler, no build step. The page loads xterm.js and noVNC from a
+CDN at runtime. Only the console pages need them, and they are too large to
+embed. Heroicons are inline SVGs.
 
 ### Backend transparency
 
 After `corral create`, the registry stores `backend: "kubevirt"` or
 `backend: "qemu"`. Every subsequent command (`start`, `ssh`, `viewer`, etc.)
-reads the registry to determine the backend, falling back to live probing if
-the registry entry is missing. The user never specifies `--kubevirt` again.
+reads the registry to determine the backend. If the registry entry is missing,
+it falls back to a live probe. The user never specifies `--kubevirt` again.
 
 ### Bootc as a plugin
 
-Bootc (building a container image into a VM disk on-cluster) is an optional
+Bootc (which builds a container image into a VM disk on-cluster) is an optional
 plugin compiled behind a `//go:build bootc` tag. The core binary's
 `bootc_core.go` defines the interface seam with nil implementations; the
 tagged `bootc.go` replaces them via `init()`. This keeps the core binary
 lean for users who only need containerdisks and ISOs, while the full
-pipeline is available via `corral plugin install bootc` or by building with
+pipeline is available via `corral plugin install bootc` or a build with
 `-tags bootc`.
 
 The web UI checks `GET /api/capabilities` → `bootc: true/false` and
-shows/hides the bootc source option accordingly.
+shows/hides the bootc source option to match.
 
 ### KubeVirt LiveUpdate strategy
 
@@ -136,18 +136,18 @@ masquerade networking so they *can* hotplug/migrate. It gates live operations
 on real viability:
 
 - Live migration / hotplug: needs `vmRolloutStrategy: LiveUpdate`, masquerade
-  networking, migratable storage (RWX), **and a target node with the same CPU
-  vendor** (you cannot live-migrate Intel→AMD).
+  networking, and migratable storage (RWX). It also needs **a target node with
+  the same CPU vendor** (you cannot live-migrate Intel→AMD).
 - Disk hotplug: needs the `HotplugVolumes` feature gate.
 - Snapshots: need a `VolumeSnapshotClass` (Longhorn CSI).
 - Online expand: needs `allowVolumeExpansion: true`.
 
 The UI queries `GET /api/capabilities` and greys out controls the cluster
-can't support, rather than failing at submit time.
+can't support, so the user does not see a failure at submit time.
 
 ### Secrets stay local
 
-- Cloud-init passwords are generated per-VM and stored in
+- Corral generates a cloud-init password for each VM and stores it in
   `~/.local/share/tailvm/registry.json` (mode 0600).
 - The Tailscale auth key comes from `~/.config/tailvm/config.yaml` or the
   `TS_AUTHKEY` environment variable (seeded from Bitwarden by the dotfiles
@@ -155,7 +155,7 @@ can't support, rather than failing at submit time.
 - SSH public keys are read from `~/.ssh/id_ed25519.pub` (fallbacks:
   `id_rsa.pub`, `id_ecdsa.pub`).
 - **No secrets in git, no secrets in cluster state.** The on-cluster
-  deployment has no registry — it reads everything from cluster objects.
+  deployment has no registry. It reads everything from cluster objects.
 
 ### Namespace conventions
 
@@ -249,7 +249,7 @@ The `deploy/corral-web.yaml` manifest:
 
 Tailnet membership *is* the authentication — never bind a public interface.
 Authorization is an `adminGate` middleware: `CORRAL_ADMINS` (tailnet logins)
-gates mutating requests, with everyone else read-only (see
+gates requests that change state, with everyone else read-only (see
 [ADR-0003](adr/0003-identity-source.md)). Unset = single-user/open.
 
 ## Plugin system
@@ -257,8 +257,8 @@ gates mutating requests, with everyone else read-only (see
 Plugins are standalone executables named `corral-<name>`, discovered in
 `~/.local/share/corral/plugins` (and `$PATH`). When you run `corral <name>`,
 the root command checks if `<name>` is a known subcommand; if not, it
-dispatches to the plugin. `CORRAL_PLUGIN=<name>` is exported so plugins know
-how they were invoked.
+dispatches to the plugin. The root command exports `CORRAL_PLUGIN=<name>`, so
+each plugin knows the name that invoked it.
 
 The marketplace is the `marketplace/index.json` file in the repo, fetched
 from GitHub raw at runtime. Each entry has a name, description, version, and
