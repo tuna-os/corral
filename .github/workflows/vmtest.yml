@@ -41,7 +41,7 @@ jobs:
   # mistake, and each round took minutes. The build step that keeps breaking
   # needs none of the machinery around it.
   layer:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -68,7 +68,7 @@ jobs:
   # only. The `layer` job above covers what a PR can usefully learn in a minute.
   boot:
     if: github.event_name != 'pull_request'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 60
     env:
       IMAGE: ${{ inputs.image || 'quay.io/fedora/fedora-bootc:41' }}
