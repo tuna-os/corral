@@ -180,7 +180,8 @@ main {
 /* In read-only mode the server rejects mutations anyway — hide the controls
    that would only ever 403, leaving view-only surfaces (consoles, tabs). */
 body.read-only #btn-create,
-body.read-only .toolbar { display: none !important; }
+body.read-only .toolbar,
+body.read-only .hp-action { display: none !important; }
 
 .btn {
   display: inline-flex;

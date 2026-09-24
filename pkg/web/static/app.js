@@ -9,6 +9,9 @@ const $ = (sel) => document.querySelector(sel);
 let vms = [];
 let cts = []; // Containers (#50) — pet pods, not KubeVirt VMs
 let nodes = [];
+// Power-manageable hosts from host-power plugins (sdk.CapHostPower). Empty
+// unless such a plugin is installed; core has no provider knowledge.
+let hostPower = { hosts: [] };
 let caps = { storageClass: '', canExpand: false, canSnapshot: false };
 // Authenticated tailnet identity + privilege (see /api/whoami). Defaults to
 // admin so the UI is fully enabled until told otherwise (single-user mode).
@@ -162,10 +165,11 @@ async function refresh(force = false) {
   // Nodes are the cluster topology view; a local-only deployment (QEMU/Incus/
   // libvirt) has none, and a nodes failure must never blank a working VM list.
   try { nodes = await api('/api/nodes'); } catch { nodes = []; }
+  try { hostPower = await api('/api/hostpower'); } catch { hostPower = { hosts: [] }; }
   offlineShown = false;
   if (treeView === 'pool') await loadPools();
   try { cts = await api('/api/cts'); } catch { cts = []; } // best-effort — don't fail the whole refresh over CTs
-  const fp = JSON.stringify([vms, cts, nodes, selected, tab]);
+  const fp = JSON.stringify([vms, cts, nodes, hostPower, selected, tab]);
   if (!force && fp === lastRenderFp) return; // nothing changed — keep the DOM
   lastRenderFp = fp;
 
@@ -323,6 +327,18 @@ function renderTree() {
     onclick: () => select({ type: 'settings' }),
   }));
 
+  // Hosts that a host-power plugin can switch on and off (e.g. an on-demand
+  // cloud VM node kept stopped when idle). Shown only when a plugin reports any.
+  for (const h of hostPower.hosts || []) {
+    tree.appendChild(treeRow({
+      lvl: 0, icon: icon('server'), label: h.name,
+      sub: h.state,
+      dot: hostPowerDot(h.state),
+      sel: selected.type === 'hostpower' && selected.key === hostPowerKey(h),
+      onclick: () => select({ type: 'hostpower', key: hostPowerKey(h) }),
+    }));
+  }
+
   if (treeView === 'pool') renderTreePools(tree);
   else if (treeView === 'namespace') renderTreeNamespaces(tree);
   else renderTreeServer(tree);
@@ -452,6 +468,7 @@ function renderContent() {
   if (selected.type === 'namespace') return renderNamespace(main, selected.name);
   if (selected.type === 'extensions') return renderExtensions(main);
   if (selected.type === 'doctor') return renderDoctor(main);
+  if (selected.type === 'hostpower') return renderHostPower(main, selected.key);
   if (selected.type === 'multiview') return renderMultiview(main);
   if (selected.type === 'settings') return renderSettings(main);
   return renderDatacenter(main);
@@ -517,6 +534,44 @@ async function renderMultiview(main) {
       tile.querySelector('.mv-screen').innerHTML = `<p class="console-msg">connect failed</p>`;
     }
   }
+}
+
+// ── Host power (host-power plugins) ──────────────────────────────
+function hostPowerKey(h) { return `${h.plugin}/${h.id}`; }
+function hostPowerDot(state) {
+  if (state === 'running') return 'on';
+  if (state === 'stopped') return 'off';
+  return 'mid'; // starting / stopping / unknown
+}
+
+function renderHostPower(main, key) {
+  const h = (hostPower.hosts || []).find((x) => hostPowerKey(x) === key);
+  if (!h) { main.innerHTML = '<p class="muted">Host no longer reported by its plugin.</p>'; return; }
+  const onNode = h.node ? vms.filter((v) => v.node === h.node) : [];
+  const btn = (action, label, cls) => (h.actions || []).includes(action)
+    ? `<button class="btn ${cls} hp-action" data-hp="${action}">${icon(action === 'start' ? 'play' : 'stop')} ${label}</button>` : '';
+  main.innerHTML = `<div class="page-head"><h1>${icon('server')} ${esc(h.name)}</h1>
+      <div>${btn('start', 'Power on', 'primary')} ${btn('stop', 'Power off', '')}</div></div>
+    <table><tbody>
+      <tr><td class="muted">State</td><td><span class="dot ${hostPowerDot(h.state)}"></span> ${esc(h.state)}</td></tr>
+      ${h.node ? `<tr><td class="muted">Kubernetes node</td><td>${esc(h.node)}</td></tr>` : ''}
+      ${h.detail ? `<tr><td class="muted">Detail</td><td>${esc(h.detail)}</td></tr>` : ''}
+      <tr><td class="muted">Provided by</td><td><code>corral-${esc(h.plugin)}</code></td></tr>
+      ${h.node ? `<tr><td class="muted">VMs on this host</td><td>${onNode.length ? onNode.map((v) => esc(v.name)).join(', ') : 'none'}</td></tr>` : ''}
+    </tbody></table>
+    ${h.state === 'stopped' ? '<p class="muted" style="margin-top:14px">VMs scheduled to this host stay pending until it is powered on.</p>' : ''}`;
+  main.querySelectorAll('[data-hp]').forEach((b) => {
+    b.onclick = async () => {
+      const action = b.dataset.hp;
+      if (action === 'stop' && onNode.length && !confirm(`Power off ${h.name}? ${onNode.length} VM(s) on it will stop.`)) return;
+      b.disabled = true;
+      try {
+        await api(`/api/hostpower/${encodeURIComponent(h.plugin)}/${action}?id=${encodeURIComponent(h.id)}`, { method: 'POST' });
+        toast(`${action === 'start' ? 'Powering on' : 'Powering off'} ${h.name}`);
+      } catch (e) { toast(e.message); }
+      refresh(true);
+    };
+  });
 }
 
 async function renderDoctor(main) {
