@@ -8,7 +8,7 @@
 ```
 cmd/              Cobra CLI (root, subcommands, TUI)
 ├── root.go       entrypoint, plugin dispatch, post-quit actions
-├── commands.go   list, start, stop, ssh, viewer, logs, info, restart, pause, migrate, scale, adddisk, rmdisk, snapshot
+├── commands.go   list, start, stop, ssh (TCP/vsock), viewer, logs, info, restart, pause, migrate, scale, adddisk, rmdisk, snapshot
 ├── create.go     corral create (all flags, both backends, CLI catalog/import/bootc)
 ├── clone.go      corral clone (kubevirt VM disk + config clone)
 ├── ct.go         corral ct (create/list/start/stop/delete/console — Containers, pkg/ct)
