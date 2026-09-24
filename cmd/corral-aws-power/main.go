@@ -218,7 +218,7 @@ func call(c creds, region, action string, params url.Values) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("ec2 %s: %w", action, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if resp.StatusCode != http.StatusOK {
 		var e struct {
