@@ -6,6 +6,7 @@ curated marketplace.
 
 | Plugin | Purpose | Supported backends | Main capabilities |
 |---|---|---|---|
+| `aws-power` | Power EC2 VM hosts on and off ([host-power hook](host-power.md)) | all | Tag-discovered EC2 instances, start/stop |
 | `auth` | Optional reverse-proxy authentication | all (web transport) | OIDC SSO, htpasswd Basic Auth, passkeys, peer service tokens |
 | `backup` | VM disk backup and restore | KubeVirt | KubeVirt export, rclone/S3/R2, schedules |
 | `bootc` | Bootable-container VM workflow | KubeVirt | On-cluster disk builds and rebuilds |

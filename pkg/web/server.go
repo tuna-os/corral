@@ -123,6 +123,8 @@ func newMux() (http.Handler, error) {
 	mux.HandleFunc("DELETE /api/cts/{ns}/{name}", handleDeleteCT)
 	mux.HandleFunc("PUT /api/cts/{ns}/{name}/scale", handleScaleCT)
 	mux.HandleFunc("GET /api/nodes", handleNodes)
+	mux.HandleFunc("GET /api/hostpower", handleHostPower)
+	mux.HandleFunc("POST /api/hostpower/{plugin}/{action}", handleHostPowerAction)
 	mux.HandleFunc("GET /api/capabilities", handleCapabilities)
 	mux.HandleFunc("GET /api/images", handleImages)
 	mux.HandleFunc("GET /api/sources", handleListSources)
