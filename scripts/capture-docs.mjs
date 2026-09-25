@@ -88,10 +88,22 @@ try {
   await delay(500);
   await page.screenshot({path: `${output}/web-vm-summary.png`});
 
+  await page.click('.tab[data-tab="options"]');
+  await page.waitForSelector('#tab-body >> text=loading…', {state: 'detached'});
+  await delay(300);
+  await page.screenshot({path: `${output}/web-vm-options.png`});
+
   await page.click('#tree >> text=Cluster health');
   await page.waitForSelector('#content >> text=KubeVirt installed');
   await delay(500);
   await page.screenshot({path: `${output}/web-doctor.png`});
+
+  // The sidebar view is kept in localStorage, so switch back before moving on.
+  await page.click('#tree >> text=Namespace View');
+  await delay(600);
+  await page.screenshot({path: `${output}/web-namespace-view.png`});
+  await page.click('#tree >> text=Server View');
+  await delay(300);
 
   await page.click('#tree >> text=Datacenter');
   await page.click('#btn-create');
@@ -99,6 +111,16 @@ try {
   await page.screenshot({path: `${output}/web-create.png`});
 
   await page.close();
+
+  const mobile = await browser.newPage({
+    viewport: {width: 390, height: 844}, deviceScaleFactor: 2, isMobile: true, hasTouch: true,
+  });
+  await mobile.goto(base);
+  await mobile.waitForSelector('text=web-prod', {timeout: 30000});
+  await delay(500);
+  await mobile.screenshot({path: `${output}/web-mobile.png`});
+  await mobile.close();
+
   await captureTUI(browser);
 } finally {
   await browser.close();
