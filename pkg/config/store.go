@@ -95,9 +95,13 @@ func mutate(fn func(cfg *Config) (*Config, error)) error {
 	return store.saveLocked(next)
 }
 
-// invalidate drops the cached bytes so the next read reloads from disk.
+// Invalidate drops the cached bytes so the next read reloads from disk.
 // Exported for tests that write config.yaml out from under this package.
-func (s *configStore) invalidate() {
+func Invalidate() {
+	store.Invalidate()
+}
+
+func (s *configStore) Invalidate() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.valid = false

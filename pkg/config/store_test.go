@@ -96,3 +96,12 @@ func TestLoad_DefaultCacheInvalidatesOnHOMEChange(t *testing.T) {
 		t.Fatalf("IncusRemote() = %q after HOME changed, want default %q (cache leaked across HOME)", got, "local")
 	}
 }
+
+func TestInvalidate(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	_, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	Invalidate()
+}
