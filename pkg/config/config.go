@@ -7,8 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync/atomic"
-
-	"gopkg.in/yaml.v3"
 )
 
 // Config holds corral configuration.
@@ -155,39 +153,35 @@ func AddContext(c ContextConfig) error {
 	default:
 		return fmt.Errorf("unsupported backend %q", c.Backend)
 	}
-	cfg, err := Load("")
-	if err != nil {
-		return err
-	}
-	for i := range cfg.Contexts {
-		if cfg.Contexts[i].Name == c.Name {
-			cfg.Contexts[i] = c
-			return Save(cfg)
+	return mutate(func(cfg *Config) (*Config, error) {
+		for i := range cfg.Contexts {
+			if cfg.Contexts[i].Name == c.Name {
+				cfg.Contexts[i] = c
+				return cfg, nil
+			}
 		}
-	}
-	cfg.Contexts = append(cfg.Contexts, c)
-	return Save(cfg)
+		cfg.Contexts = append(cfg.Contexts, c)
+		return cfg, nil
+	})
 }
 
 func RemoveContext(name string) error {
 	if name == "local" {
 		return fmt.Errorf("the local qemu context cannot be removed")
 	}
-	cfg, err := Load("")
-	if err != nil {
-		return err
-	}
-	out := cfg.Contexts[:0]
-	for _, c := range cfg.Contexts {
-		if c.Name != name {
-			out = append(out, c)
+	return mutate(func(cfg *Config) (*Config, error) {
+		out := cfg.Contexts[:0]
+		for _, c := range cfg.Contexts {
+			if c.Name != name {
+				out = append(out, c)
+			}
 		}
-	}
-	cfg.Contexts = out
-	if cfg.Default.Context == name {
-		cfg.Default.Context = ""
-	}
-	return Save(cfg)
+		cfg.Contexts = out
+		if cfg.Default.Context == name {
+			cfg.Default.Context = ""
+		}
+		return cfg, nil
+	})
 }
 
 // Folders returns the stored folder tree, empty when none is configured.
@@ -203,12 +197,10 @@ func Folders() []FolderConfig {
 // once because a folder move rewrites many paths, and a per-folder API would
 // leave the tree half-moved if a write failed midway.
 func SetFolders(folders []FolderConfig) error {
-	cfg, err := Load(DefaultPath())
-	if err != nil {
-		return err
-	}
-	cfg.Folders = folders
-	return Save(cfg)
+	return mutate(func(cfg *Config) (*Config, error) {
+		cfg.Folders = folders
+		return cfg, nil
+	})
 }
 
 func SetDefaultContext(name string) error {
@@ -216,12 +208,10 @@ func SetDefaultContext(name string) error {
 	if !ok {
 		return fmt.Errorf("unknown context %q", name)
 	}
-	cfg, err := Load("")
-	if err != nil {
-		return err
-	}
-	cfg.Default.Backend, cfg.Default.Context = c.Backend, c.Name
-	return Save(cfg)
+	return mutate(func(cfg *Config) (*Config, error) {
+		cfg.Default.Backend, cfg.Default.Context = c.Backend, c.Name
+		return cfg, nil
+	})
 }
 
 func DefaultContext() ContextConfig {
@@ -257,12 +247,10 @@ func SetDefaultBackend(backend string) error {
 	default:
 		return fmt.Errorf("unsupported backend %q (want qemu, kubevirt, incus, or libvirt)", backend)
 	}
-	cfg, err := Load("")
-	if err != nil {
-		return err
-	}
-	cfg.Default.Backend = backend
-	return Save(cfg)
+	return mutate(func(cfg *Config) (*Config, error) {
+		cfg.Default.Backend = backend
+		return cfg, nil
+	})
 }
 
 // IncusConfig holds the default Incus remote. It is intentionally separate
@@ -287,12 +275,10 @@ func LibvirtURI() string {
 	return "qemu:///system"
 }
 func SetLibvirtURI(uri string) error {
-	cfg, err := Load("")
-	if err != nil {
-		return err
-	}
-	cfg.Libvirt.URI = uri
-	return Save(cfg)
+	return mutate(func(cfg *Config) (*Config, error) {
+		cfg.Libvirt.URI = uri
+		return cfg, nil
+	})
 }
 
 type PeerConfig struct {
@@ -315,38 +301,34 @@ func SetPeerWithToken(name, rawURL, token string) error {
 	if name == "" || rawURL == "" {
 		return fmt.Errorf("peer name and URL are required")
 	}
-	cfg, err := Load("")
-	if err != nil {
-		return err
-	}
-	found := false
-	for i := range cfg.Peers {
-		if cfg.Peers[i].Name == name {
-			cfg.Peers[i].URL = strings.TrimRight(rawURL, "/")
-			if token != "" {
-				cfg.Peers[i].Token = token
+	return mutate(func(cfg *Config) (*Config, error) {
+		found := false
+		for i := range cfg.Peers {
+			if cfg.Peers[i].Name == name {
+				cfg.Peers[i].URL = strings.TrimRight(rawURL, "/")
+				if token != "" {
+					cfg.Peers[i].Token = token
+				}
+				found = true
 			}
-			found = true
 		}
-	}
-	if !found {
-		cfg.Peers = append(cfg.Peers, PeerConfig{Name: name, URL: strings.TrimRight(rawURL, "/"), Token: token})
-	}
-	return Save(cfg)
+		if !found {
+			cfg.Peers = append(cfg.Peers, PeerConfig{Name: name, URL: strings.TrimRight(rawURL, "/"), Token: token})
+		}
+		return cfg, nil
+	})
 }
 func RemovePeer(name string) error {
-	cfg, err := Load("")
-	if err != nil {
-		return err
-	}
-	out := cfg.Peers[:0]
-	for _, p := range cfg.Peers {
-		if p.Name != name {
-			out = append(out, p)
+	return mutate(func(cfg *Config) (*Config, error) {
+		out := cfg.Peers[:0]
+		for _, p := range cfg.Peers {
+			if p.Name != name {
+				out = append(out, p)
+			}
 		}
-	}
-	cfg.Peers = out
-	return Save(cfg)
+		cfg.Peers = out
+		return cfg, nil
+	})
 }
 
 // forceKubevirt makes Contexts offer the kubevirt target unconditionally.
@@ -394,12 +376,10 @@ func KubeContext() string {
 	return ""
 }
 func SetKubeContext(context string) error {
-	cfg, err := Load("")
-	if err != nil {
-		return err
-	}
-	cfg.Kubevirt.Context = context
-	return Save(cfg)
+	return mutate(func(cfg *Config) (*Config, error) {
+		cfg.Kubevirt.Context = context
+		return cfg, nil
+	})
 }
 
 // CTConfig holds Container defaults.
@@ -444,23 +424,29 @@ func DefaultPath() string {
 	return filepath.Join(ConfigDir(), "config.yaml")
 }
 
-// Load reads the config file from path. Returns empty config if file doesn't exist.
+// Load reads the config file from path. Returns empty config if file doesn't
+// exist. An empty path, or a path equal to DefaultPath(), is served from an
+// in-process byte cache (store.go) that avoids re-reading the file when
+// several helpers are called back-to-back; the returned *Config is always a
+// fresh, independent value, never shared with another caller. Any other
+// explicit path is always read straight from disk.
 func Load(path string) (*Config, error) {
-	if path == "" {
-		path = DefaultPath()
+	if path == "" || path == DefaultPath() {
+		return store.loadDefault()
 	}
-	data, err := os.ReadFile(path)
+	return loadFromDisk(path)
+}
+
+// loadFromDisk always reads path fresh, bypassing the cache.
+func loadFromDisk(path string) (*Config, error) {
+	data, notFound, err := readFileTolerant(path)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return &Config{}, nil
-		}
 		return nil, err
 	}
-	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return nil, err
+	if notFound {
+		return &Config{}, nil
 	}
-	return &cfg, nil
+	return unmarshalConfig(data)
 }
 
 // AuthKey returns the Tailscale auth key from config or the TS_AUTHKEY env var.
@@ -525,11 +511,13 @@ func CTBackend() string {
 	}
 	// Auto-detect.
 	backend := detectCTBackend()
-	// Persist for next time.
-	if err == nil {
+	// Persist for next time. Best-effort: a failed detect (err != nil above)
+	// already returned before reaching here, so this only guards a failed
+	// mutate save, which just means the next call re-detects.
+	_ = mutate(func(cfg *Config) (*Config, error) {
 		cfg.CT.Backend = backend
-		saveConfig(cfg)
-	}
+		return cfg, nil
+	})
 	return backend
 }
 
@@ -547,45 +535,25 @@ func IncusRemote() string {
 
 // SetIncusRemote persists Corral's default without changing Incus CLI state.
 func SetIncusRemote(remote string) error {
-	cfg, err := Load("")
-	if err != nil {
-		return err
-	}
-	cfg.Incus.Remote = remote
-	return Save(cfg)
+	return mutate(func(cfg *Config) (*Config, error) {
+		cfg.Incus.Remote = remote
+		return cfg, nil
+	})
 }
 
-// Save writes config.yaml with private permissions.
+// Save writes config.yaml with private permissions. When cfg is being saved
+// to the default path, the in-process cache (store.go) is updated to match
+// the bytes just written, so a subsequent Load("") doesn't re-read the file.
+//
+// Save takes the store's lock for the duration of the write. Prefer mutate
+// (store.go) over a bare Load("")+Save pair in a new helper: mutate holds
+// the lock across the whole load-modify-save span, which is what actually
+// prevents two concurrent writers from losing one of their changes; calling
+// Save alone only makes the write itself atomic on disk.
 func Save(cfg *Config) error {
-	data, err := yaml.Marshal(cfg)
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(ConfigDir(), 0o700); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(ConfigDir(), ".config-*.tmp")
-	if err != nil {
-		return err
-	}
-	name := tmp.Name()
-	defer os.Remove(name)
-	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(name, DefaultPath())
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	return store.saveLocked(cfg)
 }
 
 func detectCTBackend() string {
@@ -609,8 +577,4 @@ func detectCTBackend() string {
 	}
 	// Fallback: local QEMU (always returns something).
 	return "qemu"
-}
-
-func saveConfig(cfg *Config) {
-	_ = Save(cfg)
 }
