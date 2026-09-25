@@ -310,9 +310,10 @@ corral backup unschedule web
 ```
 
 Needs `rclone` configured for your remote (`rclone config`) and `virtctl`.
-Scheduled backups fetch `virtctl`/`rclone` inside the CronJob pod at
-runtime and mirror your local rclone config into a namespaced Secret — no
-bespoke image required.
+Scheduled backups run as non-root in the pinned `rclone/rclone` image.
+An init container copies `kubectl` and downloads `virtctl` into a
+shared volume, so no corral-owned image is necessary. Your local rclone
+config goes into a namespaced Secret that the CronJob mounts.
 
 ### The Windows plugin
 
