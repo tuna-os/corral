@@ -38,6 +38,11 @@ vmtest-layer image="quay.io/fedora/fedora-bootc:41":
 vmtest-e2e image="quay.io/fedora/fedora-bootc:41":
     sudo -E CORRAL_VMTEST_IMAGE={{image}} go test -tags e2evmtest -timeout 45m -count=1 -v ./pkg/vmtest/
 
+# The browser-only demo site (#284) as static files in dist/web-demo.
+# Serve that directory from localhost or HTTPS; see web-demo/README.md.
+web-demo:
+    scripts/build-web-demo.sh dist/web-demo
+
 # Coverage with the ratchet gate CI runs (.coverage-budget).
 cover:
     go test -count=1 -coverprofile=cover.out ./...

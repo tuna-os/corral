@@ -209,6 +209,9 @@ corral web --demo            # the Proxmox-style dashboard at http://127.0.0.1:8
 corral list --demo           # any CLI command works too
 ```
 
+You can also run the dashboard in a browser with no install. Use `just web-demo`
+to build a static demo site. See [web-demo/README.md](web-demo/README.md).
+
 ## Quick start
 
 ```bash
