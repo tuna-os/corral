@@ -75,9 +75,10 @@ async function captureTUI(browser) {
   }
 }
 
-await ready();
-const browser = await chromium.launch();
+let browser;
 try {
+  await ready();
+  browser = await chromium.launch();
   const page = await browser.newPage({viewport: {width: 1440, height: 900}, deviceScaleFactor: 1});
   await page.goto(base);
   await page.waitForSelector('td:has-text("web-prod")', {timeout: 30000});
@@ -123,7 +124,8 @@ try {
 
   await captureTUI(browser);
 } finally {
-  await browser.close();
+  // A failed launch must still stop the demo server, or it holds the port.
+  await browser?.close();
   server.kill('SIGTERM');
   rmSync(fixtureHome, {recursive: true, force: true});
 }
