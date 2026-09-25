@@ -6,10 +6,9 @@
 
 ## Mission
 
-Corral herds VMs — and containers — into your tailnet. A single Go binary with
-a CLI, TUI, and web dashboard, it manages VMs across five backends (qemu,
-kubevirt, incus, libvirt, proxmox) and exposes every guest over the Tailscale
-network your devices already share. It is also the org's CI boot-gate tool:
+Corral herds VMs and containers into your tailnet. A single Go binary provides a
+CLI, TUI, and web dashboard. It manages VMs across five backends (qemu,
+kubevirt, incus, libvirt, proxmox) and connects every guest over Tailscale. It is also the org's CI boot-gate tool:
 `reusable-build-image.yml` on `tunaos` main installs Corral and gates ISO
 builds on `corral create gate --bootc ... --wait-ssh`.
 
@@ -22,23 +21,22 @@ builds on `corral create gate --bootc ... --wait-ssh`.
 - Five backends supported; `bootc` creation mode builds a bootable-container
   disk on-cluster and runs it as a KubeVirt VM.
 - ✅ **Backend move parity closed 2026-08-11**: the Proxmox export adapter
-  (#163) and Incus image publishing (#164) both landed, and the Incus backend
-  gained end-to-end coverage (#123). `move` is no longer the weakest surface —
+  (#163) and Incus image export (#164) landed. Tests now cover Incus from
+  end to end (#123). `move` is no longer the weakest surface —
   see [docs/backend-parity.md](docs/backend-parity.md).
 - ✅ **Distribution and release infrastructure repaired (September 2026)**:
-  - macOS release binary builds published and installer checksum verification added (#315).
-  - Release workflow updated to stamp release tags properly without crowding product releases under plugin artifacts (#316).
-- ✅ **Org CI adoption shipped**: tunaos#1273 was closed 2026-09-02 as superseded —
-  hanthor landed the adoption directly on `tunaos` main instead of rebasing that
-  PR. `reusable-build-image.yml` installs Corral (with a release-binary
-  fallback) and gates on `sudo -E corral create gate --bootc "$IMAGE"
-  --wait-ssh --timeout 900`; `tests/corral/verify.yaml` is the canonical
-  scenario. This roadmap tracked the PR for three weeks after it closed —
-  see the currency rule below.
+  - Binaries for macOS published and checksum checks added to the installer (#315).
+  - The release workflow adds tags directly and isolates plugin artifacts (#316).
+- ✅ **Adoption of the CI gate complete**: tunaos#1273 closed 2026-09-02 as superseded.
+  Hanthor merged the adoption directly on `tunaos` main. `reusable-build-image.yml`
+  installs Corral (with a release-binary fallback) and gates on
+  `sudo -E corral create gate --bootc "$IMAGE" --wait-ssh --timeout 900`.
+  `tests/corral/verify.yaml` is the canonical scenario. This roadmap tracked
+  the PR for three weeks after it closed. See the currency rule below.
 - ✅ **`--json` output shipped**: #205 closed 2026-09-02, completed.
   `rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", ...)` in
   `cmd/root.go` makes it a global flag, not per-command.
-- **No milestones on the repo**; work is tracked through issues and labels
+- **No milestones on the repo**; issues and labels track all work
   (`needs-triage`, `ready-for-agent`, …) plus this file.
 
 ### Priorities
@@ -77,7 +75,7 @@ builds on `corral create gate --bootc ... --wait-ssh`.
 
 - VDI plugin GA (desktop pools for Windows/Linux) — #69
 - Plugin marketplace growth: schema v2, signed releases, SBOM
-- Supply-chain hardening aligned with org Q4 (package signing/SBOM, tunaos#1187)
+- Supply-chain security aligned with org Q4 (package sign checks and SBOM, tunaos#1187)
 - Backend support matrix + upgrade/migration documentation (5 backends × tailnet)
 
 ---
@@ -93,7 +91,7 @@ builds on `corral create gate --bootc ... --wait-ssh`.
 
 ## How to Contribute
 
-Issues are triaged with `needs-triage` / `ready-for-agent` / `ready-for-human`
+Maintainers triage issues with `needs-triage` / `ready-for-agent` / `ready-for-human`
 labels (see `docs/agents/issue-tracker.md`). The open surface is small right
 now — #97 (dependency dashboard / renovate hygiene) is the most self-contained
 pick, and #69 is the large VDI epic.

@@ -1,7 +1,7 @@
 # First-party Corral plugins
 
-These executables live under `cmd/corral-*`, implement the
-`corral.plugin/v1` metadata handshake, and are published by tuna-os through the
+These executables live under `cmd/corral-*`, provide the
+`corral.plugin/v1` metadata handshake, and tuna-os publishes them through the
 curated marketplace.
 
 | Plugin | Purpose | Supported backends | Main capabilities |
@@ -17,15 +17,15 @@ curated marketplace.
 | `windows` | Windows VM creation | KubeVirt | UEFI, TPM, Hyper-V, installer and virtio media |
 | `vdi` | Desktop pools (Phase 1) | KubeVirt | Static desktop pools, golden VM cloning, manual assignment |
 
-`corral-vdi` provides Phase-1 static desktop pools governed by RFC-0001 and
+`corral-vdi` provides static desktop pools under Phase 1, governed by RFC-0001 and
 documented in [docs/vdi.md](vdi.md) (with epic dependency gating tracked in
 [docs/vdi-epic-status.md](vdi-epic-status.md)). `corral-incus` is a compatibility
-binary for older installations; Incus is now a built-in backend and is not
-published as a marketplace plugin.
+binary for older installations; Incus is now a built-in backend, so tuna-os does not
+publish it as a marketplace plugin.
 
-First-party source is not automatically trusted at runtime. Marketplace v2
-still requires immutable URLs and SHA-256 checksums, validates optional
-Ed25519 signatures, displays permissions, and records installed provenance.
+Corral validates each first-party plugin at runtime without default trust. Marketplace v2
+still needs immutable URLs and SHA-256 checksums, validates optional
+signatures in Ed25519 format, displays permissions, and records installed provenance.
 
 The matrix is deliberately honest: core inventory and lifecycle support for a
 backend does not imply that every workflow plugin supports it. The extension
