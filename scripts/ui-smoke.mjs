@@ -8,9 +8,13 @@
 // Fails (exit 1) on any assertion or page error.
 // For reproducible documentation images, see scripts/capture-docs.mjs.
 
+import { mkdirSync } from 'node:fs';
 import { chromium } from 'playwright';
 
 const BASE = process.env.CORRAL_URL || 'http://127.0.0.1:8899/';
+// Named checks save a screenshot here; ui-smoke.yml uploads the folder.
+const SHOTS = process.env.UI_SMOKE_SCREENSHOTS || 'ui-smoke-screenshots';
+mkdirSync(SHOTS, { recursive: true });
 let failures = 0;
 const check = (ok, msg) => {
   console.log(`${ok ? 'ok' : 'FAIL'} - ${msg}`);
@@ -233,6 +237,86 @@ check(
   metricsBody.includes('# TYPE corral_collection_success gauge'),
   '/metrics always reports whether collection is working',
 );
+
+// ── dashboard-layout (#348) ───────────────────────────────────────
+// The Datacenter page opens with a widget grid. Move one widget and resize
+// another with the mouse, resize a third from the keyboard, reload, and check
+// that all three kept their place, and that a live chart drew data points.
+{
+  const layoutKey = 'corral.dashboard.datacenter';
+  await page.click('#tree >> text=Datacenter');
+  await page.evaluate((k) => localStorage.removeItem(k), layoutKey);
+  await page.reload();
+  const item = (id) => page.locator(`#dc-dash .grid-stack-item[gs-id="${id}"]`);
+  const node = (id) => item(id).evaluate((el) => {
+    const n = el.gridstackNode || {};
+    return { x: n.x, y: n.y, w: n.w, h: n.h };
+  });
+  await item('capacity').waitFor({ timeout: 30000 }).catch(() => {});
+  check(await page.locator('#dc-dash .grid-stack-item').count() >= 6, 'dashboard-layout: Datacenter opens with a widget grid');
+
+  const gridBox = await page.locator('#dc-dash .grid-stack').boundingBox();
+  const colW = gridBox ? gridBox.width / 12 : 100;
+
+  // Move: drag the Capacity title bar four columns to the right.
+  const before = await node('capacity');
+  const head = await item('capacity').locator('.widget-head').boundingBox();
+  if (head) {
+    await page.mouse.move(head.x + 30, head.y + head.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(head.x + 30 + colW * 4, head.y + head.height / 2, { steps: 15 });
+    await page.mouse.up();
+  }
+  await page.waitForTimeout(400);
+  const moved = await node('capacity');
+  check(moved.x > before.x, `dashboard-layout: dragging a title bar moves the widget (x ${before.x} → ${moved.x})`);
+
+  // Resize: hover the CPU chart so its corner handle shows, then drag it down.
+  const cpuBefore = await node('cpu');
+  await item('cpu').hover();
+  const handle = await item('cpu').locator('.ui-resizable-se').boundingBox();
+  if (handle) {
+    await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2 + 170, { steps: 15 });
+    await page.mouse.up();
+  }
+  await page.waitForTimeout(400);
+  const resized = await node('cpu');
+  check(resized.h > cpuBefore.h, `dashboard-layout: dragging the corner resizes the widget (h ${cpuBefore.h} → ${resized.h})`);
+
+  // Keyboard equivalent: Shift+ArrowRight on a focused title bar widens it.
+  const memBefore = await node('mem');
+  await item('mem').locator('.widget-head').focus();
+  await page.keyboard.press('Shift+ArrowRight');
+  await page.waitForTimeout(200);
+  const widened = await node('mem');
+  check(widened.w === memBefore.w + 1, `dashboard-layout: Shift+ArrowRight widens the focused widget (w ${memBefore.w} → ${widened.w})`);
+
+  // The same moves are in the widget menu, for pointer users without a drag.
+  await item('mem').locator('.widget-menu-btn').click();
+  check(await item('mem').locator('.widget-menu [data-wact="remove"]').isVisible(), 'dashboard-layout: the widget menu offers the drag actions');
+  await page.keyboard.press('Escape');
+
+  // Persisted: reload and read the grid back.
+  await page.reload();
+  await item('capacity').waitFor({ timeout: 30000 }).catch(() => {});
+  const after = { capacity: await node('capacity'), cpu: await node('cpu'), mem: await node('mem') };
+  check(after.capacity.x === moved.x && after.capacity.y === moved.y, 'dashboard-layout: the moved widget keeps its place after reload');
+  check(after.cpu.h === resized.h, 'dashboard-layout: the resized widget keeps its size after reload');
+  check(after.mem.w === widened.w, 'dashboard-layout: the keyboard resize persists too');
+
+  // A live chart drew data points from the demo's usage feed.
+  const drew = await page.waitForFunction(
+    () => [...document.querySelectorAll('#dc-dash .dash-chart')].some((c) => Number(c.dataset.points) > 0 && c.querySelector('canvas')),
+    null, { timeout: 30000 },
+  ).then(() => true).catch(() => false);
+  check(drew, 'dashboard-layout: a live chart rendered data points');
+  await page.screenshot({ path: `${SHOTS}/dashboard-layout.png`, fullPage: false });
+
+  // Leave the default layout for anything that runs after this.
+  await page.evaluate((k) => localStorage.removeItem(k), layoutKey);
+}
 
 check(pageErrors.length === 0, `no JS page errors (${pageErrors.join('; ').slice(0, 200)})`);
 
