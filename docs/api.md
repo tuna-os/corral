@@ -3,7 +3,7 @@
 > Full project docs: [README.md](../README.md), [SPEC.md](../SPEC.md),
 > [architecture](architecture.md), [setup guide](kubevirt-proxmox-setup.md)
 
-The Corral web UI serves a REST API at port 8006 (`corral web`), plus
+The web UI of Corral serves a REST API at port 8006 (`corral web`), plus
 WebSocket bridges for VNC and serial consoles. All responses are JSON unless
 noted otherwise.
 
@@ -13,7 +13,7 @@ The same API is available from the on-cluster deployment at
 ## Errors
 
 Every error response has shape `{"error": "<message>"}` with a 4xx or 5xx
-status code. `5xx` means the cluster couldn't be reached (kubectl failed);
+status code. `5xx` means the server couldn't reach the cluster (kubectl failed);
 `4xx` means invalid input.
 
 ---
@@ -23,7 +23,7 @@ status code. `5xx` means the cluster couldn't be reached (kubectl failed);
 ### `GET /api/vms`
 
 List all VMs across all namespaces. Merges live VMI data (IP, node) for
-running VMs.
+VMs that run.
 
 **Response** (array):
 
@@ -83,11 +83,11 @@ Exactly one *source* field must be set.
 {"task": "bootc-web-1712345678"}
 ```
 
-The task ID can be polled at `GET /api/tasks/{id}`.
+Poll the task ID at `GET /api/tasks/{id}`.
 
 ### `GET /api/vms/{ns}/{name}`
 
-Get raw VM manifest JSON (the kubevirt VirtualMachine object).
+Get the raw JSON of the VM manifest (the kubevirt VirtualMachine object).
 
 ### `POST /api/vms/{ns}/{name}/{action}`
 
@@ -108,7 +108,7 @@ Execute an action on a VM. Valid actions:
 
 Live-migrate as a tracked background task with progress in the activity panel.
 The trigger runs synchronously (so "not migratable / cross-vendor" errors come
-back immediately); the migration is then watched to completion.
+back immediately); then the server watches the migration to completion.
 
 **Body**: `{"targetNode": "bihar"}` (optional — empty lets the scheduler choose,
 from among same-CPU-vendor nodes).
@@ -118,8 +118,8 @@ from among same-CPU-vendor nodes).
 ### `POST /api/vms/{ns}/{name}/tags`
 
 Add or remove a tag, persisted as a `corral.dev/tag.<name>` VM label (so tags
-survive round-trips and are `kubectl get vm -l`-selectable). Tags are surfaced
-on every VM in `GET /api/vms`.
+survive round-trips and are `kubectl get vm -l`-selectable). `GET /api/vms`
+shows the tags on every VM.
 
 **Body**: `{"tag": "prod", "on": true}`
 
@@ -181,7 +181,7 @@ annotation.
 
 ### `DELETE /api/cts/{ns}/{name}`
 
-Delete a Container: its pod, Service (if a tailnet proxy was applied), and
+Delete a Container: its pod, Service (if it has a tailnet proxy), and
 data volume.
 
 **Response**: `{"status": "deleted"}`
@@ -257,7 +257,7 @@ Delete a snapshot.
 
 ### `POST /api/vms/{ns}/{name}/clone`
 
-Clone a VM (definition and disks). The VM must be stopped. Body:
+Clone a VM (definition and disks). Stop the VM first. Body:
 `{"target": "web-clone"}`. Needs the `Snapshot` feature gate + a
 `VolumeSnapshotClass`.
 
@@ -275,7 +275,7 @@ Mark or unmark a VM as a template. Body: `{"on": true}`.
 
 ### `GET /api/images`
 
-The built-in OS image catalog — curated, ready-to-boot containerdisks.
+The built-in catalog of OS images — curated, ready-to-boot containerdisks.
 
 **Response** (array):
 
@@ -290,7 +290,7 @@ The built-in OS image catalog — curated, ready-to-boot containerdisks.
 ]
 ```
 
-User-defined custom sources are appended, each flagged `"custom": true`.
+The response then adds the user-defined custom sources, each with the flag `"custom": true`.
 
 ### `GET /api/sources`
 
@@ -373,7 +373,7 @@ available.
 ### `GET /api/vms/{ns}/{name}/metrics/history`
 
 Retained CPU samples for the Summary-panel sparkline. The server samples every
-running VM every ~15s into a bounded in-memory ring buffer (~1h). Returns
+live VM every ~15s into a bounded in-memory ring buffer (~1h). Returns
 `[{"t": <epoch-ms>, "cpu": <millicores>}, …]` — an empty array when
 metrics-server is absent.
 
@@ -385,13 +385,13 @@ metrics-server is absent.
 
 The caller's tailnet identity and privilege, for the UI to show the logged-in
 user and switch to read-only for non-admins. Identity comes from the Tailscale
-ingress headers; admin is governed by `CORRAL_ADMINS` (see
+ingress headers; `CORRAL_ADMINS` controls admin (see
 [ADR-0003](adr/0003-identity-source.md)).
 
 **Response**: `{"login": "alice@github", "name": "Alice", "admin": true, "enforced": false}`
 
-Mutating requests (non-GET) are rejected with `403` for non-admins when an
-allowlist is configured.
+When an allowlist exists, the server rejects requests that change state
+(non-GET) from non-admins with `403`.
 
 ### `GET /api/nodes`
 
@@ -492,8 +492,8 @@ browser.
 
 ### `GET /api/vms/{ns}/{name}/export`
 
-Download a VM disk backup. The VM must be stopped (RWO disk is busy while
-running). Triggers `virtctl vmexport` and streams the result.
+Download a VM disk backup. Stop the VM first (the RWO disk is busy while
+the VM runs). Triggers `virtctl vmexport` and streams the result.
 
 | Query | Format | Content-Type |
 |---|---|---|
@@ -507,7 +507,7 @@ request returns `501` and the default raw.gz still works.
 
 ## Pools and cross-backend move
 
-Pools are the user-defined folders of ADR-0008; paths travel in the body or the
+Pools are the user-defined folders of ADR-0008. Paths travel in the body or the
 query string, never in the route, because a nested path contains slashes.
 
 | Method | Route | Notes |
@@ -532,10 +532,10 @@ live migration, and `corral migrate` remains the live, same-backend operation.
 
 Body for both: `{ref, toBackend, toContext?, toNamespace?, name?, scratch?, deleteSource?}`.
 
-A refused preflight is a **200** — the refusals are the answer, and an error
+A refused preflight is a **200** — the refusals are the answer. An error
 status would make a UI show "request failed" where it should show three reasons.
-A refused commit is a **409** carrying the same list. The source is stopped and
-kept unless `deleteSource` is set.
+A refused commit is a **409** with the same list. The move stops the source and
+keeps it unless `deleteSource` is set.
 
 ---
 
@@ -555,7 +555,7 @@ kept unless `deleteSource` is set.
 | `GET` | `/metrics` | Prometheus text exposition. Requires `corral web --metrics` |
 
 Served from a cached snapshot refreshed on a background timer, so a scrape never
-fans out to the backends. `corral_collection_age_seconds` is published for that
+fans out to the backends. Corral publishes `corral_collection_age_seconds` for that
 reason: without it, a frozen collector is indistinguishable from a stable fleet.
 The `context` label is the configured context's name, so the instance series
 and `corral_backend_up` join. The `pool` label is the one that spans backends —
@@ -564,14 +564,14 @@ across a KubeVirt cluster and a Proxmox host at once. See ADR-0011 for the full
 series list and label rationale.
 
 Without `--metrics` the endpoint still answers 200 with
-`corral_collection_success 0`: a scraper that receives a 503 records nothing,
-and "up but not collecting" is the state worth alerting on.
+`corral_collection_success 0`. A scraper that receives a 503 records nothing,
+and "up but no collection" is the state that deserves an alert.
 
 ---
 
 ## Static assets
 
-The embedded SPA is served at the root:
+The server serves the embedded SPA at the root:
 
 | Route | File |
 |---|---|

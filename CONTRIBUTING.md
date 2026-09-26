@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for your interest in contributing! This project is part of the [TunaOS](https://tunaos.org) ecosystem.
+Thanks for your interest in a contribution! This project is part of the [TunaOS](https://tunaos.org) ecosystem.
 
 ## Getting Started
 
@@ -8,13 +8,13 @@ Thanks for your interest in contributing! This project is part of the [TunaOS](h
 2. Install the Go version declared in [`go.mod`](go.mod) and the
    [`just`](https://just.systems) command runner.
 3. Read the project [README](README.md), [architecture overview](docs/architecture.md),
-   and [testing strategy](docs/testing.md).
-4. Open an issue to discuss your change before submitting a PR.
+   and [test strategy](docs/testing.md).
+4. Open an issue to discuss your change before you submit a PR.
 
 ## Validate Your Changes
 
 Corral builds two tag sets — plain and `-tags bootc` (the bootc plugin) —
-and CI checks both. Run the local pre-push gate before opening a PR:
+and CI checks both. Run the local pre-push gate before you open a PR:
 
 ```bash
 just ci
@@ -31,8 +31,8 @@ just build   # go build, both tag sets
 just test    # go test -race, both tag sets
 ```
 
-Some tests exercise real tools (qemu-img, rclone conversions); install them
-locally if you touch that code path, or rely on CI to run them.
+Some tests use real tools (qemu-img, rclone conversions). If you touch that
+code path, install them locally, or rely on CI to run them.
 
 ## Pull Requests
 

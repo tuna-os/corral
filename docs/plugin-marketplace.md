@@ -8,16 +8,16 @@ main Corral process.
 
 - Name the executable `corral-<name>`, where the name matches
   `^[a-z][a-z0-9-]{0,62}$`.
-- Accept normal CLI arguments directly. Corral connects stdin/stdout/stderr and
+- Take normal arguments directly from the command line. Corral connects stdin/stdout/stderr and
   returns the plugin process's exit status. Human output belongs on stdout;
   diagnostics belong on stderr.
 - Read `CORRAL_PLUGIN` when behavior depends on the dispatched name. Honor the
   same `CORRAL_KUBE_CONTEXT`, `CORRAL_INCUS_REMOTE`, and
   `CORRAL_LIBVIRT_URI` one-shot context variables as core commands. Never
   switch kubectl, Incus, or libvirt global state.
-- Implement `--corral-plugin-metadata`. It must print one JSON object using
-  API `corral.plugin/v1` and exit successfully without doing other work. Go
-  plugins can call `sdk.HandleMetadata` before constructing their command.
+- Support `--corral-plugin-metadata`. It must print a single JSON object with
+  API `corral.plugin/v1`, then exit successfully and do no other work. Go
+  plugins can call `sdk.HandleMetadata` before they construct their command.
 - Treat capabilities and permissions as declarations, not authorization.
   Corral asks for install consent; the plugin must still use least-privilege
   credentials and rely on Kubernetes, filesystem, and network enforcement.
@@ -50,14 +50,14 @@ func main() {
 
 Test the binary directly, test the metadata handshake, then test dispatch with
 `CORRAL_PLUGIN_DIR=/path/to/bin corral hello`. Plugins should not import
-`cmd`; reusable backend behavior belongs in a `pkg/` package.
+`cmd`; reusable behavior for a backend belongs in a `pkg/` package.
 
 ## External marketplace
 
 1. Build immutable binaries for each advertised platform.
-2. Publish them at HTTPS URLs that will never be replaced.
-3. Create an index conforming to `marketplace/schema-v2.json`. Every artifact
-   needs its SHA-256 digest. Publishers may additionally sign the lowercase
+2. Publish them at HTTPS URLs that you never replace.
+3. Create an index that conforms to `marketplace/schema-v2.json`. Every artifact
+   needs its SHA-256 digest. Publishers may also sign the lowercase
    digest with Ed25519 and publish the base64 public key.
 4. Validate it with `corral marketplace validate index.json`.
 5. Host the index over HTTPS and test it with
@@ -71,10 +71,10 @@ operator who accepts that danger can add the source with
 a warning when it reads the index and again at install time, and
 `corral marketplace list` shows the source as `unverified`.
 
-Duplicate plugin names must be selected as `source/name`. Installation shows
-the publisher, requested permissions, and requires explicit permission
-consent. Corral verifies compatibility, digest, and any supplied signature
-before atomically replacing an installed plugin; failed state writes roll the
+To select a plugin with a duplicate name, use `source/name`. Installation
+shows the publisher and the requested permissions, and it needs explicit
+consent to those permissions. Corral verifies compatibility, digest, and any
+supplied signature before it atomically replaces an installed plugin; failed state writes roll the
 binary back.
 
 ## Recommended CI
@@ -82,11 +82,11 @@ binary back.
 Build from a version tag, run the plugin's tests, generate checksums, validate
 the index, and publish both artifacts and index in one immutable release. The
 repository's `scripts/generate-marketplace.sh` and `publish-plugins` workflow
-are a working reference.
+are a reference that works.
 
 ## First-party plugins
 
-The maintained catalog and its maturity are documented in
-[first-party-plugins.md](first-party-plugins.md). First-party means published
+[first-party-plugins.md](first-party-plugins.md) documents the maintained
+catalog and its maturity. First-party means published
 by tuna-os through the curated marketplace; it does not grant the plugin more
 runtime privilege than an external plugin.
