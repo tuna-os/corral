@@ -285,3 +285,128 @@ func TestOperatorKey(t *testing.T) {
 		t.Errorf("operatorKey = %q", got)
 	}
 }
+
+// TestVerdict covers the precedence order verdict decides Run's outcome by,
+// entirely off already-collected Result state — no VM, no SSH, no host.
+func TestVerdict(t *testing.T) {
+	blankFrame := &qemu.Frame{StdDev: 0.0}
+	paintedFrame := &qemu.Frame{StdDev: 1.0}
+
+	for _, tc := range []struct {
+		name          string
+		spec          *Spec
+		result        *Result
+		sshReachable  bool
+		wantExitCode  int
+		wantStatus    string
+		wantErrSubstr string
+	}{
+		{
+			name:         "passes with nothing to report",
+			spec:         &Spec{},
+			result:       &Result{},
+			sshReachable: true,
+			wantExitCode: ExitOK,
+			wantStatus:   "passed",
+		},
+		{
+			name:          "a hook that never reported outranks a passing check",
+			spec:          &Spec{Checks: []string{"true"}},
+			result:        &Result{Hook: &HookResult{Ran: false}, Checks: []CheckResult{{Passed: true}}},
+			sshReachable:  true,
+			wantExitCode:  ExitHook,
+			wantStatus:    "failed",
+			wantErrSubstr: "never reported",
+		},
+		{
+			name:          "a hook that ran and failed outranks a passing check",
+			spec:          &Spec{Checks: []string{"true"}},
+			result:        &Result{Hook: &HookResult{Ran: true, ExitCode: 3}, Checks: []CheckResult{{Passed: true}}},
+			sshReachable:  true,
+			wantExitCode:  ExitHook,
+			wantStatus:    "failed",
+			wantErrSubstr: "exit 3",
+		},
+		{
+			name:          "a hook that ran and passed does not mask unreachable-SSH checks",
+			spec:          &Spec{Checks: []string{"true"}},
+			result:        &Result{Hook: &HookResult{Ran: true, ExitCode: 0}},
+			sshReachable:  false,
+			wantExitCode:  ExitCheck,
+			wantStatus:    "failed",
+			wantErrSubstr: "SSH never answered",
+		},
+		{
+			name:         "unreachable SSH is not a failure when there are no checks to run",
+			spec:         &Spec{},
+			result:       &Result{},
+			sshReachable: false,
+			wantExitCode: ExitOK,
+			wantStatus:   "passed",
+		},
+		{
+			name:          "the first failing check wins, later checks notwithstanding",
+			spec:          &Spec{Checks: []string{"a", "b", "c"}},
+			result:        &Result{Checks: []CheckResult{{Command: "a", Passed: true}, {Command: "b", Passed: false}, {Command: "c", Passed: true}}},
+			sshReachable:  true,
+			wantExitCode:  ExitCheck,
+			wantStatus:    "failed",
+			wantErrSubstr: "check failed: b",
+		},
+		{
+			name:         "a blank final frame fails only when RequirePaint asked for it",
+			spec:         &Spec{Screenshots: Screenshots{RequirePaint: false}},
+			result:       &Result{FinalFrame: blankFrame},
+			sshReachable: true,
+			wantExitCode: ExitOK,
+			wantStatus:   "passed",
+		},
+		{
+			name:          "a blank final frame fails when RequirePaint is set",
+			spec:          &Spec{Screenshots: Screenshots{RequirePaint: true}},
+			result:        &Result{FinalFrame: blankFrame},
+			sshReachable:  true,
+			wantExitCode:  ExitBlank,
+			wantStatus:    "failed",
+			wantErrSubstr: "never painted anything",
+		},
+		{
+			name:         "a painted final frame passes even with RequirePaint set",
+			spec:         &Spec{Screenshots: Screenshots{RequirePaint: true}},
+			result:       &Result{FinalFrame: paintedFrame},
+			sshReachable: true,
+			wantExitCode: ExitOK,
+			wantStatus:   "passed",
+		},
+		{
+			name:         "a passing check and a painted frame both clear",
+			spec:         &Spec{Checks: []string{"a"}, Screenshots: Screenshots{RequirePaint: true}},
+			result:       &Result{Checks: []CheckResult{{Command: "a", Passed: true}}, FinalFrame: paintedFrame},
+			sshReachable: true,
+			wantExitCode: ExitOK,
+			wantStatus:   "passed",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := verdict(tc.spec, tc.result, tc.sshReachable)
+			if tc.wantExitCode == ExitOK {
+				if err != nil {
+					t.Fatalf("verdict() = %v, want nil", err)
+				}
+			} else {
+				if err == nil {
+					t.Fatal("verdict() = nil, want an error")
+				}
+				if !strings.Contains(err.Error(), tc.wantErrSubstr) {
+					t.Errorf("verdict() error = %q, want it to contain %q", err.Error(), tc.wantErrSubstr)
+				}
+			}
+			if tc.result.ExitCode != tc.wantExitCode {
+				t.Errorf("result.ExitCode = %d, want %d", tc.result.ExitCode, tc.wantExitCode)
+			}
+			if tc.result.Status != tc.wantStatus {
+				t.Errorf("result.Status = %q, want %q", tc.result.Status, tc.wantStatus)
+			}
+		})
+	}
+}
