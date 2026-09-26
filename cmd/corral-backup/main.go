@@ -324,7 +324,10 @@ func ensureRclone() error {
 
 // ── Scheduled backups (CronJobs) ───────────────────────────────────
 
-const rcloneMountPath = "/root/.config/rclone"
+// rcloneMountPath is where the CronJob mounts the rclone config Secret.
+// The pod runs as non-root, and /root is mode 0700 in the backup image,
+// so the mount cannot go in /root.
+const rcloneMountPath = "/etc/rclone"
 
 func cronJobName(vm string) string { return "corral-backup-" + vm }
 func secretName(vm string) string  { return "corral-backup-rclone-" + vm }
@@ -374,7 +377,7 @@ func addSchedule(vm, ns, cron, dest string, keep int) error {
 		cronops.ServiceAccount(ns),
 		cronops.Role(ns),
 		cronops.RoleBinding(ns),
-		cronops.CronJobWithSecret(cronJobName(vm), ns, cron,
+		cronops.BackupCronJob(cronJobName(vm), ns, cron,
 			cronops.BackupScript(vm, ns, dest, keep),
 			map[string]string{scheduleLabelKey(): vm}, sec, rcloneMountPath),
 	} {
@@ -392,7 +395,7 @@ func scheduleCmd() *cobra.Command {
 		Use:   "schedule <vm>",
 		Short: "Schedule periodic backups for a VM (with retention pruning) as an in-cluster CronJob",
 		Long: "Creates a CronJob that runs entirely in-cluster (no workstation needs to be\n" +
-			"online) — it fetches virtctl + rclone at runtime, exports the VM's disk,\n" +
+			"online) — it fetches virtctl at runtime, exports the VM's disk,\n" +
 			"uploads it to the remote, and prunes backups for this VM beyond --keep.\n\n" +
 			"Your local rclone config (with the remote's credentials) is copied into a\n" +
 			"namespaced Secret the CronJob mounts — run `rclone config` locally first.",

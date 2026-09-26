@@ -67,17 +67,87 @@ func TestCronJob_Shape(t *testing.T) {
 	}
 }
 
-func TestCronJobWithSecret_MountsSecretReadOnly(t *testing.T) {
-	cj := CronJobWithSecret("corral-backup-web", "tailvm", "0 3 * * *", "echo hi",
-		nil, "corral-backup-rclone-config", "/root/.config/rclone")
-	s := marshal(t, cj)
+// backupPodSpec digs the pod spec out of a BackupCronJob manifest.
+func backupPodSpec(t *testing.T) map[string]any {
+	t.Helper()
+	cj := BackupCronJob("corral-backup-web", "tailvm", "0 3 * * *", "echo hi",
+		nil, "corral-backup-rclone-config", "/etc/rclone")
+	var m struct {
+		Spec struct {
+			JobTemplate struct {
+				Spec struct {
+					Template struct {
+						Spec map[string]any `json:"spec"`
+					} `json:"template"`
+				} `json:"spec"`
+			} `json:"jobTemplate"`
+		} `json:"spec"`
+	}
+	if err := json.Unmarshal([]byte(marshal(t, cj)), &m); err != nil {
+		t.Fatal(err)
+	}
+	return m.Spec.JobTemplate.Spec.Template.Spec
+}
+
+func TestBackupCronJob_MountsSecretReadOnly(t *testing.T) {
+	s := marshal(t, backupPodSpec(t))
 	for _, want := range []string{
 		`"secretName":"corral-backup-rclone-config"`,
-		`"mountPath":"/root/.config/rclone"`,
+		`"mountPath":"/etc/rclone"`,
 		`"readOnly":true`,
+		`"name":"RCLONE_CONFIG","value":"/etc/rclone/rclone.conf"`,
 	} {
 		if !strings.Contains(s, want) {
-			t.Errorf("CronJobWithSecret missing %q: %s", want, s)
+			t.Errorf("BackupCronJob missing %q: %s", want, s)
+		}
+	}
+}
+
+// #313: the backup pod must not depend on its images' default user, and
+// must get rclone from its image instead of installing it at runtime.
+func TestBackupCronJob_NonRootWithToolsVolume(t *testing.T) {
+	spec := backupPodSpec(t)
+	s := marshal(t, spec)
+	for _, want := range []string{
+		`"runAsNonRoot":true`,
+		`"runAsUser":1001`,
+		`"allowPrivilegeEscalation":false`,
+		`"emptyDir":{}`,
+		`"mountPath":"` + ToolsDir + `"`,
+		`"name":"PATH","value":"` + ToolsDir + `:`,
+		`"serviceAccountName":"` + RBACName + `"`,
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("BackupCronJob pod spec missing %q: %s", want, s)
+		}
+	}
+	inits := spec["initContainers"].([]any)
+	if len(inits) != 1 || inits[0].(map[string]any)["image"] != KubectlImage {
+		t.Errorf("init container should run %s: %v", KubectlImage, inits)
+	}
+	ctrs := spec["containers"].([]any)
+	if len(ctrs) != 1 || ctrs[0].(map[string]any)["image"] != BackupImage {
+		t.Errorf("main container should run %s: %v", BackupImage, ctrs)
+	}
+	for _, img := range []string{KubectlImage, BackupImage} {
+		if !strings.Contains(img, "@sha256:") {
+			t.Errorf("image %s is not digest-pinned", img)
+		}
+	}
+}
+
+func TestToolsScript(t *testing.T) {
+	s := ToolsScript()
+	for _, want := range []string{
+		"observedKubeVirtVersion",
+		"aarch64|arm64) ARCH=arm64",
+		"curl -fsSL -o /tools/virtctl",
+		"virtctl-${KV_VERSION}-linux-${ARCH}",
+		"chmod +x /tools/virtctl",
+		`cp "$(command -v kubectl)" /tools/kubectl`,
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("ToolsScript missing %q:\n%s", want, s)
 		}
 	}
 }
@@ -114,9 +184,6 @@ func TestRole_CoversExportAndPortForward(t *testing.T) {
 func TestBackupScript(t *testing.T) {
 	s := BackupScript("web", "tailvm", "r2:backups/corral", 5)
 	for _, want := range []string{
-		"observedKubeVirtVersion",
-		"virtctl-${KV_VERSION}-linux-amd64",
-		"rclone.org/install.sh",
 		"kubectl get vm web -n tailvm",
 		"persistentVolumeClaim.claimName",
 		"virtctl vmexport download web-export",
@@ -128,6 +195,15 @@ func TestBackupScript(t *testing.T) {
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("BackupScript missing %q:\n%s", want, s)
+		}
+	}
+	// #313: the pod runs as non-root, so neither script may write outside
+	// ToolsDir and /tmp, or pipe an installer into a shell.
+	for _, script := range []string{s, ToolsScript()} {
+		for _, bad := range []string{"/usr/local/bin", "/usr/bin", "install.sh", "| bash", "| sh"} {
+			if strings.Contains(script, bad) {
+				t.Errorf("script contains %q:\n%s", bad, script)
+			}
 		}
 	}
 }
