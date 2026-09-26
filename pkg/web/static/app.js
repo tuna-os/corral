@@ -2,7 +2,8 @@
 // Vanilla JS; noVNC + xterm.js vendored under static/vendor/ (offline-safe).
 
 import { icon } from './icons.js';
-import { bindPools, loadPools, renderTreePools } from './pools.js';
+import { bindPools, loadPools, poolState, renderTreePools } from './pools.js';
+import { bindPalette, initKeys } from './palette.js';
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -290,9 +291,45 @@ function treeViewToggle() {
   return div;
 }
 
+// The tree filter (`/` focuses it) narrows the guest rows by name. It is built
+// once and kept across re-renders: the 5s poll rebuilds the tree, and a
+// rebuilt input would drop focus and the caret mid-word.
+let treeFilter = '';
+let treeFilterEl = null;
+
+function treeFilterBox() {
+  if (treeFilterEl) return treeFilterEl;
+  treeFilterEl = document.createElement('input');
+  treeFilterEl.id = 'tree-filter';
+  treeFilterEl.type = 'search';
+  treeFilterEl.placeholder = 'Filter guests…  /';
+  treeFilterEl.setAttribute('aria-label', 'Filter the tree by guest name');
+  treeFilterEl.addEventListener('input', () => { treeFilter = treeFilterEl.value.trim().toLowerCase(); applyTreeFilter(); });
+  treeFilterEl.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { treeFilterEl.value = ''; treeFilter = ''; applyTreeFilter(); treeFilterEl.blur(); }
+  });
+  return treeFilterEl;
+}
+
+function applyTreeFilter() {
+  $('#tree').querySelectorAll('.tree-item[data-guest]').forEach((row) => {
+    row.hidden = !!treeFilter && !row.dataset.guest.toLowerCase().includes(treeFilter);
+  });
+}
+
+function focusTreeFilter() {
+  $('#tree').classList.add('open'); // the drawer, on a phone
+  const el = treeFilterBox();
+  el.focus();
+  el.select();
+}
+
 function renderTree() {
   const tree = $('#tree');
-  tree.replaceChildren();
+  const filter = treeFilterBox();
+  // Everything but the filter box goes; removing a focused input blurs it.
+  for (const child of [...tree.children]) if (child !== filter) child.remove();
+  if (!filter.isConnected) tree.appendChild(filter);
   tree.appendChild(treeViewToggle());
 
   tree.appendChild(treeRow({
@@ -342,19 +379,22 @@ function renderTree() {
   if (treeView === 'pool') renderTreePools(tree);
   else if (treeView === 'namespace') renderTreeNamespaces(tree);
   else renderTreeServer(tree);
+  applyTreeFilter();
 }
 
 // CTs sit in the same per-node/per-namespace groups as VMs, distinguished
 // only by icon — matching real Proxmox, which puts VMs and CTs in one
 // resource tree per node/pool rather than segregating them.
 function ctRow(c, lvl) {
-  return treeRow({
+  const row = treeRow({
     lvl, icon: icon('container'), label: c.name,
     sub: c.namespace,
     dot: c.ready ? 'on' : c.phase === 'Stopped' ? 'off' : 'mid',
     sel: selected.type === 'ct' && selected.key === ctKey(c),
     onclick: () => select({ type: 'ct', key: ctKey(c) }),
   });
+  row.dataset.guest = c.name;
+  return row;
 }
 
 // Server View: Datacenter → Node → VMs/CTs, grouped by .node. Guests with
@@ -425,13 +465,15 @@ function renderTreeNamespaces(tree) {
 }
 
 function vmRow(vm, lvl) {
-  return treeRow({
+  const row = treeRow({
     lvl, icon: icon(vm.isTemplate ? 'template' : 'cube'), label: vm.name,
     sub: vm.isTemplate ? 'template' : vm.namespace,
     dot: vm.ready ? 'on' : (vm.running ? 'mid' : 'off'),
     sel: selected.type === 'vm' && selected.key === vmKey(vm),
     onclick: () => select({ type: 'vm', key: vmKey(vm) }),
   });
+  row.dataset.guest = vm.name;
+  return row;
 }
 
 // markRendered records the just-rendered state so the next poll tick doesn't
@@ -440,14 +482,39 @@ function markRendered() {
   lastRenderFp = JSON.stringify([vms, cts, nodes, selected, tab]);
 }
 
-function select(sel) {
+function select(sel, openTab = 'summary') {
   disconnectConsoles();
   if (selected.type === 'multiview' && sel.type !== 'multiview') disconnectMultiview();
   selected = sel;
-  tab = 'summary';
+  tab = openTab;
   renderTree();
   renderContent();
   markRendered();
+}
+
+// openVM selects a VM and, optionally, one of its tabs. "console" means the
+// best console the VM has: VNC when it has one, the serial terminal if not.
+function openVM(key, wantTab) {
+  const vm = findVM(key);
+  if (!vm) return;
+  const cap = vm.capabilities || {};
+  const t = wantTab === 'console' && !cap.vnc && cap.tty ? 'terminal' : (wantTab || 'summary');
+  // Already there: leave a live console connected rather than reconnecting it.
+  if (selected.type === 'vm' && selected.key === key && tab === t) return;
+  select({ type: 'vm', key }, t);
+}
+
+// openPool shows a pool the only place pools are drawn: the Pool View tree.
+async function openPool(path) {
+  if (treeView !== 'pool') setTreeView('pool');
+  await loadPools();
+  renderTree();
+  const row = [...$('#tree').querySelectorAll('.tree-item')].find((r) => r.title === path);
+  if (!row) return;
+  $('#tree').classList.add('open');
+  row.scrollIntoView({ block: 'nearest' });
+  row.classList.add('flash');
+  setTimeout(() => row.classList.remove('flash'), 1500);
 }
 
 // ── Content panel ─────────────────────────────────────────────────
@@ -1556,6 +1623,7 @@ async function renderPowerSchedule(vm) {
   if (!box) return;
   let s = {};
   try { s = await api(vmURL(vm, '/powerschedule')); } catch { /* form */ }
+  if (!box.isConnected) return; // the tab changed while this loaded
   const has = s && (s.start || s.stop);
   box.innerHTML = `
     <h2 class="section">${icon('play')} Autostart / shutdown windows</h2>
@@ -2698,6 +2766,27 @@ $('#btn-create').innerHTML = `${icon('plus')} Create VM`;
 // pool row and a node row stay visually identical — the difference is what a
 // drop onto one means, not how it looks.
 bindPools({ api, toast, esc, icon, refresh, treeRow, vmRow });
+
+// The palette reads the fleet through getters: the poll replaces these arrays
+// rather than mutating them, so a captured reference would go stale.
+bindPalette({
+  esc, icon, vmKey,
+  vms: () => vms,
+  cts: () => cts,
+  nodes: () => nodes,
+  pools: poolState,
+  ensurePools: async () => { if (!(poolState().folders || []).length) { await loadPools(); } },
+  go: select,
+  openVM,
+  openPool,
+  vmAction: (key, act) => { const vm = findVM(key); if (vm) vmAction(vm, act); },
+  ctAction: (key, act) => { const c = findCT(key); if (c) ctAction(c, act); },
+  createVM: () => $('#btn-create').click(),
+  createCT: () => $('#btn-create-ct').click(),
+  selectedVMKey: () => (selected.type === 'vm' ? selected.key : null),
+  focusFilter: focusTreeFilter,
+});
+initKeys();
 
 loadWhoami();
 loadCaps();
