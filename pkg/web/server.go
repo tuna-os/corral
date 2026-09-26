@@ -221,7 +221,7 @@ func newMux() (http.Handler, error) {
 
 	// The admin gate lets safe (GET) requests through and rejects mutating
 	// requests from non-admins when CORRAL_ADMINS is set.
-	return peerServiceAuth(adminGate(peerGate(mux))), nil
+	return peerServiceAuth(adminGate(activityTracker(peerGate(mux)))), nil
 }
 
 // serveIndex reads the embedded index.html, injects the active theme, and
