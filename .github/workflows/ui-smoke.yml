@@ -50,3 +50,13 @@ jobs:
 
       - name: UI smoke
         run: node scripts/ui-smoke.mjs
+
+      # Named checks save what they saw (e.g. command-palette.png), so a
+      # reviewer can look at a UI change without running it.
+      - name: Upload smoke screenshots
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ui-smoke-screenshots
+          path: ui-smoke-screenshots/
+          if-no-files-found: ignore

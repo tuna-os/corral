@@ -8,9 +8,12 @@
 // Fails (exit 1) on any assertion or page error.
 // For reproducible documentation images, see scripts/capture-docs.mjs.
 
+import { mkdir } from 'node:fs/promises';
 import { chromium } from 'playwright';
 
 const BASE = process.env.CORRAL_URL || 'http://127.0.0.1:8899/';
+// Named checks save a screenshot here; the workflow uploads the directory.
+const SHOTS = process.env.UI_SMOKE_SHOTS || 'ui-smoke-screenshots';
 let failures = 0;
 const check = (ok, msg) => {
   console.log(`${ok ? 'ok' : 'FAIL'} - ${msg}`);
@@ -66,6 +69,59 @@ check(doctorText.includes('KubeVirt installed'), 'doctor renders checks');
 const broken = await page.locator('.doc-broken').allTextContents();
 const clusterBroken = broken.filter((t) => /KubeVirt|CDI|StorageClass|Snapshot|Export|metrics/i.test(t));
 check(clusterBroken.length === 0, `cluster checks green in demo (${clusterBroken.join('; ').slice(0, 120)})`);
+
+// ── command-palette (#349) ────────────────────────────────────────
+// Ctrl+K, a demo VM's name, Enter: that VM is selected. Starts from Cluster
+// health, so a pass means the palette moved the selection, not that it was
+// already there.
+await page.keyboard.press('Control+k');
+await page.waitForSelector('#palette[open] #palette-input', { timeout: 5000 }).catch(() => {});
+check(await page.locator('#palette[open]').count() === 1, 'command-palette: Ctrl+K opens the palette');
+await page.keyboard.type('db-prod');
+check(
+  (await page.textContent('#palette-list li.active .palette-label').catch(() => '')) === 'db-prod',
+  'command-palette: typing a VM name puts that VM first',
+);
+check(await page.locator('#palette-list li', { hasText: 'Stop db-prod' }).count() === 1, 'command-palette: actions are searchable');
+await page.keyboard.press('Enter');
+await page.waitForTimeout(800);
+check(await page.locator('#palette[open]').count() === 0, 'command-palette: Enter closes the palette');
+check(await page.locator('#tree .tree-item.selected', { hasText: 'db-prod' }).count() === 1, 'command-palette: Enter selects the VM in the tree');
+check(
+  (await page.textContent('.page-head h1')).includes('db-prod'),
+  'command-palette: Enter opens the VM',
+);
+await mkdir(SHOTS, { recursive: true });
+await page.keyboard.press('Control+k');
+await page.waitForSelector('#palette[open]', { timeout: 5000 }).catch(() => {});
+check(
+  (await page.textContent('#palette-list li.active .palette-label').catch(() => '')) === 'db-prod',
+  'command-palette: the recently used VM ranks first',
+);
+await page.keyboard.type('web');
+await page.screenshot({ path: `${SHOTS}/command-palette.png` });
+await page.keyboard.press('Escape');
+check(await page.locator('#palette[open]').count() === 0, 'command-palette: Escape closes the palette');
+
+// `?` lists the shortcuts; `/` focuses the tree filter, which narrows guests.
+await page.locator('body').focus();
+await page.keyboard.press('?');
+check(await page.locator('#shortcuts[open]').count() === 1, 'shortcuts: ? opens the shortcut overlay');
+await page.screenshot({ path: `${SHOTS}/shortcuts.png` });
+await page.keyboard.press('Escape');
+await page.keyboard.press('/');
+check(await page.evaluate(() => document.activeElement?.id) === 'tree-filter', 'shortcuts: / focuses the tree filter');
+await page.keyboard.type('db-pr');
+check(
+  await page.locator('#tree .tree-item[data-guest]:visible').count() === 1,
+  'tree filter narrows the tree to matching guests',
+);
+await page.keyboard.press('Escape');
+check(await page.locator('#tree .tree-item[data-guest]:visible').count() > 1, 'Escape clears the tree filter');
+await page.keyboard.press('g');
+await page.keyboard.press('d');
+await page.waitForTimeout(500);
+check(await page.locator('#tree .tree-item.selected', { hasText: 'Datacenter' }).count() === 1, 'shortcuts: g d goes to the datacenter');
 
 // Create wizard opens with catalog cards.
 await page.click('#tree >> text=Datacenter');

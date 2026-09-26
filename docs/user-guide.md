@@ -79,6 +79,25 @@ Access the Proxmox-style Web UI at `http://localhost:8006` or via `corral web`.
 
 ![Mobile Dashboard](screenshots/dashboard-mobile.png)
 
+#### Web keyboard shortcuts
+
+Press `Ctrl+K` (`⌘K` on macOS) to open the command palette. Type part of a
+name to find a VM, a CT, a node or a pool. Type a verb and a name to find an
+action, for example `stop web-prod`. Press `Enter` to run the first result.
+The items that you used last show at the top of the list.
+
+| Key | Action |
+|---|---|
+| `Ctrl+K` | Open the command palette |
+| `?` | Show the list of shortcuts |
+| `/` | Filter the tree by guest name |
+| `c` | Open the console of the selected VM |
+| `s` | Start or stop the selected VM |
+| `g` then `d` | Go to the datacenter |
+
+The one-key shortcuts do not operate when you type in a field or in a console.
+A read-only user does not see the actions that change a guest.
+
 #### Theme & Branding
 
 Corral's web UI accent colour, header branding, and custom CSS are fully
