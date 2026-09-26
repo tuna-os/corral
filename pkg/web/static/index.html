@@ -39,6 +39,8 @@
 <!-- Proxmox-style task panel: recent/running server operations.
      First Alpine.js island — see docs/adr/0004-web-ui-alpinejs-no-build.md. -->
 <div id="task-panel" x-data="taskPanel()" x-init="start()" :class="{ collapsed: collapsed }">
+  <div id="dock-resizer" role="separator" aria-orientation="horizontal" x-show="!collapsed"
+       aria-label="Resize the task dock" tabindex="0" title="Drag to resize · double-click to reset"></div>
   <div id="task-panel-head" @click="collapsed = !collapsed">
     <span id="task-panel-title">Tasks</span>
     <span id="task-panel-summary" class="muted" x-text="summary"></span>

@@ -3,6 +3,7 @@
 
 import { icon } from './icons.js';
 import { bindPools, loadPools, renderTreePools } from './pools.js';
+import { makeSplitter, makeCollapsible } from './ui/splitter.js';
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -2620,66 +2621,58 @@ document.addEventListener('alpine:init', () => {
   }));
 });
 
-// ── Sidebar resizing ──────────────────────────────────────────────
+// ── Workspace: resizable, collapsible panels (#341) ──────────────
 //
 // The tree holds pool names, VM names and backend rows an operator chose, so
-// no fixed width is right for everyone (#290). The width lives in a CSS
-// custom property, is clamped by the stylesheet, and is remembered per
-// browser. The handle is focusable: arrow keys resize it too.
+// no fixed width is right for everyone (#290); the task dock's height is the
+// same kind of preference. Both boundaries are ui/splitter.js splitters:
+// drag, arrow keys, Home or double-click to reset, remembered per browser.
+// Ctrl+B collapses the tree, as in most editors and hypervisor consoles.
 
-const TREE_WIDTH_KEY = 'corral.treeWidth';
 const TREE_WIDTH_DEFAULT = 270;
-const TREE_WIDTH_MIN = 180;
+const DOCK_HEIGHT_DEFAULT = 220;
+let treeCollapse = null;
 
-function treeWidthMax() { return Math.max(TREE_WIDTH_MIN, Math.round(window.innerWidth * 0.6)); }
-
-function setTreeWidth(px, remember = true) {
-  const w = Math.min(treeWidthMax(), Math.max(TREE_WIDTH_MIN, Math.round(px)));
-  document.documentElement.style.setProperty('--tree-w', `${w}px`);
-  const resizer = $('#tree-resizer');
-  if (resizer) resizer.setAttribute('aria-valuenow', String(w));
-  if (remember) {
-    try { localStorage.setItem(TREE_WIDTH_KEY, String(w)); } catch { /* private mode */ }
-  }
-  return w;
-}
-
-function initTreeResizer() {
-  const resizer = $('#tree-resizer');
+function initWorkspace() {
   const tree = $('#tree');
-  if (!resizer || !tree) return;
+  const treeHandle = $('#tree-resizer');
+  if (tree && treeHandle) {
+    makeSplitter({
+      handle: treeHandle, axis: 'x', cssVar: '--tree-w', storageKey: 'corral.treeWidth',
+      def: TREE_WIDTH_DEFAULT, min: 180,
+      max: () => Math.max(180, Math.round(window.innerWidth * 0.6)),
+      sizeFromPointer: (e) => e.clientX - tree.getBoundingClientRect().left,
+      current: () => tree.getBoundingClientRect().width,
+    });
+    treeCollapse = makeCollapsible({
+      className: 'tree-collapsed', storageKey: 'corral.treeCollapsed',
+      onChange: (on) => treeHandle.setAttribute('aria-label', on ? 'Sidebar collapsed (Ctrl+B)' : 'Resize the sidebar'),
+    });
+  }
 
-  let stored = null;
-  try { stored = localStorage.getItem(TREE_WIDTH_KEY); } catch { /* private mode */ }
-  setTreeWidth(Number(stored) || TREE_WIDTH_DEFAULT, false);
+  const dock = $('#task-panel');
+  const dockHandle = $('#dock-resizer');
+  if (dock && dockHandle) {
+    makeSplitter({
+      handle: dockHandle, axis: 'y', cssVar: '--dock-h', storageKey: 'corral.dockHeight',
+      def: DOCK_HEIGHT_DEFAULT, min: 80,
+      max: () => Math.round(window.innerHeight * 0.7),
+      // The dock grows upwards from the bottom edge; the head sits above the body.
+      sizeFromPointer: (e) => window.innerHeight - e.clientY - $('#task-panel-head').offsetHeight,
+      current: () => $('#task-panel-body').getBoundingClientRect().height,
+    });
+    // The dock floats over the page; reserve its height so it never hides
+    // the bottom of the content it docks under.
+    new ResizeObserver(() => {
+      document.documentElement.style.setProperty('--dock-space', `${dock.offsetHeight}px`);
+    }).observe(dock);
+  }
 
-  resizer.addEventListener('pointerdown', (e) => {
-    e.preventDefault();
-    resizer.setPointerCapture(e.pointerId);
-    resizer.classList.add('dragging');
-    document.body.classList.add('resizing');
-    const left = tree.getBoundingClientRect().left;
-    const onMove = (ev) => setTreeWidth(ev.clientX - left);
-    const onUp = () => {
-      resizer.classList.remove('dragging');
-      document.body.classList.remove('resizing');
-      resizer.removeEventListener('pointermove', onMove);
-      resizer.removeEventListener('pointerup', onUp);
-      resizer.removeEventListener('pointercancel', onUp);
-    };
-    resizer.addEventListener('pointermove', onMove);
-    resizer.addEventListener('pointerup', onUp);
-    resizer.addEventListener('pointercancel', onUp);
-  });
-
-  resizer.addEventListener('dblclick', () => setTreeWidth(TREE_WIDTH_DEFAULT));
-
-  resizer.addEventListener('keydown', (e) => {
-    const step = e.shiftKey ? 40 : 10;
-    const current = tree.getBoundingClientRect().width;
-    if (e.key === 'ArrowLeft') { setTreeWidth(current - step); e.preventDefault(); }
-    if (e.key === 'ArrowRight') { setTreeWidth(current + step); e.preventDefault(); }
-    if (e.key === 'Home') { setTreeWidth(TREE_WIDTH_DEFAULT); e.preventDefault(); }
+  document.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'b' && treeCollapse) {
+      e.preventDefault();
+      treeCollapse.toggle();
+    }
   });
 }
 
@@ -2690,7 +2683,7 @@ function closeDrawer() { $('#tree').classList.remove('open'); }
 
 // ── Boot ──────────────────────────────────────────────────────────
 
-initTreeResizer();
+initWorkspace();
 $('#btn-menu').innerHTML = icon('menu');
 $('#btn-create').innerHTML = `${icon('plus')} Create VM`;
 

@@ -234,6 +234,62 @@ check(
   '/metrics always reports whether collection is working',
 );
 
+// ── Workspace: resizable, collapsible panels (#341) ─────────────────
+// Drag the real handles with the mouse, reload, and assert the sizes stuck.
+{
+await page.goto(BASE);
+await page.waitForSelector('#tree >> text=Datacenter', { timeout: 30000 });
+await page.evaluate(() => localStorage.clear());
+await page.reload();
+await page.waitForSelector('#tree >> text=Datacenter', { timeout: 30000 });
+const treeW = async () => (await page.locator('#tree').boundingBox()).width;
+const before = await treeW();
+const h = await page.locator('#tree-resizer').boundingBox();
+await page.mouse.move(h.x + h.width / 2, h.y + 200);
+await page.mouse.down();
+await page.mouse.move(h.x + h.width / 2 + 120, h.y + 200, { steps: 8 });
+await page.mouse.up();
+const dragged = await treeW();
+check(Math.abs(dragged - (before + 120)) <= 4, `workspace-resize: dragging the tree splitter widens the tree (${before} -> ${dragged})`);
+await page.reload();
+await page.waitForSelector('#tree >> text=Datacenter', { timeout: 30000 });
+check(Math.abs((await treeW()) - dragged) <= 2, 'workspace-resize: tree width persists across reload');
+await page.focus('#tree-resizer');
+await page.keyboard.press('ArrowLeft');
+check(Math.abs((await treeW()) - (dragged - 10)) <= 2, 'workspace-resize: arrow keys resize the tree');
+await page.keyboard.press('Home');
+check(Math.abs((await treeW()) - 270) <= 2, 'workspace-resize: Home resets the tree width');
+
+await page.keyboard.press('Control+b');
+check(!(await page.locator('#tree').isVisible()), 'workspace-collapse: Ctrl+B hides the tree');
+await page.reload();
+await page.waitForSelector('#tree-resizer', { timeout: 30000 });
+check(!(await page.locator('#tree').isVisible()), 'workspace-collapse: collapsed tree persists across reload');
+await page.keyboard.press('Control+b');
+check(await page.locator('#tree').isVisible(), 'workspace-collapse: Ctrl+B brings the tree back');
+
+// Task dock: open it, drag its top edge up, reload, and the height stuck.
+await page.click('#task-panel-head');
+await page.waitForSelector('#dock-resizer', { state: 'visible' });
+const dockH = async () => (await page.locator('#task-panel-body').boundingBox()).height;
+const dockBefore = await dockH();
+const d = await page.locator('#dock-resizer').boundingBox();
+await page.mouse.move(d.x + 300, d.y + d.height / 2);
+await page.mouse.down();
+await page.mouse.move(d.x + 300, d.y + d.height / 2 - 100, { steps: 8 });
+await page.mouse.up();
+const dockAfter = await dockH();
+check(Math.abs(dockAfter - (dockBefore + 100)) <= 6, `workspace-resize: dragging the dock edge grows the task dock (${dockBefore} -> ${dockAfter})`);
+await page.screenshot({ path: 'ui-smoke-workspace.png' });
+await page.reload();
+await page.waitForSelector('#task-panel-head', { timeout: 30000 });
+await page.click('#task-panel-head');
+check(Math.abs((await dockH()) - dockAfter) <= 2, 'workspace-resize: dock height persists across reload');
+const dockTop = (await page.locator('#task-panel').boundingBox()).y;
+const layoutBottom = await page.evaluate(() => document.querySelector('.layout').getBoundingClientRect().bottom);
+check(layoutBottom <= dockTop + 1, 'workspace-dock: the open dock never covers the content area');
+}
+
 check(pageErrors.length === 0, `no JS page errors (${pageErrors.join('; ').slice(0, 200)})`);
 
 await browser.close();

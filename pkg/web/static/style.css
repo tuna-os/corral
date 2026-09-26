@@ -35,8 +35,11 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: Inter, "Segoe UI", system-ui, -apple-system, sans-serif;
-  min-height: 100vh;
-  min-height: 100dvh;
+  /* Exactly the viewport, not at least it: the panels scroll inside, and the
+     task dock can reserve its height. With min-height the body grew past the
+     viewport and overflow:hidden silently clipped the bottom of the page. */
+  height: 100vh;
+  height: 100dvh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -55,7 +58,7 @@ header {
 .brand span { color: var(--muted); font-size: .85rem; margin-left: 8px; }
 .spacer { flex: 1; }
 
-.layout { display: flex; flex: 1; min-height: 0; }
+.layout { display: flex; flex: 1; min-height: 0; margin-bottom: var(--dock-space, 0px); }
 
 /* The sidebar width is an operator preference (#290): --tree-w is set by the
    drag handle below and remembered in localStorage. The clamp keeps a stored
@@ -90,7 +93,13 @@ header {
 }
 /* While dragging, the pointer owns the page: no text selection, and the
    cursor stays col-resize wherever it travels. */
-body.resizing { user-select: none; cursor: col-resize; }
+body.resizing { user-select: none; }
+
+/* Ctrl+B: the tree folds away entirely; its handle stays as a thin strip so
+   there is still something to find (and double-click restores nothing —
+   Ctrl+B does, and the handle's label says so). */
+body.tree-collapsed #tree { display: none; }
+body.tree-collapsed #tree-resizer { margin-left: 0; }
 
 .tree-view-toggle {
   display: flex;
@@ -402,7 +411,16 @@ dl.props dd { margin: 0; word-break: break-all; }
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
   background: var(--panel);
   border-top: 1px solid var(--border);
-  max-height: 40vh; display: flex; flex-direction: column;
+  display: flex; flex-direction: column;
+}
+/* Dock height is an operator preference (--dock-h, set by #dock-resizer). */
+:root { --dock-h: 220px; }
+#task-panel-body { height: var(--dock-h); }
+#dock-resizer {
+  height: 6px; margin-top: -3px; cursor: row-resize; flex: none;
+}
+#dock-resizer:hover, #dock-resizer:focus-visible, #dock-resizer.dragging {
+  background: var(--accent); outline: none;
 }
 #task-panel-head {
   display: flex; gap: 10px; align-items: center;
