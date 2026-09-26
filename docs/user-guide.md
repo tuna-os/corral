@@ -300,3 +300,8 @@ node scripts/capture-docs.mjs docs/screenshots/generated
 
 The same command can target the TunaOS site checkout:
 `node scripts/capture-docs.mjs ../docs/static/img/screenshots/corral`.
+
+The `Screenshots` workflow runs this script when the web UI, the TUI or the
+demo fleet changes, and one time each week. It then opens a PR with the new
+images. When the `TUNAOS_DOCS_TOKEN` secret is set, it also opens a PR in
+tuna-os/docs. That PR updates the images on the TunaOS site.
