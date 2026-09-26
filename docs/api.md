@@ -372,10 +372,35 @@ available.
 
 ### `GET /api/vms/{ns}/{name}/metrics/history`
 
-Retained CPU samples for the Summary-panel sparkline. The server samples every
+Retained usage samples for the Summary-panel charts. The server samples every
 running VM every ~15s into a bounded in-memory ring buffer (~1h). Returns
-`[{"t": <epoch-ms>, "cpu": <millicores>}, …]` — an empty array when
-metrics-server is absent.
+`[{"t": <epoch-ms>, "cpu": <millicores>, "mem": <bytes>}, …]` — an empty array
+when metrics-server is absent. The `mem` field is absent when metrics-server
+gives no memory value.
+
+### `GET /api/metrics/history`
+
+The same samples, added up over all VMs that run now. The Datacenter dashboard
+charts show them.
+
+### `GET /api/nodes/{name}/metrics/history`
+
+The same samples, added up over the VMs that run now on one node. The node
+dashboard charts show them.
+
+### `GET /api/metrics/top`
+
+The newest sample of each VM that runs now, busiest first. The "top VMs" dashboard
+widgets use it.
+
+**Query**: `by=cpu` (default) or `by=mem` sets the sort order. `node=<name>`
+keeps only the VMs on that node. `limit=<n>` keeps the first `n` rows.
+
+**Response** (array):
+
+```json
+[{"namespace": "corral-vms", "name": "db-prod", "node": "corral-2", "cpu": 900, "mem": 4294967296}]
+```
 
 ---
 

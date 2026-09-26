@@ -42,3 +42,4 @@ corral-incus
 
 # Coverage profiles (scripts/coverage-gate.sh, just cover)
 cover.out
+/ui-smoke-screenshots/

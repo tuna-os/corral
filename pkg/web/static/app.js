@@ -3,6 +3,7 @@
 
 import { icon } from './icons.js';
 import { bindPools, loadPools, renderTreePools } from './pools.js';
+import { fmtBytes, fmtCPU, mountDashboard, timeChart } from './dashboard.js';
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -806,19 +807,206 @@ async function renderSettings(main) {
   updatePreview();
 }
 
+// ── Dashboard widgets (#348) ──────────────────────────────────────
+// The Datacenter and node pages open with a widget grid (dashboard.js). The
+// widgets read this module's state when they render, so a poll only has to
+// call the dashboard's refresh().
+
+// "4Gi", "8G", "2048Mi" → bytes (0 when unreadable).
+function memBytes(s) {
+  const m = /^([\d.]+)\s*([KMGT]?)i?B?$/i.exec(String(s || '').trim());
+  if (!m) return 0;
+  return Number(m[1]) * (1024 ** ' KMGT'.indexOf(m[2].toUpperCase() || ' '));
+}
+
+const NO_SAMPLES = `No samples yet. Usage comes from <strong>metrics-server</strong>
+  (see <em>Cluster health</em>), sampled every 15 seconds.`;
+
+// Run fn now and every ms until body leaves the DOM — for widgets whose data
+// is not part of the fleet poll (task log, usage samples).
+function pollWhileShown(body, fn, ms) {
+  fn();
+  const t = setInterval(() => (body.isConnected ? fn() : clearInterval(t)), ms);
+}
+
+function chartWidget(title, url, metric) {
+  return {
+    title, w: 6, h: 3, minW: 3, live: true,
+    render: (body) => timeChart(body, { load: () => api(url), metric, label: title, empty: NO_SAMPLES }),
+  };
+}
+
+// The busiest running KubeVirt VMs by CPU or memory at the last sample,
+// optionally on one node. A name opens that VM.
+function topVMsWidget(title, by, node) {
+  return {
+    title, w: 4, h: 3, live: true,
+    render: (body) => pollWhileShown(body, () => {
+      const q = new URLSearchParams({ by, limit: '5' });
+      if (node) q.set('node', node);
+      api(`/api/metrics/top?${q}`).then((rows) => {
+        if (!body.isConnected) return;
+        if (!rows.length) { body.innerHTML = `<p class="muted">${NO_SAMPLES}</p>`; return; }
+        const val = (r) => (by === 'mem' ? r.mem : r.cpu);
+        const top = Math.max(...rows.map(val)) || 1;
+        body.innerHTML = `<table><tbody>${rows.map((r) => {
+          const vm = vms.find((v) => v.backend === 'kubevirt' && v.namespace === r.namespace && v.name === r.name);
+          const name = vm ? `<a href="#" data-vmkey="${esc(vmKey(vm))}">${esc(r.name)}</a>` : esc(r.name);
+          return `<tr><td>${name}</td>
+            <td style="width:55%">${by === 'mem' ? fmtBytes(r.mem) : fmtCPU(r.cpu)}
+              <div class="meter"><span style="width:${((val(r) / top) * 100).toFixed(0)}%"></span></div></td></tr>`;
+        }).join('')}</tbody></table>`;
+        body.querySelectorAll('[data-vmkey]').forEach((a) => {
+          a.onclick = (e) => { e.preventDefault(); select({ type: 'vm', key: a.dataset.vmkey }); };
+        });
+      }).catch((e) => { if (body.isConnected) body.innerHTML = `<p class="muted">${esc(e.message)}</p>`; });
+    }, 15000),
+  };
+}
+
+// Host-power hosts (sdk.CapHostPower plugins), optionally only one node's.
+// The power buttons carry .hp-action, which read-only mode hides.
+function powerWidget(node) {
+  return {
+    title: 'Host power', w: 4, h: 3,
+    render(body) {
+      const hosts = (hostPower.hosts || []).filter((h) => !node || h.node === node);
+      if (!hosts.length) {
+        body.innerHTML = `<p class="muted">${node ? 'No host-power plugin manages this node.'
+          : 'No host-power plugin is installed. Hosts show here when one is (see Extensions).'}</p>`;
+        return;
+      }
+      body.innerHTML = `<ul class="plain">${hosts.map((h) => {
+        const btn = (action, label) => ((h.actions || []).includes(action)
+          ? `<button class="btn sm hp-action" data-hp="${action}" data-hpkey="${esc(hostPowerKey(h))}">${label}</button>` : '');
+        return `<li><span class="dot ${hostPowerDot(h.state)}"></span>
+          <a href="#" data-hpopen="${esc(hostPowerKey(h))}">${esc(h.name)}</a>
+          <span class="muted">${esc(h.state)}</span> ${btn('start', 'Power on')} ${btn('stop', 'Power off')}</li>`;
+      }).join('')}</ul>`;
+      body.querySelectorAll('[data-hpopen]').forEach((a) => {
+        a.onclick = (e) => { e.preventDefault(); select({ type: 'hostpower', key: a.dataset.hpopen }); };
+      });
+      body.querySelectorAll('[data-hp]').forEach((b) => {
+        b.onclick = async () => {
+          const h = hosts.find((x) => hostPowerKey(x) === b.dataset.hpkey);
+          const action = b.dataset.hp;
+          const onNode = h.node ? vms.filter((v) => v.node === h.node) : [];
+          if (action === 'stop' && onNode.length && !confirm(`Power off ${h.name}? ${onNode.length} VM(s) on it will stop.`)) return;
+          b.disabled = true;
+          try {
+            await api(`/api/hostpower/${encodeURIComponent(h.plugin)}/${action}?id=${encodeURIComponent(h.id)}`, { method: 'POST' });
+            toast(`${action === 'start' ? 'Powering on' : 'Powering off'} ${h.name}`);
+          } catch (e) { toast(e.message); }
+          refresh(true);
+        };
+      });
+    },
+  };
+}
+
+function recentTasksWidget() {
+  return {
+    title: 'Recent tasks', w: 4, h: 3, live: true,
+    render: (body) => pollWhileShown(body, () => {
+      api('/api/tasklog').then((log) => {
+        if (!body.isConnected) return;
+        if (!log.length) { body.innerHTML = '<p class="muted">No tasks yet.</p>'; return; }
+        const pill = (t) => (t.status === 'running' ? '<span class="pill mid">running</span>'
+          : t.status === 'error' ? `<span class="pill off" title="${esc(t.error || '')}">error</span>`
+            : '<span class="pill on">OK</span>');
+        body.innerHTML = `<table><tbody>${log.slice(0, 8).map((t) => `<tr>
+          <td class="muted">${esc(new Date(t.started).toLocaleTimeString())}</td>
+          <td>${esc(t.action)}</td><td>${esc(t.target)}</td><td>${pill(t)}</td></tr>`).join('')}</tbody></table>`;
+      }).catch((e) => { if (body.isConnected) body.innerHTML = `<p class="muted">${esc(e.message)}</p>`; });
+    }, 5000),
+  };
+}
+
+// Things an operator should look at now: nodes that are not ready, VMs in a
+// failure state, stopped hosts with VMs scheduled to them, and failed tasks.
+function alertsWidget() {
+  return {
+    title: 'Alerts', w: 4, h: 2,
+    render(body) {
+      const alerts = [];
+      for (const n of nodes) if (!n.ready) alerts.push(`Node <strong>${esc(n.name)}</strong> is not ready`);
+      for (const v of vms) {
+        if (/error|fail|crash|unschedulable/i.test(v.status || '')) alerts.push(`VM <strong>${esc(v.name)}</strong>: ${esc(v.status)}`);
+      }
+      for (const h of hostPower.hosts || []) {
+        const onNode = h.node ? vms.filter((v) => v.node === h.node).length : 0;
+        if (h.state === 'stopped' && onNode) alerts.push(`Host <strong>${esc(h.name)}</strong> is off with ${onNode} VM(s) on it`);
+      }
+      const draw = (failed) => {
+        const all = alerts.concat(failed.map((t) => `Task <strong>${esc(t.action)}</strong> ${esc(t.target)} failed${t.error ? `: ${esc(t.error)}` : ''}`));
+        body.innerHTML = all.length
+          ? `<ul class="plain">${all.map((a) => `<li><span class="dot off"></span> ${a}</li>`).join('')}</ul>`
+          : '<p class="muted"><span class="dot on"></span> Nothing needs attention.</p>';
+      };
+      draw([]);
+      api('/api/tasklog')
+        .then((log) => { if (body.isConnected) draw(log.filter((t) => t.status === 'error').slice(0, 5)); })
+        .catch(() => { /* the task log is best-effort here */ });
+    },
+  };
+}
+
+function capacityWidget() {
+  return {
+    title: 'Capacity', w: 4, h: 2,
+    render(body) {
+      const running = vms.filter((v) => v.ready);
+      const cpu = running.reduce((a, v) => a + (Number(v.cpu) || 0), 0);
+      const mem = running.reduce((a, v) => a + memBytes(v.mem), 0);
+      body.innerHTML = `<dl class="kv">
+        <dt>Virtual machines</dt><dd><span class="big">${vms.length}</span> <span class="muted">${running.length} running</span></dd>
+        <dt>Containers</dt><dd>${cts.length}</dd>
+        <dt>Nodes ready</dt><dd>${nodes.filter((n) => n.ready).length}/${nodes.length}</dd>
+        <dt>Allocated</dt><dd>${cpu} vCPU · ${fmtBytes(mem)} <span class="muted">(running VMs)</span></dd>
+      </dl>`;
+    },
+  };
+}
+
+const DC_WIDGETS = {
+  capacity: capacityWidget(),
+  alerts: alertsWidget(),
+  tasks: recentTasksWidget(),
+  cpu: chartWidget('CPU usage', '/api/metrics/history', 'cpu'),
+  mem: chartWidget('Memory usage', '/api/metrics/history', 'mem'),
+  'top-cpu': topVMsWidget('Top VMs by CPU', 'cpu'),
+  'top-mem': topVMsWidget('Top VMs by memory', 'mem'),
+  power: powerWidget(),
+};
+
+const DC_LAYOUT = [
+  { id: 'capacity', x: 0, y: 0, w: 4, h: 2 },
+  { id: 'alerts', x: 4, y: 0, w: 4, h: 2 },
+  { id: 'tasks', x: 8, y: 0, w: 4, h: 3 },
+  { id: 'cpu', x: 0, y: 2, w: 4, h: 3 },
+  { id: 'mem', x: 4, y: 2, w: 4, h: 3 },
+  { id: 'top-cpu', x: 0, y: 5, w: 4, h: 3 },
+  { id: 'top-mem', x: 4, y: 5, w: 4, h: 3 },
+  { id: 'power', x: 8, y: 3, w: 4, h: 3 },
+];
+
+let dcDash = null;
+
 function renderDatacenter(main) {
-  const running = vms.filter((v) => v.ready).length;
-  const ready = nodes.filter((n) => n.ready).length;
+  // Mount the widget grid once per visit; later polls refresh it in place so
+  // a drag, an open menu or keyboard focus survives the 5s refresh.
+  if (!main.querySelector('#dc-dash')) {
+    main.innerHTML = `<div class="page-head"><h1>Datacenter</h1></div>
+      <div id="dc-dash"></div><div id="dc-rest"></div>`;
+    dcDash = mountDashboard($('#dc-dash'), { scope: 'datacenter', widgets: DC_WIDGETS, layout: DC_LAYOUT });
+  } else {
+    dcDash.refresh();
+  }
+  const rest = $('#dc-rest');
   const allTags = [...new Set(vms.flatMap((v) => v.tags || []))].sort();
   if (tagFilter && !allTags.includes(tagFilter)) tagFilter = null; // tag vanished
   const shown = tagFilter ? vms.filter((v) => (v.tags || []).includes(tagFilter)) : vms;
-  main.innerHTML = `
-    <div class="page-head"><h1>Datacenter</h1></div>
-    <div class="cards">
-      <div class="card"><div class="num">${vms.length}</div><div class="label">virtual machines</div></div>
-      <div class="card"><div class="num">${running}</div><div class="label">running</div></div>
-      <div class="card"><div class="num">${ready}/${nodes.length}</div><div class="label">nodes ready</div></div>
-    </div>
+  rest.innerHTML = `
     ${allTags.length ? `<div class="tagbar">
       <span class="muted">Filter by tag:</span>
       <button class="chip filter ${tagFilter ? '' : 'active'}" data-tagfilter="">all</button>
@@ -833,9 +1021,9 @@ function renderDatacenter(main) {
     <div id="dc-images"><p class="muted">loading…</p></div>
     <h2 class="section">${icon('template')} Templates</h2>
     ${templateTable(vms.filter((v) => v.isTemplate))}`;
-  bindVMTable(main);
-  bindTemplateTable(main);
-  main.querySelectorAll('[data-tagfilter]').forEach((b) => {
+  bindVMTable(rest);
+  bindTemplateTable(rest);
+  rest.querySelectorAll('[data-tagfilter]').forEach((b) => {
     b.onclick = () => { tagFilter = b.dataset.tagfilter || null; renderDatacenter(main); markRendered(); };
   });
   $('#dc-import').onclick = importImage;
@@ -924,27 +1112,70 @@ async function uploadImage(file) {
   }
 }
 
+// The node page shares one saved layout across nodes; the widgets are built
+// per node because they filter to it.
+const NODE_LAYOUT = [
+  { id: 'info', x: 0, y: 0, w: 4, h: 3 },
+  { id: 'cpu', x: 4, y: 0, w: 4, h: 3 },
+  { id: 'mem', x: 8, y: 0, w: 4, h: 3 },
+  { id: 'top-cpu', x: 0, y: 3, w: 4, h: 3 },
+  { id: 'top-mem', x: 4, y: 3, w: 4, h: 3 },
+  { id: 'power', x: 8, y: 3, w: 4, h: 3 },
+];
+
+function nodeWidgets(name) {
+  const hist = `/api/nodes/${encodeURIComponent(name)}/metrics/history`;
+  return {
+    info: {
+      title: 'Node', w: 4, h: 3,
+      render(body) {
+        const n = nodes.find((x) => x.name === name);
+        body.innerHTML = `<dl class="kv">
+          <dt>Status</dt><dd><span class="pill ${n?.ready ? 'on' : 'off'}">${n?.ready ? 'ready' : 'not ready'}</span></dd>
+          <dt>Roles</dt><dd>${esc(n?.roles || '—')}</dd>
+          <dt>Kubelet</dt><dd>${esc(n?.kubelet || '—')}</dd>
+          <dt>Architecture</dt><dd>${esc(n?.arch || '—')}</dd>
+          <dt>VMs</dt><dd>${vms.filter((v) => v.node === name).length}</dd>
+          <dt>CTs</dt><dd>${cts.filter((c) => c.node === name).length}</dd>
+        </dl>`;
+      },
+    },
+    cpu: chartWidget('CPU usage', hist, 'cpu'),
+    mem: chartWidget('Memory usage', hist, 'mem'),
+    'top-cpu': topVMsWidget('Top VMs by CPU', 'cpu', name),
+    'top-mem': topVMsWidget('Top VMs by memory', 'mem', name),
+    power: powerWidget(name),
+  };
+}
+
+let nodeDash = null;
+
 function renderNode(main, name) {
   const n = nodes.find((x) => x.name === name);
   const nodeVMs = vms.filter((v) => v.node === name);
   const nodeCTs = cts.filter((c) => c.node === name);
-  main.innerHTML = `
-    <div class="page-head">
-      <h1>${icon('server')} ${esc(name)}</h1>
-      <span class="pill ${n?.ready ? 'on' : 'off'}">${n?.ready ? 'ready' : 'not ready'}</span>
-    </div>
-    <dl class="props">
-      <dt>Roles</dt><dd>${esc(n?.roles || '—')}</dd>
-      <dt>Kubelet</dt><dd>${esc(n?.kubelet || '—')}</dd>
-      <dt>Architecture</dt><dd>${esc(n?.arch || '—')}</dd>
-      <dt>VMs</dt><dd>${nodeVMs.length}</dd>
-      <dt>CTs</dt><dd>${nodeCTs.length}</dd>
-    </dl>
+  if (main.querySelector('#node-dash')?.dataset.node !== name) {
+    main.innerHTML = `
+      <div class="page-head">
+        <h1>${icon('server')} ${esc(name)}</h1>
+        <span class="pill" id="node-ready"></span>
+      </div>
+      <div id="node-dash" data-node="${esc(name)}"></div>
+      <div id="node-rest"></div>`;
+    nodeDash = mountDashboard($('#node-dash'), { scope: 'node', widgets: nodeWidgets(name), layout: NODE_LAYOUT });
+  } else {
+    nodeDash.refresh();
+  }
+  const pill = $('#node-ready');
+  pill.className = `pill ${n?.ready ? 'on' : 'off'}`;
+  pill.textContent = n?.ready ? 'ready' : 'not ready';
+  const rest = $('#node-rest');
+  rest.innerHTML = `
     <h2 style="font-size:1rem;margin:18px 0 8px">Virtual machines</h2>
     ${vmTable(nodeVMs)}
     ${nodeCTs.length ? `<h2 style="font-size:1rem;margin:18px 0 8px">Containers</h2>${ctTable(nodeCTs)}` : ''}`;
-  bindVMTable(main);
-  bindCTTable(main);
+  bindVMTable(rest);
+  bindCTTable(rest);
 }
 
 // Namespace View's namespace detail — same shape as renderNode, grouped by
@@ -1287,14 +1518,17 @@ function renderTab(vm) {
         <dt>SSH</dt><dd><code>corral ssh ${esc(vm.name)}</code></dd>
         <dt>RDP</dt><dd id="vm-rdp">${vm.running ? 'checking…' : '—'}</dd>
       </dl>
-      <div id="cpu-graph-box" class="panel-section">
-        <h2 class="section">${icon('cpu')} CPU usage</h2>
-        <div id="cpu-graph"><p class="muted">${vm.running ? 'loading…' : 'VM is stopped'}</p></div>
+      <div id="usage-charts" class="panel-section">
+        <h2 class="section">${icon('cpu')} Usage</h2>
+        ${vm.running ? `<div class="charts-row">
+          <div><strong>CPU</strong> <span class="muted">(${vm.cpu} vCPU = ${vm.cpu * 1000}m)</span><div id="vm-cpu-chart"></div></div>
+          <div><strong>Memory</strong> <span class="muted">(${esc(vm.mem)} allocated)</span><div id="vm-mem-chart"></div></div>
+        </div>` : '<p class="muted">VM is stopped</p>'}
       </div>
       <div id="guest-info"></div>
       <div id="powersched-box" class="panel-section"><p class="muted">loading schedule…</p></div>`;
       if (vm.running && capability.metrics) loadMetrics(vm);
-      if (vm.running) loadCPUGraph(vm);
+      if (vm.running) loadUsageCharts(vm);
       if (vm.running && capability.rdp) checkRDP(vm);
       if (vm.agentConnected) loadGuestInfo(vm);
       renderPowerSchedule(vm);
@@ -1497,56 +1731,13 @@ async function loadMetrics(vm) {
   } catch { /* metrics-server may be absent */ }
 }
 
-// ── CPU sparkline (RRD-style history) ─────────────────────────────
-// The server samples per-VM CPU into a bounded ring buffer; we poll the
-// retained window and draw a sparkline. The poller self-cancels once the
-// graph element leaves the DOM (tab/VM switch via disconnectConsoles).
-let cpuGraphTimer = null;
-
-function stopCPUGraph() {
-  if (cpuGraphTimer) { clearInterval(cpuGraphTimer); cpuGraphTimer = null; }
-}
-
-async function loadCPUGraph(vm) {
-  stopCPUGraph();
-  const draw = async () => {
-    const box = $('#cpu-graph');
-    if (!box) { stopCPUGraph(); return; } // navigated away
-    let hist;
-    try { hist = await api(vmURL(vm, '/metrics/history')); }
-    catch { box.innerHTML = `<p class="muted">CPU history unavailable</p>`; return; }
-    box.innerHTML = cpuSparkline(hist, vm);
-  };
-  await draw();
-  cpuGraphTimer = setInterval(draw, 15000);
-}
-
-function cpuSparkline(hist, vm) {
-  if (!hist || !hist.length) {
-    return `<p class="muted">No CPU samples yet — install <strong>metrics-server</strong>
-      (see <em>Cluster health</em>) and give it a moment to collect data.</p>`;
-  }
-  const cap = (vm.cpu || 1) * 1000;            // allocated millicores
-  const peak = Math.max(...hist.map((s) => s.cpu));
-  const top = Math.max(cap, peak) || 1;        // y-axis ceiling
-  const W = 600;
-  const H = 80;
-  const n = hist.length;
-  const xc = (i) => (n <= 1 ? 0 : (i / (n - 1)) * W);
-  const yc = (c) => H - (c / top) * H;
-  const line = hist.map((s, i) => `${xc(i).toFixed(1)},${yc(s.cpu).toFixed(1)}`).join(' ');
-  const area = `0,${H} ${line} ${W},${H}`;
-  const last = hist[n - 1].cpu;
-  const pct = ((last / cap) * 100).toFixed(0);
-  const capLine = cap <= top ? `<line class="spark-cap" x1="0" y1="${yc(cap).toFixed(1)}" x2="${W}" y2="${yc(cap).toFixed(1)}" />` : '';
-  const mins = Math.max(1, Math.round((n * 15) / 60));
-  return `<svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="CPU usage sparkline">
-      <polygon class="spark-area" points="${area}" />
-      <polyline class="spark-line" points="${line}" />
-      ${capLine}
-    </svg>
-    <div class="muted spark-legend">now <strong>${last}m</strong> (${pct}% of ${vm.cpu} vCPU)
-      · peak ${peak}m · last ~${mins}m</div>`;
+// ── Usage charts (RRD-style history) ──────────────────────────────
+// The server samples per-VM CPU and memory into a bounded ring buffer; the
+// charts poll the retained window and stop once they leave the DOM.
+function loadUsageCharts(vm) {
+  const load = () => api(vmURL(vm, '/metrics/history'));
+  timeChart($('#vm-cpu-chart'), { load, metric: 'cpu', label: `${vm.name} CPU usage`, empty: NO_SAMPLES, height: 140 });
+  timeChart($('#vm-mem-chart'), { load, metric: 'mem', label: `${vm.name} memory usage`, empty: NO_SAMPLES, height: 140 });
 }
 
 // Autostart/shutdown windows (schedule plugin): two cron boundaries that flip
@@ -2101,7 +2292,6 @@ function connectTTY(vm, body) {
 }
 
 function disconnectConsoles() {
-  stopCPUGraph();
   try { rfb?.disconnect(); } catch { /* already gone */ }
   rfb = null;
   try { ttyWS?.close(); } catch { /* already gone */ }

@@ -350,19 +350,71 @@ dl.props dd { margin: 0; word-break: break-all; }
 }
 .wiz-chip.active { border-color: var(--accent, #4a9eda); }
 
-/* CPU sparkline (RRD-style history on the Summary tab) */
-.spark {
-  width: 100%;
-  height: 80px;
-  display: block;
-  background: var(--panel-2);
+/* Dashboard widget grid + live charts (#348, pkg/web/static/dashboard.js).
+   gridstack positions the items; these rules only dress them. */
+.dash-toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; font-size: .85rem; }
+.dash-toolbar select { margin-left: 6px; }
+.dash-hint { font-size: .78rem; }
+.grid-stack { margin: 0 -5px 18px; }
+.widget {
+  display: flex; flex-direction: column;
+  background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
+  overflow: hidden;
 }
-.spark-line { fill: none; stroke: var(--accent); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
-.spark-area { fill: var(--accent); opacity: .12; stroke: none; }
-.spark-cap { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; opacity: .6; }
-.spark-legend { margin-top: 6px; font-size: .82rem; }
+.widget-head {
+  display: flex; align-items: center; gap: 6px;
+  position: relative;
+  padding: 6px 8px 6px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: .85rem; font-weight: 600;
+  cursor: move; user-select: none;
+}
+.widget-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.widget-head .spacer { flex: 1; }
+.widget-menu-btn {
+  background: none; border: 1px solid transparent; border-radius: 6px;
+  color: var(--muted); cursor: pointer; padding: 0 8px; font-size: 1.05rem; line-height: 1.4;
+}
+.widget-menu-btn:hover, .widget-menu-btn[aria-expanded="true"] { color: var(--text); border-color: var(--border); }
+.widget-menu {
+  position: absolute; right: 6px; top: calc(100% + 2px); z-index: 20;
+  display: flex; flex-direction: column; min-width: 200px;
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 4px; box-shadow: 0 8px 24px rgba(0, 0, 0, .35);
+  font-weight: 400; cursor: default;
+}
+.widget-menu[hidden] { display: none; }
+.widget-menu button {
+  display: flex; justify-content: space-between; gap: 12px;
+  background: none; border: none; color: var(--text); text-align: left;
+  padding: 6px 10px; border-radius: 6px; cursor: pointer; font-size: .84rem;
+}
+.widget-menu button:hover, .widget-menu button:focus-visible { background: var(--border); outline: none; }
+.widget-menu kbd { color: var(--muted); font-size: .72rem; font-family: inherit; }
+.widget-body { flex: 1; min-height: 0; overflow: auto; padding: 10px 12px; font-size: .86rem; }
+.widget-body table { font-size: .82rem; }
+.widget-body .kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; margin: 0; }
+.widget-body .kv dt { color: var(--muted); }
+.widget-body .kv dd { margin: 0; }
+.widget-body .big { font-size: 1.4rem; font-weight: 700; }
+.widget-body ul.plain { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.widget-body .dot { display: inline-block; }
+.widget-body a { color: var(--text); }
+.widget-body a:hover { color: var(--accent); }
+.meter { height: 6px; background: var(--panel-2); border-radius: 3px; overflow: hidden; margin-top: 3px; }
+.meter > span { display: block; height: 100%; background: var(--accent); }
+.grid-stack-item > .ui-resizable-se { opacity: .5; }
+.grid-stack-placeholder > .placeholder-content { border: 1px dashed var(--accent); border-radius: var(--radius); background: transparent; }
+.dash-chart { width: 100%; }
+.dash-chart-note { font-size: .78rem; margin-top: 4px; }
+.charts-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+.u-axis { font-size: 11px; }
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
 
 /* Inset panel section (snapshot schedule, etc.) */
 .panel-section {
