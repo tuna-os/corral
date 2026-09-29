@@ -9,9 +9,8 @@
 Corral herds VMs — and containers — into your tailnet. A single Go binary with
 a CLI, TUI, and web dashboard, it manages VMs across five backends (qemu,
 kubevirt, incus, libvirt, proxmox) and exposes every guest over the Tailscale
-network your devices already share. It is also the org's CI boot-gate tool:
-[tunaos#1273](https://github.com/tuna-os/tunaos/pull/1273) adopted Corral to
-gate ISO builds on boot evidence.
+network your devices already share. It is the org's CI boot-gate tool, adopted into tunaOS
+CI to gate ISO builds on boot evidence.
 
 ---
 
@@ -28,7 +27,7 @@ gate ISO builds on boot evidence.
 - ✅ **Distribution and release infrastructure repaired (September 2026)**:
   - macOS release binary builds published and installer checksum verification added (#315).
   - Release workflow updated to stamp release tags properly without crowding product releases under plugin artifacts (#316).
-- ✅ **Org CI adoption landed**: tunaos#1273 (gate ISO builds on Corral boot evidence) is closed.
+- ✅ **Org CI adoption complete**: corral is the boot-gate runner on tunaOS main. `reusable-build-image.yml` installs corral and gates on `sudo -E corral create gate --bootc`, and `tests/corral/verify.yaml` defines the canonical scenario. [tunaos#1273](https://github.com/tuna-os/tunaos/pull/1273) was superseded by evolved schema and is now closed.
 - **No milestones on the repo**; work is tracked through issues and labels
   (`needs-triage`, `ready-for-agent`, …) plus this file.
 
@@ -36,7 +35,9 @@ gate ISO builds on boot evidence.
 
 | Priority | Item | Tracking | Status |
 |----------|------|----------|--------|
-| P0 | Fix advertised install path & macOS release publishing | #210 (install path + checksum verify done via #315/#316; the Releases page still has no visible product release — see #210 item 3), #315, #316 | 🟡 Partially done |
+<<<<<<< HEAD
+| P0 | Fix advertised install path & macOS release publishing | #210, #315, #316 | ✅ Done |
+| P1 | tunaOS boot-gate adoption | tunaos#1273 | ✅ Done — in production on main |
 | P1 | VDI plugin epic — Windows/Linux desktop pools | #69, [docs/vdi-epic-status.md](docs/vdi-epic-status.md) | 🟡 In progress |
 | P2 | Programmatic output — `--json` across commands | #205 | ✅ Done |
 | P2 | Stable plugin API contract + marketplace schema v2 | [docs/plugin-marketplace.md](docs/plugin-marketplace.md) | 🟡 In progress |
@@ -56,8 +57,9 @@ gate ISO builds on boot evidence.
 | Incus image publishing (move destination parity) | architect | #164 | ✅ Done — closed 08-11 |
 | Incus E2E suite | quality | #123 | ✅ Done — closed 08-11 |
 | Install path works on every OS the installer claims to support | — | #210, #315 | ✅ Done |
-| One visible product release channel, separate from plugin artifacts | — | #210, #316 | 🔴 Open — Releases page still dominated by rolling `plugins-<sha>` tags, no v0.6.0+ product release listed |
-| Merge tunaOS boot-gate adoption | ci-maintainer | tunaos#1273 | ✅ Done |
+<<<<<<< HEAD
+| One visible product release channel, separate from plugin artifacts | — | #210, #316 | ✅ Done |
+| Merge tunaOS boot-gate adoption | ci-maintainer | tunaos#1273 | ✅ Done — superseded, now on main |
 | Document stable plugin API + marketplace schema v2 | guide | docs/plugin-marketplace.md | 🟡 In progress |
 
 ### Next Quarter (2026 Q4 — October–December)
