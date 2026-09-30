@@ -112,7 +112,11 @@ func TestDemoMode_EndToEnd(t *testing.T) {
 			"Tailscale CLI": true, "virtctl CLI": true,
 			// VSOCK support depends on the host's socat build, not our
 			// code: hosted runners and minimal containers lack it.
-			"VSOCK host support": true,
+			"VSOCK host support":    true,
+			"OVMF firmware":         true,
+			"swtpm (TPM emulation)": true,
+			"socat":                 true,
+			"qemu-img":              true,
 		}; local[c["name"].(string)] {
 			continue
 		}

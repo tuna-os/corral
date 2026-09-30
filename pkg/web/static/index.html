@@ -36,35 +36,121 @@
   <main id="content"></main>
 </div>
 
-<!-- Proxmox-style task panel: recent/running server operations.
-     First Alpine.js island — see docs/adr/0004-web-ui-alpinejs-no-build.md. -->
+<!-- Proxmox-style bottom dock with Tasks / Cluster log / Events tabs.
+     Alpine.js island — see docs/adr/0004-web-ui-alpinejs-no-build.md. -->
 <div id="task-panel" x-data="taskPanel()" x-init="start()" :class="{ collapsed: collapsed }">
-  <div id="task-panel-head" @click="collapsed = !collapsed">
-    <span id="task-panel-title">Tasks</span>
-    <span id="task-panel-summary" class="muted" x-text="summary"></span>
+  <div id="task-panel-head" @click="toggleCollapse($event)">
+    <div class="dock-tabs" role="tablist">
+      <button type="button" class="dock-tab" :class="{ active: currentTab === 'tasks' }" @click.stop="switchTab('tasks')" role="tab" :aria-selected="currentTab === 'tasks'">Tasks</button>
+      <button type="button" class="dock-tab" :class="{ active: currentTab === 'clusterlog' }" @click.stop="switchTab('clusterlog')" role="tab" :aria-selected="currentTab === 'clusterlog'">Cluster log</button>
+      <button type="button" class="dock-tab" :class="{ active: currentTab === 'events' }" @click.stop="switchTab('events')" role="tab" :aria-selected="currentTab === 'events'">Events</button>
+    </div>
+    <div class="dock-badges" x-show="collapsed">
+      <span class="dock-badge pill mid" x-show="runningCount > 0" x-text="runningCount + ' running'"></span>
+      <span class="dock-badge pill off" x-show="errorCount > 0" x-text="errorCount + ' failed'"></span>
+    </div>
+    <span id="task-panel-summary" class="muted" x-show="!collapsed" x-text="summary"></span>
     <span class="spacer"></span>
     <span id="task-panel-chevron" x-text="collapsed ? '▴' : '▾'"></span>
   </div>
   <div id="task-panel-body">
-    <table>
-      <thead><tr><th>Started</th><th>Action</th><th>Target</th><th>Duration</th><th>Status</th></tr></thead>
-      <tbody id="task-rows">
-        <tr x-show="tasks.length === 0"><td colspan="5" class="muted">No tasks yet.</td></tr>
-        <template x-for="t in tasks.slice(0, 50)" :key="t.id">
-          <tr :title="t.status === 'error' ? (t.error || '') : ''">
-            <td x-text="new Date(t.started).toLocaleTimeString()"></td>
-            <td x-text="t.action"></td>
-            <td x-text="t.target"></td>
-            <td x-text="t.duration || '…'"></td>
-            <td>
-              <span class="pill mid" x-show="t.status === 'running'">running</span>
-              <span class="pill off" x-show="t.status === 'error'" :title="t.error || ''">error</span>
-              <span class="pill on" x-show="t.status !== 'running' && t.status !== 'error'">OK</span>
-            </td>
-          </tr>
-        </template>
-      </tbody>
-    </table>
+    <!-- Tasks tab -->
+    <div id="dock-tasks" x-show="currentTab === 'tasks'">
+      <table>
+        <thead><tr><th>Started</th><th>User</th><th>Action</th><th>Target</th><th>Duration</th><th>Status</th><th style="width:70px"></th></tr></thead>
+        <tbody id="task-rows">
+          <tr x-show="tasks.length === 0"><td colspan="7" class="muted">No tasks yet.</td></tr>
+          <template x-for="t in tasks.slice(0, 50)" :key="t.id">
+            <tr :class="{ 'task-row-err': t.status === 'error' }" :title="t.status === 'error' ? (t.error || '') : ''">
+              <td x-text="formatTime(t.started)"></td>
+              <td x-text="t.user || 'root@pam'"></td>
+              <td x-text="t.action"></td>
+              <td>
+                <template x-if="isTargetLinkable(t.target)">
+                  <a href="#" class="target-link" @click.prevent.stop="goToTarget(t.target)" x-text="t.target"></a>
+                </template>
+                <template x-if="!isTargetLinkable(t.target)">
+                  <span x-text="t.target"></span>
+                </template>
+              </td>
+              <td x-text="t.duration || '…'"></td>
+              <td>
+                <span class="pill mid" x-show="t.status === 'running'">running</span>
+                <span class="pill off" x-show="t.status === 'error'" style="cursor:pointer" @click.stop="openLog(t)" title="Click to view error log">error</span>
+                <span class="pill on" x-show="t.status !== 'running' && t.status !== 'error'">OK</span>
+              </td>
+              <td class="task-actions">
+                <button type="button" class="btn sm" x-show="t.status === 'error'" @click.stop="openLog(t)">Log</button>
+                <button type="button" class="btn sm danger" x-show="t.status === 'running' && t.cancelable && canMutate()" @click.stop="cancelTask(t)">Cancel</button>
+              </td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Cluster log tab -->
+    <div id="dock-clusterlog" x-show="currentTab === 'clusterlog'">
+      <table>
+        <thead><tr><th>Time</th><th>User</th><th>Action</th><th>Target</th><th>Status</th><th>Details</th></tr></thead>
+        <tbody>
+          <tr x-show="tasks.length === 0"><td colspan="6" class="muted">No cluster log entries yet.</td></tr>
+          <template x-for="t in tasks.slice(0, 100)" :key="'cl-' + t.id">
+            <tr :class="{ 'task-row-err': t.status === 'error' }">
+              <td x-text="formatDateTime(t.started)"></td>
+              <td x-text="t.user || 'root@pam'"></td>
+              <td x-text="t.action"></td>
+              <td>
+                <template x-if="isTargetLinkable(t.target)">
+                  <a href="#" class="target-link" @click.prevent.stop="goToTarget(t.target)" x-text="t.target"></a>
+                </template>
+                <template x-if="!isTargetLinkable(t.target)">
+                  <span x-text="t.target"></span>
+                </template>
+              </td>
+              <td>
+                <span class="pill mid" x-show="t.status === 'running'">running</span>
+                <span class="pill off" x-show="t.status === 'error'" style="cursor:pointer" @click.stop="openLog(t)">error</span>
+                <span class="pill on" x-show="t.status !== 'running' && t.status !== 'error'">OK</span>
+              </td>
+              <td>
+                <template x-if="t.status === 'error'">
+                  <span class="err-msg" style="cursor:pointer" @click.stop="openLog(t)" x-text="t.error || 'Failed (click for log)'"></span>
+                </template>
+                <template x-if="t.status !== 'error'">
+                  <span class="muted" x-text="t.duration ? 'Completed in ' + t.duration : 'In progress'"></span>
+                </template>
+              </td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Events tab -->
+    <div id="dock-events" x-show="currentTab === 'events'">
+      <div class="dock-context-bar" x-show="eventsContext" style="margin-bottom:8px;font-size:0.85rem">
+        <span class="muted" x-text="eventsContext"></span>
+      </div>
+      <table>
+        <thead><tr><th>Time</th><th>Type</th><th>Reason</th><th>Object</th><th>Message</th></tr></thead>
+        <tbody>
+          <tr x-show="eventsLoading"><td colspan="5" class="muted">Loading events…</td></tr>
+          <tr x-show="!eventsLoading && events.length === 0"><td colspan="5" class="muted" x-text="eventsEmptyMessage"></td></tr>
+          <template x-for="(e, idx) in events" :key="'ev-' + idx">
+            <tr :class="{ 'ev-warn': e.type === 'Warning' }">
+              <td x-text="e.time || ''"></td>
+              <td>
+                <span :class="e.type === 'Warning' ? 'pill mid' : 'pill on'" x-text="e.type || 'Normal'"></span>
+              </td>
+              <td x-text="e.reason || ''"></td>
+              <td x-text="e.object || ''"></td>
+              <td x-text="e.message || ''"></td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
   </div>
 </div>
 
@@ -200,6 +286,24 @@
       <button type="submit" class="btn primary">Create</button>
     </div>
   </form>
+</dialog>
+
+<dialog id="task-log-dialog">
+  <h2 id="task-log-title">Task log</h2>
+  <div id="task-log-meta" style="display:grid;grid-template-columns:1fr 1fr;gap:8px 16px;margin:12px 0;font-size:0.85rem">
+    <div><strong>Action:</strong> <span id="task-log-action"></span></div>
+    <div><strong>Target:</strong> <span id="task-log-target"></span></div>
+    <div><strong>Status:</strong> <span id="task-log-status"></span></div>
+    <div><strong>Started:</strong> <span id="task-log-started"></span></div>
+    <div><strong>Duration:</strong> <span id="task-log-duration"></span></div>
+    <div><strong>User:</strong> <span id="task-log-user"></span></div>
+  </div>
+  <h3>Output &amp; error details</h3>
+  <pre class="yaml" id="task-log-output" style="min-height:120px;max-height:40vh;overflow:auto"></pre>
+  <div class="dialog-actions">
+    <span class="spacer" style="flex:1"></span>
+    <button type="button" class="btn" id="btn-task-log-close">Close</button>
+  </div>
 </dialog>
 </body>
 </html>
