@@ -1,0 +1,158 @@
+name: Screenshots
+
+# Keeps the documentation screenshots in step with the interface (#291).
+#
+# scripts/capture-docs.mjs drives the real `--demo` fleet in headless Chromium
+# and tmux, so the captures need no cluster and no KVM. This workflow runs it
+# whenever the web UI, the TUI or the demo fleet changes, and weekly as a
+# backstop, then proposes the new images as pull requests:
+#
+# - here, into docs/screenshots/generated/ (the README and user guide);
+# - in tuna-os/docs, into static/img/screenshots/corral/ (tunaos.org/corral).
+#   That repo's sync copies Markdown, not images, so without this the landing
+#   page keeps whatever was last copied by hand. The step needs a token that
+#   can push to tuna-os/docs: set the repository secret TUNAOS_DOCS_TOKEN to
+#   enable it. With none set the job says so and stops.
+#
+# Both PRs reuse one fixed branch, so a busy week updates one PR instead of
+# opening several. On pull_request the captures only run and upload, which
+# checks that the script still works against the changed UI.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "cmd/**"
+      - "pkg/web/**"
+      - "pkg/demo/**"
+      - "scripts/capture-docs.mjs"
+      - "e2e/package.json"
+      - "e2e/package-lock.json"
+      - ".github/workflows/screenshots.yml"
+  pull_request:
+    paths:
+      - "scripts/capture-docs.mjs"
+      - "e2e/package.json"
+      - "e2e/package-lock.json"
+      - ".github/workflows/screenshots.yml"
+  schedule:
+    # Mondays 05:23 UTC: off the hour, and after the nightly run.
+    - cron: "23 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: screenshots-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  capture:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+
+      - name: Build corral
+        run: go build -o corral .
+
+      # tmux hosts the TUI so its screen can be read back as text.
+      - name: Install tmux and Playwright Chromium
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq tmux
+          npm ci --prefix e2e
+          (cd e2e && npx playwright install --with-deps chromium)
+
+      - name: Capture screenshots
+        run: node scripts/capture-docs.mjs "$RUNNER_TEMP/screenshots"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: screenshots
+          path: ${{ runner.temp }}/screenshots/
+          if-no-files-found: error
+
+  corral-pr:
+    needs: capture
+    if: github.event_name != 'pull_request' && github.repository == 'tuna-os/corral'
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: screenshots
+          path: docs/screenshots/generated
+
+      - name: Open or update the screenshots PR
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8
+        with:
+          commit-message: "docs: refresh generated screenshots"
+          title: "docs: refresh generated screenshots"
+          body: |
+            Automated capture of the `--demo` fleet by
+            `scripts/capture-docs.mjs` (see `.github/workflows/screenshots.yml`).
+            Check the images before merging.
+          branch: automation/screenshots
+          delete-branch: true
+          add-paths: docs/screenshots/generated/*.png
+          labels: documentation
+
+  site-pr:
+    needs: capture
+    if: github.event_name != 'pull_request' && github.repository == 'tuna-os/corral'
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Check the site token is configured
+        id: token
+        env:
+          TUNAOS_DOCS_TOKEN: ${{ secrets.TUNAOS_DOCS_TOKEN }}
+        run: |
+          if [ -z "$TUNAOS_DOCS_TOKEN" ]; then
+            echo "::notice::TUNAOS_DOCS_TOKEN is not set — skipping the tunaos.org screenshots PR. Set it to a token that can push to tuna-os/docs and open PRs there to enable this job."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        if: steps.token.outputs.configured == 'true'
+        with:
+          repository: tuna-os/docs
+          token: ${{ secrets.TUNAOS_DOCS_TOKEN }}
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        if: steps.token.outputs.configured == 'true'
+        with:
+          name: screenshots
+          path: static/img/screenshots/corral
+
+      - name: Open or update the tunaos.org screenshots PR
+        if: steps.token.outputs.configured == 'true'
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8
+        with:
+          token: ${{ secrets.TUNAOS_DOCS_TOKEN }}
+          commit-message: "chore: refresh Corral screenshots"
+          title: "chore: refresh Corral screenshots"
+          body: |
+            Automated capture of the Corral `--demo` fleet from
+            tuna-os/corral@${{ github.sha }} (`scripts/capture-docs.mjs`,
+            run by `.github/workflows/screenshots.yml` there).
+            Check the images before merging.
+          branch: automation/corral-screenshots
+          delete-branch: true
+          add-paths: static/img/screenshots/corral/*.png
+          labels: documentation

@@ -130,7 +130,7 @@ func startDirect(name string) error {
 	cmd.Stdout, cmd.Stderr = logFile, logFile
 	// Its own session, so the VM outlives the shell that started it — which is
 	// the one thing the systemd unit was doing for us.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	cmd.SysProcAttr = newSessionAttr()
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("starting QEMU: %w (see %s)", err, logPath)
 	}
