@@ -15,6 +15,22 @@ import "fmt"
 // that access.
 const KubectlImage = "docker.io/bitnami/kubectl:latest@sha256:cd9daa0cc6968665402654b887bdc59aba0f774d0d0a36808eb9259fb642aa5c"
 
+// BackupImage runs the backup CronJob's main container. It ships rclone,
+// busybox and CA certificates, so the job no longer pipes rclone's install
+// script into bash, which needs root and unzip (#313). Digest-pinned for
+// the same reason as KubectlImage.
+const BackupImage = "docker.io/rclone/rclone:1.75.1@sha256:45401ad7410db1d67ffdb58e19059ad20b0d8e0285a60e38bbec55cc1019c7a5"
+
+// ToolsDir is the emptyDir the backup pod's init container fills with
+// kubectl and virtctl. The main container puts it first on PATH.
+const ToolsDir = "/tools"
+
+// backupUID is the UID for every container in the backup pod. It matches
+// KubectlImage's USER 1001. The pod sets it explicitly so the pod does not
+// depend on the defaults of the images it uses. The job writes only to
+// ToolsDir and /tmp, so it does not need root.
+const backupUID = 1001
+
 // ManagedLabel marks every object the scheduled-ops plugins create.
 const ManagedLabel = "corral.dev/scheduled-op"
 
@@ -121,43 +137,77 @@ func RoleBinding(ns string) map[string]any {
 // CronJob wraps a shell script in a CronJob running as the corral-sched SA.
 // labels are added on top of the ManagedLabel marker.
 func CronJob(name, ns, schedule, script string, labels map[string]string) map[string]any {
-	return cronJob(name, ns, schedule, script, labels, nil, nil)
+	return cronJob(name, ns, schedule, labels, map[string]any{
+		"serviceAccountName": RBACName,
+		"restartPolicy":      "Never",
+		"containers": []map[string]any{{
+			"name":    "kubectl",
+			"image":   KubectlImage,
+			"command": []string{"/bin/sh", "-ec", script},
+		}},
+	})
 }
 
-// CronJobWithSecret is CronJob, plus a Secret mounted read-only at
-// mountPath — corral-backup's schedule needs the caller's rclone config
-// (remote credentials) available inside the CronJob pod, which plain
-// CronJob has no way to express.
-func CronJobWithSecret(name, ns, schedule, script string, labels map[string]string, secretName, mountPath string) map[string]any {
-	volumes := []map[string]any{
-		{"name": "rclone-config", "secret": map[string]any{"secretName": secretName}},
+// BackupCronJob is the CronJob for corral-backup's schedule. The job needs
+// kubectl, virtctl and rclone. No single image has all three, and a pod
+// running as non-root cannot install tools into the image's system
+// directories (#313). The pod therefore uses two containers:
+//
+//   - an init container (KubectlImage) runs ToolsScript to copy kubectl
+//     and download virtctl into the ToolsDir emptyDir
+//   - the main container (BackupImage) already has rclone. It runs script
+//     with ToolsDir first on PATH.
+//
+// The Secret secretName holds the caller's rclone config (the remote's
+// credentials). It is mounted read-only at mountPath, and RCLONE_CONFIG
+// points at the rclone.conf file in it.
+func BackupCronJob(name, ns, schedule, script string, labels map[string]string, secretName, mountPath string) map[string]any {
+	containerSecurity := map[string]any{
+		"allowPrivilegeEscalation": false,
+		"capabilities":             map[string]any{"drop": []string{"ALL"}},
 	}
-	volumeMounts := []map[string]any{
-		{"name": "rclone-config", "mountPath": mountPath, "readOnly": true},
-	}
-	return cronJob(name, ns, schedule, script, labels, volumes, volumeMounts)
+	tools := map[string]any{"name": "tools", "mountPath": ToolsDir}
+	return cronJob(name, ns, schedule, labels, map[string]any{
+		"serviceAccountName": RBACName,
+		"restartPolicy":      "Never",
+		"securityContext": map[string]any{
+			"runAsNonRoot": true,
+			"runAsUser":    backupUID,
+			"runAsGroup":   backupUID,
+		},
+		"initContainers": []map[string]any{{
+			"name":            "tools",
+			"image":           KubectlImage,
+			"command":         []string{"/bin/sh", "-ec", ToolsScript()},
+			"volumeMounts":    []map[string]any{tools},
+			"securityContext": containerSecurity,
+		}},
+		"containers": []map[string]any{{
+			"name":    "backup",
+			"image":   BackupImage,
+			"command": []string{"/bin/sh", "-ec", script},
+			"env": []map[string]any{
+				{"name": "PATH", "value": ToolsDir + ":/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"},
+				{"name": "HOME", "value": "/tmp"},
+				{"name": "RCLONE_CONFIG", "value": mountPath + "/rclone.conf"},
+			},
+			"volumeMounts": []map[string]any{
+				tools,
+				{"name": "rclone-config", "mountPath": mountPath, "readOnly": true},
+			},
+			"securityContext": containerSecurity,
+		}},
+		"volumes": []map[string]any{
+			{"name": "tools", "emptyDir": map[string]any{}},
+			{"name": "rclone-config", "secret": map[string]any{"secretName": secretName}},
+		},
+	})
 }
 
-func cronJob(name, ns, schedule, script string, labels map[string]string, volumes, volumeMounts []map[string]any) map[string]any {
+func cronJob(name, ns, schedule string, labels map[string]string, podSpec map[string]any) map[string]any {
 	all := map[string]string{ManagedLabel: "true"}
 	for k, v := range labels {
 		all[k] = v
-	}
-	container := map[string]any{
-		"name":    "kubectl",
-		"image":   KubectlImage,
-		"command": []string{"/bin/sh", "-ec", script},
-	}
-	if len(volumeMounts) > 0 {
-		container["volumeMounts"] = volumeMounts
-	}
-	podSpec := map[string]any{
-		"serviceAccountName": RBACName,
-		"restartPolicy":      "Never",
-		"containers":         []map[string]any{container},
-	}
-	if len(volumes) > 0 {
-		podSpec["volumes"] = volumes
 	}
 	return map[string]any{
 		"apiVersion": "batch/v1",
@@ -205,23 +255,32 @@ kubectl get vmsnapshot -n %[2]s -l corral.dev/auto-snap=%[1]s \
   | xargs -r kubectl delete -n %[2]s`, vm, ns, keep)
 }
 
-// BackupScript exports the VM's primary disk (gzip), rclone-copies it to
-// dest, then prunes older backups for this VM beyond keep. Runs in the
-// KubectlImage CronJob pod, which has kubectl + a shell but not virtctl or
-// rclone — both are fetched at runtime (matching the existing pattern in
-// pkg/kubevirt's proxy Deployment script, which likewise `apk add`s its own
-// tools rather than requiring a bespoke pre-built image) rather than
-// requiring a new corral-owned container image. rclone needs its remote's
-// credentials — see cmd/corral-backup's `schedule` command, which mounts
-// the caller's local rclone config as a Secret at
-// /root/.config/rclone/rclone.conf before this script ever runs.
-func BackupScript(vm, ns, dest string, keep int) string {
-	return fmt.Sprintf(`KV_VERSION=$(kubectl get kubevirt kubevirt -n kubevirt -o jsonpath='{.status.observedKubeVirtVersion}')
-curl -sL -o /usr/local/bin/virtctl "https://github.com/kubevirt/kubevirt/releases/download/${KV_VERSION}/virtctl-${KV_VERSION}-linux-amd64"
-chmod +x /usr/local/bin/virtctl
-curl -s https://rclone.org/install.sh | bash >/dev/null
+// ToolsScript runs in BackupCronJob's init container (KubectlImage). It
+// copies the image's kubectl into ToolsDir and downloads the virtctl that
+// matches the cluster's KubeVirt version and the node's architecture.
+// `curl -f` makes an HTTP error fail the job. Without it, curl would save
+// the error page as virtctl.
+func ToolsScript() string {
+	return fmt.Sprintf(`case "$(uname -m)" in
+  x86_64) ARCH=amd64 ;;
+  aarch64|arm64) ARCH=arm64 ;;
+  *) echo "unsupported architecture $(uname -m)" >&2; exit 1 ;;
+esac
+KV_VERSION=$(kubectl get kubevirt kubevirt -n kubevirt -o jsonpath='{.status.observedKubeVirtVersion}')
+if [ -z "$KV_VERSION" ]; then echo "cannot read the KubeVirt version" >&2; exit 1; fi
+curl -fsSL -o %[1]s/virtctl "https://github.com/kubevirt/kubevirt/releases/download/${KV_VERSION}/virtctl-${KV_VERSION}-linux-${ARCH}"
+chmod +x %[1]s/virtctl
+cp "$(command -v kubectl)" %[1]s/kubectl`, ToolsDir)
+}
 
-VOL=$(kubectl get vm %[1]s -n %[2]s -o jsonpath='{.spec.template.spec.volumes[?(@.persistentVolumeClaim)].persistentVolumeClaim.claimName}' | awk '{print $1}')
+// BackupScript exports the VM's primary disk (gzip), rclone-copies it to
+// dest, then prunes older backups for this VM beyond keep. It runs in
+// BackupCronJob's main container (BackupImage, busybox sh), which has
+// rclone. ToolsScript has already put kubectl and virtctl on its PATH.
+// cmd/corral-backup's `schedule` command mounts the caller's rclone config
+// as a Secret, and BackupCronJob points RCLONE_CONFIG at it.
+func BackupScript(vm, ns, dest string, keep int) string {
+	return fmt.Sprintf(`VOL=$(kubectl get vm %[1]s -n %[2]s -o jsonpath='{.spec.template.spec.volumes[?(@.persistentVolumeClaim)].persistentVolumeClaim.claimName}' | awk '{print $1}')
 if [ -z "$VOL" ]; then echo "no persistent disk on %[1]s — nothing to back up" >&2; exit 1; fi
 
 TS=$(date +%%Y%%m%%d%%H%%M%%S)

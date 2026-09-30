@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -441,6 +442,11 @@ func Load(path string) (*Config, error) {
 func loadFromDisk(path string) (*Config, error) {
 	data, notFound, err := readFileTolerant(path)
 	if err != nil {
+		// A platform with no filesystem has no config file either: the
+		// browser demo (js/wasm, #284) gets ENOSYS for every file call.
+		if os.IsNotExist(err) || errors.Is(err, errors.ErrUnsupported) {
+			return &Config{}, nil
+		}
 		return nil, err
 	}
 	if notFound {

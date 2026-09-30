@@ -176,30 +176,42 @@ func Run(spec *Spec, out io.Writer) (*Result, error) {
 		}
 	}
 
-	// Verdicts, in the order a reader cares about them.
+	// verdict decides the run's outcome from what was already collected; it
+	// touches nothing on the host.
+	return result, verdict(spec, result, sshReachable)
+}
+
+// verdict decides Run's outcome from the state already collected in result,
+// in the order a reader cares about them: a hook that never reported or
+// failed, checks that could not run at all, an individual failing check,
+// then a guest that booted but never painted anything. It performs no I/O and
+// mutates only result's own status fields (via Result.fail/Result.pass), so
+// ordering and precedence between failure modes can be tested directly
+// without a VM, an SSH connection, or a host.
+func verdict(spec *Spec, result *Result, sshReachable bool) error {
 	switch {
 	case result.Hook != nil && !result.Hook.Ran:
-		return result, result.fail(ExitHook, fmt.Errorf(
+		return result.fail(ExitHook, fmt.Errorf(
 			"the post-boot hook never reported — see %s in the guest, and the console log. "+
 				"A hook that waits for the boot to finish (systemctl is-system-running --wait) "+
 				"never returns: the hook is part of the boot", StatusFile))
 	case result.Hook != nil && result.Hook.ExitCode != 0:
-		return result, result.fail(ExitHook, fmt.Errorf("the post-boot hook failed (exit %d)", result.Hook.ExitCode))
+		return result.fail(ExitHook, fmt.Errorf("the post-boot hook failed (exit %d)", result.Hook.ExitCode))
 	case !sshReachable && len(spec.Checks) > 0:
-		return result, result.fail(ExitCheck, fmt.Errorf("the checks could not run: SSH never answered"))
+		return result.fail(ExitCheck, fmt.Errorf("the checks could not run: SSH never answered"))
 	}
 	for _, check := range result.Checks {
 		if !check.Passed {
-			return result, result.fail(ExitCheck, fmt.Errorf("check failed: %s", check.Command))
+			return result.fail(ExitCheck, fmt.Errorf("check failed: %s", check.Command))
 		}
 	}
 	if spec.Screenshots.RequirePaint && result.FinalFrame != nil && result.FinalFrame.Blank() {
-		return result, result.fail(ExitBlank, fmt.Errorf(
+		return result.fail(ExitBlank, fmt.Errorf(
 			"the guest booted but never painted anything (framebuffer deviation %.4f, at or under %.2f) — see %s",
 			result.FinalFrame.StdDev, qemu.BlankStdDev, result.FinalFrame.Path))
 	}
 	result.pass()
-	return result, nil
+	return nil
 }
 
 // readyBy values.

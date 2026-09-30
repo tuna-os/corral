@@ -1,8 +1,8 @@
 # Backend support matrix
 
 Corral can show several contexts at once. A context is a named connection to
-one backend; changing the default context changes only where an unqualified
-command goes and never hides the rest of the fleet.
+one backend. A change to the default context changes only where an unqualified
+command goes. It never hides the rest of the fleet.
 
 | Capability | local QEMU | KubeVirt | Incus | libvirt | Proxmox VE | Corral peer |
 |---|---:|---:|---:|---:|---:|---:|
@@ -24,6 +24,6 @@ supported backends; “installed” is not evidence that a workflow works on eve
 inventory target.
 
 Tailscale is a first-class endpoint discovery/exposure option, not a required
-network. KubeVirt ingress remains implementation-agnostic. Federation attempts
+network. KubeVirt ingress remains implementation-agnostic. Federation tries
 advertised/direct guest endpoints first and uses Corral-to-Corral HTTP and
 WebSocket relay only when the network cannot reach the guest directly.

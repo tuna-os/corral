@@ -1,15 +1,15 @@
 # Host power hook
 
-Some VM hosts are not always on: an on-demand cloud instance that is stopped
-when idle, a lab machine behind a smart plug, a workstation with
-Wake-on-LAN. The host-power hook lets the web UI show these machines and
+Some VM hosts are not always on. Examples are an on-demand cloud instance
+that stops when idle, a lab machine behind a smart plug, and a workstation
+with Wake-on-LAN. The host-power hook lets the web UI show these machines and
 power them on and off. Corral core contains no provider code. Any installed
 plugin that declares the `host-power` capability provides it (ADR-0007).
 
 ## Contract (`corral.plugin/v1`)
 
 The plugin lists `host-power` in its `--corral-plugin-metadata` capabilities
-and implements:
+and provides these commands:
 
 | Command | Output |
 |---|---|
@@ -23,13 +23,13 @@ and implements:
 ```
 
 `state` is one of `running`, `stopped`, `starting`, `stopping` or `unknown`.
-`actions` lists what may be requested now. `node` ties the host to a
+`actions` lists the actions that a user can request now. `node` ties the host to a
 Kubernetes node, so the UI can show which VMs it carries.
 
 ## Web API
 
-- `GET /api/hostpower` returns the hosts from every capable plugin. A
-  failing plugin is reported under `errors` without hiding the others.
+- `GET /api/hostpower` returns the hosts from every capable plugin. If a
+  plugin fails, the response reports it under `errors` and still shows the others.
 - `POST /api/hostpower/{plugin}/{start|stop}?id=<id>` is admin-gated, like
   every mutation (`CORRAL_ADMINS`).
 
@@ -37,8 +37,8 @@ Each plugin call times out after 30 s.
 
 ## First-party provider: `aws-power`
 
-`corral-aws-power` manages EC2 instances tagged `corral:host-power` (the value
-is the display name), optionally with `corral:node=<k8s node>`. Configure it
+`corral-aws-power` manages the EC2 instances that have the tag `corral:host-power`
+(the value is the display name), optionally with `corral:node=<k8s node>`. Configure it
 with `CORRAL_AWS_POWER_REGIONS` (or `AWS_REGION`) and standard AWS
 credentials. Scope the credentials to `ec2:DescribeInstances` plus
 `ec2:StartInstances`/`ec2:StopInstances` on the tagged instances. The plugin
