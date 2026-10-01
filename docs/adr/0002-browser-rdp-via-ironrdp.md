@@ -51,7 +51,11 @@ IronRDP's web client:
   server cert chain back to the browser.
 - So phase 2 = two steps. First, write an RDCleanPath endpoint in Go on the
   existing bridge (TLS dial to the guest's 3389, PDU frames). Then embed
-  the IronRDP web component. The component is npm-distributed. Corral's
+  the IronRDP web component. The component is npm-distributed, as two
+  packages: `@devolutions/iron-remote-desktop` (the host web component, already
+  vendored at 0.11.0 — see `pkg/web/static/vendor/MANIFEST.json`) and
+  `@devolutions/iron-remote-desktop-rdp` (the RDP backend module that plugs
+  into it, not vendored yet). Corral's
   no-build-step rule means we vendor the built ESM/WASM artifacts under
   `pkg/web/static/vendor/`. A CDN load is possible, but it pins us to
   jsdelivr availability for a console feature.
