@@ -10,7 +10,7 @@ import (
 
 func TestMain(m *testing.M) {
 	// Clear XDG_CONFIG_HOME so tests that configure HOME find their configs under HOME/.config
-	os.Unsetenv("XDG_CONFIG_HOME")
+	_ = os.Unsetenv("XDG_CONFIG_HOME")
 	os.Exit(m.Run())
 }
 

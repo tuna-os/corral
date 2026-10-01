@@ -40,7 +40,7 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	os.Setenv("HOME", dir)
-	os.Unsetenv("XDG_CONFIG_HOME")
+	_ = os.Unsetenv("XDG_CONFIG_HOME")
 	os.Setenv("KUBECONFIG", kubeconfig)
 
 	code := m.Run()

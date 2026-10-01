@@ -210,10 +210,13 @@ func TestDemoMode_EndToEnd(t *testing.T) {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	respTheme, err := http.DefaultClient.Do(req)
-	if err != nil || respTheme.StatusCode != http.StatusOK {
-		t.Fatalf("PUT /api/theme: %v status=%v", err, respTheme.StatusCode)
+	if err != nil {
+		t.Fatalf("PUT /api/theme: %v", err)
 	}
-	respTheme.Body.Close()
+	_ = respTheme.Body.Close()
+	if respTheme.StatusCode != http.StatusOK {
+		t.Fatalf("PUT /api/theme: status=%v", respTheme.StatusCode)
+	}
 	var theme ThemeConfig
 	getJSON(t, srv, "/api/theme", &theme)
 	if theme.Accent != "#22c55e" || theme.BrandTitle != "SmokeTest" {
