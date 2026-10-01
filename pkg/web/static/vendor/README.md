@@ -30,10 +30,12 @@ curl -fsSLo iron-remote-desktop.js \
 Then update `MANIFEST.json` in the same commit — new `version`, `url`, `sha256`
 (`sha256sum <file>`) and `bytes` (`wc -c <file>`).
 
-The `iron-remote-desktop.js` bundle carries no version string of its own, so the
-vendored copy was identified by digesting every published version of the package
-until one matched: `0.11.0`. Note the two package names IronRDP publishes.
-`@devolutions/iron-remote-desktop` is the host web component vendored here;
+The `iron-remote-desktop.js` bundle carries no version string of its own. To
+identify the vendored copy, we digested each published version of the package
+until one matched: `0.11.0`.
+
+The two package names from IronRDP are easy to confuse.
+`@devolutions/iron-remote-desktop` is the host web component in this directory.
 `@devolutions/iron-remote-desktop-rdp` is the RDP backend module that plugs into
-it, which ADR-0002 names and which is not vendored yet. Keep them on compatible
-versions when phase 2 lands.
+that host. ADR-0002 names the backend module, but this directory does not hold
+it yet. Keep both packages on compatible versions when phase 2 lands.
