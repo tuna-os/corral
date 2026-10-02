@@ -150,7 +150,7 @@ func (r *Result) pass() {
 const ResultFile = "result.json"
 
 // Write saves the result. Called even when the run failed — especially then.
-func (r *Result) Write(dir string) (string, error) {
+func (r *Result) Write(dir string) (path string, retErr error) {
 	r.Finished = time.Now()
 	if r.Status == "" {
 		// A run that neither passed nor failed crashed somewhere that did not
@@ -163,7 +163,7 @@ func (r *Result) Write(dir string) (string, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
-	path := filepath.Join(dir, ResultFile)
+	path = filepath.Join(dir, ResultFile)
 	data, err := json.MarshalIndent(r, "", "  ")
 	if err != nil {
 		return "", err
@@ -172,17 +172,17 @@ func (r *Result) Write(dir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	defer func() {
+		if err := f.Close(); err != nil && retErr == nil {
+			retErr = err
+		}
+	}()
 	// OpenFile does not change the mode of an existing result. Correct it before
 	// writing because the JSON may contain the password for a still-running VM.
 	if err := f.Chmod(0o600); err != nil {
-		_ = f.Close()
 		return "", err
 	}
 	if _, err := f.Write(append(data, '\n')); err != nil {
-		_ = f.Close()
-		return "", err
-	}
-	if err := f.Close(); err != nil {
 		return "", err
 	}
 	return path, nil
