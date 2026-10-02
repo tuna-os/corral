@@ -488,3 +488,75 @@ func TestDocsGapCountsMatchTheMatrix(t *testing.T) {
 		}
 	}
 }
+
+// TestKubeVirtBranchesRatchet ensures that hardcoded `== "kubevirt"` branches
+// in non-backend code (the abstraction boundary violation tracked in issue #214)
+// are being steadily eliminated rather than allowed to grow. The ratchet pins
+// the count and fails if new branches are added without convergence elsewhere.
+func TestKubeVirtBranchesRatchet(t *testing.T) {
+	// The expected count as of the test baseline. This number should only
+	// decrease as work lands to route KubeVirt-specific operations through
+	// the adapter interface instead. If this test fails because the count went
+	// up, it means a new `== "kubevirt"` branch was added without removing one
+	// elsewhere — the ratchet is working as intended and should reject the PR.
+	const maxAllowedBranches = 48
+
+	// Count all `== "kubevirt"` and `case "kubevirt"` branches outside
+	// pkg/backend and pkg/kubevirt. These are the call sites that bypass the
+	// adapter abstraction.
+	count := 0
+	err := filepath.Walk(".", func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			// Skip vendor and git directories
+			if strings.HasPrefix(info.Name(), ".") || info.Name() == "vendor" {
+				return filepath.SkipDir
+			}
+			// Skip the backend packages themselves — they are allowed to reference kubevirt
+			if strings.HasPrefix(path, "./pkg/backend") || strings.HasPrefix(path, "./pkg/kubevirt") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		// Only check Go files
+		if !strings.HasSuffix(path, ".go") {
+			return nil
+		}
+		// Skip test files for this scan — they may have branches to verify behavior
+		if strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		text := string(content)
+
+		// Count == "kubevirt" and case "kubevirt" branches
+		for _, line := range strings.Split(text, "\n") {
+			trimmed := strings.TrimSpace(line)
+			if strings.Contains(trimmed, "== \"kubevirt\"") ||
+				strings.Contains(trimmed, "case \"kubevirt\"") {
+				count++
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking directory tree: %v", err)
+	}
+
+	if count > maxAllowedBranches {
+		t.Errorf("kubevirt branches ratchet broken: found %d, limit is %d. "+
+			"New == \"kubevirt\" or case \"kubevirt\" branches were added without removing equivalents elsewhere. "+
+			"Either remove the new branches or coordinate convergence via issue #214.",
+			count, maxAllowedBranches)
+	}
+	if count < maxAllowedBranches {
+		t.Logf("✓ kubevirt branches ratchet: %d branches (was %d) — lower the limit to %d",
+			count, maxAllowedBranches, count)
+	}
+}
