@@ -630,6 +630,7 @@ func (d *demoCluster) launcherPodsJSON() []byte {
 				"namespace": v.NS,
 				"labels":    map[string]string{"vm.kubevirt.io/name": v.Name},
 			},
+			"spec":   map[string]any{"nodeName": v.Node},
 			"status": map[string]any{"phase": "Running"},
 		})
 	}
@@ -637,8 +638,9 @@ func (d *demoCluster) launcherPodsJSON() []byte {
 	return b
 }
 
-// topLines feeds the CPU sparkline: baseline load per VM plus a slow sine
-// wobble and jitter, so the graph visibly moves between 5s polls.
+// topLines feeds the usage charts: baseline load per VM plus a slow sine
+// wobble and jitter, so the graphs visibly move between polls. Memory
+// wanders between roughly a third and two thirds of the allocation.
 func (d *demoCluster) topLines() []byte {
 	t := time.Since(d.start).Seconds()
 	var b strings.Builder
@@ -647,9 +649,24 @@ func (d *demoCluster) topLines() []byte {
 			continue
 		}
 		milli := v.Load * (1 + 0.35*math.Sin(t/45+v.Load)) * (0.92 + 0.16*rand.Float64())
-		fmt.Fprintf(&b, "%s virt-launcher-%s %dm %s\n", v.NS, v.Name, int(milli), v.Mem)
+		memMi := float64(demoMiB(v.Mem)) * (0.5 + 0.15*math.Sin(t/70+v.Load/100))
+		fmt.Fprintf(&b, "%s virt-launcher-%s %dm %dMi\n", v.NS, v.Name, int(milli), int(memMi))
 	}
 	return []byte(b.String())
+}
+
+// demoMiB reads a demo memory size ("4Gi", "512Mi") as MiB; 0 if unreadable.
+func demoMiB(s string) int {
+	var n int
+	switch {
+	case strings.HasSuffix(s, "Gi"):
+		_, _ = fmt.Sscanf(s, "%d", &n) // 0 on a bad value, as documented
+		return n * 1024
+	case strings.HasSuffix(s, "Mi"):
+		_, _ = fmt.Sscanf(s, "%d", &n)
+		return n
+	}
+	return 0
 }
 
 func (d *demoCluster) ctPVCsJSON() []byte {

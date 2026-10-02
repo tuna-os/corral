@@ -926,11 +926,18 @@ func (c *Client) Metrics(name string) map[string]string {
 	return res
 }
 
-// SampleAllCPU returns current CPU usage in millicores for every running VM,
+// Usage is one `kubectl top` reading for a running VM's launcher pod.
+type Usage struct {
+	MilliCPU int    // millicores (1000 = one full vCPU)
+	MemBytes int64  // working-set memory of the launcher pod
+	Node     string // node the launcher pod runs on ("" when unscheduled)
+}
+
+// SampleAllUsage returns current CPU and memory usage for every running VM,
 // keyed by "namespace/vm". It joins `kubectl top` (usage by pod) with the
-// virt-launcher pods' vm.kubevirt.io/name label. Returns nil when
-// metrics-server is unavailable, so callers degrade gracefully.
-func SampleAllCPU() map[string]int {
+// virt-launcher pods' vm.kubevirt.io/name label and their node. Returns nil
+// when metrics-server is unavailable, so callers degrade gracefully.
+func SampleAllUsage() map[string]Usage {
 	out, err := runPkg("kubectl", "get", "pods", "-A", "-l", "kubevirt.io=virt-launcher", "-o", "json")
 	if err != nil {
 		return nil
@@ -942,35 +949,74 @@ func SampleAllCPU() map[string]int {
 				Namespace string            `json:"namespace"`
 				Labels    map[string]string `json:"labels"`
 			} `json:"metadata"`
+			Spec struct {
+				NodeName string `json:"nodeName"`
+			} `json:"spec"`
 		} `json:"items"`
 	}
 	if json.Unmarshal(out, &pods) != nil {
 		return nil
 	}
-	podToVM := map[string]string{} // "ns/podname" -> "ns/vm"
+	type podVM struct{ key, node string }
+	podToVM := map[string]podVM{} // "ns/podname" -> "ns/vm" + node
 	for _, p := range pods.Items {
 		if vm := p.Metadata.Labels["vm.kubevirt.io/name"]; vm != "" {
-			podToVM[p.Metadata.Namespace+"/"+p.Metadata.Name] = p.Metadata.Namespace + "/" + vm
+			podToVM[p.Metadata.Namespace+"/"+p.Metadata.Name] = podVM{p.Metadata.Namespace + "/" + vm, p.Spec.NodeName}
 		}
 	}
 	if len(podToVM) == 0 {
-		return map[string]int{}
+		return map[string]Usage{}
 	}
 	top, err := runPkg("kubectl", "top", "pod", "-A", "-l", "kubevirt.io=virt-launcher", "--no-headers")
 	if err != nil {
 		return nil // metrics-server absent
 	}
-	res := map[string]int{}
+	res := map[string]Usage{}
 	for _, line := range strings.Split(strings.TrimSpace(string(top)), "\n") {
 		f := strings.Fields(line) // NAMESPACE NAME CPU(cores) MEMORY(bytes)
 		if len(f) < 3 {
 			continue
 		}
-		if key, ok := podToVM[f[0]+"/"+f[1]]; ok {
-			res[key] = parseMilliCPU(f[2])
+		if vm, ok := podToVM[f[0]+"/"+f[1]]; ok {
+			u := Usage{MilliCPU: parseMilliCPU(f[2]), Node: vm.node}
+			if len(f) > 3 {
+				u.MemBytes = parseTopBytes(f[3])
+			}
+			res[vm.key] = u
 		}
 	}
 	return res
+}
+
+// SampleAllCPU is SampleAllUsage reduced to millicores per "namespace/vm".
+func SampleAllCPU() map[string]int {
+	all := SampleAllUsage()
+	if all == nil {
+		return nil
+	}
+	res := make(map[string]int, len(all))
+	for k, u := range all {
+		res[k] = u.MilliCPU
+	}
+	return res
+}
+
+// parseTopBytes parses a `kubectl top` memory value ("512Mi", "2Gi", "900Ki",
+// or a bare byte count). Unparseable values read as 0.
+func parseTopBytes(s string) int64 {
+	s = strings.TrimSpace(s)
+	mult := int64(1)
+	for suffix, m := range map[string]int64{"Ki": 1 << 10, "Mi": 1 << 20, "Gi": 1 << 30, "Ti": 1 << 40} {
+		if strings.HasSuffix(s, suffix) {
+			s, mult = strings.TrimSuffix(s, suffix), m
+			break
+		}
+	}
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return 0
+	}
+	return n * mult
 }
 
 // parseMilliCPU parses a `kubectl top` CPU value ("123m", or "1" = 1 core).
