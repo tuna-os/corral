@@ -384,6 +384,56 @@ check(
   '/metrics always reports whether collection is working',
 );
 
+// ── bulk-select (#344) ─────────────────────────────────────────────
+// The tree filter matches tags and IPs as well as names, tree rows support
+// arrow-key focus, and Shift-click selects a range that the inventory grid
+// shares and acts on in bulk.
+await page.goto(BASE);
+await page.waitForSelector('#tree [data-vm-key]', { timeout: 30000 }).catch(() => {});
+await page.click('#tree >> text=Server View');
+await page.waitForTimeout(800);
+await page.evaluate(() => document.activeElement?.blur());
+await page.keyboard.press('/');
+await page.keyboard.type('prod');
+check(await page.locator('#tree [data-vm-key]:visible').count() >= 2, 'tree filter matches VM tags');
+const anIP = (await (await fetch(`${BASE}api/vms`)).json()).find((v) => v.ip && v.backend === 'kubevirt')?.ip || '';
+await page.locator('#tree-filter').fill(anIP);
+check(!!anIP && await page.locator('#tree [data-vm-key]:visible').count() === 1, `tree filter matches VM IPs (${anIP})`);
+await page.locator('#tree-filter').fill('');
+await page.locator('#tree-filter').dispatchEvent('input');
+const webTreeRow = page.locator('#tree [data-vm-key]', { hasText: 'web-prod' }).first();
+const nextRowText = await webTreeRow.evaluate((row) => {
+  const rows = [...document.querySelectorAll('#tree .tree-item')].filter((r) => !r.hidden && r.offsetParent !== null);
+  return rows[rows.indexOf(row) + 1]?.textContent ?? '';
+});
+await webTreeRow.focus();
+await page.keyboard.press('ArrowDown');
+check(
+  nextRowText !== '' && (await page.locator('#tree .tree-item:focus').textContent().catch(() => '')) === nextRowText,
+  'tree ArrowDown moves focus to the next row',
+);
+const treeVMs = await page.locator('#tree [data-vm-key] .tree-label').allTextContents();
+const webAt = treeVMs.indexOf('web-prod');
+const range = treeVMs.slice(webAt, webAt + 3);
+await webTreeRow.click();
+await page.locator('#tree [data-vm-key]', { hasText: range[2] }).first().click({ modifiers: ['Shift'] });
+check(await page.locator('#tree [data-vm-key].multi-selected').count() === 3, `bulk-select: Shift selects three tree VMs (${range.join(', ')})`);
+await page.locator('#tree .tree-item', { hasText: 'Datacenter' }).first().click();
+await page.waitForSelector('#content .vm-check', { timeout: 10000 }).catch(() => {});
+check(await page.locator('#content .vm-check:checked').count() === 3, 'bulk-select: tree selection is shared with the grid');
+page.once('dialog', (dialog) => dialog.accept());
+await page.locator('#content .bulkbar [data-bulk="stop"]').click();
+await page.waitForFunction(async (names) => {
+  const fleet = await (await fetch('/api/vms')).json();
+  return names.every((name) => fleet.find((vm) => vm.name === name)?.status?.includes('Stopped'));
+}, range, { timeout: 10000 }).catch(() => {});
+const stoppedFleet = await (await fetch(`${BASE}api/vms`)).json();
+check(
+  range.every((name) => stoppedFleet.find((vm) => vm.name === name)?.status?.includes('Stopped')),
+  'bulk-select: bulk Stop stops all three selected VMs',
+);
+await page.screenshot({ path: `${SHOTS}/bulk-select.png` });
+
 check(pageErrors.length === 0, `no JS page errors (${pageErrors.join('; ').slice(0, 200)})`);
 
 await browser.close();

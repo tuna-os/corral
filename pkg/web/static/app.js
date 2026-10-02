@@ -1015,8 +1015,16 @@ function treeRow({ lvl, icon, label, sub, sel, onclick, dot }) {
   div.innerHTML = `${dot ? `<span class="dot ${dot}"></span>` : ''}${icon}` +
     ` <span class="tree-label">${esc(label)}</span>` +
     (sub ? ` <span class="muted">${esc(sub)}</span>` : '');
-  div.onclick = () => { onclick(); closeDrawer(); };
+  div.onclick = (e) => { onclick(e); closeDrawer(); };
   div.addEventListener('keydown', (e) => {
+    if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key) && e.target === div) {
+      // Roving focus over the rows the filter leaves visible.
+      const rows = [...document.querySelectorAll('#tree .tree-item')].filter((r) => !r.hidden && r.offsetParent !== null);
+      const at = rows.indexOf(div);
+      const to = e.key === 'Home' ? 0 : e.key === 'End' ? rows.length - 1 : at + (e.key === 'ArrowDown' ? 1 : -1);
+      if (rows[to]) { e.preventDefault(); rows[to].focus(); }
+      return;
+    }
     if (e.key === 'Enter' || e.key === ' ') {
       if (e.target === div || !e.target.closest('button')) {
         e.preventDefault();
@@ -1062,7 +1070,7 @@ function treeFilterBox() {
 
 function applyTreeFilter() {
   $('#tree').querySelectorAll('.tree-item[data-guest]').forEach((row) => {
-    row.hidden = !!treeFilter && !row.dataset.guest.toLowerCase().includes(treeFilter);
+    row.hidden = !!treeFilter && !(row.dataset.search || row.dataset.guest.toLowerCase()).includes(treeFilter);
   });
 }
 
@@ -1236,8 +1244,12 @@ function vmRow(vm, lvl) {
     sub: vm.isTemplate ? 'template' : vm.namespace,
     dot: vm.ready ? 'on' : (vm.running ? 'mid' : 'off'),
     sel: selected.type === 'vm' && selected.key === vmKey(vm),
-    onclick: () => select({ type: 'vm', key: vmKey(vm) }),
+    onclick: (e) => treeVMClick(vmKey(vm), e),
   });
+  row.dataset.vmKey = vmKey(vm);
+  row.dataset.search = [vm.name, vm.ip, ...(vm.tags || [])].filter(Boolean).join(' ').toLowerCase();
+  row.classList.toggle('multi-selected', selectedVMKeys.has(vmKey(vm)));
+  row.setAttribute('aria-selected', selectedVMKeys.has(vmKey(vm)) ? 'true' : 'false');
   const check = document.createElement('input');
   check.type = 'checkbox';
   check.className = 'tree-vm-check';
@@ -1246,6 +1258,8 @@ function vmRow(vm, lvl) {
   check.onclick = (event) => event.stopPropagation();
   check.onchange = () => {
     check.checked ? selectedVMKeys.add(vmKey(vm)) : selectedVMKeys.delete(vmKey(vm));
+    selectionAnchorKey = vmKey(vm);
+    row.classList.toggle('multi-selected', check.checked);
     renderContent();
   };
   row.prepend(check);
@@ -1256,6 +1270,35 @@ function vmRow(vm, lvl) {
 
 // markRendered records the just-rendered state so the next poll tick doesn't
 // re-render (and reset scroll) for a change the user already saw.
+// Tree selection: a plain click opens the VM and sets the range anchor;
+// Ctrl/Cmd toggles one VM and Shift selects the visible range from the anchor.
+// The set is the one the inventory grid uses, so both stay in step.
+let selectionAnchorKey = null;
+
+function treeVMClick(key, e) {
+  if (e?.shiftKey && selectionAnchorKey) {
+    const keys = [...document.querySelectorAll('#tree .tree-item[data-vm-key]')]
+      .filter((r) => !r.hidden).map((r) => r.dataset.vmKey);
+    const a = keys.indexOf(selectionAnchorKey);
+    const b = keys.indexOf(key);
+    if (a >= 0 && b >= 0) {
+      selectedVMKeys.clear();
+      keys.slice(Math.min(a, b), Math.max(a, b) + 1).forEach((k) => selectedVMKeys.add(k));
+    }
+  } else if (e?.ctrlKey || e?.metaKey) {
+    if (selectedVMKeys.has(key)) selectedVMKeys.delete(key);
+    else selectedVMKeys.add(key);
+    selectionAnchorKey = key;
+  } else {
+    selectionAnchorKey = key;
+    select({ type: 'vm', key });
+    return;
+  }
+  renderTree();
+  renderContent();
+  markRendered();
+}
+
 function markRendered() {
   lastRenderFp = JSON.stringify([vms, cts, nodes, selected, tab]);
 }
@@ -1987,6 +2030,9 @@ function vmTable(list) {
       <button class="btn sm" data-bulk="start">${icon('play')} Start</button>
       <button class="btn sm" data-bulk="stop">${icon('stop')} Stop</button>
       <button class="btn sm" data-bulk="restart">${icon('restart')} Restart</button>
+      <button class="btn sm" data-bulk="snapshot">${icon('camera')} Snapshot</button>
+      <button class="btn sm" data-bulk="tag">Tag…</button>
+      <button class="btn sm danger" data-bulk="delete">${icon('trash')} Delete</button>
     </div>
     <div class="vm-grid"></div>`;
 }
@@ -2040,13 +2086,29 @@ function bindVMTable(root, list) {
       const act = b.dataset.bulk;
       const sel = selectedKeys().map(findVM).filter(Boolean);
       if (!sel.length) return;
-      const verb = act === 'start' ? 'Start' : act === 'stop' ? 'Stop' : 'Restart';
-      if (!confirm(`${verb} ${sel.length} VM${sel.length === 1 ? '' : 's'}?`)) return;
+      const verb = { start: 'Start', stop: 'Stop', restart: 'Restart', snapshot: 'Snapshot', tag: 'Tag', delete: 'Delete' }[act];
+      const plural = `${sel.length} VM${sel.length === 1 ? '' : 's'}`;
+      let tag = '';
+      if (act === 'tag') {
+        tag = (prompt(`Tag ${plural} with:`, '') || '').trim();
+        if (!tag) return;
+      } else if (act === 'delete') {
+        if (!confirm(`Delete ${plural} and their disks?\n\n${sel.map((v) => v.name).join('\n')}`)) return;
+      } else if (!confirm(`${verb} ${plural}?`)) return;
       let ok = 0;
       let fail = 0;
       await Promise.all(sel.map(async (vm) => {
-        try { await api(vmURL(vm, `/${act}`), { method: 'POST' }); ok += 1; }
-        catch { fail += 1; }
+        try {
+          if (act === 'snapshot') await post(vm, '/snapshots', {});
+          else if (act === 'tag') await post(vm, '/tags', { tag, on: true });
+          else if (act === 'delete') {
+            let target = vmURL(vm);
+            if (vm.backend === 'libvirt') target += `${target.includes('?') ? '&' : '?'}destroyStorage=true`;
+            await api(target, { method: 'DELETE' });
+            selectedVMKeys.delete(vmKey(vm));
+          } else await api(vmURL(vm, `/${act}`), { method: 'POST' });
+          ok += 1;
+        } catch { fail += 1; }
       }));
       toast(`${verb}: ${ok} ok${fail ? `, ${fail} failed` : ''}`);
       setTimeout(() => refresh(), 800);

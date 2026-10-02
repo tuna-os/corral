@@ -930,3 +930,6 @@ tbody tr:focus-visible {
   margin: 3px 0;
 }
 
+
+/* Tree multi-select (#344): rows in the shared VM selection. */
+.tree-item.multi-selected { background: color-mix(in srgb, var(--accent) 16%, transparent); }
