@@ -53,6 +53,7 @@ export function renderTreePools(tree) {
     onclick: () => {},
   });
   header.appendChild(newPoolButton());
+  if (ctx.attachContextMenu && ctx.unassignedMenuItems) ctx.attachContextMenu(header, () => ctx.unassignedMenuItems());
   tree.appendChild(header);
 
   for (const folder of pools.folders) {
@@ -66,6 +67,7 @@ export function renderTreePools(tree) {
     row.title = folder.path;
     dropTargetPool(row, folder.path);
     row.appendChild(poolActions(folder));
+    if (ctx.attachContextMenu && ctx.poolMenuItems) ctx.attachContextMenu(row, () => ctx.poolMenuItems(folder));
     tree.appendChild(row);
 
     for (const vm of folder.members || []) {
@@ -96,6 +98,7 @@ export function renderTreePools(tree) {
     onclick: () => {},
   });
   dropTargetPool(loose, '');
+  if (ctx.attachContextMenu && ctx.unassignedMenuItems) ctx.attachContextMenu(loose, () => ctx.unassignedMenuItems());
   tree.appendChild(loose);
   for (const vm of unassigned) {
     const row = vmRow(vm, 1);

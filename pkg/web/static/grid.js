@@ -222,6 +222,7 @@ export function mountGrid(host, options) {
       tr.onclick = (event) => { if (!event.target.closest('.check')) onRowClick?.(row); };
       tr.onkeydown = (event) => { if (event.key === 'Enter') onRowClick?.(row); };
       const checkCell = document.createElement('td'); checkCell.className = 'check'; const check = document.createElement('input'); check.type = 'checkbox'; check.className = options.checkClass || 'grid-check'; check.checked = selected.has(rowKey(row)); check.setAttribute('aria-label', `Select ${rowKey(row)}`); check.onchange = () => { check.checked ? selected.add(rowKey(row)) : selected.delete(rowKey(row)); onSelectionChange?.(selected); syncSelection(); }; checkCell.appendChild(check); tr.appendChild(checkCell);
+      options.decorateRow?.(tr, row);
       cols.forEach((col) => { const td = document.createElement('td'); const rendered = col.render?.(row); if (rendered instanceof Node) td.appendChild(rendered); else td.textContent = rendered ?? valueFor(row, col) ?? ''; tr.appendChild(td); });
       body.appendChild(tr);
     });
