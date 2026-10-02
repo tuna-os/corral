@@ -157,10 +157,10 @@ func handleMetricsExposition(w http.ResponseWriter, _ *http.Request) {
 		out.Metric("corral_collection_success", "gauge",
 			"1 when the last fleet collection succeeded; 0 when it failed or has not run")
 		out.Sample(nil, 0)
-		_, _ = w.Write([]byte(out.String()))
+		_, _ = w.Write([]byte(out.String() + activityMetrics()))
 		return
 	}
-	_, _ = w.Write([]byte(renderMetrics(snap, time.Now())))
+	_, _ = w.Write([]byte(renderMetrics(snap, time.Now()) + activityMetrics()))
 }
 
 // renderMetrics is the whole exposition, pure over a snapshot so it is testable
