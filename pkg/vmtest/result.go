@@ -175,11 +175,11 @@ func (r *Result) Write(dir string) (string, error) {
 	// OpenFile does not change the mode of an existing result. Correct it before
 	// writing because the JSON may contain the password for a still-running VM.
 	if err := f.Chmod(0o600); err != nil {
-		f.Close()
+		_ = f.Close()
 		return "", err
 	}
 	if _, err := f.Write(append(data, '\n')); err != nil {
-		f.Close()
+		_ = f.Close()
 		return "", err
 	}
 	if err := f.Close(); err != nil {
