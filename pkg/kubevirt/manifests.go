@@ -143,6 +143,12 @@ func GenerateVM(opts types.CreateOpts) map[string]any {
 			"interfaces": []map[string]any{
 				{"name": "default", "masquerade": map[string]any{}},
 			},
+			// An absolute pointer, so VNC clicks land where they are aimed.
+			// The default PS/2 mouse is relative: a VNC client's absolute
+			// coordinates drift, and installers cannot be driven by pointer.
+			"inputs": []map[string]any{
+				{"type": "tablet", "bus": "usb", "name": "tablet"},
+			},
 		},
 	}
 	if opts.UEFI {
