@@ -1,7 +1,8 @@
-# Vendored console libraries
+# Vendored browser libraries
 
-Pinned copies so the consoles work offline / air-gapped (same rationale as
-the vendored `../alpine.min.js` — see docs/adr/0004-web-ui-alpinejs-no-build.md).
+Pinned copies so the consoles and the dashboard work offline / air-gapped
+(same rationale as the vendored `../alpine.min.js` — see
+docs/adr/0004-web-ui-alpinejs-no-build.md).
 
 `MANIFEST.json` is the machine-readable record of the same set: package,
 version, upstream URL, SHA-256 and byte count for every third-party browser
@@ -14,6 +15,8 @@ human-readable view of it; the two must not disagree.
 | `addon-fit.min.js` | `@xterm/addon-fit@0.10.0` |
 | `novnc-rfb.esm.js` | `@novnc/novnc@1.4.0` `core/rfb.js`, bundled to a single ES module via jsDelivr `/+esm` |
 | `iron-remote-desktop.js` | `@devolutions/iron-remote-desktop@0.11.0` |
+| `gridstack-all.js`, `gridstack.min.css` | `gridstack@14.0.0` (MIT) |
+| `uPlot.iife.min.js`, `uPlot.min.css` | `uplot@1.6.32` (MIT) |
 | `../alpine.min.js` | `alpinejs@3.15.12` (per ADR-0004) |
 
 To update, re-download from jsdelivr with the new version pinned:
@@ -25,6 +28,10 @@ curl -fsSLo addon-fit.min.js  https://cdn.jsdelivr.net/npm/@xterm/addon-fit@<v>/
 curl -fsSLo novnc-rfb.esm.js "https://cdn.jsdelivr.net/npm/@novnc/novnc@<v>/core/rfb.js/+esm"
 curl -fsSLo iron-remote-desktop.js \
   "https://cdn.jsdelivr.net/npm/@devolutions/iron-remote-desktop@<v>/iron-remote-desktop.js"
+curl -fsSLo gridstack-all.js  https://cdn.jsdelivr.net/npm/gridstack@<v>/dist/gridstack-all.js
+curl -fsSLo gridstack.min.css https://cdn.jsdelivr.net/npm/gridstack@<v>/dist/gridstack.min.css
+curl -fsSLo uPlot.iife.min.js https://cdn.jsdelivr.net/npm/uplot@<v>/dist/uPlot.iife.min.js
+curl -fsSLo uPlot.min.css     https://cdn.jsdelivr.net/npm/uplot@<v>/dist/uPlot.min.css
 ```
 
 Then update `MANIFEST.json` in the same commit — new `version`, `url`, `sha256`

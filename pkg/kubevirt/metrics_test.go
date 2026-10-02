@@ -90,3 +90,40 @@ func TestSampleAllCPU_NoMetricsServer(t *testing.T) {
 		t.Errorf("expected nil when metrics-server absent, got %v", got)
 	}
 }
+
+func TestSampleAllUsage(t *testing.T) {
+	_, r := newFakeClient()
+	r.AddResponseKV("kubectl", []string{"get", "pods", "-A", "-l", "kubevirt.io=virt-launcher", "-o", "json"},
+		`{"items":[
+			{"metadata":{"name":"virt-launcher-web-abcde","namespace":"corral-vms","labels":{"vm.kubevirt.io/name":"web"}},"spec":{"nodeName":"node-a"}},
+			{"metadata":{"name":"virt-launcher-db-fghij","namespace":"corral-vms","labels":{"vm.kubevirt.io/name":"db"}}}
+		]}`, nil)
+	r.AddResponseKV("kubectl", []string{"top", "pod", "-A", "-l", "kubevirt.io=virt-launcher", "--no-headers"},
+		"corral-vms   virt-launcher-web-abcde   250m   512Mi\ncorral-vms   virt-launcher-db-fghij   1", nil)
+
+	got := SampleAllUsage()
+	web := got["corral-vms/web"]
+	if web.MilliCPU != 250 || web.MemBytes != 512<<20 || web.Node != "node-a" {
+		t.Errorf("web usage = %+v, want 250m / 512Mi on node-a", web)
+	}
+	// A row with no memory column still reports CPU; an unscheduled pod has no node.
+	if db := got["corral-vms/db"]; db.MilliCPU != 1000 || db.MemBytes != 0 || db.Node != "" {
+		t.Errorf("db usage = %+v, want 1000m, no memory, no node", db)
+	}
+}
+
+func TestParseTopBytes(t *testing.T) {
+	cases := map[string]int64{
+		"512Mi": 512 << 20,
+		"2Gi":   2 << 30,
+		"900Ki": 900 << 10,
+		"4096":  4096,
+		"":      0,
+		"12Qi":  0,
+	}
+	for in, want := range cases {
+		if got := parseTopBytes(in); got != want {
+			t.Errorf("parseTopBytes(%q) = %d, want %d", in, got, want)
+		}
+	}
+}

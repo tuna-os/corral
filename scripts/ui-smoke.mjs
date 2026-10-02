@@ -8,9 +8,14 @@
 // Fails (exit 1) on any assertion or page error.
 // For reproducible documentation images, see scripts/capture-docs.mjs.
 
+import { mkdir } from 'node:fs/promises';
+import { mkdirSync } from 'node:fs';
 import { chromium } from 'playwright';
 
 const BASE = process.env.CORRAL_URL || 'http://127.0.0.1:8899/';
+// Named checks save a screenshot here; the workflow uploads the directory.
+const SHOTS = process.env.UI_SMOKE_SHOTS || 'ui-smoke-screenshots';
+mkdirSync(SHOTS, { recursive: true });
 let failures = 0;
 const check = (ok, msg) => {
   console.log(`${ok ? 'ok' : 'FAIL'} - ${msg}`);
@@ -40,11 +45,56 @@ check(await page.locator('td:has-text("incus-demo-vm")').count() > 0, 'Incus dem
 check(await page.locator('td:has-text("incus-demo-container")').count() === 0, 'Incus demo container is not in the VM table');
 check(await page.locator('#tree >> text=incus-demo-container').count() > 0, 'Incus demo container in the tree as a CT');
 
+// ── grid-columns: persisted resize, reorder and sort ──────────────
+const grid = page.locator('[data-grid="vms"]');
+const nameHeader = grid.locator('th[data-column="name"]');
+// The grid sits below the dashboard widgets: centre it on screen before
+// driving the mouse at its header (the task panel covers the bottom edge).
+await nameHeader.evaluate((el) => el.scrollIntoView({ block: 'center' }));
+const beforeWidth = await nameHeader.evaluate((el) => el.getBoundingClientRect().width);
+const resizeBox = await nameHeader.locator('.grid-resizer').boundingBox();
+await page.mouse.move(resizeBox.x + resizeBox.width / 2, resizeBox.y + resizeBox.height / 2);
+await page.mouse.down();
+await page.mouse.move(resizeBox.x + 42, resizeBox.y + resizeBox.height / 2);
+await page.mouse.up();
+await grid.locator('th[data-column="status"]').dragTo(nameHeader);
+await grid.locator('th[data-column="name"] .grid-sort').click();
+await page.reload();
+await page.waitForSelector('[data-grid="vms"] td:has-text("web-prod")');
+const columnOrder = await grid.locator('thead tr:first-child th[data-column]').evaluateAll((els) => els.map((el) => el.dataset.column));
+const afterWidth = await grid.locator('th[data-column="name"]').evaluate((el) => el.getBoundingClientRect().width);
+const sortedNames = await grid.locator('tbody tr:not(.grid-spacer) td:nth-child(3)').allTextContents();
+check(columnOrder[0] === 'status' && columnOrder[1] === 'name', 'grid-columns reorder persists after reload');
+check(afterWidth > beforeWidth + 20, 'grid-columns resize persists after reload');
+check(sortedNames.join('|') === [...sortedNames].sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })).join('|'), 'grid-columns sort persists and row order is correct');
+await grid.screenshot({ path: 'grid-columns.png' });
+check(true, 'grid-columns screenshot saved');
+
 // VM summary.
 await page.click('#tree >> text=web-prod');
 await page.waitForTimeout(1200);
 check(await page.locator('.tab.active:has-text("Summary")').count() === 1, 'VM summary tab opens');
 check((await page.textContent('#tab-body')).includes('corral ssh web-prod'), 'summary shows SSH hint');
+
+// Named acceptance check: console-popout. The control must create a separate
+// browser page and that page must complete the RFB handshake against demo mode.
+await page.click('[data-tab="console"]');
+await page.waitForSelector('#vnc-popout');
+const popupPromise = page.waitForEvent('popup');
+await page.click('#vnc-popout');
+const consolePopup = await popupPromise;
+await consolePopup.waitForSelector('#vnc-screen[data-connected="true"]', { timeout: 10000 }).catch(() => {});
+check(
+  await consolePopup.locator('#vnc-screen[data-connected="true"]').count() === 1,
+  'console-popout opens a new window and connects',
+);
+check(await consolePopup.locator('#vnc-one').count() === 1, 'console offers 1:1 scaling');
+check(await consolePopup.locator('#vnc-paste').count() === 1, 'console offers clipboard typing');
+check(await consolePopup.locator('[data-send-keys="cad"]').count() === 1, 'console offers send-keys');
+await mkdir('test-results', { recursive: true });
+await consolePopup.screenshot({ path: 'test-results/console-popout.png' });
+await consolePopup.close();
+await page.click('[data-tab="summary"]');
 
 // Stateful action: toggle power and watch the status flip. State-agnostic so
 // the script also works against an already-toggled long-running server.
@@ -56,6 +106,59 @@ check(
   `${wasRunning ? 'stop' : 'start'} action flips VM state`,
 );
 
+// ── Context Menu (context-menu acceptance check) ───────────────────
+// Right-click a demo VM, choose Stop (or Start), and assert that the state changes.
+await page.click('#tree >> text=Datacenter');
+await page.waitForTimeout(800);
+const demoRow = page.locator('tr[data-key*="web-prod"]').first();
+// Scroll first: a scroll closes an open menu, and the row sits below the
+// dashboard.
+await demoRow.evaluate((el) => el.scrollIntoView({ block: 'center' }));
+await page.waitForTimeout(300);
+await demoRow.click({ button: 'right' });
+await page.waitForSelector('.context-menu', { timeout: 10000 });
+check(await page.locator('.context-menu').count() > 0, 'context-menu: right-click opens action menu');
+
+// Save a screenshot with the context menu open
+await page.screenshot({ path: 'context-menu.png' }).catch(() => {});
+
+// Context menu closes on Escape
+await page.keyboard.press('Escape');
+await page.waitForTimeout(300);
+check(await page.locator('.context-menu').count() === 0, 'context-menu: Escape closes action menu');
+
+// Right-click again to drive Stop (or Start) action and verify state flips
+await demoRow.click({ button: 'right' });
+await page.waitForSelector('.context-menu', { timeout: 10000 });
+// Exact labels: "Start" must not match "Restart". A disabled item carries
+// disabled="" — an empty, falsy attribute — so ask for the enabled state.
+const menuItem = (label) => page.locator('.context-menu button.menu-item')
+  .filter({ has: page.locator('.menu-label', { hasText: new RegExp(`^${label}$`) }) });
+const stopItem = menuItem('Stop');
+const startItem = menuItem('Start');
+const canStop = (await stopItem.count()) > 0 && await stopItem.first().isEnabled();
+
+if (canStop) {
+  await stopItem.first().click();
+  await page.waitForTimeout(5500);
+  const statusCell = await page.locator('tr[data-key*="web-prod"]').first().innerText(); // column order is user-configurable
+  check(statusCell.includes('Stopped'), 'context-menu: Stop action flips VM state');
+} else if ((await startItem.count()) > 0 && await startItem.first().isEnabled()) {
+  await startItem.first().click();
+  await page.waitForTimeout(5500);
+  const statusCell = await page.locator('tr[data-key*="web-prod"]').first().innerText(); // column order is user-configurable
+  check(statusCell.includes('Running'), 'context-menu: Start action flips VM state');
+}
+
+// Tree row right-click
+const treeDemoRow = page.locator('#tree .tree-item', { hasText: 'web-prod' }).first();
+if (await treeDemoRow.count() > 0) {
+  await treeDemoRow.click({ button: 'right' });
+  await page.waitForSelector('.context-menu', { timeout: 5000 });
+  check(await page.locator('.context-menu').count() > 0, 'context-menu: tree row right-click opens action menu');
+  await page.keyboard.press('Escape');
+}
+
 // Cluster health is green in demo.
 await page.click('#tree >> text=Cluster health');
 await page.waitForTimeout(2500);
@@ -66,6 +169,62 @@ check(doctorText.includes('KubeVirt installed'), 'doctor renders checks');
 const broken = await page.locator('.doc-broken').allTextContents();
 const clusterBroken = broken.filter((t) => /KubeVirt|CDI|StorageClass|Snapshot|Export|metrics/i.test(t));
 check(clusterBroken.length === 0, `cluster checks green in demo (${clusterBroken.join('; ').slice(0, 120)})`);
+
+// ── command-palette (#349) ────────────────────────────────────────
+// Ctrl+K, a demo VM's name, Enter: that VM is selected. Starts from Cluster
+// health, so a pass means the palette moved the selection, not that it was
+// already there.
+await page.keyboard.press('Control+k');
+await page.waitForSelector('#palette[open] #palette-input', { timeout: 5000 }).catch(() => {});
+check(await page.locator('#palette[open]').count() === 1, 'command-palette: Ctrl+K opens the palette');
+await page.keyboard.type('db-prod');
+check(
+  (await page.textContent('#palette-list li.active .palette-label').catch(() => '')) === 'db-prod',
+  'command-palette: typing a VM name puts that VM first',
+);
+check(await page.locator('#palette-list li', { hasText: 'Stop db-prod' }).count() === 1, 'command-palette: actions are searchable');
+await page.keyboard.press('Enter');
+await page.waitForTimeout(800);
+check(await page.locator('#palette[open]').count() === 0, 'command-palette: Enter closes the palette');
+check(await page.locator('#tree .tree-item.selected', { hasText: 'db-prod' }).count() === 1, 'command-palette: Enter selects the VM in the tree');
+check(
+  (await page.textContent('.page-head h1')).includes('db-prod'),
+  'command-palette: Enter opens the VM',
+);
+await mkdir(SHOTS, { recursive: true });
+await page.keyboard.press('Control+k');
+await page.waitForSelector('#palette[open]', { timeout: 5000 }).catch(() => {});
+check(
+  (await page.textContent('#palette-list li.active .palette-label').catch(() => '')) === 'db-prod',
+  'command-palette: the recently used VM ranks first',
+);
+await page.keyboard.type('web');
+await page.screenshot({ path: `${SHOTS}/command-palette.png` });
+await page.keyboard.press('Escape');
+check(await page.locator('#palette[open]').count() === 0, 'command-palette: Escape closes the palette');
+
+// `?` lists the shortcuts; `/` focuses the tree filter, which narrows guests.
+// Blur whatever the closed palette handed focus back to: a key typed into an
+// input is text, not a shortcut.
+await page.evaluate(() => document.activeElement?.blur());
+await page.keyboard.press('?');
+await page.waitForSelector('#shortcuts[open]', { timeout: 3000 }).catch(() => {});
+check(await page.locator('#shortcuts[open]').count() === 1, 'shortcuts: ? opens the shortcut overlay');
+await page.screenshot({ path: `${SHOTS}/shortcuts.png` });
+await page.keyboard.press('Escape');
+await page.keyboard.press('/');
+check(await page.evaluate(() => document.activeElement?.id) === 'tree-filter', 'shortcuts: / focuses the tree filter');
+await page.keyboard.type('db-pr');
+check(
+  await page.locator('#tree .tree-item[data-guest]:visible').count() === 1,
+  'tree filter narrows the tree to matching guests',
+);
+await page.keyboard.press('Escape');
+check(await page.locator('#tree .tree-item[data-guest]:visible').count() > 1, 'Escape clears the tree filter');
+await page.keyboard.press('g');
+await page.keyboard.press('d');
+await page.waitForTimeout(500);
+check(await page.locator('#tree .tree-item.selected', { hasText: 'Datacenter' }).count() === 1, 'shortcuts: g d goes to the datacenter');
 
 // Create wizard opens with catalog cards.
 await page.click('#tree >> text=Datacenter');
@@ -104,6 +263,35 @@ const putRes = await fetch(`${BASE}api/theme`, {
 const updated = await putRes.json();
 check(updated.accent === '#22c55e' || updated.error, 'PUT /api/theme accepts accent change');
 
+
+// ── drag-migrate: drag a VM onto a node in Server View ─────────────
+// The drop opens the migrate confirmation with that node preselected; the
+// confirm runs POST /api/vms/{ns}/{name}/migrate and the VM lands there.
+await page.click('#tree >> text=Server View');
+await page.waitForTimeout(800);
+const fleetBeforeMigrate = await (await fetch(`${BASE}api/vms`)).json();
+const fromNode = fleetBeforeMigrate.find((v) => v.name === 'web-prod')?.node;
+const toNode = ['corral-1', 'corral-2', 'corral-3'].find((n) => n !== fromNode);
+const migrateSubject = page.locator('#tree .tree-item', { hasText: 'web-prod' }).first();
+const migrateTarget = page.locator('#tree .tree-item', { hasText: toNode }).first();
+await migrateSubject.dragTo(migrateTarget);
+await page.waitForSelector('.migrate-dialog[open]', { timeout: 5000 }).catch(() => {});
+check(await page.locator('.migrate-dialog[open]').count() === 1, `drag-migrate: dropping web-prod on ${toNode} opens the confirmation`);
+check(
+  await page.locator('.migrate-dialog #pick-node').inputValue().catch(() => '') === toNode,
+  'drag-migrate: the dropped-on node is preselected',
+);
+await page.screenshot({ path: 'drag-migrate.png' }).catch(() => {});
+await page.click('.migrate-dialog #pick-go').catch(() => {});
+await page.waitForFunction(async ([target]) => {
+  const fleet = await (await fetch('/api/vms')).json();
+  return fleet.find((v) => v.name === 'web-prod')?.node === target;
+}, [toNode], { timeout: 10000 }).catch(() => {});
+const fleetAfterMigrate = await (await fetch(`${BASE}api/vms`)).json();
+const migratedNode = fleetAfterMigrate.find((v) => v.name === 'web-prod')?.node;
+check(migratedNode === toNode, `drag-migrate: web-prod moved ${fromNode} → ${migratedNode} (want ${toNode})`);
+// The migration's task log opens as a modal; close it before moving on.
+if (await page.locator('#build-dialog[open]').count()) await page.click('#btn-build-close');
 
 // ── Pool View: drag-and-drop grouping and drag-to-move ────────────
 // The drop targets are the whole point of this view, and the two kinds must
@@ -233,6 +421,136 @@ check(
   metricsBody.includes('# TYPE corral_collection_success gauge'),
   '/metrics always reports whether collection is working',
 );
+
+// ── bulk-select (#344) ─────────────────────────────────────────────
+// The tree filter matches tags and IPs as well as names, tree rows support
+// arrow-key focus, and Shift-click selects a range that the inventory grid
+// shares and acts on in bulk.
+await page.goto(BASE);
+await page.waitForSelector('#tree [data-vm-key]', { timeout: 30000 }).catch(() => {});
+await page.click('#tree >> text=Server View');
+await page.waitForTimeout(800);
+await page.evaluate(() => document.activeElement?.blur());
+await page.keyboard.press('/');
+await page.keyboard.type('prod');
+check(await page.locator('#tree [data-vm-key]:visible').count() >= 2, 'tree filter matches VM tags');
+const anIP = (await (await fetch(`${BASE}api/vms`)).json()).find((v) => v.ip && v.backend === 'kubevirt')?.ip || '';
+await page.locator('#tree-filter').fill(anIP);
+check(!!anIP && await page.locator('#tree [data-vm-key]:visible').count() === 1, `tree filter matches VM IPs (${anIP})`);
+await page.locator('#tree-filter').fill('');
+await page.locator('#tree-filter').dispatchEvent('input');
+const webTreeRow = page.locator('#tree [data-vm-key]', { hasText: 'web-prod' }).first();
+const nextRowText = await webTreeRow.evaluate((row) => {
+  const rows = [...document.querySelectorAll('#tree .tree-item')].filter((r) => !r.hidden && r.offsetParent !== null);
+  return rows[rows.indexOf(row) + 1]?.textContent ?? '';
+});
+await webTreeRow.focus();
+await page.keyboard.press('ArrowDown');
+check(
+  nextRowText !== '' && (await page.locator('#tree .tree-item:focus').textContent().catch(() => '')) === nextRowText,
+  'tree ArrowDown moves focus to the next row',
+);
+const treeVMs = await page.locator('#tree [data-vm-key] .tree-label').allTextContents();
+const webAt = treeVMs.indexOf('web-prod');
+const range = treeVMs.slice(webAt, webAt + 3);
+await webTreeRow.click();
+await page.locator('#tree [data-vm-key]', { hasText: range[2] }).first().click({ modifiers: ['Shift'] });
+check(await page.locator('#tree [data-vm-key].multi-selected').count() === 3, `bulk-select: Shift selects three tree VMs (${range.join(', ')})`);
+await page.locator('#tree .tree-item', { hasText: 'Datacenter' }).first().click();
+await page.waitForSelector('#content .vm-check', { timeout: 10000 }).catch(() => {});
+check(await page.locator('#content .vm-check:checked').count() === 3, 'bulk-select: tree selection is shared with the grid');
+page.once('dialog', (dialog) => dialog.accept());
+await page.locator('#content .bulkbar [data-bulk="stop"]').click();
+await page.waitForFunction(async (names) => {
+  const fleet = await (await fetch('/api/vms')).json();
+  return names.every((name) => fleet.find((vm) => vm.name === name)?.status?.includes('Stopped'));
+}, range, { timeout: 10000 }).catch(() => {});
+const stoppedFleet = await (await fetch(`${BASE}api/vms`)).json();
+check(
+  range.every((name) => stoppedFleet.find((vm) => vm.name === name)?.status?.includes('Stopped')),
+  'bulk-select: bulk Stop stops all three selected VMs',
+);
+await page.screenshot({ path: `${SHOTS}/bulk-select.png` });
+
+// ── dashboard-layout (#348) ───────────────────────────────────────
+// The Datacenter page opens with a widget grid. Move one widget and resize
+// another with the mouse, resize a third from the keyboard, reload, and check
+// that all three kept their place, and that a live chart drew data points.
+{
+  const layoutKey = 'corral.dashboard.datacenter';
+  await page.click('#tree >> text=Datacenter');
+  await page.evaluate((k) => localStorage.removeItem(k), layoutKey);
+  await page.reload();
+  const item = (id) => page.locator(`#dc-dash .grid-stack-item[gs-id="${id}"]`);
+  const node = (id) => item(id).evaluate((el) => {
+    const n = el.gridstackNode || {};
+    return { x: n.x, y: n.y, w: n.w, h: n.h };
+  });
+  await item('capacity').waitFor({ timeout: 30000 }).catch(() => {});
+  check(await page.locator('#dc-dash .grid-stack-item').count() >= 6, 'dashboard-layout: Datacenter opens with a widget grid');
+
+  const gridBox = await page.locator('#dc-dash .grid-stack').boundingBox();
+  const colW = gridBox ? gridBox.width / 12 : 100;
+
+  // Move: drag the Capacity title bar four columns to the right.
+  const before = await node('capacity');
+  const head = await item('capacity').locator('.widget-head').boundingBox();
+  if (head) {
+    await page.mouse.move(head.x + 30, head.y + head.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(head.x + 30 + colW * 4, head.y + head.height / 2, { steps: 15 });
+    await page.mouse.up();
+  }
+  await page.waitForTimeout(400);
+  const moved = await node('capacity');
+  check(moved.x > before.x, `dashboard-layout: dragging a title bar moves the widget (x ${before.x} → ${moved.x})`);
+
+  // Resize: hover the CPU chart so its corner handle shows, then drag it down.
+  const cpuBefore = await node('cpu');
+  await item('cpu').hover();
+  const handle = await item('cpu').locator('.ui-resizable-se').boundingBox();
+  if (handle) {
+    await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2 + 170, { steps: 15 });
+    await page.mouse.up();
+  }
+  await page.waitForTimeout(400);
+  const resized = await node('cpu');
+  check(resized.h > cpuBefore.h, `dashboard-layout: dragging the corner resizes the widget (h ${cpuBefore.h} → ${resized.h})`);
+
+  // Keyboard equivalent: Shift+ArrowRight on a focused title bar widens it.
+  const memBefore = await node('mem');
+  await item('mem').locator('.widget-head').focus();
+  await page.keyboard.press('Shift+ArrowRight');
+  await page.waitForTimeout(200);
+  const widened = await node('mem');
+  check(widened.w === memBefore.w + 1, `dashboard-layout: Shift+ArrowRight widens the focused widget (w ${memBefore.w} → ${widened.w})`);
+
+  // The same moves are in the widget menu, for pointer users without a drag.
+  await item('mem').locator('.widget-menu-btn').click();
+  check(await item('mem').locator('.widget-menu [data-wact="remove"]').isVisible(), 'dashboard-layout: the widget menu offers the drag actions');
+  await page.keyboard.press('Escape');
+
+  // Persisted: reload and read the grid back.
+  await page.reload();
+  await item('capacity').waitFor({ timeout: 30000 }).catch(() => {});
+  const after = { capacity: await node('capacity'), cpu: await node('cpu'), mem: await node('mem') };
+  check(after.capacity.x === moved.x && after.capacity.y === moved.y, 'dashboard-layout: the moved widget keeps its place after reload');
+  check(after.cpu.h === resized.h, 'dashboard-layout: the resized widget keeps its size after reload');
+  check(after.mem.w === widened.w, 'dashboard-layout: the keyboard resize persists too');
+
+  // A live chart drew data points from the demo's usage feed.
+  const drew = await page.waitForFunction(
+    () => [...document.querySelectorAll('#dc-dash .dash-chart')].some((c) => Number(c.dataset.points) > 0 && c.querySelector('canvas')),
+    null, { timeout: 30000 },
+  ).then(() => true).catch(() => false);
+  check(drew, 'dashboard-layout: a live chart rendered data points');
+  await page.screenshot({ path: `${SHOTS}/dashboard-layout.png`, fullPage: false });
+
+  // Leave the default layout for anything that runs after this.
+  await page.evaluate((k) => localStorage.removeItem(k), layoutKey);
+}
 
 check(pageErrors.length === 0, `no JS page errors (${pageErrors.join('; ').slice(0, 200)})`);
 
