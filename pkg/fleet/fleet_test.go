@@ -162,6 +162,7 @@ func TestList_ContextCanceled(t *testing.T) {
 func TestList_UnsupportedBackend(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("CORRAL_INCUS_REMOTE", "")
 	t.Setenv("CORRAL_LIBVIRT_URI", "")
 	t.Setenv("CORRAL_KUBE_CONTEXT", "")

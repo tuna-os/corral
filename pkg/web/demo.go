@@ -6,16 +6,24 @@ import (
 	"net/http"
 
 	"github.com/tuna-os/corral/pkg/demo"
+	"github.com/tuna-os/corral/pkg/folder"
 	"golang.org/x/net/websocket"
 )
 
-var demoEnabled bool
+// demoEnabled is consumed by the next newMux (demo console); demoMode stays
+// set for handlers that must not touch real state, such as PUT /api/theme.
+var (
+	demoEnabled bool
+	demoMode    bool
+)
 
 // EnableDemo plugs the in-memory fake cluster (pkg/demo) into every backend
 // seam plus this package's own runner. Must be called before Serve.
 func EnableDemo() {
 	demoEnabled = true
+	demoMode = true
 	defaultRunner = demo.Enable()
+	SetFolderStore(folder.NewStore(folder.NewMemoryBackend()))
 }
 
 // serveDemoVNC performs enough of RFB 3.8 to establish a no-auth console.
