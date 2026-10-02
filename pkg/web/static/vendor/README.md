@@ -14,7 +14,7 @@ human-readable view of it; the two must not disagree.
 | `xterm.min.js`, `xterm.min.css` | `@xterm/xterm@5.5.0` |
 | `addon-fit.min.js` | `@xterm/addon-fit@0.10.0` |
 | `novnc-rfb.esm.js` | `@novnc/novnc@1.4.0` `core/rfb.js`, bundled to a single ES module via jsDelivr `/+esm` |
-| `iron-remote-desktop.js` | **unknown** — provenance was not recorded when this file was vendored, and the build carries no version string. See [#215](https://github.com/tuna-os/corral/issues/215) |
+| `iron-remote-desktop.js` | `@devolutions/iron-remote-desktop@0.11.0` |
 | `gridstack-all.js`, `gridstack.min.css` | `gridstack@14.0.0` (MIT) |
 | `uPlot.iife.min.js`, `uPlot.min.css` | `uplot@1.6.32` (MIT) |
 | `../alpine.min.js` | `alpinejs@3.15.12` (per ADR-0004) |
@@ -26,6 +26,8 @@ curl -fsSLo xterm.min.js      https://cdn.jsdelivr.net/npm/@xterm/xterm@<v>/lib/
 curl -fsSLo xterm.min.css     https://cdn.jsdelivr.net/npm/@xterm/xterm@<v>/css/xterm.min.css
 curl -fsSLo addon-fit.min.js  https://cdn.jsdelivr.net/npm/@xterm/addon-fit@<v>/lib/addon-fit.min.js
 curl -fsSLo novnc-rfb.esm.js "https://cdn.jsdelivr.net/npm/@novnc/novnc@<v>/core/rfb.js/+esm"
+curl -fsSLo iron-remote-desktop.js \
+  "https://cdn.jsdelivr.net/npm/@devolutions/iron-remote-desktop@<v>/iron-remote-desktop.js"
 curl -fsSLo gridstack-all.js  https://cdn.jsdelivr.net/npm/gridstack@<v>/dist/gridstack-all.js
 curl -fsSLo gridstack.min.css https://cdn.jsdelivr.net/npm/gridstack@<v>/dist/gridstack.min.css
 curl -fsSLo uPlot.iife.min.js https://cdn.jsdelivr.net/npm/uplot@<v>/dist/uPlot.iife.min.js
@@ -35,7 +37,12 @@ curl -fsSLo uPlot.min.css     https://cdn.jsdelivr.net/npm/uplot@<v>/dist/uPlot.
 Then update `MANIFEST.json` in the same commit — new `version`, `url`, `sha256`
 (`sha256sum <file>`) and `bytes` (`wc -c <file>`).
 
-`iron-remote-desktop.js` has no update recipe yet because its upstream is not
-known. `MANIFEST.json` pins the digest of the copy in tree so the file cannot
-be changed unnoticed, but that digest cannot be checked against an upstream
-release until the source package and version are identified.
+The `iron-remote-desktop.js` bundle carries no version string of its own. To
+identify the vendored copy, we digested each published version of the package
+until one matched: `0.11.0`.
+
+The two package names from IronRDP are easy to confuse.
+`@devolutions/iron-remote-desktop` is the host web component in this directory.
+`@devolutions/iron-remote-desktop-rdp` is the RDP backend module that plugs into
+that host. ADR-0002 names the backend module, but this directory does not hold
+it yet. Keep both packages on compatible versions when phase 2 lands.
