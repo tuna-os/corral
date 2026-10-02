@@ -23,6 +23,7 @@ export function bindPools(helpers) { ctx = helpers; }
 let pools = { folders: [], unfoldered: [] };
 let destinations = [];
 export const poolState = () => pools;
+export const destinationsState = () => destinations;
 
 // loadPools refreshes both halves of the tree. Failures are soft: a pool tree
 // that cannot load should degrade to "no pools yet", not blank the sidebar.
@@ -72,7 +73,7 @@ export function renderTreePools(tree) {
 
     for (const vm of folder.members || []) {
       const child = vmRow(vm, Math.min(depthOf(folder.path) + 2, 4));
-      draggable(child, vm);
+      makeDraggable(child, vm);
       tree.appendChild(child);
     }
     for (const missing of folder.missing || []) {
@@ -102,7 +103,7 @@ export function renderTreePools(tree) {
   tree.appendChild(loose);
   for (const vm of unassigned) {
     const row = vmRow(vm, 1);
-    draggable(row, vm);
+    makeDraggable(row, vm);
     tree.appendChild(row);
   }
 
@@ -143,87 +144,180 @@ function renderBackendTargets(tree) {
       continue;
     }
     row.title = `Drop a VM here to move it to ${d.backend} (the guest stops)`;
-    dropTargetBackend(row, d.backend);
+    dropTargetBackend(row, d);
     tree.appendChild(row);
   }
 }
 
-// ── drag and drop ─────────────────────────────────────────────────
+// ── Unified drag and drop ──────────────────────────────────────────
 
-const DRAG_TYPE = 'application/x-corral-instance';
+export const DRAG_TYPE = 'application/x-corral-instance';
+let activeDrag = null;
 
-function draggable(row, vm) {
+export const getActiveDrag = () => activeDrag;
+export const setActiveDrag = (val) => { activeDrag = val; };
+
+export function makeDraggable(row, vm) {
+  if (document.body.classList.contains('read-only')) {
+    row.draggable = false;
+    return;
+  }
+  // vmRow already makes tree rows draggable; pool view calls this again.
+  if (row.dataset.dragBound) return;
+  row.dataset.dragBound = '1';
   row.draggable = true;
   row.addEventListener('dragstart', (e) => {
-    e.dataTransfer.setData(DRAG_TYPE, vm.id);
+    if (document.body.classList.contains('read-only')) {
+      e.preventDefault();
+      return;
+    }
+    activeDrag = { type: 'vm', vm };
+    e.dataTransfer.setData(DRAG_TYPE, vm.id || (ctx.vmKey ? ctx.vmKey(vm) : vm.name));
     e.dataTransfer.setData('text/plain', vm.name);
     e.dataTransfer.effectAllowed = 'move';
     row.classList.add('dragging');
   });
-  row.addEventListener('dragend', () => row.classList.remove('dragging'));
+  row.addEventListener('dragend', () => {
+    activeDrag = null;
+    row.classList.remove('dragging');
+    document.querySelectorAll('.drop-target, .drop-invalid').forEach((el) => {
+      el.classList.remove('drop-target', 'drop-invalid');
+    });
+  });
 }
 
-// dropZone wires the three events every target needs identically, so a target
-// differs only in what it does with the ref.
-function dropZone(row, onDrop) {
+// dropZone wires drag events with validation and feedback.
+export function dropZone(row, { checkValid, onDrop, defaultTitle }) {
+  const origTitle = defaultTitle ?? row.title ?? '';
+
+  row.addEventListener('dragenter', (e) => {
+    if (!e.dataTransfer.types.includes(DRAG_TYPE)) return;
+    if (document.body.classList.contains('read-only')) return;
+    const vm = activeDrag?.vm;
+    const validity = checkValid ? checkValid(vm) : { ok: true };
+    if (validity.ok) {
+      e.preventDefault();
+      row.classList.add('drop-target');
+      row.classList.remove('drop-invalid');
+    } else {
+      row.classList.remove('drop-target');
+      row.classList.add('drop-invalid');
+      if (validity.reason) row.title = validity.reason;
+    }
+  });
+
   row.addEventListener('dragover', (e) => {
     if (!e.dataTransfer.types.includes(DRAG_TYPE)) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-    row.classList.add('drop-target');
+    if (document.body.classList.contains('read-only')) return;
+    const vm = activeDrag?.vm;
+    const validity = checkValid ? checkValid(vm) : { ok: true };
+    if (validity.ok) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      row.classList.add('drop-target');
+      row.classList.remove('drop-invalid');
+    } else {
+      e.dataTransfer.dropEffect = 'none';
+      row.classList.remove('drop-target');
+      row.classList.add('drop-invalid');
+      if (validity.reason) row.title = validity.reason;
+    }
   });
-  row.addEventListener('dragleave', () => row.classList.remove('drop-target'));
+
+  row.addEventListener('dragleave', (e) => {
+    if (!row.contains(e.relatedTarget)) {
+      row.classList.remove('drop-target', 'drop-invalid');
+      row.title = origTitle;
+    }
+  });
+
   row.addEventListener('drop', (e) => {
-    row.classList.remove('drop-target');
+    row.classList.remove('drop-target', 'drop-invalid');
+    row.title = origTitle;
+    if (document.body.classList.contains('read-only')) return;
     const ref = e.dataTransfer.getData(DRAG_TYPE);
     if (!ref) return;
+    const vm = activeDrag?.vm || (ctx.findVM ? ctx.findVM(ref) : null);
+    const validity = checkValid ? checkValid(vm) : { ok: true };
+    if (!validity.ok) {
+      if (validity.reason) ctx.toast(validity.reason);
+      return;
+    }
     e.preventDefault();
     e.stopPropagation();
-    onDrop(ref);
+    onDrop(vm, ref);
   });
 }
 
 // Dropping onto a pool is grouping only — no instance is touched, so it commits
 // immediately rather than asking. Dragging it back undoes it.
-function dropTargetPool(row, path) {
-  dropZone(row, async (ref) => {
-    try {
-      if (path === '') {
-        await ctx.api(`/api/folders/members?ref=${encodeURIComponent(ref)}`, { method: 'DELETE' });
-        ctx.toast('Removed from its pool');
-      } else {
-        await ctx.api('/api/folders/members', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ path, ref }),
-        });
-        ctx.toast(`Added to ${path}`);
+export function dropTargetPool(row, path) {
+  dropZone(row, {
+    defaultTitle: path ? `Pool ${path}` : 'Unassigned pool',
+    checkValid: (vm) => {
+      if (vm && path !== '') {
+        const folder = pools.folders.find((f) => f.path === path);
+        if (folder && (folder.members || []).some((m) => (m.id && m.id === vm.id) || m.name === vm.name)) {
+          return { ok: false, reason: `${vm.name} is already in pool ${path}` };
+        }
       }
-    } catch (e) {
-      ctx.toast(e.message);
-      return;
-    }
-    await loadPools();
-    ctx.refresh(true);
+      return { ok: true };
+    },
+    onDrop: async (vm, ref) => {
+      try {
+        if (path === '') {
+          await ctx.api(`/api/folders/members?ref=${encodeURIComponent(ref)}`, { method: 'DELETE' });
+          ctx.toast('Removed from its pool');
+        } else {
+          await ctx.api('/api/folders/members', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path, ref }),
+          });
+          ctx.toast(`Added to ${path}`);
+        }
+      } catch (e) {
+        ctx.toast(e.message);
+        return;
+      }
+      await loadPools();
+      ctx.refresh(true);
+    },
   });
 }
 
 // Dropping onto a backend proposes a move. The drop itself only asks the server
 // for a plan — safe to do on every stray drag.
-function dropTargetBackend(row, backend) {
-  dropZone(row, async (ref) => {
-    let plan;
-    try {
-      plan = await ctx.api('/api/move/preflight', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ref, toBackend: backend }),
-      });
-    } catch (e) {
-      ctx.toast(`Could not plan the move: ${e.message}`);
-      return;
-    }
-    showMoveDialog(ref, backend, plan);
+export function dropTargetBackend(row, d) {
+  const backend = typeof d === 'string' ? d : d.backend;
+  const can = typeof d === 'string' ? true : d.can;
+  const reason = typeof d === 'string' ? '' : d.reason;
+
+  dropZone(row, {
+    defaultTitle: can ? `Drop a VM here to move it to ${backend} (the guest stops)` : (reason || `${backend} unavailable`),
+    checkValid: (vm) => {
+      if (!can) {
+        return { ok: false, reason: reason || `${backend} cannot receive a moved instance` };
+      }
+      if (vm && vm.backend === backend && (!vm.context || vm.context === (d.context || ''))) {
+        return { ok: false, reason: `${vm.name} is already on backend ${backend}` };
+      }
+      return { ok: true };
+    },
+    onDrop: async (vm, ref) => {
+      let plan;
+      try {
+        plan = await ctx.api('/api/move/preflight', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ref, toBackend: backend }),
+        });
+      } catch (e) {
+        ctx.toast(`Could not plan the move: ${e.message}`);
+        return;
+      }
+      showMoveDialog(ref, backend, plan);
+    },
   });
 }
 

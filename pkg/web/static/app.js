@@ -2,7 +2,10 @@
 // Vanilla JS; noVNC + xterm.js vendored under static/vendor/ (offline-safe).
 
 import { icon } from './icons.js';
-import { bindPools, loadPools, poolState, renderTreePools, showMoveDialog, summariseOutcomes } from './pools.js';
+import {
+  bindPools, loadPools, poolState, renderTreePools, showMoveDialog, summariseOutcomes,
+  makeDraggable, dropZone,
+} from './pools.js';
 import { mountGrid } from './grid.js';
 import { bindPalette, initKeys } from './palette.js';
 
@@ -1169,6 +1172,26 @@ function ctRow(c, lvl) {
 
 // Server View: Datacenter → Node → VMs/CTs, grouped by .node. Guests with
 // no placed node (stopped, unscheduled) render as top-level orphans.
+// dropTargetNode accepts a dragged VM and proposes migrating it to that node.
+// Invalid drops (node not ready, VM already there, non-KubeVirt VM) are
+// refused with the reason as the row's tooltip.
+function dropTargetNode(row, node) {
+  dropZone(row, {
+    defaultTitle: node.ready ? `Drop a VM here to migrate it to ${node.name}` : `Node ${node.name} (not ready)`,
+    checkValid: (vm) => {
+      if (!node.ready) return { ok: false, reason: `Node ${node.name} is not ready` };
+      if (vm) {
+        if (vm.node === node.name) return { ok: false, reason: `${vm.name} is already on ${node.name}` };
+        if (vm.backend && vm.backend !== 'kubevirt') {
+          return { ok: false, reason: `${vm.name} (${vm.backend}) cannot migrate to a cluster node` };
+        }
+      }
+      return { ok: true };
+    },
+    onDrop: (vm) => { if (vm) migrateVM(vm, node.name); },
+  });
+}
+
 function renderTreeServer(tree) {
   const byNode = (nodeName) => vms.filter((v) => v.node === nodeName);
   const ctsByNode = (nodeName) => cts.filter((c) => c.node === nodeName);
@@ -1183,6 +1206,7 @@ function renderTreeServer(tree) {
       onclick: () => select({ type: 'node', name: n.name }),
     });
     attachContextMenu(row, () => nodeMenuItems(n.name));
+    dropTargetNode(row, n);
     tree.appendChild(row);
     for (const vm of byNode(n.name)) {
       placed.add(vmKey(vm));
@@ -1265,6 +1289,7 @@ function vmRow(vm, lvl) {
   row.prepend(check);
   row.dataset.guest = vm.name;
   attachContextMenu(row, () => vmMenuItems(vm));
+  makeDraggable(row, vm);
   return row;
 }
 
@@ -2077,7 +2102,10 @@ function bindVMTable(root, list) {
     selected: selectedVMKeys, checkClass: 'vm-check', checkAllClass: 'vm-check-all',
     onRowClick: (vm) => select({ type: 'vm', key: vmKey(vm) }),
     onSelectionChange: () => { update(); renderTree(); },
-    decorateRow: (tr, vm) => attachContextMenu(tr, () => vmMenuItems(vm)),
+    decorateRow: (tr, vm) => {
+      attachContextMenu(tr, () => vmMenuItems(vm));
+      makeDraggable(tr, vm);
+    },
   });
 
   bar.querySelectorAll('[data-bulk]').forEach((b) => {
@@ -2341,10 +2369,12 @@ async function post(vm, path, body) {
   });
 }
 
-async function migrateVM(vm) {
+// migrateVM asks for (or, after a drag onto a node, confirms) the target node.
+async function migrateVM(vm, targetNode = null) {
+  if (document.body.classList.contains('read-only') || !me.admin) return;
   const others = nodes.filter((n) => n.ready && n.name !== vm.node).map((n) => n.name);
   if (!others.length) { toast('No other ready node to migrate to.'); return; }
-  const target = await pickNode(vm, others);
+  const target = await pickNode(vm, others, targetNode);
   if (target === null) return; // cancelled
   let res;
   try {
@@ -2399,21 +2429,28 @@ function pickExportFormat(vm) {
 }
 
 // pickNode shows a small modal with a target-node dropdown (eligible nodes
-// only). Resolves to the chosen node name, '' for "let the scheduler choose",
-// or null if cancelled.
-function pickNode(vm, eligible) {
+// only) and what kind of migration this will be. preselect is the node a VM
+// was dropped on. Resolves to the chosen node name, '' for "let the scheduler
+// choose", or null if cancelled.
+function pickNode(vm, eligible, preselect = null) {
   return new Promise((resolve) => {
     const dlg = document.createElement('dialog');
-    dlg.className = 'pick-dialog';
+    dlg.className = 'pick-dialog migrate-dialog';
+    const mode = !vm.running
+      ? `<li><span class="dot off"></span> <b>Offline:</b> the VM is stopped; it starts on the new node next time.</li>`
+      : vm.liveMigratable
+        ? `<li><span class="dot on"></span> <b>Live:</b> memory and CPU state move with no downtime.</li>`
+        : `<li><span class="dot mid"></span> <b>Not live-migratable:</b> the migration may fail; stop the VM to move it offline.</li>`;
     dlg.innerHTML = `
       <h3>Migrate ${esc(vm.name)}</h3>
-      <p class="muted">Currently on <strong>${esc(vm.node || '—')}</strong>. Pick a target node.</p>
+      <p class="muted">Currently on <strong>${esc(vm.node || '—')}</strong>. ${preselect ? `Move to <strong>${esc(preselect)}</strong>?` : 'Pick a target node.'}</p>
       <label>Target node
         <select id="pick-node">
           <option value="">Auto — let the scheduler choose</option>
-          ${eligible.map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join('')}
+          ${eligible.map((n) => `<option value="${esc(n)}"${n === preselect ? ' selected' : ''}>${esc(n)}</option>`).join('')}
         </select>
       </label>
+      <ul class="migrate-checks">${mode}</ul>
       <div class="pick-actions">
         <button class="btn" value="cancel">Cancel</button>
         <button class="btn primary" id="pick-go">${icon('migrate')} Migrate</button>
@@ -3801,7 +3838,7 @@ $('#btn-create').innerHTML = `${icon('plus')} Create VM`;
 // pool row and a node row stay visually identical — the difference is what a
 // drop onto one means, not how it looks.
 bindPools({
-  api, toast, esc, icon, refresh, treeRow, vmRow,
+  api, toast, esc, icon, refresh, treeRow, vmRow, vmKey, findVM,
   attachContextMenu, poolMenuItems, unassignedMenuItems,
 });
 

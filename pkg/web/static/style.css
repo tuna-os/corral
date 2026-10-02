@@ -181,6 +181,7 @@ main {
    that would only ever 403, leaving view-only surfaces (consoles, tabs). */
 body.read-only #btn-create,
 body.read-only #btn-create-ct,
+body.read-only .pool-actions,
 body.read-only .toolbar,
 body.read-only .hp-action,
 body.read-only .bulkbar button[data-bulk],
@@ -706,6 +707,11 @@ tr.ev-warn td { color: var(--yellow); }
   outline-offset: -2px;
   background: var(--panel-2);
 }
+.tree-item.drop-invalid {
+  outline: 2px dashed var(--red, #f85149);
+  outline-offset: -2px;
+  cursor: not-allowed;
+}
 /* A backend that cannot receive a move: visibly inert, with the reason on
    hover. It is never a drop target, so it never highlights. */
 .tree-item.disabled { opacity: .45; cursor: not-allowed; }
@@ -719,6 +725,9 @@ tr.ev-warn td { color: var(--yellow); }
    three buttons on every folder is noise, and one of them stops everything. */
 .pool-actions { visibility: hidden; }
 .tree-item:hover .pool-actions, .tree-item:focus-within .pool-actions { visibility: visible; }
+
+ul.migrate-checks { list-style: none; padding: 0; margin: 12px 0; }
+.migrate-checks li { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: .85rem; }
 
 .modal {
   position: fixed; inset: 0; z-index: 60;

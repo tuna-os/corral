@@ -118,6 +118,7 @@ type demoVM struct {
 	Template       bool
 	ExpiresAt      string
 	Load           float64 // baseline CPU load in millicores for the sparkline
+	pinnedNode     string
 }
 
 func (v *demoVM) running() bool {
@@ -302,6 +303,36 @@ func (d *demoCluster) dispatch(stdin, name string, args []string) ([]byte, error
 	case args[0] == "label" && len(args) >= 3:
 		d.applyTagLabel(args)
 		return []byte{}, nil
+	case len(args) >= 3 && args[0] == "patch" && args[1] == "vm":
+		v := d.find(args[2], flagValue(args, "-n"))
+		if v != nil {
+			for i, a := range args {
+				if a == "-p" && i+1 < len(args) {
+					var p struct {
+						Spec struct {
+							Template struct {
+								Spec struct {
+									NodeSelector map[string]string `json:"nodeSelector"`
+								} `json:"spec"`
+							} `json:"template"`
+						} `json:"spec"`
+					}
+					if json.Unmarshal([]byte(args[i+1]), &p) == nil && p.Spec.Template.Spec.NodeSelector != nil {
+						if target := p.Spec.Template.Spec.NodeSelector["kubernetes.io/hostname"]; target != "" {
+							v.Node = target
+							v.pinnedNode = target
+						}
+					}
+				}
+			}
+		}
+		return []byte{}, nil
+	case len(args) >= 3 && args[0] == "get" && (args[1] == "vmi" || args[1] == "vmis") && !strings.HasPrefix(args[2], "-"):
+		v := d.find(args[2], flagValue(args, "-n"))
+		if v == nil {
+			return nil, fmt.Errorf("virtualmachineinstance %q not found", args[2])
+		}
+		return d.vmiJSON(v), nil
 	case args[0] == "get" && hasJSONOutput(args):
 		// A named get ("get datavolume foo -o json") must 404 like kubectl
 		// would — returning a list shape parses as a zero object and callers
@@ -352,7 +383,17 @@ func (d *demoCluster) virtctl(args []string) ([]byte, error) {
 	case "restart":
 		v.Status = "Running"
 	case "migrate":
-		v.Status = "Migrating"
+		if v.pinnedNode != "" {
+			v.Node = v.pinnedNode
+			v.pinnedNode = ""
+		} else if v.Node == "" || v.Node == "corral-1" {
+			v.Node = "corral-2"
+		} else if v.Node == "corral-2" {
+			v.Node = "corral-3"
+		} else {
+			v.Node = "corral-1"
+		}
+		v.Status = "Running"
 	}
 	return []byte{}, nil
 }
@@ -533,6 +574,27 @@ func (d *demoCluster) vmItem(v *demoVM) map[string]any {
 	}
 }
 
+func (d *demoCluster) vmiJSON(v *demoVM) []byte {
+	b, _ := json.Marshal(map[string]any{
+		"metadata": map[string]any{"name": v.Name, "namespace": v.NS},
+		"status": map[string]any{
+			"nodeName": v.Node,
+			"phase":    "Running",
+			"migrationState": map[string]any{
+				"completed":  true,
+				"sourceNode": "corral-1",
+				"targetNode": v.Node,
+			},
+			"interfaces": []map[string]any{{"ipAddress": v.IP}},
+			"conditions": []map[string]any{
+				{"type": "LiveMigratable", "status": "True"},
+				{"type": "AgentConnected", "status": "True"},
+			},
+		},
+	})
+	return b
+}
+
 func (d *demoCluster) vmiListJSON() []byte {
 	items := []map[string]any{}
 	for _, v := range d.vms {
@@ -652,7 +714,11 @@ var demoStorageClassJSON = []byte(`{"items": [{
 
 var demoNodesJSON = func() []byte {
 	node := func(name, role string) map[string]any {
-		labels := map[string]string{"kubernetes.io/hostname": name}
+		labels := map[string]string{
+			"kubernetes.io/hostname":            name,
+			"kubevirt.io/schedulable":           "true",
+			"cpu-vendor.node.kubevirt.io/intel": "true",
+		}
 		if role != "" {
 			labels["node-role.kubernetes.io/"+role] = "true"
 		}

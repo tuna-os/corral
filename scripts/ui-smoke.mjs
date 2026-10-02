@@ -255,6 +255,35 @@ const updated = await putRes.json();
 check(updated.accent === '#22c55e' || updated.error, 'PUT /api/theme accepts accent change');
 
 
+// ── drag-migrate: drag a VM onto a node in Server View ─────────────
+// The drop opens the migrate confirmation with that node preselected; the
+// confirm runs POST /api/vms/{ns}/{name}/migrate and the VM lands there.
+await page.click('#tree >> text=Server View');
+await page.waitForTimeout(800);
+const fleetBeforeMigrate = await (await fetch(`${BASE}api/vms`)).json();
+const fromNode = fleetBeforeMigrate.find((v) => v.name === 'web-prod')?.node;
+const toNode = ['corral-1', 'corral-2', 'corral-3'].find((n) => n !== fromNode);
+const migrateSubject = page.locator('#tree .tree-item', { hasText: 'web-prod' }).first();
+const migrateTarget = page.locator('#tree .tree-item', { hasText: toNode }).first();
+await migrateSubject.dragTo(migrateTarget);
+await page.waitForSelector('.migrate-dialog[open]', { timeout: 5000 }).catch(() => {});
+check(await page.locator('.migrate-dialog[open]').count() === 1, `drag-migrate: dropping web-prod on ${toNode} opens the confirmation`);
+check(
+  await page.locator('.migrate-dialog #pick-node').inputValue().catch(() => '') === toNode,
+  'drag-migrate: the dropped-on node is preselected',
+);
+await page.screenshot({ path: 'drag-migrate.png' }).catch(() => {});
+await page.click('.migrate-dialog #pick-go').catch(() => {});
+await page.waitForFunction(async ([target]) => {
+  const fleet = await (await fetch('/api/vms')).json();
+  return fleet.find((v) => v.name === 'web-prod')?.node === target;
+}, [toNode], { timeout: 10000 }).catch(() => {});
+const fleetAfterMigrate = await (await fetch(`${BASE}api/vms`)).json();
+const migratedNode = fleetAfterMigrate.find((v) => v.name === 'web-prod')?.node;
+check(migratedNode === toNode, `drag-migrate: web-prod moved ${fromNode} → ${migratedNode} (want ${toNode})`);
+// The migration's task log opens as a modal; close it before moving on.
+if (await page.locator('#build-dialog[open]').count()) await page.click('#btn-build-close');
+
 // ── Pool View: drag-and-drop grouping and drag-to-move ────────────
 // The drop targets are the whole point of this view, and the two kinds must
 // behave differently: a pool drop regroups silently, a backend drop must open
