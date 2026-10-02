@@ -75,11 +75,12 @@ func TestTheme_Put_DemoMode_MemoryOnly(t *testing.T) {
 	activeTheme = themeDefaults
 	cliTheme = ThemeConfig{}
 	prevDemo := demoMode
-	prevFolderStore := folderStore
-	EnableDemo()
+	// Only the theme handler's demo switch is under test. EnableDemo would
+	// also swap every backend seam for the fake cluster and leak it into
+	// later tests; newDemoServer is the helper that restores those.
+	demoMode = true
 	t.Cleanup(func() {
 		demoMode = prevDemo
-		folderStore = prevFolderStore
 		activeTheme = themeDefaults
 		cliTheme = ThemeConfig{}
 	})
