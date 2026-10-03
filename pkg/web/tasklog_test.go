@@ -23,9 +23,11 @@ func TestTaskLog_RecordsLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var entries []TaskEntry
-	json.NewDecoder(resp.Body).Decode(&entries)
+	if err := json.NewDecoder(resp.Body).Decode(&entries); err != nil {
+		t.Fatal(err)
+	}
 
 	if len(entries) < 3 {
 		t.Fatalf("got %d entries, want >= 3", len(entries))
@@ -55,7 +57,7 @@ func TestTaskLog_VMActionsRecorded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer r2.Body.Close()
+	defer func() { _ = r2.Body.Close() }()
 	var entries []TaskEntry
 	json.NewDecoder(r2.Body).Decode(&entries)
 
@@ -96,9 +98,11 @@ func TestTaskLog_UserAndCancel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var entries []TaskEntry
-	json.NewDecoder(resp.Body).Decode(&entries)
+	if err := json.NewDecoder(resp.Body).Decode(&entries); err != nil {
+		t.Fatal(err)
+	}
 
 	if len(entries) == 0 {
 		t.Fatal("expected at least 1 task")
@@ -116,7 +120,7 @@ func TestTaskLog_UserAndCancel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer cResp.Body.Close()
+	defer func() { _ = cResp.Body.Close() }()
 	if cResp.StatusCode != http.StatusOK {
 		t.Fatalf("cancel returned status %d, want 200", cResp.StatusCode)
 	}
@@ -129,9 +133,11 @@ func TestTaskLog_UserAndCancel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer r2.Body.Close()
+	defer func() { _ = r2.Body.Close() }()
 	var entries2 []TaskEntry
-	json.NewDecoder(r2.Body).Decode(&entries2)
+	if err := json.NewDecoder(r2.Body).Decode(&entries2); err != nil {
+		t.Fatal(err)
+	}
 	if entries2[0].Status != "error" || entries2[0].Error != "cancelled" {
 		t.Errorf("task status after cancel: %+v, want status=error, error=cancelled", entries2[0])
 	}
