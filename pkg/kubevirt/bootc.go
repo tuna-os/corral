@@ -481,6 +481,12 @@ write_files:
         # empty NVRAM, so it needs the removable fallback path EFI/BOOT/BOOTX64.EFI
         # — that's exactly what --generic-image adds (and it skips firmware changes).
         COMPOSEFS=0; FS=xfs; BACKEND=--generic-image
+        # bootc formats the root with the image's own mkfs, so an image that
+        # ships no xfsprogs (Hummingbird-based desktops carry btrfs-progs
+        # only) fails "Creating rootfs: No such file or directory" on xfs.
+        if ! imghas /usr/sbin/mkfs.xfs && ! imghas /usr/bin/mkfs.xfs; then
+          if imghas /usr/sbin/mkfs.btrfs || imghas /usr/bin/mkfs.btrfs; then FS=btrfs; fi
+        fi
       fi
       echo "CORRAL_COMPOSEFS=$COMPOSEFS FS=$FS"
       podman run --rm --privileged --pid=host --security-opt label=type:unconfined_t \
