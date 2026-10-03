@@ -10,6 +10,12 @@
 <link rel="stylesheet" href="vendor/xterm.min.css">
 <script src="vendor/xterm.min.js"></script>
 <script src="vendor/addon-fit.min.js"></script>
+<!-- Dashboard widget grid and live charts (#348), vendored for the same reason.
+     Classic scripts, so dashboard.js finds GridStack and uPlot as globals. -->
+<link rel="stylesheet" href="vendor/gridstack.min.css">
+<link rel="stylesheet" href="vendor/uPlot.min.css">
+<script src="vendor/gridstack-all.js"></script>
+<script src="vendor/uPlot.iife.min.js"></script>
   <!-- IronRDP web component for in-browser RDP (ADR-0002 phase 2). -->
   <script type="module" src="vendor/iron-remote-desktop.js"></script>
 <!-- app.js (a module, deferred by spec) must run before Alpine's own deferred
