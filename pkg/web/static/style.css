@@ -185,7 +185,8 @@ body.read-only .pool-actions,
 body.read-only .toolbar,
 body.read-only .hp-action,
 body.read-only .bulkbar button[data-bulk],
-body.read-only .menu-mutate { display: none !important; }
+body.read-only .menu-mutate,
+body.read-only .task-actions button.danger { display: none !important; }
 
 .btn {
   display: inline-flex;
@@ -464,7 +465,7 @@ dl.props dd { margin: 0; word-break: break-all; }
 /* Doctor: broken features stand out */
 .doc-broken { color: var(--red, #e25b5b); }
 
-/* Task panel — Proxmox-style activity log docked at the bottom */
+/* Task panel / bottom dock — Proxmox-style activity log docked at the bottom */
 #task-panel {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
   background: var(--panel);
@@ -472,10 +473,24 @@ dl.props dd { margin: 0; word-break: break-all; }
   max-height: 40vh; display: flex; flex-direction: column;
 }
 #task-panel-head {
-  display: flex; gap: 10px; align-items: center;
+  display: flex; gap: 12px; align-items: center;
   padding: 6px 14px; cursor: pointer; user-select: none;
   font-size: .85rem;
 }
+.dock-tabs { display: inline-flex; gap: 4px; align-items: center; }
+.dock-tab {
+  background: transparent; border: none; border-bottom: 2px solid transparent;
+  padding: 4px 8px; font-size: .85rem; font-weight: 500;
+  color: var(--muted); cursor: pointer;
+}
+.dock-tab:hover { color: var(--text); }
+.dock-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.dock-badges { display: inline-flex; gap: 6px; align-items: center; }
+.target-link { color: var(--accent); text-decoration: none; cursor: pointer; }
+.target-link:hover { text-decoration: underline; }
+.task-actions { text-align: right; white-space: nowrap; }
+.task-row-err { background: rgba(255, 100, 100, 0.05); }
+.ev-warn { color: var(--yellow); }
 #task-panel-head .spacer { flex: 1; }
 #task-panel-body { overflow-y: auto; padding: 0 14px 10px; }
 #task-panel.collapsed #task-panel-body { display: none; }

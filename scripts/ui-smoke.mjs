@@ -422,6 +422,69 @@ check(
   '/metrics always reports whether collection is working',
 );
 
+
+// ── Bottom Dock (Tasks / Cluster log / Events) (#342) ─────────────
+// Proxmox-style bottom dock hosting Tasks, Cluster log, and Events tabs.
+// Asserts tabs render, collapsed badges work, starting a VM shows a running task,
+// and it completes into history with target link.
+
+check(await page.locator('#task-panel .dock-tab:has-text("Tasks")').count() > 0, 'dock has Tasks tab');
+check(await page.locator('#task-panel .dock-tab:has-text("Cluster log")').count() > 0, 'dock has Cluster log tab');
+check(await page.locator('#task-panel .dock-tab:has-text("Events")').count() > 0, 'dock has Events tab');
+
+// Open the dock by clicking Tasks tab
+await page.click('#task-panel .dock-tab:has-text("Tasks")');
+await page.waitForTimeout(400);
+check(await page.locator('#dock-tasks').isVisible(), 'dock opens to Tasks tab');
+
+// Select web-prod VM and check events tab
+await page.click('#tree >> text=web-prod');
+await page.waitForTimeout(500);
+await page.click('#task-panel .dock-tab:has-text("Events")');
+await page.waitForTimeout(600);
+check(await page.locator('#dock-events').isVisible(), 'dock switches to Events tab');
+check((await page.textContent('#dock-events')).includes('web-prod'), 'Events tab displays selected VM context');
+
+// Switch back to Tasks tab
+await page.click('#task-panel .dock-tab:has-text("Tasks")');
+await page.waitForTimeout(400);
+
+// Start/Stop a VM to observe task lifecycle in dock-tasks
+const dockVmRunning = (await page.textContent('.page-head')).includes('Running');
+const dockAction = dockVmRunning ? 'stop' : 'start';
+
+// Trigger action and check running task appears
+await page.click(`button[data-act="${dockAction}"]`);
+await page.waitForTimeout(200);
+const dockTaskRow = page.locator('#dock-tasks tr', { hasText: dockAction }).first();
+check(await dockTaskRow.count() > 0, `dock-tasks: ${dockAction} task appears in dock`);
+
+// Wait for task to complete into history
+await page.waitForTimeout(3000);
+const dockOkPill = page.locator('#dock-tasks tr', { hasText: dockAction }).locator('.pill.on', { hasText: 'OK' }).first();
+check(await dockOkPill.count() > 0, `dock-tasks: ${dockAction} task completes into history`);
+
+// Target link navigation
+const dockTargetLink = page.locator('#dock-tasks tr', { hasText: dockAction }).locator('.target-link').first();
+if (await dockTargetLink.count() > 0) {
+  await dockTargetLink.click();
+  await page.waitForTimeout(500);
+  check(await page.locator('.tab.active:has-text("Summary")').count() === 1, 'dock task target link navigates to object');
+}
+
+// Cluster log tab records activity
+await page.click('#task-panel .dock-tab:has-text("Cluster log")');
+await page.waitForTimeout(400);
+check(await page.locator('#dock-clusterlog tr', { hasText: dockAction }).count() > 0, 'Cluster log tab records activity');
+
+// Collapse dock
+await page.click('#task-panel-head #task-panel-chevron');
+await page.waitForTimeout(300);
+check(await page.locator('#task-panel.collapsed').count() > 0, 'dock collapses via chevron');
+
+// Save screenshot for dock-tasks
+await page.screenshot({ path: `${SHOTS}/dock-tasks.png` });
+
 // ── bulk-select (#344) ─────────────────────────────────────────────
 // The tree filter matches tags and IPs as well as names, tree rows support
 // arrow-key focus, and Shift-click selects a range that the inventory grid
