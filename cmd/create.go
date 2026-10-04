@@ -412,12 +412,17 @@ func runKubevirtCreate(name string) error {
 	}
 
 	opts := types.CreateOpts{
-		Name:              name,
-		Namespace:         ns,
-		Mem:               createMem,
-		CPU:               createCPU,
-		Disk:              createDisk,
-		ISO:               iso,
+		Name:      name,
+		Namespace: ns,
+		Mem:       createMem,
+		CPU:       createCPU,
+		Disk:      createDisk,
+		ISO:       iso,
+		// --firmware was honoured only by the QEMU paths, so a KubeVirt ISO
+		// install always got SeaBIOS and a UEFI-only ISO (Utah, Dakota) found
+		// nothing to boot. Opt-in here: changing the KubeVirt default would
+		// re-firmware every existing catalog image.
+		UEFI:              createFirmware == "uefi",
 		ContainerDisk:     containerDisk,
 		ImportURL:         importURL,
 		PVC:               createPVC,
