@@ -687,8 +687,8 @@ func runLocalBootcCreate(name string) error {
 	// Backend-aware install (mirrors pkg/kubevirt/bootc.go's builder). ostree/
 	// server images ship bootupctl and install to xfs with --generic-image (so
 	// the disk boots the removable EFI path under plain QEMU). composefs images
-	// (Universal Blue / TunaOS desktops: no bootupctl, systemd-boot on the ESP)
-	// REQUIRE btrfs — their initramfs is btrfs-only, so installing them the
+	// (Universal Blue / TunaOS desktops: systemd-boot without GRUB payloads)
+	// require fs-verity (ext4 when available, otherwise btrfs). Installing the
 	// ostree/xfs way drops to dracut emergency mode at initrd-switch-root
 	// (tuna-os sailfin desktop Gate). They also need the real kernel/initrd
 	// re-extracted over bootc's EROFS-zeroed ESP copies, and the SSH key written
@@ -698,10 +698,14 @@ func runLocalBootcCreate(name string) error {
 		createBootc, "sh", "-c",
 		fmt.Sprintf(`set -e
 DISK=%s
-if command -v bootupctl >/dev/null 2>&1; then
+if ls /usr/lib/bootupd/updates/EFI/*/grub*.efi >/dev/null 2>&1 \
+  || { [ -f /usr/lib/bootupd/updates/EFI.json ] \
+    && find /usr/lib/efi/grub2 -type f -name 'grub*.efi' -print -quit 2>/dev/null | grep -q . \
+    && find /usr/lib/efi/shim -type f -name 'shim*.efi' -print -quit 2>/dev/null | grep -q .; }; then
   COMPOSEFS=0; FS=xfs; BACKEND=--generic-image
 elif [ -f /usr/lib/systemd/boot/efi/systemd-bootx64.efi ] || [ -f /usr/lib/systemd/boot/efi/systemd-bootaa64.efi ]; then
   COMPOSEFS=1; FS=btrfs; BACKEND=--composefs-backend
+  if command -v mkfs.ext4 >/dev/null 2>&1; then FS=ext4; fi
 else
   COMPOSEFS=0; FS=xfs; BACKEND=--generic-image
 fi
