@@ -178,9 +178,9 @@ libvirt.
 filesystem with `podman cp` — never executing it, since Universal Blue images
 ship Rust uutils that `podman --entrypoint` cannot dispatch:
 
-- **bootupd present** → ostree backend, `xfs`, `--generic-image`
-- **systemd-boot, no bootupd** → composefs backend, `btrfs`, `--composefs-backend`
-- **neither** → ostree
+- **GRUB bootupd update payload present** → ostree backend, `xfs`, `--generic-image`
+- **systemd-boot, no GRUB update payload** → composefs backend, `ext4` when its formatter is present (otherwise `btrfs`), `--composefs-backend`
+- **neither** → legacy bootupd fallback; local probes reject images without either bootloader
 
 `--generic-image` is load-bearing rather than cosmetic. bootupd installs the
 bootloader to `EFI/<vendor>/` plus an efibootmgr NVRAM entry, and a fresh VM

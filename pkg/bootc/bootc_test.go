@@ -1,7 +1,10 @@
 package bootc
 
 import (
+	"archive/tar"
+	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -169,7 +172,7 @@ func TestDetectBackend_FollowsTheClusterRule(t *testing.T) {
 		"bootupd present":          {[]string{"/usr/sbin/bootupctl"}, ostreeBackend},
 		"bootupd in /usr/bin":      {[]string{"/usr/bin/bootupctl"}, ostreeBackend},
 		"systemd-boot, no bootupd": {[]string{"/usr/lib/systemd/boot/efi/systemd-bootx64.efi"}, composefsBackend},
-		"neither marker":           {nil, ostreeBackend},
+		"Marlin ships both tools":  {[]string{"/usr/bin/bootupctl", "/usr/lib/systemd/boot/efi/systemd-bootx64.efi", "/usr/bin/mkfs.ext4"}, Backend{Kind: "composefs", Filesystem: "ext4", Flag: "--composefs-backend"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			fake := withFake(t)
@@ -201,6 +204,7 @@ func TestDetectBackend_NeverExecutesTheImage(t *testing.T) {
 	fake.AddPrefixResponse("podman create", "container123", nil)
 	fake.AddPrefixResponse("podman rm", "", nil)
 	fake.AddPrefixResponse("podman cp", "", errors.New("absent"))
+	fake.AddResponse("podman cp container123:/usr/bin/bootupctl -", "", nil)
 
 	if _, err := (LocalBuilder{}).DetectBackend("img"); err != nil {
 		t.Fatal(err)
@@ -531,6 +535,7 @@ func TestDetectBackend_GivesPodmanACommandToRecord(t *testing.T) {
 	fake.AddPrefixResponse("podman create", "container123", nil)
 	fake.AddPrefixResponse("podman rm", "", nil)
 	fake.AddPrefixResponse("podman cp", "", errors.New("absent"))
+	fake.AddResponse("podman cp container123:/usr/bin/bootupctl -", "", nil)
 
 	if _, err := (LocalBuilder{}).DetectBackend("ghcr.io/ublue-os/bluefin:stable"); err != nil {
 		t.Fatal(err)
@@ -551,5 +556,51 @@ func TestDetectBackend_GivesPodmanACommandToRecord(t *testing.T) {
 	// would fail loudly rather than execute something real.
 	if !strings.HasPrefix(probeCommand[0], "/corral-probe") {
 		t.Errorf("the placeholder should be an obviously fake path: %q", probeCommand[0])
+	}
+}
+
+// GRUB payloads win over systemd-boot binaries installed by the same systemd
+// package. Cover both bootupd layouts without requiring a container engine.
+func TestDetectBackend_GRUBPayloadWins(t *testing.T) {
+	for _, modern := range []bool{false, true} {
+		t.Run(fmt.Sprint(modern), func(t *testing.T) {
+			fake := withFake(t)
+			fake.AddPrefixResponse("podman create", "container123", nil)
+			fake.AddPrefixResponse("podman rm", "", nil)
+			fake.AddPrefixResponse("podman cp", "", errors.New("absent"))
+			for _, p := range []string{"/usr/lib/systemd/boot/efi/systemd-bootx64.efi", "/usr/bin/mkfs.xfs"} {
+				fake.AddResponse("podman cp container123:"+p+" -", "", nil)
+			}
+			addTar := func(dir, filename string) {
+				var b bytes.Buffer
+				tw := tar.NewWriter(&b)
+				if err := tw.WriteHeader(&tar.Header{Name: filename, Mode: 0644, Size: 1}); err != nil {
+					t.Fatal(err)
+				}
+				tw.Write([]byte("x"))
+				tw.Close()
+				fake.AddResponse("podman cp container123:"+dir+" -", b.String(), nil)
+			}
+			if modern {
+				fake.AddResponse("podman cp container123:/usr/lib/bootupd/updates/EFI.json -", "", nil)
+				addTar("/usr/lib/efi/grub2", "grub2/2.14/grubaa64.efi")
+				addTar("/usr/lib/efi/shim", "shim/16/shimaa64.efi")
+			} else {
+				addTar("/usr/lib/bootupd/updates/EFI", "EFI/fedora/grubx64.efi")
+			}
+			got, err := (LocalBuilder{}).DetectBackend("img")
+			if err != nil || got != ostreeBackend {
+				t.Fatalf("got %+v, %v", got, err)
+			}
+		})
+	}
+}
+func TestDetectBackend_RejectsUnknownImage(t *testing.T) {
+	fake := withFake(t)
+	fake.AddPrefixResponse("podman create", "container123", nil)
+	fake.AddPrefixResponse("podman rm", "", nil)
+	fake.AddPrefixResponse("podman cp", "", errors.New("absent"))
+	if _, err := (LocalBuilder{}).DetectBackend("img"); err == nil {
+		t.Fatal("unknown image silently chose OSTree")
 	}
 }

@@ -698,10 +698,14 @@ func runLocalBootcCreate(name string) error {
 		createBootc, "sh", "-c",
 		fmt.Sprintf(`set -e
 DISK=%s
-if command -v bootupctl >/dev/null 2>&1; then
+if ls /usr/lib/bootupd/updates/EFI/*/grub*.efi >/dev/null 2>&1 \
+  || { [ -f /usr/lib/bootupd/updates/EFI.json ] \
+    && find /usr/lib/efi/grub2 -type f -name 'grub*.efi' -print -quit 2>/dev/null | grep -q . \
+    && find /usr/lib/efi/shim -type f -name 'shim*.efi' -print -quit 2>/dev/null | grep -q .; }; then
   COMPOSEFS=0; FS=xfs; BACKEND=--generic-image
 elif [ -f /usr/lib/systemd/boot/efi/systemd-bootx64.efi ] || [ -f /usr/lib/systemd/boot/efi/systemd-bootaa64.efi ]; then
   COMPOSEFS=1; FS=btrfs; BACKEND=--composefs-backend
+  if command -v mkfs.ext4 >/dev/null 2>&1; then FS=ext4; fi
 else
   COMPOSEFS=0; FS=xfs; BACKEND=--generic-image
 fi
