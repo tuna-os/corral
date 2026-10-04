@@ -577,8 +577,12 @@ func TestDetectBackend_GRUBPayloadWins(t *testing.T) {
 				if err := tw.WriteHeader(&tar.Header{Name: filename, Mode: 0644, Size: 1}); err != nil {
 					t.Fatal(err)
 				}
-				tw.Write([]byte("x"))
-				tw.Close()
+				if _, err := tw.Write([]byte("x")); err != nil {
+					t.Fatal(err)
+				}
+				if err := tw.Close(); err != nil {
+					t.Fatal(err)
+				}
 				fake.AddResponse("podman cp container123:"+dir+" -", b.String(), nil)
 			}
 			if modern {

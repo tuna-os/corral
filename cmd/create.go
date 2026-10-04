@@ -687,8 +687,8 @@ func runLocalBootcCreate(name string) error {
 	// Backend-aware install (mirrors pkg/kubevirt/bootc.go's builder). ostree/
 	// server images ship bootupctl and install to xfs with --generic-image (so
 	// the disk boots the removable EFI path under plain QEMU). composefs images
-	// (Universal Blue / TunaOS desktops: no bootupctl, systemd-boot on the ESP)
-	// REQUIRE btrfs — their initramfs is btrfs-only, so installing them the
+	// (Universal Blue / TunaOS desktops: systemd-boot without GRUB payloads)
+	// require fs-verity (ext4 when available, otherwise btrfs). Installing the
 	// ostree/xfs way drops to dracut emergency mode at initrd-switch-root
 	// (tuna-os sailfin desktop Gate). They also need the real kernel/initrd
 	// re-extracted over bootc's EROFS-zeroed ESP copies, and the SSH key written
