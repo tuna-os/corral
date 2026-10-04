@@ -166,6 +166,10 @@ backend that tried and failed is a 502.
 (the `auto-` prefix), oldest first, and is scoped by the instance reference —
 so two contexts running a same-named instance prune independently.
 
+Memory flags accept `G`/`M` and binary `Gi`/`Mi` (also `GiB`/`MiB`).
+Raw numbers are MiB. A 6 GiB bootc guest must render as `guest: 6144Mi`;
+6 MiB leaves UEFI stuck before the guest bootloader can run.
+
 ### Bootc build and import
 
 Building a bootable-container image into a disk, and putting that disk on a

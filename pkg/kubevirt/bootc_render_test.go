@@ -132,3 +132,14 @@ func TestRenderBuilderVM_NoNodeMeansNoSelector(t *testing.T) {
 		t.Fatalf("expected no nodeSelector when node is empty, got %v", spec["nodeSelector"])
 	}
 }
+
+func TestBootcVMPreservesGiBMemory(t *testing.T) {
+	vm := generateBootcVM("roost", "corral-vms", "disk", "image", "key", "6Gi", 4, "node")
+	data, err := json.Marshal(vm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"guest":"6144Mi"`) {
+		t.Fatalf("6Gi did not become 6GiB of guest memory: %s", data)
+	}
+}
