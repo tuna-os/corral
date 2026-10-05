@@ -2,7 +2,7 @@
 // Vanilla JS; noVNC + xterm.js vendored under static/vendor/ (offline-safe).
 
 import { icon } from './icons.js';
-import { api, vmURL, vmKey, ctKey, post, patch, deleteRequest } from './apiClient.js';
+import { api, vmURL, vmKey, ctKey } from './apiClient.js';
 import {
   bindPools, loadPools, poolState, renderTreePools, showMoveDialog, summariseOutcomes,
   makeDraggable, dropZone,
