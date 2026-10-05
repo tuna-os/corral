@@ -2,6 +2,7 @@
 // Vanilla JS; noVNC + xterm.js vendored under static/vendor/ (offline-safe).
 
 import { icon } from './icons.js';
+import { api, vmURL, vmKey, ctKey, post, patch, deleteRequest } from './apiClient.js';
 import {
   bindPools, loadPools, poolState, renderTreePools, showMoveDialog, summariseOutcomes,
   makeDraggable, dropZone,
@@ -37,16 +38,7 @@ const consoleRoute = new URLSearchParams(location.search).get('console');
 let consoleRouteApplied = false;
 
 // ── API ───────────────────────────────────────────────────────────
-
-async function api(path, opts = {}) {
-  const r = await fetch(path, opts);
-  if (!r.ok) {
-    let msg = r.statusText;
-    try { msg = (await r.json()).error || msg; } catch { /* not json */ }
-    throw new Error(msg);
-  }
-  return r.headers.get('content-type')?.includes('json') ? r.json() : r.text();
-}
+// API functions are now in apiClient.js; they're imported above.
 
 function toast(msg) {
   document.querySelectorAll('.toast').forEach((t) => t.remove());
@@ -60,10 +52,8 @@ function toast(msg) {
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g,
   (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-const vmKey = (vm) => `${vm.peer || ''}/${vm.context || ''}/${vm.namespace}/${vm.name}`;
-const vmURL = (vm, suffix = '') => `/api/vms/${vm.namespace}/${vm.name}${suffix}${vm.context ? `?context=${encodeURIComponent(vm.context)}` : ''}`;
+
 const findVM = (key) => vms.find((v) => vmKey(v) === key);
-const ctKey = (c) => `${c.namespace}/${c.name}`;
 const findCT = (key) => cts.find((c) => ctKey(c) === key);
 
 // Tag the tree/list is filtered to, or null for "show all".
