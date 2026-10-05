@@ -112,7 +112,7 @@ func FromString(s string) TUIMode {
 	}
 }
 
-// Transitions represents valid mode transitions.
+// Transition represents a valid mode transition.
 // This table test structure allows exhaustive checking of state machine logic.
 // See tests/tui_transitions_test.go for the comprehensive table-driven test.
 type Transition struct {
