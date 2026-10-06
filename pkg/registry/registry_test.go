@@ -256,7 +256,11 @@ func TestPing_UnwritableDir(t *testing.T) {
 	if err := os.Chmod(dir, 0o500); err != nil {
 		t.Fatalf("Chmod: %v", err)
 	}
-	defer os.Chmod(dir, 0o700)
+	defer func() {
+		if err := os.Chmod(dir, 0o700); err != nil {
+			t.Fatalf("Chmod cleanup: %v", err)
+		}
+	}()
 
 	s := NewStoreAt(filepath.Join(dir, "registry.json"))
 	if err := s.Ping(); err == nil {

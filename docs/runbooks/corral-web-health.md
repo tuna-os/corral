@@ -8,7 +8,7 @@ This runbook helps an operator to diagnose and resolve availability, probe failu
 
 Key Endpoints:
 - `GET /healthz`: Liveness probe. Returns HTTP `200 OK` (`ok\n`) when the server process and HTTP multiplexer are alive.
-- `GET /readyz`: Readiness probe. Returns HTTP `200 OK` (`{"status":"ready"}`) when the registry store is initialized AND its state directory is confirmed writable on every request (via `registry.Store.Ping`, which creates and removes a temp probe file — it does not touch `registry.json` itself). Returns `503 Service Unavailable`, with an `error` field describing the failure, if either check fails.
+- `GET /readyz`: Readiness probe. `corral-web` returns HTTP `200 OK` (`{"status":"ready"}`) when the registry store exists and `registry.Store.Ping` confirms its state directory is writable on every request. `Ping` creates and removes a temp probe file; it does not touch `registry.json` itself. If either check fails, `corral-web` returns `503 Service Unavailable` with an `error` field that states the failure.
 - `GET /metrics`: Prometheus metrics exposition. Exposes collector age, backend reachability, and instance inventory status.
 - `GET /api/doctor`: On-demand diagnostic checks that cover cluster capabilities, KubeVirt, CDI, QEMU, and virtualization extensions.
 
@@ -19,10 +19,10 @@ Key Endpoints:
 ### Symptom A: Pod Failing Readiness Probe (`/readyz` returning 503)
 
 **Root Causes:**
-1. State directory unmounted or non-writable (`~/.local/share/corral/registry.json`'s parent dir) — `/readyz` catches this on every call via a write probe, not just at startup.
+1. State directory unmounted or non-writable (`~/.local/share/corral/registry.json`'s parent dir). A write probe in `/readyz` catches this on every call, not only at startup.
 2. Lock contention or startup hang during registry initialization (`store` still nil).
 
-The `error` field in the `/readyz` response body distinguishes the two: `"registry store not initialized"` means (2), `"registry store unwritable: ..."` means (1) and includes the underlying OS error.
+The `error` field in the `/readyz` response body distinguishes the two cases. `"registry store not initialized"` means (2). `"registry store unwritable: ..."` means (1) and includes the OS error below it.
 
 **Diagnostic Steps:**
 1. Check pod status and events:

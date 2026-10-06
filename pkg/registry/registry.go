@@ -48,7 +48,9 @@ func (s *Store) Ping() error {
 		return err
 	}
 	name := probe.Name()
-	probe.Close()
+	if err := probe.Close(); err != nil {
+		return err
+	}
 	return os.Remove(name)
 }
 

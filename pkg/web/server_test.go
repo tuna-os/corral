@@ -1131,14 +1131,22 @@ func TestReadyz_UnwritableStore(t *testing.T) {
 	if err := os.Chmod(tmpDir, 0o500); err != nil {
 		t.Fatalf("Chmod: %v", err)
 	}
-	defer os.Chmod(tmpDir, 0o700)
+	defer func() {
+		if err := os.Chmod(tmpDir, 0o700); err != nil {
+			t.Fatalf("Chmod cleanup: %v", err)
+		}
+	}()
 	store = registry.NewStoreAt(filepath.Join(tmpDir, "registry.json"))
 
 	resp, err := http.Get(srv.URL + "/readyz")
 	if err != nil {
 		t.Fatalf("GET /readyz: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			t.Fatalf("Body.Close: %v", err)
+		}
+	}()
 	if resp.StatusCode != http.StatusServiceUnavailable {
 		t.Errorf("GET /readyz (unwritable dir) = %d, want 503", resp.StatusCode)
 	}
