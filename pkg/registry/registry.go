@@ -29,6 +29,29 @@ func NewStoreAt(path string) *Store {
 	return &Store{path: path}
 }
 
+// Ping verifies the registry's storage is actually usable: its parent
+// directory exists (or can be created) and is writable. It does not read or
+// modify registry.json itself, so it is safe to call from a readiness probe
+// on every request. A nil receiver (store never initialized) is reported as
+// unready by the caller before Ping is reached.
+//
+// readAll/writeAll swallow their own I/O errors (see below) so neither one
+// can be used to detect a stale mount or permission problem after startup;
+// Ping exists specifically to catch what they hide.
+func (s *Store) Ping() error {
+	dir := filepath.Dir(s.path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	probe, err := os.CreateTemp(dir, ".ping-*.tmp")
+	if err != nil {
+		return err
+	}
+	name := probe.Name()
+	probe.Close()
+	return os.Remove(name)
+}
+
 // Get retrieves a VM's registry entry.
 func (s *Store) Get(name string) (types.RegistryEntry, bool) {
 	reg := s.readAll()

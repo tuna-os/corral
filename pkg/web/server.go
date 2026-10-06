@@ -348,6 +348,19 @@ func handleReadyz(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	// store != nil only proves the server completed startup; it says nothing
+	// about whether the registry's state directory is still mounted and
+	// writable right now (readAll/writeAll swallow I/O errors, see
+	// pkg/registry). Ping exercises that path on every call so a probe never
+	// reports ready while writes are silently failing underneath it.
+	if err := store.Ping(); err != nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "not_ready",
+			"error":  "registry store unwritable: " + err.Error(),
+		})
+		return
+	}
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"status": "ready",

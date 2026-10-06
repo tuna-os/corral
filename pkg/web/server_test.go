@@ -1107,3 +1107,46 @@ func TestReadyz(t *testing.T) {
 		t.Errorf("status = %v, want ready", res["status"])
 	}
 }
+
+// TestReadyz_UnwritableStore pins the gap a nil check alone cannot catch: a
+// store that initialized fine at startup but whose state directory has since
+// gone read-only (disk full, volume remounted ro, permissions changed) must
+// fail readiness, not report 200 forever. See pkg/registry.Store.Ping.
+func TestReadyz_UnwritableStore(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root bypasses directory permission checks")
+	}
+
+	mux, err := newMux()
+	if err != nil {
+		t.Fatalf("newMux: %v", err)
+	}
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	origStore := store
+	defer func() { store = origStore }()
+
+	tmpDir := t.TempDir()
+	if err := os.Chmod(tmpDir, 0o500); err != nil {
+		t.Fatalf("Chmod: %v", err)
+	}
+	defer os.Chmod(tmpDir, 0o700)
+	store = registry.NewStoreAt(filepath.Join(tmpDir, "registry.json"))
+
+	resp, err := http.Get(srv.URL + "/readyz")
+	if err != nil {
+		t.Fatalf("GET /readyz: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("GET /readyz (unwritable dir) = %d, want 503", resp.StatusCode)
+	}
+	var res map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if res["status"] != "not_ready" {
+		t.Errorf("status = %v, want not_ready", res["status"])
+	}
+}

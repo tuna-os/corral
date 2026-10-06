@@ -232,3 +232,34 @@ func TestNewStore_HomeDirError(t *testing.T) {
 		t.Log("NewStore succeeded without HOME (unusual but possible on some platforms)")
 	}
 }
+
+func TestPing_WritableDir(t *testing.T) {
+	s := NewStoreAt(filepath.Join(t.TempDir(), "registry.json"))
+	if err := s.Ping(); err != nil {
+		t.Errorf("Ping() = %v, want nil", err)
+	}
+}
+
+func TestPing_CreatesMissingParentDir(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "nested", "path")
+	s := NewStoreAt(filepath.Join(dir, "registry.json"))
+	if err := s.Ping(); err != nil {
+		t.Errorf("Ping() = %v, want nil (should create missing parent dirs)", err)
+	}
+}
+
+func TestPing_UnwritableDir(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root bypasses directory permission checks")
+	}
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatalf("Chmod: %v", err)
+	}
+	defer os.Chmod(dir, 0o700)
+
+	s := NewStoreAt(filepath.Join(dir, "registry.json"))
+	if err := s.Ping(); err == nil {
+		t.Error("Ping() = nil, want error for unwritable directory")
+	}
+}
