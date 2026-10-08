@@ -833,6 +833,76 @@ check(
   await page.setViewportSize({ width: 1440, height: 900 });
 }
 
+// ── interaction-guard (#341) ──────────────────────────────────────
+// The content pane rebuilds from markup, so a poll that lands mid-gesture
+// destroys whatever the gesture was working on: a column being dragged to a
+// new width, a half-made selection, a row on its way to a node. The poll now
+// holds off while a pointer is down and runs the render it skipped as soon as
+// the gesture ends, so the change is deferred rather than lost.
+{
+  await page.goto(BASE);
+  await page.waitForSelector('#content .vm-check', { timeout: 30000 });
+  const GRID_ROWS = '#content .grid-scroll table tbody tr';
+  const stampRows = () => page.evaluate((sel) => {
+    const rows = document.querySelectorAll(sel);
+    rows.forEach((r, i) => { r.__smokeRow = i; });
+    return rows.length;
+  }, GRID_ROWS);
+  const stillStamped = () => page.evaluate(
+    (sel) => [...document.querySelectorAll(sel)].filter((r) => r.__smokeRow !== undefined).length,
+    GRID_ROWS,
+  );
+
+  const fleet = await (await fetch(`${BASE}api/vms`)).json();
+  const victim = fleet.find((v) => v.status?.includes('Running') && v.backend === 'kubevirt');
+  const stamped = await stampRows();
+
+  // Hold a pointer down, then change the fleet behind the UI's back. An idle
+  // poll renders nothing anyway (the fingerprint is unchanged), so the guard
+  // is only exercised when the data really moves mid-gesture.
+  const box = await page.locator('#content').boundingBox();
+  await page.mouse.move(box.x + box.width - 5, box.y + box.height - 5);
+  await page.mouse.down();
+  if (victim) {
+    await fetch(`${BASE}api/vms/${victim.namespace}/${victim.name}/stop`, { method: 'POST' }).catch(() => {});
+  }
+  await page.waitForTimeout(8000); // longer than one 5s poll cycle
+  const heldThrough = await stillStamped();
+  check(
+    !!victim && stamped > 0 && heldThrough === stamped,
+    `interaction-guard: a poll does not rebuild the grid under a held pointer (${heldThrough}/${stamped} rows kept)`,
+  );
+
+  // Letting go must land the change, not drop it.
+  await page.mouse.up();
+  await page.waitForFunction(
+    (sel) => [...document.querySelectorAll(sel)].every((r) => r.__smokeRow === undefined),
+    GRID_ROWS,
+    { timeout: 10000 },
+  ).catch(() => {});
+  check(await stillStamped() === 0, 'interaction-guard: releasing runs the render the poll skipped');
+  check(
+    (await page.textContent('#content .grid-scroll table')).includes('Stopped'),
+    'interaction-guard: the deferred render shows the change made during the gesture',
+  );
+  await page.screenshot({ path: `${SHOTS}/interaction-guard.png` });
+
+  // Start it again — this check stops a VM, and the console checks need one
+  // running. Same reason the bulk-select check restores its three.
+  if (victim) {
+    await fetch(`${BASE}api/vms/${victim.namespace}/${victim.name}/start`, { method: 'POST' }).catch(() => {});
+    await page.waitForFunction(async (name) => {
+      const list = await (await fetch('/api/vms')).json();
+      return !list.find((v) => v.name === name)?.status?.includes('Stopped');
+    }, victim.name, { timeout: 10000 }).catch(() => {});
+    const back = await (await fetch(`${BASE}api/vms`)).json();
+    check(
+      !back.find((v) => v.name === victim.name)?.status?.includes('Stopped'),
+      'interaction-guard: the stopped VM is restarted so the suite stays re-runnable',
+    );
+  }
+}
+
 check(pageErrors.length === 0, `no JS page errors (${pageErrors.join('; ').slice(0, 200)})`);
 
 await browser.close();

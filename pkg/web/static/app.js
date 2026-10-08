@@ -29,6 +29,7 @@ import { focusTreeFilter, renderTree, setTreeView, treeRow, treeView, vmRow } fr
 import { $, esc, toast } from './ui/dom.js';
 import { makeCollapsible, makeSplitter } from './ui/splitter.js';
 import { activeContextMenu, attachContextMenu } from './ui/menu.js';
+import { initInteractionTracking, interacting, onSettled } from './ui/interaction.js';
 
 // A console deep link is also the pop-out contract. It uses the canonical VM
 // key rather than only a name, so duplicate names on peers/contexts are safe.
@@ -39,6 +40,9 @@ let consoleRouteApplied = false;
 // the data (or what's selected) actually changed — otherwise innerHTML
 // replacement would reset scroll position and text selection on every tick.
 let lastRenderFp = '';
+// Set when a poll declined to render because a gesture was in flight, so the
+// render can be run as soon as the gesture ends.
+let renderDeferred = false;
 // Whether the offline empty state is showing — rendered once, not on every
 // failed 5s poll, so it doesn't clobber pages that work offline (Extensions).
 let offlineShown = false;
@@ -139,6 +143,10 @@ export async function refresh(force = false) {
   // A poll must not pull the rows out from under an open context menu; the
   // next tick after it closes renders the change.
   if (!force && activeContextMenu) return;
+  // Nor out from under a gesture. The fingerprint is deliberately not stored
+  // here: leaving it stale is what makes the render after the gesture ends see
+  // the change and redraw, instead of deciding nothing happened.
+  if (!force && interacting()) { renderDeferred = true; return; }
   lastRenderFp = fp;
 
   // The tree reconciles its rows in place, so its scroll position, focus and
@@ -343,6 +351,15 @@ export function closeDrawer() { $('#tree').classList.remove('open'); }
 // ── Boot ──────────────────────────────────────────────────────────
 
 initWorkspace();
+initInteractionTracking();
+// The poll skips a render while the operator is mid-gesture; this is what runs
+// it once they let go, so a change that landed during a drag is not held until
+// the next tick.
+onSettled(() => {
+  if (!renderDeferred) return;
+  renderDeferred = false;
+  refresh();
+});
 $('#btn-menu').innerHTML = icon('menu');
 $('#btn-create').innerHTML = `${icon('plus')} Create VM`;
 $('#btn-palette').innerHTML = `${icon('search')}<span class="btn-label">Search</span>`;
