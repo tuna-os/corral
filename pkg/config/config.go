@@ -435,8 +435,16 @@ type TailscaleConfig struct {
 }
 
 // ConfigDir returns the directory containing config.yaml.
+// If XDG_CONFIG_HOME is set, it returns $XDG_CONFIG_HOME/corral.
+// Otherwise it defaults to ~/.config/corral.
 func ConfigDir() string {
-	home, _ := os.UserHomeDir()
+	if d := os.Getenv("XDG_CONFIG_HOME"); d != "" {
+		return filepath.Join(d, "corral")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = os.TempDir()
+	}
 	return filepath.Join(home, ".config", "corral")
 }
 

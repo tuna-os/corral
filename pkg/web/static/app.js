@@ -2,7 +2,13 @@
 // Vanilla JS; noVNC + xterm.js vendored under static/vendor/ (offline-safe).
 
 import { icon } from './icons.js';
-import { bindPools, loadPools, renderTreePools } from './pools.js';
+import {
+  bindPools, loadPools, poolState, renderTreePools, showMoveDialog, summariseOutcomes,
+  makeDraggable, dropZone,
+} from './pools.js';
+import { mountGrid } from './grid.js';
+import { bindPalette, initKeys } from './palette.js';
+import { fmtBytes, fmtCPU, mountDashboard, timeChart } from './dashboard.js';
 import { makeSplitter, makeCollapsible } from './ui/splitter.js';
 
 const $ = (sel) => document.querySelector(sel);
@@ -19,10 +25,17 @@ let caps = { storageClass: '', canExpand: false, canSnapshot: false };
 let me = { login: '', name: '', admin: true, enforced: false };
 let availableNADs = [];
 let selected = { type: 'dc' }; // {type:'dc'} | {type:'node',name} | {type:'vm',key}
+// One selection model backs both the inventory grid and sidebar tree.
+const selectedVMKeys = new Set();
 let tab = 'summary';
 let rfb = null;        // noVNC connection
 let term = null;       // xterm instance
 let ttyWS = null;      // serial console websocket
+
+// A console deep link is also the pop-out contract. It uses the canonical VM
+// key rather than only a name, so duplicate names on peers/contexts are safe.
+const consoleRoute = new URLSearchParams(location.search).get('console');
+let consoleRouteApplied = false;
 
 // ── API ───────────────────────────────────────────────────────────
 
@@ -170,8 +183,25 @@ async function refresh(force = false) {
   offlineShown = false;
   if (treeView === 'pool') await loadPools();
   try { cts = await api('/api/cts'); } catch { cts = []; } // best-effort — don't fail the whole refresh over CTs
+  // A pop-out console opens straight onto the console tab, which the guard
+  // below never renders on poll — render it once here.
+  let renderPopout = false;
+  if (consoleRoute && !consoleRouteApplied) {
+    consoleRouteApplied = true;
+    const vm = findVM(consoleRoute);
+    if (vm) {
+      selected = { type: 'vm', key: consoleRoute };
+      tab = 'console';
+      document.body.classList.add('console-popout');
+      document.title = `${vm.name} console · Corral`;
+      renderPopout = true;
+    }
+  }
   const fp = JSON.stringify([vms, cts, nodes, hostPower, selected, tab]);
   if (!force && fp === lastRenderFp) return; // nothing changed — keep the DOM
+  // A poll must not pull the rows out from under an open context menu; the
+  // next tick after it closes renders the change.
+  if (!force && activeContextMenu) return;
   lastRenderFp = fp;
 
   // Re-render, preserving scroll positions across the DOM swap.
@@ -181,7 +211,7 @@ async function refresh(force = false) {
   const contentScroll = contentEl ? contentEl.scrollTop : 0;
   renderTree();
   // Don't clobber live consoles (or the multiview grid) on poll.
-  if (tab !== 'console' && tab !== 'terminal' && selected.type !== 'multiview') renderContent();
+  if (renderPopout || (tab !== 'console' && tab !== 'terminal' && selected.type !== 'multiview')) renderContent();
   if (treeEl) treeEl.scrollTop = treeScroll;
   if (contentEl) contentEl.scrollTop = contentScroll;
 }
@@ -265,16 +295,755 @@ function setTreeView(v) {
   else renderTree();
 }
 
+// ── Context Menus ──────────────────────────────────────────────────
+
+let activeContextMenu = null;
+
+function hideContextMenu() {
+  if (activeContextMenu) {
+    activeContextMenu.el.remove();
+    if (activeContextMenu.trigger && typeof activeContextMenu.trigger.focus === 'function') {
+      if (document.activeElement === document.body || activeContextMenu.el.contains(document.activeElement)) {
+        activeContextMenu.trigger.focus();
+      }
+    }
+    activeContextMenu = null;
+  }
+}
+
+function showContextMenu(e, items, triggerEl) {
+  if (e) {
+    if (typeof e.preventDefault === 'function') e.preventDefault();
+    if (typeof e.stopPropagation === 'function') e.stopPropagation();
+  }
+  hideContextMenu();
+
+  const isReadOnly = document.body.classList.contains('read-only') || !me.admin;
+  const rawItems = typeof items === 'function' ? items() : items;
+  if (!rawItems || !rawItems.length) return;
+
+  // Filter out mutating items for read-only users
+  const filtered = rawItems.filter((it) => {
+    if (!it) return false;
+    if (isReadOnly && it.mutate) return false;
+    return true;
+  });
+
+  // Clean trailing/duplicate separators
+  const visible = [];
+  for (const it of filtered) {
+    if (it.separator) {
+      if (visible.length && !visible[visible.length - 1].separator) {
+        visible.push(it);
+      }
+    } else {
+      visible.push(it);
+    }
+  }
+  if (visible.length && visible[visible.length - 1].separator) {
+    visible.pop();
+  }
+  if (!visible.length) return;
+
+  const menu = document.createElement('div');
+  menu.className = 'context-menu';
+  menu.setAttribute('role', 'menu');
+  menu.setAttribute('tabindex', '-1');
+
+  for (const it of visible) {
+    if (it.separator) {
+      const sep = document.createElement('div');
+      sep.className = 'menu-separator';
+      sep.setAttribute('role', 'separator');
+      menu.appendChild(sep);
+      continue;
+    }
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = `menu-item${it.danger ? ' danger' : ''}${it.mutate ? ' menu-mutate' : ''}`;
+    btn.setAttribute('role', 'menuitem');
+    btn.setAttribute('tabindex', '-1');
+    if (it.disabled) btn.disabled = true;
+    if (it.title) btn.title = it.title;
+
+    btn.innerHTML = `${it.icon ? icon(it.icon) : ''} <span class="menu-label">${esc(it.label)}</span>`;
+    btn.onclick = (ev) => {
+      ev.stopPropagation();
+      hideContextMenu();
+      if (typeof it.action === 'function') it.action();
+    };
+
+    menu.appendChild(btn);
+  }
+
+  document.body.appendChild(menu);
+
+  // Position calculation:
+  let x = e?.clientX;
+  let y = e?.clientY;
+  if ((x === undefined || y === undefined || (x === 0 && y === 0)) && triggerEl) {
+    const rect = triggerEl.getBoundingClientRect();
+    x = rect.left + 24;
+    y = rect.bottom;
+  }
+  x = x || 10;
+  y = y || 10;
+
+  const rect = menu.getBoundingClientRect();
+  const pad = 6;
+  if (x + rect.width > window.innerWidth - pad) {
+    x = Math.max(pad, window.innerWidth - rect.width - pad);
+  }
+  if (y + rect.height > window.innerHeight - pad) {
+    y = Math.max(pad, window.innerHeight - rect.height - pad);
+  }
+  if (x < pad) x = pad;
+  if (y < pad) y = pad;
+
+  menu.style.left = `${Math.round(x)}px`;
+  menu.style.top = `${Math.round(y)}px`;
+
+  activeContextMenu = { el: menu, trigger: triggerEl, top: triggerEl?.getBoundingClientRect().top };
+
+  // Focus the first enabled menu item
+  const enabled = [...menu.querySelectorAll('button.menu-item:not(:disabled)')];
+  if (enabled.length > 0) {
+    enabled[0].focus();
+  } else {
+    menu.focus();
+  }
+
+  menu.addEventListener('keydown', (kev) => {
+    const buttons = [...menu.querySelectorAll('button.menu-item:not(:disabled)')];
+    if (!buttons.length) return;
+    const currentIdx = buttons.indexOf(document.activeElement);
+
+    if (kev.key === 'ArrowDown') {
+      kev.preventDefault();
+      const next = (currentIdx + 1) % buttons.length;
+      buttons[next].focus();
+    } else if (kev.key === 'ArrowUp') {
+      kev.preventDefault();
+      const prev = (currentIdx - 1 + buttons.length) % buttons.length;
+      buttons[prev].focus();
+    } else if (kev.key === 'Home') {
+      kev.preventDefault();
+      buttons[0].focus();
+    } else if (kev.key === 'End') {
+      kev.preventDefault();
+      buttons[buttons.length - 1].focus();
+    } else if (kev.key === 'Escape') {
+      kev.preventDefault();
+      hideContextMenu();
+    } else if (kev.key === 'Tab') {
+      hideContextMenu();
+    }
+  });
+}
+
+function attachContextMenu(el, getItems) {
+  if (!el) return;
+  if (!el.hasAttribute('tabindex')) el.setAttribute('tabindex', '0');
+
+  el.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    const items = typeof getItems === 'function' ? getItems() : getItems;
+    if (items && items.length) showContextMenu(e, items, el);
+  });
+
+  el.addEventListener('keydown', (e) => {
+    if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {
+      e.preventDefault();
+      const items = typeof getItems === 'function' ? getItems() : getItems;
+      if (items && items.length) showContextMenu(e, items, el);
+    }
+  });
+}
+
+document.addEventListener('pointerdown', (e) => {
+  if (activeContextMenu && !activeContextMenu.el.contains(e.target)) {
+    hideContextMenu();
+  }
+});
+window.addEventListener('resize', hideContextMenu);
+// Close on a scroll that moved the row the menu belongs to; a scroll that
+// leaves it in place (a widget body, a late scroll-into-view) must not
+// close the menu under the pointer.
+window.addEventListener('scroll', (e) => {
+  if (!activeContextMenu || activeContextMenu.el.contains(e.target)) return;
+  const t = activeContextMenu.trigger;
+  if (!t || !t.isConnected || Math.abs(t.getBoundingClientRect().top - activeContextMenu.top) > 4) hideContextMenu();
+}, true);
+
+function vmMenuItems(vm) {
+  const capability = vm.capabilities || {};
+  const isKubeVirt = vm.backend === 'kubevirt';
+  const items = [];
+
+  // Console / Terminal / RDP options
+  if (capability.vnc) {
+    items.push({
+      icon: 'desktop',
+      label: 'Console (VNC)',
+      action: () => {
+        select({ type: 'vm', key: vmKey(vm) });
+        tab = 'console';
+        renderContent();
+        markRendered();
+      },
+    });
+  }
+  if (capability.tty) {
+    items.push({
+      icon: 'terminal',
+      label: 'Terminal (Serial)',
+      action: () => {
+        select({ type: 'vm', key: vmKey(vm) });
+        tab = 'terminal';
+        renderContent();
+        markRendered();
+      },
+    });
+  }
+  if (capability.rdp) {
+    items.push({
+      icon: 'desktop',
+      label: 'RDP Console',
+      action: () => {
+        select({ type: 'vm', key: vmKey(vm) });
+        tab = 'rdp';
+        renderContent();
+        markRendered();
+      },
+    });
+  }
+  if (!capability.vnc && !capability.tty && !capability.rdp) {
+    items.push({
+      icon: 'info',
+      label: 'Open summary',
+      action: () => select({ type: 'vm', key: vmKey(vm) }),
+    });
+  }
+
+  items.push({ separator: true });
+
+  // Power actions
+  if (capability.start !== false) {
+    items.push({
+      icon: 'play',
+      label: 'Start',
+      mutate: true,
+      disabled: !!vm.running,
+      action: () => vmAction(vm, 'start'),
+    });
+  }
+  if (capability.stop !== false) {
+    items.push({
+      icon: 'stop',
+      label: 'Stop',
+      mutate: true,
+      disabled: !vm.running,
+      action: () => vmAction(vm, 'stop'),
+    });
+  }
+  if (capability.start !== false && capability.stop !== false) {
+    items.push({
+      icon: 'restart',
+      label: 'Restart',
+      mutate: true,
+      disabled: !vm.running,
+      action: () => vmAction(vm, 'restart'),
+    });
+  }
+
+  // Cluster actions
+  if (isKubeVirt) {
+    items.push({ separator: true });
+    items.push({
+      icon: 'migrate',
+      label: 'Migrate…',
+      mutate: true,
+      disabled: !(vm.ready && vm.liveMigratable),
+      title: vm.liveMigratable ? 'Live-migrate to another node' : 'Not live-migratable (persistent RWO disk)',
+      action: () => migrateVM(vm),
+    });
+
+    if (capability.snapshots) {
+      items.push({
+        icon: 'camera',
+        label: 'Take snapshot',
+        mutate: true,
+        action: async () => {
+          try {
+            await post(vm, '/snapshots', {});
+            toast('Snapshot started');
+            refresh(true);
+          } catch (e) {
+            toast(e.message);
+          }
+        },
+      });
+    }
+
+    items.push({
+      icon: 'clone',
+      label: 'Clone…',
+      mutate: true,
+      action: () => cloneVM(vm),
+    });
+
+    items.push({
+      icon: 'template',
+      label: vm.isTemplate ? 'Unmark template' : 'Convert to template',
+      mutate: true,
+      action: () => vmAction(vm, 'template'),
+    });
+
+    items.push({
+      icon: 'plus',
+      label: 'Add tag…',
+      mutate: true,
+      action: () => {
+        const t = prompt('Add tag (letters, digits, -_.):', '');
+        if (t && t.trim()) setTag(vm, t.trim(), true);
+      },
+    });
+  }
+
+  // Drag-equivalent actions: Assign to Pool and Move to Backend
+  items.push({ separator: true });
+
+  items.push({
+    icon: 'folder',
+    label: 'Assign to pool…',
+    mutate: true,
+    action: async () => {
+      const state = poolState();
+      const paths = (state.folders || []).map((f) => f.path);
+      const promptMsg = paths.length
+        ? `Assign ${vm.name} to pool (leave empty to unassign):\nAvailable pools: ${paths.join(', ')}`
+        : `Assign ${vm.name} to pool path (leave empty to unassign):`;
+      const chosen = prompt(promptMsg, '');
+      if (chosen === null) return;
+      const ref = vm.id || vmKey(vm);
+      try {
+        if (!chosen.trim()) {
+          await api(`/api/folders/members?ref=${encodeURIComponent(ref)}`, { method: 'DELETE' });
+          toast('Removed from its pool');
+        } else {
+          await api('/api/folders/members', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: chosen.trim(), ref }),
+          });
+          toast(`Added to ${chosen.trim()}`);
+        }
+        await loadPools();
+        refresh(true);
+      } catch (err) {
+        toast(err.message);
+      }
+    },
+  });
+
+  items.push({
+    icon: 'server',
+    label: 'Move to backend…',
+    mutate: true,
+    action: async () => {
+      let dests = [];
+      try { dests = (await api('/api/move/destinations')).destinations || []; } catch {}
+      const available = dests.filter((d) => d.can && d.backend !== vm.backend).map((d) => d.backend);
+      if (!available.length) {
+        toast('No destination backend available for move.');
+        return;
+      }
+      const chosen = prompt(`Move ${vm.name} to which backend? (${available.join(', ')})`, available[0]);
+      if (!chosen || !chosen.trim()) return;
+      const ref = vm.id || vmKey(vm);
+      let plan;
+      try {
+        plan = await api('/api/move/preflight', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ref, toBackend: chosen.trim() }),
+        });
+      } catch (e) {
+        toast(`Could not plan move: ${e.message}`);
+        return;
+      }
+      showMoveDialog(ref, chosen.trim(), plan);
+    },
+  });
+
+  if (isKubeVirt) {
+    items.push({
+      icon: 'download',
+      label: 'Export…',
+      mutate: true,
+      disabled: !!vm.running,
+      title: vm.running ? 'Stop the VM to export its disk' : 'Download a disk backup',
+      action: () => exportVM(vm),
+    });
+  }
+
+  // Delete action
+  if (capability.delete !== false) {
+    items.push({ separator: true });
+    items.push({
+      icon: 'trash',
+      label: 'Delete',
+      danger: true,
+      mutate: true,
+      action: () => vmAction(vm, 'delete'),
+    });
+  }
+
+  return items;
+}
+
+function ctMenuItems(c) {
+  const running = c.phase === 'Running';
+  return [
+    {
+      icon: 'terminal',
+      label: 'Terminal',
+      action: () => {
+        select({ type: 'ct', key: ctKey(c) });
+        ctTab = 'terminal';
+        renderContent();
+        markRendered();
+      },
+    },
+    { separator: true },
+    {
+      icon: 'play',
+      label: 'Start',
+      mutate: true,
+      disabled: running,
+      action: () => ctAction(c, 'start'),
+    },
+    {
+      icon: 'stop',
+      label: 'Stop',
+      mutate: true,
+      disabled: !running,
+      action: () => ctAction(c, 'stop'),
+    },
+    { separator: true },
+    {
+      icon: 'trash',
+      label: 'Delete',
+      danger: true,
+      mutate: true,
+      action: () => ctAction(c, 'delete'),
+    },
+  ];
+}
+
+function nodeMenuItems(nodeName) {
+  const items = [
+    {
+      icon: 'server',
+      label: 'View node',
+      action: () => select({ type: 'node', name: nodeName }),
+    },
+  ];
+
+  const h = (hostPower.hosts || []).find((x) => x.node === nodeName || x.name === nodeName);
+  if (h) {
+    items.push({ separator: true });
+    if ((h.actions || []).includes('start')) {
+      items.push({
+        icon: 'play',
+        label: 'Power on',
+        mutate: true,
+        disabled: h.state === 'running',
+        action: async () => {
+          try {
+            await api(`/api/hostpower/${encodeURIComponent(h.plugin)}/start?id=${encodeURIComponent(h.id)}`, { method: 'POST' });
+            toast(`Powering on ${h.name}`);
+            refresh(true);
+          } catch (e) { toast(e.message); }
+        },
+      });
+    }
+    if ((h.actions || []).includes('stop')) {
+      items.push({
+        icon: 'stop',
+        label: 'Power off',
+        mutate: true,
+        disabled: h.state === 'stopped',
+        action: async () => {
+          const onNode = h.node ? vms.filter((v) => v.node === h.node) : [];
+          if (onNode.length && !confirm(`Power off ${h.name}? ${onNode.length} VM(s) on it will stop.`)) return;
+          try {
+            await api(`/api/hostpower/${encodeURIComponent(h.plugin)}/stop?id=${encodeURIComponent(h.id)}`, { method: 'POST' });
+            toast(`Powering off ${h.name}`);
+            refresh(true);
+          } catch (e) { toast(e.message); }
+        },
+      });
+    }
+  }
+
+  items.push({ separator: true });
+  items.push({
+    icon: 'pause',
+    label: 'Cordon',
+    mutate: true,
+    disabled: true,
+    title: 'Cordon not supported on this backend',
+    action: () => {},
+  });
+  items.push({
+    icon: 'migrate',
+    label: 'Drain',
+    mutate: true,
+    disabled: true,
+    title: 'Drain not supported on this backend',
+    action: () => {},
+  });
+
+  return items;
+}
+
+function hostPowerMenuItems(h) {
+  const items = [
+    {
+      icon: 'server',
+      label: 'View host',
+      action: () => select({ type: 'hostpower', key: hostPowerKey(h) }),
+    },
+  ];
+  items.push({ separator: true });
+  if ((h.actions || []).includes('start')) {
+    items.push({
+      icon: 'play',
+      label: 'Power on',
+      mutate: true,
+      disabled: h.state === 'running',
+      action: async () => {
+        try {
+          await api(`/api/hostpower/${encodeURIComponent(h.plugin)}/start?id=${encodeURIComponent(h.id)}`, { method: 'POST' });
+          toast(`Powering on ${h.name}`);
+          refresh(true);
+        } catch (e) { toast(e.message); }
+      },
+    });
+  }
+  if ((h.actions || []).includes('stop')) {
+    items.push({
+      icon: 'stop',
+      label: 'Power off',
+      mutate: true,
+      disabled: h.state === 'stopped',
+      action: async () => {
+        const onNode = h.node ? vms.filter((v) => v.node === h.node) : [];
+        if (onNode.length && !confirm(`Power off ${h.name}? ${onNode.length} VM(s) on it will stop.`)) return;
+        try {
+          await api(`/api/hostpower/${encodeURIComponent(h.plugin)}/stop?id=${encodeURIComponent(h.id)}`, { method: 'POST' });
+          toast(`Powering off ${h.name}`);
+          refresh(true);
+        } catch (e) { toast(e.message); }
+      },
+    });
+  }
+  return items;
+}
+
+function namespaceMenuItems(ns) {
+  const nsVMs = vms.filter((v) => (v.namespace || '(none)') === ns);
+  const running = nsVMs.filter((v) => v.running);
+  const stopped = nsVMs.filter((v) => !v.running);
+
+  return [
+    {
+      icon: 'folder',
+      label: 'View namespace',
+      action: () => select({ type: 'namespace', name: ns }),
+    },
+    { separator: true },
+    {
+      icon: 'play',
+      label: 'Start all VMs',
+      mutate: true,
+      disabled: stopped.length === 0,
+      action: async () => {
+        if (!confirm(`Start ${stopped.length} stopped VM(s) in ${ns}?`)) return;
+        let ok = 0; let fail = 0;
+        await Promise.all(stopped.map(async (v) => {
+          try { await api(vmURL(v, '/start'), { method: 'POST' }); ok++; }
+          catch { fail++; }
+        }));
+        toast(`Start: ${ok} ok${fail ? `, ${fail} failed` : ''}`);
+        setTimeout(() => refresh(true), 800);
+      },
+    },
+    {
+      icon: 'stop',
+      label: 'Stop all VMs',
+      mutate: true,
+      disabled: running.length === 0,
+      action: async () => {
+        if (!confirm(`Stop ${running.length} running VM(s) in ${ns}?`)) return;
+        let ok = 0; let fail = 0;
+        await Promise.all(running.map(async (v) => {
+          try { await api(vmURL(v, '/stop'), { method: 'POST' }); ok++; }
+          catch { fail++; }
+        }));
+        toast(`Stop: ${ok} ok${fail ? `, ${fail} failed` : ''}`);
+        setTimeout(() => refresh(true), 800);
+      },
+    },
+  ];
+}
+
+function poolMenuItems(folder) {
+  const n = (folder.members || []).length;
+  return [
+    {
+      icon: 'play',
+      label: 'Start all',
+      mutate: true,
+      disabled: n === 0,
+      action: async () => {
+        if (!confirm(`Start every instance in pool ${folder.path}? (${n} instances)`)) return;
+        try {
+          const res = await api('/api/folders/action', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: folder.path, action: 'start' }),
+          });
+          toast(summariseOutcomes('start', res.members || []));
+          refresh(true);
+        } catch (err) { toast(err.message); }
+      },
+    },
+    {
+      icon: 'stop',
+      label: 'Stop all',
+      mutate: true,
+      disabled: n === 0,
+      action: async () => {
+        if (!confirm(`Stop every instance in pool ${folder.path}? (${n} instances)`)) return;
+        try {
+          const res = await api('/api/folders/action', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: folder.path, action: 'stop' }),
+          });
+          toast(summariseOutcomes('stop', res.members || []));
+          refresh(true);
+        } catch (err) { toast(err.message); }
+      },
+    },
+    {
+      icon: 'restart',
+      label: 'Restart all',
+      mutate: true,
+      disabled: n === 0,
+      action: async () => {
+        if (!confirm(`Restart every instance in pool ${folder.path}? (${n} instances)`)) return;
+        try {
+          const res = await api('/api/folders/action', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: folder.path, action: 'restart' }),
+          });
+          toast(summariseOutcomes('restart', res.members || []));
+          refresh(true);
+        } catch (err) { toast(err.message); }
+      },
+    },
+    { separator: true },
+    {
+      icon: 'plus',
+      label: 'New subpool…',
+      mutate: true,
+      action: async () => {
+        const p = prompt(`New subpool under ${folder.path} (e.g. ${folder.path}/sub):`, `${folder.path}/`);
+        if (!p) return;
+        try {
+          await api('/api/folders', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: p.trim() }),
+          });
+          await loadPools();
+          refresh(true);
+        } catch (err) { toast(err.message); }
+      },
+    },
+    {
+      icon: 'trash',
+      label: 'Delete pool',
+      danger: true,
+      mutate: true,
+      action: async () => {
+        if (!confirm(`Delete pool ${folder.path}? Members will be unfoldered, not deleted.`)) return;
+        try {
+          await api(`/api/folders?path=${encodeURIComponent(folder.path)}`, { method: 'DELETE' });
+          toast('Pool deleted');
+          await loadPools();
+          refresh(true);
+        } catch (err) { toast(err.message); }
+      },
+    },
+  ];
+}
+
+function unassignedMenuItems() {
+  return [
+    {
+      icon: 'plus',
+      label: 'New pool…',
+      mutate: true,
+      action: async () => {
+        const path = prompt('Pool path (nest with /, e.g. prod/web):');
+        if (!path) return;
+        try {
+          await api('/api/folders', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path }),
+          });
+          await loadPools();
+          refresh(true);
+        } catch (err) { toast(err.message); }
+      },
+    },
+  ];
+}
+
 function treeRow({ lvl, icon, label, sub, sel, onclick, dot }) {
   const div = document.createElement('div');
   div.className = `tree-item lvl-${lvl}${sel ? ' selected' : ''}`;
+  div.setAttribute('tabindex', '0');
   // The label is its own element so it can be ellipsized: a bare text node is
   // an anonymous flex item and refuses to shrink, which is how a long VM name
   // used to push the row past the sidebar edge (#290).
   div.innerHTML = `${dot ? `<span class="dot ${dot}"></span>` : ''}${icon}` +
     ` <span class="tree-label">${esc(label)}</span>` +
     (sub ? ` <span class="muted">${esc(sub)}</span>` : '');
-  div.onclick = () => { onclick(); closeDrawer(); };
+  div.onclick = (e) => { onclick(e); closeDrawer(); };
+  div.addEventListener('keydown', (e) => {
+    if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key) && e.target === div) {
+      // Roving focus over the rows the filter leaves visible.
+      const rows = [...document.querySelectorAll('#tree .tree-item')].filter((r) => !r.hidden && r.offsetParent !== null);
+      const at = rows.indexOf(div);
+      const to = e.key === 'Home' ? 0 : e.key === 'End' ? rows.length - 1 : at + (e.key === 'ArrowDown' ? 1 : -1);
+      if (rows[to]) { e.preventDefault(); rows[to].focus(); }
+      return;
+    }
+    if (e.key === 'Enter' || e.key === ' ') {
+      if (e.target === div || !e.target.closest('button')) {
+        e.preventDefault();
+        div.click();
+      }
+    }
+  });
   return div;
 }
 
@@ -291,75 +1060,147 @@ function treeViewToggle() {
   return div;
 }
 
+// The tree filter (`/` focuses it) narrows the guest rows by name. It is built
+// once and kept across re-renders: the 5s poll rebuilds the tree, and a
+// rebuilt input would drop focus and the caret mid-word.
+let treeFilter = '';
+let treeFilterEl = null;
+
+function treeFilterBox() {
+  if (treeFilterEl) return treeFilterEl;
+  treeFilterEl = document.createElement('input');
+  treeFilterEl.id = 'tree-filter';
+  treeFilterEl.type = 'search';
+  treeFilterEl.placeholder = 'Filter guests…  /';
+  treeFilterEl.setAttribute('aria-label', 'Filter the tree by guest name');
+  treeFilterEl.addEventListener('input', () => { treeFilter = treeFilterEl.value.trim().toLowerCase(); applyTreeFilter(); });
+  treeFilterEl.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { treeFilterEl.value = ''; treeFilter = ''; applyTreeFilter(); treeFilterEl.blur(); }
+  });
+  return treeFilterEl;
+}
+
+function applyTreeFilter() {
+  $('#tree').querySelectorAll('.tree-item[data-guest]').forEach((row) => {
+    row.hidden = !!treeFilter && !(row.dataset.search || row.dataset.guest.toLowerCase()).includes(treeFilter);
+  });
+}
+
+function focusTreeFilter() {
+  $('#tree').classList.add('open'); // the drawer, on a phone
+  const el = treeFilterBox();
+  el.focus();
+  el.select();
+}
+
 function renderTree() {
   const tree = $('#tree');
-  tree.replaceChildren();
+  const filter = treeFilterBox();
+  // Everything but the filter box goes; removing a focused input blurs it.
+  for (const child of [...tree.children]) if (child !== filter) child.remove();
+  if (!filter.isConnected) tree.appendChild(filter);
   tree.appendChild(treeViewToggle());
 
-  tree.appendChild(treeRow({
+  const dcRow = treeRow({
     lvl: 0, icon: icon('datacenter'), label: 'Datacenter',
     sel: selected.type === 'dc',
     onclick: () => select({ type: 'dc' }),
-  }));
+  });
+  attachContextMenu(dcRow, () => [{ icon: 'datacenter', label: 'Open Datacenter', action: () => select({ type: 'dc' }) }]);
+  tree.appendChild(dcRow);
 
-  tree.appendChild(treeRow({
+  const docRow = treeRow({
     lvl: 0, icon: icon('health'), label: 'Cluster health',
     sel: selected.type === 'doctor',
     onclick: () => select({ type: 'doctor' }),
-  }));
+  });
+  attachContextMenu(docRow, () => [{ icon: 'health', label: 'Open Cluster health', action: () => select({ type: 'doctor' }) }]);
+  tree.appendChild(docRow);
 
-  tree.appendChild(treeRow({
+  const extRow = treeRow({
     lvl: 0, icon: icon('extension'), label: 'Extensions',
     sel: selected.type === 'extensions',
     onclick: () => select({ type: 'extensions' }),
-  }));
+  });
+  attachContextMenu(extRow, () => [{ icon: 'extension', label: 'Open Extensions', action: () => select({ type: 'extensions' }) }]);
+  tree.appendChild(extRow);
 
-  tree.appendChild(treeRow({
+  const mvRow = treeRow({
     lvl: 0, icon: icon('cube'), label: 'Multiview',
     sub: 'live consoles',
     sel: selected.type === 'multiview',
     onclick: () => select({ type: 'multiview' }),
-  }));
+  });
+  attachContextMenu(mvRow, () => [{ icon: 'cube', label: 'Open Multiview', action: () => select({ type: 'multiview' }) }]);
+  tree.appendChild(mvRow);
 
-  tree.appendChild(treeRow({
+  const setRow = treeRow({
     lvl: 0, icon: icon('cog'), label: 'Settings',
     sub: 'theme & branding',
     sel: selected.type === 'settings',
     onclick: () => select({ type: 'settings' }),
-  }));
+  });
+  attachContextMenu(setRow, () => [{ icon: 'cog', label: 'Open Settings', action: () => select({ type: 'settings' }) }]);
+  tree.appendChild(setRow);
 
   // Hosts that a host-power plugin can switch on and off (e.g. an on-demand
   // cloud VM node kept stopped when idle). Shown only when a plugin reports any.
   for (const h of hostPower.hosts || []) {
-    tree.appendChild(treeRow({
+    const hpRow = treeRow({
       lvl: 0, icon: icon('server'), label: h.name,
       sub: h.state,
       dot: hostPowerDot(h.state),
       sel: selected.type === 'hostpower' && selected.key === hostPowerKey(h),
       onclick: () => select({ type: 'hostpower', key: hostPowerKey(h) }),
-    }));
+    });
+    attachContextMenu(hpRow, () => hostPowerMenuItems(h));
+    tree.appendChild(hpRow);
   }
 
   if (treeView === 'pool') renderTreePools(tree);
   else if (treeView === 'namespace') renderTreeNamespaces(tree);
   else renderTreeServer(tree);
+  applyTreeFilter();
 }
 
 // CTs sit in the same per-node/per-namespace groups as VMs, distinguished
 // only by icon — matching real Proxmox, which puts VMs and CTs in one
 // resource tree per node/pool rather than segregating them.
 function ctRow(c, lvl) {
-  return treeRow({
+  const row = treeRow({
     lvl, icon: icon('container'), label: c.name,
     sub: c.namespace,
     dot: c.ready ? 'on' : c.phase === 'Stopped' ? 'off' : 'mid',
     sel: selected.type === 'ct' && selected.key === ctKey(c),
     onclick: () => select({ type: 'ct', key: ctKey(c) }),
   });
+  row.dataset.guest = c.name;
+  attachContextMenu(row, () => ctMenuItems(c));
+  return row;
 }
 
 // Server View: Datacenter → Node → VMs/CTs, grouped by .node. Guests with
 // no placed node (stopped, unscheduled) render as top-level orphans.
+// dropTargetNode accepts a dragged VM and proposes migrating it to that node.
+// Invalid drops (node not ready, VM already there, non-KubeVirt VM) are
+// refused with the reason as the row's tooltip.
+function dropTargetNode(row, node) {
+  dropZone(row, {
+    defaultTitle: node.ready ? `Drop a VM here to migrate it to ${node.name}` : `Node ${node.name} (not ready)`,
+    checkValid: (vm) => {
+      if (!node.ready) return { ok: false, reason: `Node ${node.name} is not ready` };
+      if (vm) {
+        if (vm.node === node.name) return { ok: false, reason: `${vm.name} is already on ${node.name}` };
+        if (vm.backend && vm.backend !== 'kubevirt') {
+          return { ok: false, reason: `${vm.name} (${vm.backend}) cannot migrate to a cluster node` };
+        }
+      }
+      return { ok: true };
+    },
+    onDrop: (vm) => { if (vm) migrateVM(vm, node.name); },
+  });
+}
+
 function renderTreeServer(tree) {
   const byNode = (nodeName) => vms.filter((v) => v.node === nodeName);
   const ctsByNode = (nodeName) => cts.filter((c) => c.node === nodeName);
@@ -367,12 +1208,15 @@ function renderTreeServer(tree) {
   const ctPlaced = new Set();
 
   for (const n of nodes) {
-    tree.appendChild(treeRow({
+    const row = treeRow({
       lvl: 1, icon: icon('server'), label: n.name, sub: n.roles,
       dot: n.ready ? 'on' : 'off',
       sel: selected.type === 'node' && selected.name === n.name,
       onclick: () => select({ type: 'node', name: n.name }),
-    }));
+    });
+    attachContextMenu(row, () => nodeMenuItems(n.name));
+    dropTargetNode(row, n);
+    tree.appendChild(row);
     for (const vm of byNode(n.name)) {
       placed.add(vmKey(vm));
       tree.appendChild(vmRow(vm, 2));
@@ -415,40 +1259,117 @@ function renderTreeNamespaces(tree) {
     const parts = [];
     if (nsVMs.length) parts.push(`${nsVMs.length} VM${nsVMs.length === 1 ? '' : 's'}`);
     if (nsCTs.length) parts.push(`${nsCTs.length} CT${nsCTs.length === 1 ? '' : 's'}`);
-    tree.appendChild(treeRow({
+    const row = treeRow({
       lvl: 1, icon: icon('folder'), label: ns, sub: parts.join(', '),
       sel: selected.type === 'namespace' && selected.name === ns,
       onclick: () => select({ type: 'namespace', name: ns }),
-    }));
+    });
+    attachContextMenu(row, () => namespaceMenuItems(ns));
+    tree.appendChild(row);
     for (const vm of nsVMs) tree.appendChild(vmRow(vm, 2));
     for (const c of nsCTs) tree.appendChild(ctRow(c, 2));
   }
 }
 
 function vmRow(vm, lvl) {
-  return treeRow({
+  const row = treeRow({
     lvl, icon: icon(vm.isTemplate ? 'template' : 'cube'), label: vm.name,
     sub: vm.isTemplate ? 'template' : vm.namespace,
     dot: vm.ready ? 'on' : (vm.running ? 'mid' : 'off'),
     sel: selected.type === 'vm' && selected.key === vmKey(vm),
-    onclick: () => select({ type: 'vm', key: vmKey(vm) }),
+    onclick: (e) => treeVMClick(vmKey(vm), e),
   });
+  row.dataset.vmKey = vmKey(vm);
+  row.dataset.search = [vm.name, vm.ip, ...(vm.tags || [])].filter(Boolean).join(' ').toLowerCase();
+  row.classList.toggle('multi-selected', selectedVMKeys.has(vmKey(vm)));
+  row.setAttribute('aria-selected', selectedVMKeys.has(vmKey(vm)) ? 'true' : 'false');
+  const check = document.createElement('input');
+  check.type = 'checkbox';
+  check.className = 'tree-vm-check';
+  check.checked = selectedVMKeys.has(vmKey(vm));
+  check.setAttribute('aria-label', `Select ${vm.name}`);
+  check.onclick = (event) => event.stopPropagation();
+  check.onchange = () => {
+    check.checked ? selectedVMKeys.add(vmKey(vm)) : selectedVMKeys.delete(vmKey(vm));
+    selectionAnchorKey = vmKey(vm);
+    row.classList.toggle('multi-selected', check.checked);
+    renderContent();
+  };
+  row.prepend(check);
+  row.dataset.guest = vm.name;
+  attachContextMenu(row, () => vmMenuItems(vm));
+  makeDraggable(row, vm);
+  return row;
 }
 
 // markRendered records the just-rendered state so the next poll tick doesn't
 // re-render (and reset scroll) for a change the user already saw.
+// Tree selection: a plain click opens the VM and sets the range anchor;
+// Ctrl/Cmd toggles one VM and Shift selects the visible range from the anchor.
+// The set is the one the inventory grid uses, so both stay in step.
+let selectionAnchorKey = null;
+
+function treeVMClick(key, e) {
+  if (e?.shiftKey && selectionAnchorKey) {
+    const keys = [...document.querySelectorAll('#tree .tree-item[data-vm-key]')]
+      .filter((r) => !r.hidden).map((r) => r.dataset.vmKey);
+    const a = keys.indexOf(selectionAnchorKey);
+    const b = keys.indexOf(key);
+    if (a >= 0 && b >= 0) {
+      selectedVMKeys.clear();
+      keys.slice(Math.min(a, b), Math.max(a, b) + 1).forEach((k) => selectedVMKeys.add(k));
+    }
+  } else if (e?.ctrlKey || e?.metaKey) {
+    if (selectedVMKeys.has(key)) selectedVMKeys.delete(key);
+    else selectedVMKeys.add(key);
+    selectionAnchorKey = key;
+  } else {
+    selectionAnchorKey = key;
+    select({ type: 'vm', key });
+    return;
+  }
+  renderTree();
+  renderContent();
+  markRendered();
+}
+
 function markRendered() {
   lastRenderFp = JSON.stringify([vms, cts, nodes, selected, tab]);
 }
 
-function select(sel) {
+function select(sel, openTab = 'summary') {
   disconnectConsoles();
   if (selected.type === 'multiview' && sel.type !== 'multiview') disconnectMultiview();
   selected = sel;
-  tab = 'summary';
+  tab = openTab;
   renderTree();
   renderContent();
   markRendered();
+}
+
+// openVM selects a VM and, optionally, one of its tabs. "console" means the
+// best console the VM has: VNC when it has one, the serial terminal if not.
+function openVM(key, wantTab) {
+  const vm = findVM(key);
+  if (!vm) return;
+  const cap = vm.capabilities || {};
+  const t = wantTab === 'console' && !cap.vnc && cap.tty ? 'terminal' : (wantTab || 'summary');
+  // Already there: leave a live console connected rather than reconnecting it.
+  if (selected.type === 'vm' && selected.key === key && tab === t) return;
+  select({ type: 'vm', key }, t);
+}
+
+// openPool shows a pool the only place pools are drawn: the Pool View tree.
+async function openPool(path) {
+  if (treeView !== 'pool') setTreeView('pool');
+  await loadPools();
+  renderTree();
+  const row = [...$('#tree').querySelectorAll('.tree-item')].find((r) => r.title === path);
+  if (!row) return;
+  $('#tree').classList.add('open');
+  row.scrollIntoView({ block: 'nearest' });
+  row.classList.add('flash');
+  setTimeout(() => row.classList.remove('flash'), 1500);
 }
 
 // ── Content panel ─────────────────────────────────────────────────
@@ -475,66 +1396,120 @@ function renderContent() {
   return renderDatacenter(main);
 }
 
-// ── Multiview: a grid of live view-only consoles ──────────────────
-// Watch 4–6 VMs at once — built for monitoring automated GUI testing.
+// ── Multiview: persisted, rearrangeable live consoles ─────────────
+// Preset sizes make resizing keyboard-accessible; pointer users can also drag
+// a tile by its title. Arrow buttons are the equivalent of that drag action.
 
 let multiviewRFBs = [];
+const MULTIVIEW_KEY = 'corral.multiview.v1';
 
 function disconnectMultiview() {
   for (const r of multiviewRFBs) { try { r.disconnect(); } catch { /* gone */ } }
   multiviewRFBs = [];
 }
 
+function loadMultiviewLayout() {
+  try { return JSON.parse(localStorage.getItem(MULTIVIEW_KEY) || '{}'); }
+  catch { return {}; }
+}
+
+function saveMultiviewLayout(layout) {
+  try { localStorage.setItem(MULTIVIEW_KEY, JSON.stringify(layout)); } catch { /* private mode */ }
+}
+
+function moveMultiviewTile(grid, tile, delta, layout) {
+  const tiles = [...grid.querySelectorAll('.mv-tile')];
+  const from = tiles.indexOf(tile);
+  const to = Math.max(0, Math.min(tiles.length - 1, from + delta));
+  if (from === to) return;
+  if (to < from) grid.insertBefore(tile, tiles[to]);
+  else grid.insertBefore(tile, tiles[to].nextSibling);
+  layout.order = [...grid.querySelectorAll('.mv-tile')].map((el) => el.dataset.key);
+  saveMultiviewLayout(layout);
+  tile.querySelector('.mv-title').focus();
+}
+
 async function renderMultiview(main) {
   disconnectMultiview();
   const running = vms.filter((v) => v.running);
-  const shown = running.slice(0, 6);
+  const layout = loadMultiviewLayout();
+  const rank = new Map((layout.order || []).map((key, i) => [key, i]));
+  const shown = running.slice(0, 6).sort((a, b) =>
+    (rank.get(vmKey(a)) ?? 999) - (rank.get(vmKey(b)) ?? 999));
   main.innerHTML = `
     <div class="page-head"><h1>${icon('cube')} Multiview</h1>
       <span class="muted">${running.length} running VM${running.length === 1 ? '' : 's'}${running.length > 6 ? ' — showing first 6' : ''}</span>
     </div>
-    ${shown.length ? `<div id="mv-grid" class="mv-grid" data-count="${shown.length}"></div>`
+    ${shown.length ? `<p class="muted mv-help">Drag titles to rearrange, or use Move and Size. Layout is saved in this browser.</p>
+      <div id="mv-grid" class="mv-grid"></div>`
       : `<p class="console-msg">No running VMs. Start some and they appear here, live.</p>`}`;
   if (!shown.length) return;
 
   let RFB;
   try {
-    ({ default: RFB } = await import(
-      './vendor/novnc-rfb.esm.js'));
+    ({ default: RFB } = await import('./vendor/novnc-rfb.esm.js'));
   } catch (e) {
     $('#mv-grid').innerHTML = `<p class="console-msg">noVNC failed to load: ${esc(e.message)}</p>`;
     return;
   }
   const grid = $('#mv-grid');
+  let dragged = null;
   for (const vm of shown) {
-    const tile = document.createElement('div');
-    tile.className = 'mv-tile';
-    tile.innerHTML = `<div class="mv-title">${esc(vm.name)} <span class="muted">${esc(vm.namespace)}</span></div>
-      <div class="mv-screen"></div>`;
-    tile.querySelector('.mv-title').onclick = () => {
+    const key = vmKey(vm);
+    const tile = document.createElement('section');
+    tile.className = `mv-tile mv-${layout.sizes?.[key] || 'normal'}`;
+    tile.dataset.key = key;
+    tile.innerHTML = `<div class="mv-title" draggable="true" tabindex="0" aria-label="${esc(vm.name)} console tile; drag to rearrange">
+        <button class="mv-open" title="Open console tab">${esc(vm.name)}</button>
+        <span class="muted">${esc(vm.namespace)}</span><span class="spacer"></span>
+        <button class="btn xs mv-left" aria-label="Move ${esc(vm.name)} left">←</button>
+        <button class="btn xs mv-right" aria-label="Move ${esc(vm.name)} right">→</button>
+        <label class="mv-size-label">Size <select class="mv-size" aria-label="Resize ${esc(vm.name)} tile">
+          <option value="normal">Normal</option><option value="wide">Wide</option>
+          <option value="tall">Tall</option><option value="large">Large</option>
+        </select></label>
+      </div><div class="mv-screen"></div>`;
+    tile.querySelector('.mv-size').value = layout.sizes?.[key] || 'normal';
+    tile.querySelector('.mv-open').onclick = () => {
       disconnectMultiview();
-      select({ type: 'vm', key: vmKey(vm) });
+      select({ type: 'vm', key });
       tab = 'console';
       renderContent();
     };
+    tile.querySelector('.mv-left').onclick = () => moveMultiviewTile(grid, tile, -1, layout);
+    tile.querySelector('.mv-right').onclick = () => moveMultiviewTile(grid, tile, 1, layout);
+    tile.querySelector('.mv-size').onchange = (e) => {
+      tile.className = `mv-tile mv-${e.target.value}`;
+      layout.sizes ||= {};
+      layout.sizes[key] = e.target.value;
+      saveMultiviewLayout(layout);
+    };
+    const title = tile.querySelector('.mv-title');
+    title.ondragstart = () => { dragged = tile; tile.classList.add('dragging'); };
+    title.ondragend = () => { dragged = null; tile.classList.remove('dragging'); };
+    tile.ondragover = (e) => { if (dragged && dragged !== tile) e.preventDefault(); };
+    tile.ondrop = (e) => {
+      e.preventDefault();
+      if (!dragged || dragged === tile) return;
+      const tiles = [...grid.querySelectorAll('.mv-tile')];
+      moveMultiviewTile(grid, dragged, tiles.indexOf(tile) - tiles.indexOf(dragged), layout);
+    };
     grid.appendChild(tile);
     try {
-      const rfb = new RFB(tile.querySelector('.mv-screen'), wsURL('vnc', vm));
-      rfb.viewOnly = false; // click tile canvas to focus and interact directly
-      rfb.scaleViewport = true;
-      tile.onclick = (e) => {
-        if (!e.target.closest('.mv-title')) {
-          rfb.focus();
-        }
-      };
-      rfb.addEventListener('disconnect', () => {
+      const tileRFB = new RFB(tile.querySelector('.mv-screen'), wsURL('vnc', vm));
+      tileRFB.viewOnly = false;
+      tileRFB.scaleViewport = true;
+      tile.querySelector('.mv-screen').onclick = () => tileRFB.focus();
+      tileRFB.addEventListener('disconnect', () => {
         tile.querySelector('.mv-screen').innerHTML = `<p class="console-msg">disconnected</p>`;
       });
-      multiviewRFBs.push(rfb);
+      multiviewRFBs.push(tileRFB);
     } catch {
       tile.querySelector('.mv-screen').innerHTML = `<p class="console-msg">connect failed</p>`;
     }
   }
+  layout.order = shown.map(vmKey);
+  saveMultiviewLayout(layout);
 }
 
 // ── Host power (host-power plugins) ──────────────────────────────
@@ -807,19 +1782,206 @@ async function renderSettings(main) {
   updatePreview();
 }
 
+// ── Dashboard widgets (#348) ──────────────────────────────────────
+// The Datacenter and node pages open with a widget grid (dashboard.js). The
+// widgets read this module's state when they render, so a poll only has to
+// call the dashboard's refresh().
+
+// "4Gi", "8G", "2048Mi" → bytes (0 when unreadable).
+function memBytes(s) {
+  const m = /^([\d.]+)\s*([KMGT]?)i?B?$/i.exec(String(s || '').trim());
+  if (!m) return 0;
+  return Number(m[1]) * (1024 ** ' KMGT'.indexOf(m[2].toUpperCase() || ' '));
+}
+
+const NO_SAMPLES = `No samples yet. Usage comes from <strong>metrics-server</strong>
+  (see <em>Cluster health</em>), sampled every 15 seconds.`;
+
+// Run fn now and every ms until body leaves the DOM — for widgets whose data
+// is not part of the fleet poll (task log, usage samples).
+function pollWhileShown(body, fn, ms) {
+  fn();
+  const t = setInterval(() => (body.isConnected ? fn() : clearInterval(t)), ms);
+}
+
+function chartWidget(title, url, metric) {
+  return {
+    title, w: 6, h: 3, minW: 3, live: true,
+    render: (body) => timeChart(body, { load: () => api(url), metric, label: title, empty: NO_SAMPLES }),
+  };
+}
+
+// The busiest running KubeVirt VMs by CPU or memory at the last sample,
+// optionally on one node. A name opens that VM.
+function topVMsWidget(title, by, node) {
+  return {
+    title, w: 4, h: 3, live: true,
+    render: (body) => pollWhileShown(body, () => {
+      const q = new URLSearchParams({ by, limit: '5' });
+      if (node) q.set('node', node);
+      api(`/api/metrics/top?${q}`).then((rows) => {
+        if (!body.isConnected) return;
+        if (!rows.length) { body.innerHTML = `<p class="muted">${NO_SAMPLES}</p>`; return; }
+        const val = (r) => (by === 'mem' ? r.mem : r.cpu);
+        const top = Math.max(...rows.map(val)) || 1;
+        body.innerHTML = `<table><tbody>${rows.map((r) => {
+          const vm = vms.find((v) => v.backend === 'kubevirt' && v.namespace === r.namespace && v.name === r.name);
+          const name = vm ? `<a href="#" data-vmkey="${esc(vmKey(vm))}">${esc(r.name)}</a>` : esc(r.name);
+          return `<tr><td>${name}</td>
+            <td style="width:55%">${by === 'mem' ? fmtBytes(r.mem) : fmtCPU(r.cpu)}
+              <div class="meter"><span style="width:${((val(r) / top) * 100).toFixed(0)}%"></span></div></td></tr>`;
+        }).join('')}</tbody></table>`;
+        body.querySelectorAll('[data-vmkey]').forEach((a) => {
+          a.onclick = (e) => { e.preventDefault(); select({ type: 'vm', key: a.dataset.vmkey }); };
+        });
+      }).catch((e) => { if (body.isConnected) body.innerHTML = `<p class="muted">${esc(e.message)}</p>`; });
+    }, 15000),
+  };
+}
+
+// Host-power hosts (sdk.CapHostPower plugins), optionally only one node's.
+// The power buttons carry .hp-action, which read-only mode hides.
+function powerWidget(node) {
+  return {
+    title: 'Host power', w: 4, h: 3,
+    render(body) {
+      const hosts = (hostPower.hosts || []).filter((h) => !node || h.node === node);
+      if (!hosts.length) {
+        body.innerHTML = `<p class="muted">${node ? 'No host-power plugin manages this node.'
+          : 'No host-power plugin is installed. Hosts show here when one is (see Extensions).'}</p>`;
+        return;
+      }
+      body.innerHTML = `<ul class="plain">${hosts.map((h) => {
+        const btn = (action, label) => ((h.actions || []).includes(action)
+          ? `<button class="btn sm hp-action" data-hp="${action}" data-hpkey="${esc(hostPowerKey(h))}">${label}</button>` : '');
+        return `<li><span class="dot ${hostPowerDot(h.state)}"></span>
+          <a href="#" data-hpopen="${esc(hostPowerKey(h))}">${esc(h.name)}</a>
+          <span class="muted">${esc(h.state)}</span> ${btn('start', 'Power on')} ${btn('stop', 'Power off')}</li>`;
+      }).join('')}</ul>`;
+      body.querySelectorAll('[data-hpopen]').forEach((a) => {
+        a.onclick = (e) => { e.preventDefault(); select({ type: 'hostpower', key: a.dataset.hpopen }); };
+      });
+      body.querySelectorAll('[data-hp]').forEach((b) => {
+        b.onclick = async () => {
+          const h = hosts.find((x) => hostPowerKey(x) === b.dataset.hpkey);
+          const action = b.dataset.hp;
+          const onNode = h.node ? vms.filter((v) => v.node === h.node) : [];
+          if (action === 'stop' && onNode.length && !confirm(`Power off ${h.name}? ${onNode.length} VM(s) on it will stop.`)) return;
+          b.disabled = true;
+          try {
+            await api(`/api/hostpower/${encodeURIComponent(h.plugin)}/${action}?id=${encodeURIComponent(h.id)}`, { method: 'POST' });
+            toast(`${action === 'start' ? 'Powering on' : 'Powering off'} ${h.name}`);
+          } catch (e) { toast(e.message); }
+          refresh(true);
+        };
+      });
+    },
+  };
+}
+
+function recentTasksWidget() {
+  return {
+    title: 'Recent tasks', w: 4, h: 3, live: true,
+    render: (body) => pollWhileShown(body, () => {
+      api('/api/tasklog').then((log) => {
+        if (!body.isConnected) return;
+        if (!log.length) { body.innerHTML = '<p class="muted">No tasks yet.</p>'; return; }
+        const pill = (t) => (t.status === 'running' ? '<span class="pill mid">running</span>'
+          : t.status === 'error' ? `<span class="pill off" title="${esc(t.error || '')}">error</span>`
+            : '<span class="pill on">OK</span>');
+        body.innerHTML = `<table><tbody>${log.slice(0, 8).map((t) => `<tr>
+          <td class="muted">${esc(new Date(t.started).toLocaleTimeString())}</td>
+          <td>${esc(t.action)}</td><td>${esc(t.target)}</td><td>${pill(t)}</td></tr>`).join('')}</tbody></table>`;
+      }).catch((e) => { if (body.isConnected) body.innerHTML = `<p class="muted">${esc(e.message)}</p>`; });
+    }, 5000),
+  };
+}
+
+// Things an operator should look at now: nodes that are not ready, VMs in a
+// failure state, stopped hosts with VMs scheduled to them, and failed tasks.
+function alertsWidget() {
+  return {
+    title: 'Alerts', w: 4, h: 2,
+    render(body) {
+      const alerts = [];
+      for (const n of nodes) if (!n.ready) alerts.push(`Node <strong>${esc(n.name)}</strong> is not ready`);
+      for (const v of vms) {
+        if (/error|fail|crash|unschedulable/i.test(v.status || '')) alerts.push(`VM <strong>${esc(v.name)}</strong>: ${esc(v.status)}`);
+      }
+      for (const h of hostPower.hosts || []) {
+        const onNode = h.node ? vms.filter((v) => v.node === h.node).length : 0;
+        if (h.state === 'stopped' && onNode) alerts.push(`Host <strong>${esc(h.name)}</strong> is off with ${onNode} VM(s) on it`);
+      }
+      const draw = (failed) => {
+        const all = alerts.concat(failed.map((t) => `Task <strong>${esc(t.action)}</strong> ${esc(t.target)} failed${t.error ? `: ${esc(t.error)}` : ''}`));
+        body.innerHTML = all.length
+          ? `<ul class="plain">${all.map((a) => `<li><span class="dot off"></span> ${a}</li>`).join('')}</ul>`
+          : '<p class="muted"><span class="dot on"></span> Nothing needs attention.</p>';
+      };
+      draw([]);
+      api('/api/tasklog')
+        .then((log) => { if (body.isConnected) draw(log.filter((t) => t.status === 'error').slice(0, 5)); })
+        .catch(() => { /* the task log is best-effort here */ });
+    },
+  };
+}
+
+function capacityWidget() {
+  return {
+    title: 'Capacity', w: 4, h: 2,
+    render(body) {
+      const running = vms.filter((v) => v.ready);
+      const cpu = running.reduce((a, v) => a + (Number(v.cpu) || 0), 0);
+      const mem = running.reduce((a, v) => a + memBytes(v.mem), 0);
+      body.innerHTML = `<dl class="kv">
+        <dt>Virtual machines</dt><dd><span class="big">${vms.length}</span> <span class="muted">${running.length} running</span></dd>
+        <dt>Containers</dt><dd>${cts.length}</dd>
+        <dt>Nodes ready</dt><dd>${nodes.filter((n) => n.ready).length}/${nodes.length}</dd>
+        <dt>Allocated</dt><dd>${cpu} vCPU · ${fmtBytes(mem)} <span class="muted">(running VMs)</span></dd>
+      </dl>`;
+    },
+  };
+}
+
+const DC_WIDGETS = {
+  capacity: capacityWidget(),
+  alerts: alertsWidget(),
+  tasks: recentTasksWidget(),
+  cpu: chartWidget('CPU usage', '/api/metrics/history', 'cpu'),
+  mem: chartWidget('Memory usage', '/api/metrics/history', 'mem'),
+  'top-cpu': topVMsWidget('Top VMs by CPU', 'cpu'),
+  'top-mem': topVMsWidget('Top VMs by memory', 'mem'),
+  power: powerWidget(),
+};
+
+const DC_LAYOUT = [
+  { id: 'capacity', x: 0, y: 0, w: 4, h: 2 },
+  { id: 'alerts', x: 4, y: 0, w: 4, h: 2 },
+  { id: 'tasks', x: 8, y: 0, w: 4, h: 3 },
+  { id: 'cpu', x: 0, y: 2, w: 4, h: 3 },
+  { id: 'mem', x: 4, y: 2, w: 4, h: 3 },
+  { id: 'top-cpu', x: 0, y: 5, w: 4, h: 3 },
+  { id: 'top-mem', x: 4, y: 5, w: 4, h: 3 },
+  { id: 'power', x: 8, y: 3, w: 4, h: 3 },
+];
+
+let dcDash = null;
+
 function renderDatacenter(main) {
-  const running = vms.filter((v) => v.ready).length;
-  const ready = nodes.filter((n) => n.ready).length;
+  // Mount the widget grid once per visit; later polls refresh it in place so
+  // a drag, an open menu or keyboard focus survives the 5s refresh.
+  if (!main.querySelector('#dc-dash')) {
+    main.innerHTML = `<div class="page-head"><h1>Datacenter</h1></div>
+      <div id="dc-dash"></div><div id="dc-rest"></div>`;
+    dcDash = mountDashboard($('#dc-dash'), { scope: 'datacenter', widgets: DC_WIDGETS, layout: DC_LAYOUT });
+  } else {
+    dcDash.refresh();
+  }
+  const rest = $('#dc-rest');
   const allTags = [...new Set(vms.flatMap((v) => v.tags || []))].sort();
   if (tagFilter && !allTags.includes(tagFilter)) tagFilter = null; // tag vanished
   const shown = tagFilter ? vms.filter((v) => (v.tags || []).includes(tagFilter)) : vms;
-  main.innerHTML = `
-    <div class="page-head"><h1>Datacenter</h1></div>
-    <div class="cards">
-      <div class="card"><div class="num">${vms.length}</div><div class="label">virtual machines</div></div>
-      <div class="card"><div class="num">${running}</div><div class="label">running</div></div>
-      <div class="card"><div class="num">${ready}/${nodes.length}</div><div class="label">nodes ready</div></div>
-    </div>
+  rest.innerHTML = `
     ${allTags.length ? `<div class="tagbar">
       <span class="muted">Filter by tag:</span>
       <button class="chip filter ${tagFilter ? '' : 'active'}" data-tagfilter="">all</button>
@@ -834,9 +1996,9 @@ function renderDatacenter(main) {
     <div id="dc-images"><p class="muted">loading…</p></div>
     <h2 class="section">${icon('template')} Templates</h2>
     ${templateTable(vms.filter((v) => v.isTemplate))}`;
-  bindVMTable(main);
-  bindTemplateTable(main);
-  main.querySelectorAll('[data-tagfilter]').forEach((b) => {
+  bindVMTable(rest, shown);
+  bindTemplateTable(rest);
+  rest.querySelectorAll('[data-tagfilter]').forEach((b) => {
     b.onclick = () => { tagFilter = b.dataset.tagfilter || null; renderDatacenter(main); markRendered(); };
   });
   $('#dc-import').onclick = importImage;
@@ -925,27 +2087,70 @@ async function uploadImage(file) {
   }
 }
 
+// The node page shares one saved layout across nodes; the widgets are built
+// per node because they filter to it.
+const NODE_LAYOUT = [
+  { id: 'info', x: 0, y: 0, w: 4, h: 3 },
+  { id: 'cpu', x: 4, y: 0, w: 4, h: 3 },
+  { id: 'mem', x: 8, y: 0, w: 4, h: 3 },
+  { id: 'top-cpu', x: 0, y: 3, w: 4, h: 3 },
+  { id: 'top-mem', x: 4, y: 3, w: 4, h: 3 },
+  { id: 'power', x: 8, y: 3, w: 4, h: 3 },
+];
+
+function nodeWidgets(name) {
+  const hist = `/api/nodes/${encodeURIComponent(name)}/metrics/history`;
+  return {
+    info: {
+      title: 'Node', w: 4, h: 3,
+      render(body) {
+        const n = nodes.find((x) => x.name === name);
+        body.innerHTML = `<dl class="kv">
+          <dt>Status</dt><dd><span class="pill ${n?.ready ? 'on' : 'off'}">${n?.ready ? 'ready' : 'not ready'}</span></dd>
+          <dt>Roles</dt><dd>${esc(n?.roles || '—')}</dd>
+          <dt>Kubelet</dt><dd>${esc(n?.kubelet || '—')}</dd>
+          <dt>Architecture</dt><dd>${esc(n?.arch || '—')}</dd>
+          <dt>VMs</dt><dd>${vms.filter((v) => v.node === name).length}</dd>
+          <dt>CTs</dt><dd>${cts.filter((c) => c.node === name).length}</dd>
+        </dl>`;
+      },
+    },
+    cpu: chartWidget('CPU usage', hist, 'cpu'),
+    mem: chartWidget('Memory usage', hist, 'mem'),
+    'top-cpu': topVMsWidget('Top VMs by CPU', 'cpu', name),
+    'top-mem': topVMsWidget('Top VMs by memory', 'mem', name),
+    power: powerWidget(name),
+  };
+}
+
+let nodeDash = null;
+
 function renderNode(main, name) {
   const n = nodes.find((x) => x.name === name);
   const nodeVMs = vms.filter((v) => v.node === name);
   const nodeCTs = cts.filter((c) => c.node === name);
-  main.innerHTML = `
-    <div class="page-head">
-      <h1>${icon('server')} ${esc(name)}</h1>
-      <span class="pill ${n?.ready ? 'on' : 'off'}">${n?.ready ? 'ready' : 'not ready'}</span>
-    </div>
-    <dl class="props">
-      <dt>Roles</dt><dd>${esc(n?.roles || '—')}</dd>
-      <dt>Kubelet</dt><dd>${esc(n?.kubelet || '—')}</dd>
-      <dt>Architecture</dt><dd>${esc(n?.arch || '—')}</dd>
-      <dt>VMs</dt><dd>${nodeVMs.length}</dd>
-      <dt>CTs</dt><dd>${nodeCTs.length}</dd>
-    </dl>
+  if (main.querySelector('#node-dash')?.dataset.node !== name) {
+    main.innerHTML = `
+      <div class="page-head">
+        <h1>${icon('server')} ${esc(name)}</h1>
+        <span class="pill" id="node-ready"></span>
+      </div>
+      <div id="node-dash" data-node="${esc(name)}"></div>
+      <div id="node-rest"></div>`;
+    nodeDash = mountDashboard($('#node-dash'), { scope: 'node', widgets: nodeWidgets(name), layout: NODE_LAYOUT });
+  } else {
+    nodeDash.refresh();
+  }
+  const pill = $('#node-ready');
+  pill.className = `pill ${n?.ready ? 'on' : 'off'}`;
+  pill.textContent = n?.ready ? 'ready' : 'not ready';
+  const rest = $('#node-rest');
+  rest.innerHTML = `
     <h2 style="font-size:1rem;margin:18px 0 8px">Virtual machines</h2>
     ${vmTable(nodeVMs)}
     ${nodeCTs.length ? `<h2 style="font-size:1rem;margin:18px 0 8px">Containers</h2>${ctTable(nodeCTs)}` : ''}`;
-  bindVMTable(main);
-  bindCTTable(main);
+  bindVMTable(rest, nodeVMs);
+  bindCTTable(rest);
 }
 
 // Namespace View's namespace detail — same shape as renderNode, grouped by
@@ -964,7 +2169,7 @@ function renderNamespace(main, name) {
     <h2 style="font-size:1rem;margin:18px 0 8px">Virtual machines</h2>
     ${vmTable(nsVMs)}
     ${nsCTs.length ? `<h2 style="font-size:1rem;margin:18px 0 8px">Containers</h2>${ctTable(nsCTs)}` : ''}`;
-  bindVMTable(main);
+  bindVMTable(main, nsVMs);
   bindCTTable(main);
 }
 
@@ -984,7 +2189,17 @@ function ctTable(list) {
 
 function bindCTTable(root) {
   root.querySelectorAll('tr[data-ctkey]').forEach((tr) => {
+    const c = findCT(tr.dataset.ctkey);
+    if (c) attachContextMenu(tr, () => ctMenuItems(c));
     tr.onclick = () => select({ type: 'ct', key: tr.dataset.ctkey });
+    tr.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        if (!e.target.closest('button')) {
+          e.preventDefault();
+          select({ type: 'ct', key: tr.dataset.ctkey });
+        }
+      }
+    });
   });
 }
 
@@ -1079,54 +2294,58 @@ function vmTable(list) {
       <button class="btn sm" data-bulk="start">${icon('play')} Start</button>
       <button class="btn sm" data-bulk="stop">${icon('stop')} Stop</button>
       <button class="btn sm" data-bulk="restart">${icon('restart')} Restart</button>
+      <button class="btn sm" data-bulk="snapshot">${icon('camera')} Snapshot</button>
+      <button class="btn sm" data-bulk="tag">Tag…</button>
+      <button class="btn sm danger" data-bulk="delete">${icon('trash')} Delete</button>
     </div>
-    <table><thead><tr>
-      <th class="check"><input type="checkbox" class="vm-check-all" title="Select all"></th>
-      <th>Name</th><th>Status</th><th>Node</th><th>Namespace</th><th>CPU</th><th>Mem</th><th>IP</th>
-    </tr></thead><tbody>
-    ${list.map((v) => `<tr data-key="${esc(vmKey(v))}">
-      <td class="check"><input type="checkbox" class="vm-check" value="${esc(vmKey(v))}"></td>
-      <td>${esc(v.name)}${(v.tags || []).map((t) => `<span class="chip mini">${esc(t)}</span>`).join('')}</td>
-      <td><span class="dot ${v.ready ? 'on' : (v.running || (v.status && (v.status.includes('Starting') || v.status.includes('Creating')))) ? 'mid' : 'off'}"></span> ${esc(v.status)}</td>
-      <td>${esc(v.node || '—')}</td><td>${esc(v.namespace)}</td>
-      <td>${v.cpu}</td><td>${esc(v.mem)}</td><td>${esc(v.ip || '—')}</td>
-    </tr>`).join('')}
-    </tbody></table>`;
+    <div class="vm-grid"></div>`;
 }
 
-function bindVMTable(root) {
-  // Row click opens the VM — except clicks landing in the checkbox cell.
-  root.querySelectorAll('tr[data-key]').forEach((tr) => {
-    tr.onclick = (e) => {
-      if (e.target.closest('.check')) return;
-      select({ type: 'vm', key: tr.dataset.key });
-    };
-  });
+const VM_GRID_COLUMNS = [
+  { id: 'name', label: 'Name', width: 220 },
+  { id: 'status', label: 'Status', width: 130, render: (vm) => {
+    const value = document.createElement('span');
+    const active = vm.running || (vm.status && (vm.status.includes('Starting') || vm.status.includes('Creating')));
+    value.innerHTML = `<span class="dot ${vm.ready ? 'on' : active ? 'mid' : 'off'}"></span> `;
+    value.append(document.createTextNode(vm.status || '—'));
+    return value;
+  } },
+  { id: 'node', label: 'Node', width: 150, value: (vm) => vm.node || '—' },
+  { id: 'namespace', label: 'Namespace', width: 150 },
+  { id: 'cpu', label: 'CPU', width: 80 },
+  { id: 'mem', label: 'Mem', width: 100 },
+  { id: 'ip', label: 'IP', width: 150, value: (vm) => vm.ip || '—' },
+  { id: 'tags', label: 'Tags', width: 160, value: (vm) => (vm.tags || []).join(', '), render: (vm) => {
+    const chips = document.createElement('span');
+    for (const t of vm.tags || []) {
+      const chip = document.createElement('span');
+      chip.className = 'chip mini';
+      chip.textContent = t;
+      chips.appendChild(chip);
+    }
+    return chips;
+  } },
+];
 
-  const checks = [...root.querySelectorAll('.vm-check')];
-  const all = root.querySelector('.vm-check-all');
+function bindVMTable(root, list) {
   const bar = root.querySelector('.bulkbar');
-  if (!checks.length || !bar) return;
-
-  const selectedKeys = () => checks.filter((c) => c.checked).map((c) => c.value);
+  if (!bar) return;
+  const selectedKeys = () => [...selectedVMKeys];
   const update = () => {
-    const n = selectedKeys().length;
+    const n = selectedVMKeys.size;
     bar.hidden = n === 0;
     bar.querySelector('.bulkbar-count').textContent = `${n} selected`;
-    if (all) {
-      all.checked = n > 0 && n === checks.length;
-      all.indeterminate = n > 0 && n < checks.length;
-    }
   };
-
-  checks.forEach((c) => {
-    c.onclick = (e) => e.stopPropagation();
-    c.onchange = update;
+  mountGrid(root.querySelector('.vm-grid'), {
+    id: 'vms', columns: VM_GRID_COLUMNS, rows: list, rowKey: vmKey,
+    selected: selectedVMKeys, checkClass: 'vm-check', checkAllClass: 'vm-check-all',
+    onRowClick: (vm) => select({ type: 'vm', key: vmKey(vm) }),
+    onSelectionChange: () => { update(); renderTree(); },
+    decorateRow: (tr, vm) => {
+      attachContextMenu(tr, () => vmMenuItems(vm));
+      makeDraggable(tr, vm);
+    },
   });
-  if (all) {
-    all.onclick = (e) => e.stopPropagation();
-    all.onchange = () => { checks.forEach((c) => { c.checked = all.checked; }); update(); };
-  }
 
   bar.querySelectorAll('[data-bulk]').forEach((b) => {
     b.onclick = async (e) => {
@@ -1134,13 +2353,29 @@ function bindVMTable(root) {
       const act = b.dataset.bulk;
       const sel = selectedKeys().map(findVM).filter(Boolean);
       if (!sel.length) return;
-      const verb = act === 'start' ? 'Start' : act === 'stop' ? 'Stop' : 'Restart';
-      if (!confirm(`${verb} ${sel.length} VM${sel.length === 1 ? '' : 's'}?`)) return;
+      const verb = { start: 'Start', stop: 'Stop', restart: 'Restart', snapshot: 'Snapshot', tag: 'Tag', delete: 'Delete' }[act];
+      const plural = `${sel.length} VM${sel.length === 1 ? '' : 's'}`;
+      let tag = '';
+      if (act === 'tag') {
+        tag = (prompt(`Tag ${plural} with:`, '') || '').trim();
+        if (!tag) return;
+      } else if (act === 'delete') {
+        if (!confirm(`Delete ${plural} and their disks?\n\n${sel.map((v) => v.name).join('\n')}`)) return;
+      } else if (!confirm(`${verb} ${plural}?`)) return;
       let ok = 0;
       let fail = 0;
       await Promise.all(sel.map(async (vm) => {
-        try { await api(vmURL(vm, `/${act}`), { method: 'POST' }); ok += 1; }
-        catch { fail += 1; }
+        try {
+          if (act === 'snapshot') await post(vm, '/snapshots', {});
+          else if (act === 'tag') await post(vm, '/tags', { tag, on: true });
+          else if (act === 'delete') {
+            let target = vmURL(vm);
+            if (vm.backend === 'libvirt') target += `${target.includes('?') ? '&' : '?'}destroyStorage=true`;
+            await api(target, { method: 'DELETE' });
+            selectedVMKeys.delete(vmKey(vm));
+          } else await api(vmURL(vm, `/${act}`), { method: 'POST' });
+          ok += 1;
+        } catch { fail += 1; }
       }));
       toast(`${verb}: ${ok} ok${fail ? `, ${fail} failed` : ''}`);
       setTimeout(() => refresh(), 800);
@@ -1156,7 +2391,7 @@ function bindVMTable(root) {
 // the same mark-template endpoint to unmark/remove from here.
 function templateTable(list) {
   if (!list.length) return `<p class="muted">No templates. Mark a VM as a template from its detail page.</p>`;
-  return `<table><thead><tr><th>Name</th><th>Namespace</th><th>CPU</th><th>Mem</th><th></th></tr></thead><tbody>
+  return `<table class="template-table"><thead><tr><th>Name</th><th>Namespace</th><th>CPU</th><th>Mem</th><th></th></tr></thead><tbody>
     ${list.map((v) => `<tr data-key="${esc(vmKey(v))}">
       <td>${esc(v.name)}</td><td>${esc(v.namespace)}</td><td>${v.cpu}</td><td>${esc(v.mem)}</td>
       <td><button class="btn sm danger" data-untemplate="${esc(vmKey(v))}">Unmark</button></td>
@@ -1175,11 +2410,22 @@ function bindTemplateTable(root) {
       setTimeout(refresh, 600);
     };
   });
-  root.querySelectorAll('tr[data-key]').forEach((tr) => {
+  // Scoped to the template table: the inventory grid binds its own rows.
+  root.querySelectorAll('.template-table tr[data-key]').forEach((tr) => {
+    const vm = findVM(tr.dataset.key);
+    if (vm) attachContextMenu(tr, () => vmMenuItems(vm));
     tr.onclick = (e) => {
       if (e.target.closest('button')) return;
       select({ type: 'vm', key: tr.dataset.key });
     };
+    tr.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        if (!e.target.closest('button')) {
+          e.preventDefault();
+          select({ type: 'vm', key: tr.dataset.key });
+        }
+      }
+    });
   });
 }
 
@@ -1288,14 +2534,17 @@ function renderTab(vm) {
         <dt>SSH</dt><dd><code>corral ssh ${esc(vm.name)}</code></dd>
         <dt>RDP</dt><dd id="vm-rdp">${vm.running ? 'checking…' : '—'}</dd>
       </dl>
-      <div id="cpu-graph-box" class="panel-section">
-        <h2 class="section">${icon('cpu')} CPU usage</h2>
-        <div id="cpu-graph"><p class="muted">${vm.running ? 'loading…' : 'VM is stopped'}</p></div>
+      <div id="usage-charts" class="panel-section">
+        <h2 class="section">${icon('cpu')} Usage</h2>
+        ${vm.running ? `<div class="charts-row">
+          <div><strong>CPU</strong> <span class="muted">(${vm.cpu} vCPU = ${vm.cpu * 1000}m)</span><div id="vm-cpu-chart"></div></div>
+          <div><strong>Memory</strong> <span class="muted">(${esc(vm.mem)} allocated)</span><div id="vm-mem-chart"></div></div>
+        </div>` : '<p class="muted">VM is stopped</p>'}
       </div>
       <div id="guest-info"></div>
       <div id="powersched-box" class="panel-section"><p class="muted">loading schedule…</p></div>`;
       if (vm.running && capability.metrics) loadMetrics(vm);
-      if (vm.running) loadCPUGraph(vm);
+      if (vm.running) loadUsageCharts(vm);
       if (vm.running && capability.rdp) checkRDP(vm);
       if (vm.agentConnected) loadGuestInfo(vm);
       renderPowerSchedule(vm);
@@ -1362,10 +2611,12 @@ async function post(vm, path, body) {
   });
 }
 
-async function migrateVM(vm) {
+// migrateVM asks for (or, after a drag onto a node, confirms) the target node.
+async function migrateVM(vm, targetNode = null) {
+  if (document.body.classList.contains('read-only') || !me.admin) return;
   const others = nodes.filter((n) => n.ready && n.name !== vm.node).map((n) => n.name);
   if (!others.length) { toast('No other ready node to migrate to.'); return; }
-  const target = await pickNode(vm, others);
+  const target = await pickNode(vm, others, targetNode);
   if (target === null) return; // cancelled
   let res;
   try {
@@ -1420,21 +2671,28 @@ function pickExportFormat(vm) {
 }
 
 // pickNode shows a small modal with a target-node dropdown (eligible nodes
-// only). Resolves to the chosen node name, '' for "let the scheduler choose",
-// or null if cancelled.
-function pickNode(vm, eligible) {
+// only) and what kind of migration this will be. preselect is the node a VM
+// was dropped on. Resolves to the chosen node name, '' for "let the scheduler
+// choose", or null if cancelled.
+function pickNode(vm, eligible, preselect = null) {
   return new Promise((resolve) => {
     const dlg = document.createElement('dialog');
-    dlg.className = 'pick-dialog';
+    dlg.className = 'pick-dialog migrate-dialog';
+    const mode = !vm.running
+      ? `<li><span class="dot off"></span> <b>Offline:</b> the VM is stopped; it starts on the new node next time.</li>`
+      : vm.liveMigratable
+        ? `<li><span class="dot on"></span> <b>Live:</b> memory and CPU state move with no downtime.</li>`
+        : `<li><span class="dot mid"></span> <b>Not live-migratable:</b> the migration may fail; stop the VM to move it offline.</li>`;
     dlg.innerHTML = `
       <h3>Migrate ${esc(vm.name)}</h3>
-      <p class="muted">Currently on <strong>${esc(vm.node || '—')}</strong>. Pick a target node.</p>
+      <p class="muted">Currently on <strong>${esc(vm.node || '—')}</strong>. ${preselect ? `Move to <strong>${esc(preselect)}</strong>?` : 'Pick a target node.'}</p>
       <label>Target node
         <select id="pick-node">
           <option value="">Auto — let the scheduler choose</option>
-          ${eligible.map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join('')}
+          ${eligible.map((n) => `<option value="${esc(n)}"${n === preselect ? ' selected' : ''}>${esc(n)}</option>`).join('')}
         </select>
       </label>
+      <ul class="migrate-checks">${mode}</ul>
       <div class="pick-actions">
         <button class="btn" value="cancel">Cancel</button>
         <button class="btn primary" id="pick-go">${icon('migrate')} Migrate</button>
@@ -1498,56 +2756,13 @@ async function loadMetrics(vm) {
   } catch { /* metrics-server may be absent */ }
 }
 
-// ── CPU sparkline (RRD-style history) ─────────────────────────────
-// The server samples per-VM CPU into a bounded ring buffer; we poll the
-// retained window and draw a sparkline. The poller self-cancels once the
-// graph element leaves the DOM (tab/VM switch via disconnectConsoles).
-let cpuGraphTimer = null;
-
-function stopCPUGraph() {
-  if (cpuGraphTimer) { clearInterval(cpuGraphTimer); cpuGraphTimer = null; }
-}
-
-async function loadCPUGraph(vm) {
-  stopCPUGraph();
-  const draw = async () => {
-    const box = $('#cpu-graph');
-    if (!box) { stopCPUGraph(); return; } // navigated away
-    let hist;
-    try { hist = await api(vmURL(vm, '/metrics/history')); }
-    catch { box.innerHTML = `<p class="muted">CPU history unavailable</p>`; return; }
-    box.innerHTML = cpuSparkline(hist, vm);
-  };
-  await draw();
-  cpuGraphTimer = setInterval(draw, 15000);
-}
-
-function cpuSparkline(hist, vm) {
-  if (!hist || !hist.length) {
-    return `<p class="muted">No CPU samples yet — install <strong>metrics-server</strong>
-      (see <em>Cluster health</em>) and give it a moment to collect data.</p>`;
-  }
-  const cap = (vm.cpu || 1) * 1000;            // allocated millicores
-  const peak = Math.max(...hist.map((s) => s.cpu));
-  const top = Math.max(cap, peak) || 1;        // y-axis ceiling
-  const W = 600;
-  const H = 80;
-  const n = hist.length;
-  const xc = (i) => (n <= 1 ? 0 : (i / (n - 1)) * W);
-  const yc = (c) => H - (c / top) * H;
-  const line = hist.map((s, i) => `${xc(i).toFixed(1)},${yc(s.cpu).toFixed(1)}`).join(' ');
-  const area = `0,${H} ${line} ${W},${H}`;
-  const last = hist[n - 1].cpu;
-  const pct = ((last / cap) * 100).toFixed(0);
-  const capLine = cap <= top ? `<line class="spark-cap" x1="0" y1="${yc(cap).toFixed(1)}" x2="${W}" y2="${yc(cap).toFixed(1)}" />` : '';
-  const mins = Math.max(1, Math.round((n * 15) / 60));
-  return `<svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="CPU usage sparkline">
-      <polygon class="spark-area" points="${area}" />
-      <polyline class="spark-line" points="${line}" />
-      ${capLine}
-    </svg>
-    <div class="muted spark-legend">now <strong>${last}m</strong> (${pct}% of ${vm.cpu} vCPU)
-      · peak ${peak}m · last ~${mins}m</div>`;
+// ── Usage charts (RRD-style history) ──────────────────────────────
+// The server samples per-VM CPU and memory into a bounded ring buffer; the
+// charts poll the retained window and stop once they leave the DOM.
+function loadUsageCharts(vm) {
+  const load = () => api(vmURL(vm, '/metrics/history'));
+  timeChart($('#vm-cpu-chart'), { load, metric: 'cpu', label: `${vm.name} CPU usage`, empty: NO_SAMPLES, height: 140 });
+  timeChart($('#vm-mem-chart'), { load, metric: 'mem', label: `${vm.name} memory usage`, empty: NO_SAMPLES, height: 140 });
 }
 
 // Autostart/shutdown windows (schedule plugin): two cron boundaries that flip
@@ -1557,6 +2772,7 @@ async function renderPowerSchedule(vm) {
   if (!box) return;
   let s = {};
   try { s = await api(vmURL(vm, '/powerschedule')); } catch { /* form */ }
+  if (!box.isConnected) return; // the tab changed while this loaded
   const has = s && (s.start || s.stop);
   box.innerHTML = `
     <h2 class="section">${icon('play')} Autostart / shutdown windows</h2>
@@ -2023,17 +3239,146 @@ function toggleFullscreen(el) {
 // fit addon both key off it — give them one.
 document.addEventListener('fullscreenchange', () => window.dispatchEvent(new Event('resize')));
 
+const CONSOLE_TABS_KEY = 'corral.consoleTabs.v1';
+function loadConsoleTabs() {
+  try { return JSON.parse(sessionStorage.getItem(CONSOLE_TABS_KEY) || '[]'); }
+  catch { return []; }
+}
+function saveConsoleTabs(keys) {
+  try { sessionStorage.setItem(CONSOLE_TABS_KEY, JSON.stringify(keys)); } catch { /* private mode */ }
+}
+function rememberConsole(vm) {
+  const key = vmKey(vm);
+  const keys = loadConsoleTabs().filter((k) => findVM(k));
+  if (!keys.includes(key)) keys.push(key);
+  saveConsoleTabs(keys);
+  return keys;
+}
+function openConsole(vm) {
+  disconnectConsoles();
+  selected = { type: 'vm', key: vmKey(vm) };
+  tab = 'console';
+  renderTree();
+  renderContent();
+  markRendered();
+}
+function consoleTabStrip(vm) {
+  const keys = rememberConsole(vm);
+  return `<div class="console-tabs" role="tablist" aria-label="Open consoles">
+    ${keys.map((key) => {
+      const item = findVM(key);
+      if (!item) return '';
+      const active = key === vmKey(vm);
+      return `<span class="console-tab ${active ? 'active' : ''}">
+        <button role="tab" aria-selected="${active}" data-console-tab="${esc(key)}">${esc(item.name)}</button>
+        <button class="console-tab-close" data-console-close="${esc(key)}" aria-label="Close ${esc(item.name)} console tab">×</button>
+      </span>`;
+    }).join('')}
+  </div>`;
+}
+function bindConsoleTabs(body, vm) {
+  body.querySelectorAll('[data-console-tab]').forEach((button) => {
+    button.onclick = () => {
+      const target = findVM(button.dataset.consoleTab);
+      if (target) openConsole(target);
+    };
+  });
+  body.querySelectorAll('[data-console-close]').forEach((button) => {
+    button.onclick = () => {
+      const keys = loadConsoleTabs().filter((key) => key !== button.dataset.consoleClose);
+      saveConsoleTabs(keys);
+      if (button.dataset.consoleClose === vmKey(vm) && keys.length) {
+        const target = findVM(keys[keys.length - 1]);
+        if (target) return openConsole(target);
+      }
+      if (button.dataset.consoleClose === vmKey(vm)) {
+        disconnectConsoles();
+        tab = 'summary';
+        return renderContent();
+      }
+      button.closest('.console-tab')?.remove();
+    };
+  });
+}
+
+function popOutConsole(vm) {
+  const key = vmKey(vm);
+  const url = `${location.pathname}?console=${encodeURIComponent(key)}`;
+  window.open(url, `corral-console-${key.replace(/[^a-z0-9]/gi, '-')}`, 'popup,width=1100,height=760');
+}
+
+function sendChord(keys) {
+  if (!rfb) return;
+  for (const [keysym, code] of keys) rfb.sendKey(keysym, code, true);
+  for (const [keysym, code] of [...keys].reverse()) rfb.sendKey(keysym, code, false);
+  rfb.focus();
+}
+
+function sendTextAsKeys(text) {
+  if (!rfb) return;
+  for (const char of text.replace(/\r\n?/g, '\n')) {
+    const point = char.codePointAt(0);
+    const keysym = char === '\n' ? 0xff0d : char === '\t' ? 0xff09
+      : point <= 0xff ? point : 0x01000000 | point;
+    rfb.sendKey(keysym, '', undefined);
+  }
+  rfb.focus();
+}
+
+async function pasteConsoleText() {
+  let text = '';
+  try { text = await navigator.clipboard.readText(); }
+  catch { text = prompt('Paste text to type into the guest:', '') ?? ''; }
+  if (text) sendTextAsKeys(text);
+}
+
+function bindConsoleControls(vm, body, screen) {
+  bindConsoleTabs(body, vm);
+  $('#vnc-popout').onclick = () => popOutConsole(vm);
+  $('#vnc-fullscreen').onclick = () => toggleFullscreen(screen);
+  const applyScale = (mode) => {
+    if (!rfb) return;
+    rfb.scaleViewport = mode === 'fit';
+    rfb.resizeSession = mode === 'remote';
+  };
+  body.querySelectorAll('[name=vnc-scale-mode]').forEach((input) => {
+    input.onchange = () => { if (input.checked) applyScale(input.value); };
+  });
+  $('#vnc-paste').onclick = pasteConsoleText;
+  body.querySelectorAll('[data-send-keys]').forEach((button) => {
+    button.onclick = () => {
+      const key = button.dataset.sendKeys;
+      if (key === 'cad') return rfb?.sendCtrlAltDel();
+      if (key === 'print') return sendChord([[0xff61, 'PrintScreen']]);
+      const f = Number(key.slice(1));
+      sendChord([[0xffe3, 'ControlLeft'], [0xffe9, 'AltLeft'], [0xffbd + f, `F${f}`]]);
+    };
+  });
+}
+
 async function connectVNC(vm, body) {
   if (!vm.running) {
     body.innerHTML = `<p class="console-msg">VM is not running — start it to open the console.</p>`;
     return;
   }
-  body.innerHTML = `
+  body.innerHTML = `${consoleTabStrip(vm)}
     <div class="toolbar console-bar">
+      <button class="btn sm" id="vnc-popout" title="Open this console in its own browser window">Pop out</button>
       <button class="btn sm" id="vnc-fullscreen" title="Fullscreen (Esc to leave)">${icon('expand')} Fullscreen</button>
-      <label class="console-opt"><input type="checkbox" id="vnc-scale" checked> Scale to fit (local)</label>
-      <label class="console-opt" title="Ask the guest to change its resolution to match the window (needs guest support)">
-        <input type="checkbox" id="vnc-resize"> Remote resize</label>
+      <fieldset class="console-scale" aria-label="Console scale">
+        <label class="console-opt"><input type="radio" name="vnc-scale-mode" id="vnc-scale" value="fit" checked> Fit</label>
+        <label class="console-opt"><input type="radio" name="vnc-scale-mode" id="vnc-one" value="one"> 1:1</label>
+        <label class="console-opt" title="Ask the guest to match the window (needs guest support)">
+          <input type="radio" name="vnc-scale-mode" id="vnc-resize" value="remote"> Remote resize</label>
+      </fieldset>
+      <button class="btn sm" id="vnc-paste">Paste as text</button>
+      <details class="send-keys"><summary class="btn sm">Send keys</summary>
+        <div class="send-keys-menu" role="menu">
+          <button role="menuitem" data-send-keys="cad">Ctrl+Alt+Del</button>
+          ${[1, 2, 3, 4, 5, 6, 7].map((f) => `<button role="menuitem" data-send-keys="f${f}">Ctrl+Alt+F${f}</button>`).join('')}
+          <button role="menuitem" data-send-keys="print">PrtSc</button>
+        </div>
+      </details>
     </div>
     <div id="vnc-screen"><p class="console-msg">Connecting…</p></div>`;
   try {
@@ -2044,18 +3389,11 @@ async function connectVNC(vm, body) {
     rfb = new RFB(screen, wsURL('vnc', vm));
     rfb.scaleViewport = true;  // noVNC local scaling — fits any window size
     rfb.resizeSession = false; // remote resize is opt-in (guest must support it)
-
-    $('#vnc-fullscreen').onclick = () => toggleFullscreen(screen);
-    $('#vnc-scale').onchange = (e) => { if (rfb) rfb.scaleViewport = e.target.checked; };
-    $('#vnc-resize').onchange = (e) => {
-      if (!rfb) return;
-      rfb.resizeSession = e.target.checked;
-      if (e.target.checked) {
-        // The two modes fight each other; remote resize wins when enabled.
-        $('#vnc-scale').checked = false;
-        rfb.scaleViewport = false;
-      }
-    };
+    bindConsoleControls(vm, body, screen);
+    rfb.addEventListener('connect', () => {
+      screen.dataset.connected = 'true';
+      screen.setAttribute('aria-label', `${vm.name} console connected`);
+    });
     rfb.addEventListener('disconnect', () => {
       if (tab === 'console') {
         screen.innerHTML = `<p class="console-msg">Console disconnected.<br>
@@ -2102,7 +3440,6 @@ function connectTTY(vm, body) {
 }
 
 function disconnectConsoles() {
-  stopCPUGraph();
   try { rfb?.disconnect(); } catch { /* already gone */ }
   rfb = null;
   try { ttyWS?.close(); } catch { /* already gone */ }
@@ -2696,7 +4033,31 @@ $('#btn-create').innerHTML = `${icon('plus')} Create VM`;
 // Pool View borrows the tree's row builders rather than growing its own, so a
 // pool row and a node row stay visually identical — the difference is what a
 // drop onto one means, not how it looks.
-bindPools({ api, toast, esc, icon, refresh, treeRow, vmRow });
+bindPools({
+  api, toast, esc, icon, refresh, treeRow, vmRow, vmKey, findVM,
+  attachContextMenu, poolMenuItems, unassignedMenuItems,
+});
+
+// The palette reads the fleet through getters: the poll replaces these arrays
+// rather than mutating them, so a captured reference would go stale.
+bindPalette({
+  esc, icon, vmKey,
+  vms: () => vms,
+  cts: () => cts,
+  nodes: () => nodes,
+  pools: poolState,
+  ensurePools: async () => { if (!(poolState().folders || []).length) { await loadPools(); } },
+  go: select,
+  openVM,
+  openPool,
+  vmAction: (key, act) => { const vm = findVM(key); if (vm) vmAction(vm, act); },
+  ctAction: (key, act) => { const c = findCT(key); if (c) ctAction(c, act); },
+  createVM: () => $('#btn-create').click(),
+  createCT: () => $('#btn-create-ct').click(),
+  selectedVMKey: () => (selected.type === 'vm' ? selected.key : null),
+  focusFilter: focusTreeFilter,
+});
+initKeys();
 
 loadWhoami();
 loadCaps();
