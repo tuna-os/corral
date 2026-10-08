@@ -17,8 +17,19 @@ the web epics. Nobody tests these screens by hand.
 
 ## The update model
 
-Corral polls the fleet every 5 seconds. It renders again when the data
-changed. One rule follows from this:
+Corral polls the fleet, and renders again when the data changed.
+
+The poll is not a fixed timer. `pollLoop()` waits for the refresh to finish,
+then waits 5 seconds plus twice the time that refresh took. Two things follow.
+Corral asks a slow server less often, and nobody has to tune it. And two polls
+can never be in flight together, which a fixed timer allowed as soon as the
+server took longer than the interval.
+
+`refresh()` holds that guarantee: it runs one refresh at a time. A refresh
+asked for while one runs waits, and then happens. A caller that forces one has
+changed something and has to see it. Do not reach past this function.
+
+One more rule follows from the redraw:
 
 **Do not rebuild DOM that holds state the browser owns.**
 

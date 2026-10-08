@@ -108,7 +108,68 @@ async function renderOffline(msg) {
   if (b) b.onclick = () => { offlineShown = false; refresh(true); };
 }
 
+// One refresh at a time, and the next one scheduled from the end of the last.
+//
+// This used to be `setInterval(refresh, 5000)`. refresh() is asynchronous and
+// awaits several endpoints in turn, so a fixed timer fires whether or not the
+// previous one came back: on a large fleet or a loaded cluster the requests
+// overlap, pile onto a server that is already behind, and can interleave their
+// writes to state so a render draws half of one poll and half of another.
+//
+// Proxmox's UpdateStore does not use a fixed timer. It schedules the next load
+// from the previous load's callback, and adds twice the time that load took,
+// so a slow server is asked less often without anybody tuning anything. That
+// is the behaviour here: the guard below keeps one refresh in flight, and
+// pollLoop() sets the delay from the runtime it measured.
+//
+// A refresh asked for while one runs is not dropped. It runs once the current
+// one finishes, and a forced request stays forced, because the callers that
+// force one have just changed something and need to see it.
+// The floor between polls. The real wait is this plus twice how long the last
+// poll took, so a healthy server is polled on this interval and a slow one
+// gets room to recover.
+const POLL_MS = 5000;
+
+// Poll, measure, then schedule the next one. A thrown error is already handled
+// inside refresh(), but the loop must survive one regardless: if this function
+// ever threw, polling would stop for the life of the page.
+async function pollLoop() {
+  const started = Date.now();
+  try {
+    await refresh();
+  } finally {
+    setTimeout(pollLoop, POLL_MS + (Date.now() - started) * 2);
+  }
+}
+
+let refreshInFlight = false;
+let refreshAgain = false;
+let refreshAgainForced = false;
+
 export async function refresh(force = false) {
+  if (refreshInFlight) {
+    refreshAgain = true;
+    refreshAgainForced = refreshAgainForced || force;
+    return;
+  }
+  refreshInFlight = true;
+  try {
+    let next = force;
+    for (;;) {
+      await refreshOnce(next);
+      if (!refreshAgain) break;
+      next = refreshAgainForced;
+      refreshAgain = false;
+      refreshAgainForced = false;
+    }
+  } finally {
+    refreshInFlight = false;
+    refreshAgain = false;
+    refreshAgainForced = false;
+  }
+}
+
+async function refreshOnce(force = false) {
   try {
     state.vms = await api('/api/vms');
   } catch (e) {
@@ -519,4 +580,4 @@ loadWhoami();
 loadCaps();
 loadInstanceTypes();
 refresh();
-setInterval(refresh, 5000);
+setTimeout(pollLoop, POLL_MS);

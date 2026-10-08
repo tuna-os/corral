@@ -147,6 +147,9 @@ documents the keyboard model. That chapter is where the Prism rows come from.
 | Update rows in place | Every live console | **Added.** The poll rebuilt everything every 5 s. `tree-reconcile`, `grid-reconcile` |
 | Keep a live console across a redraw | Proxmox, vSphere | **Added.** The page used to freeze instead. `console-stays-live`, `multiview-stays-live` |
 | Hold off during a gesture | General | **Added.** `interaction-guard` |
+| One poll at a time | Proxmox (`UpdateStore` schedules the next load from the last load's callback) | **Added.** A fixed 5-second timer over an asynchronous refresh sent a second request before the first came back. Measured: two in flight against a slow endpoint, now one. `poll-backoff` |
+| A slow server is polled less | Proxmox (its interval is the base plus twice the last load's runtime) | **Added**, with the same arithmetic. Nobody tunes it, and a struggling server gets room. `poll-backoff` |
+| A refresh asked for during a poll is not lost | — | **Added** with the guard. The callers that force a refresh have just changed something and have to see it. |
 
 ## Customisation
 

@@ -2153,6 +2153,46 @@ check(
   await page.waitForTimeout(600);
 }
 
+// ── poll-backoff ─────────────────────────────────────────
+// The poll used to be a fixed 5-second timer over an asynchronous refresh, so
+// a server slower than the interval got a second request before the first came
+// back. Proxmox's UpdateStore schedules the next load from the previous one's
+// callback instead, which cannot overlap by construction.
+//
+// This drives the case the old shape got wrong: make the fleet endpoint slower
+// than the interval, then count how many requests are in flight at once. One
+// is correct. Two means the timer is firing over itself, and on a real cluster
+// that adds load to a server that is already behind.
+{
+  const fresh = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  let inFlight = 0;
+  let peak = 0;
+  let total = 0;
+  await fresh.route('**/api/vms', async (route) => {
+    inFlight += 1;
+    total += 1;
+    peak = Math.max(peak, inFlight);
+    // Longer than POLL_MS, which is what a fixed timer could not survive.
+    await new Promise((r) => setTimeout(r, 6500));
+    inFlight -= 1;
+    await route.continue();
+  });
+  await fresh.goto(BASE);
+  // Long enough for a fixed 5s timer to have fired two or three times over a
+  // request that takes 6.5s.
+  await fresh.waitForTimeout(22000);
+  check(
+    total >= 2,
+    `poll-backoff: the page kept polling a slow endpoint (${total} requests)`,
+  );
+  check(
+    peak === 1,
+    `poll-backoff: never more than one poll in flight (peak ${peak})`,
+  );
+  await fresh.unroute('**/api/vms');
+  await fresh.close();
+}
+
 check(pageErrors.length === 0, `no JS page errors (${pageErrors.join('; ').slice(0, 200)})`);
 
 await browser.close();
