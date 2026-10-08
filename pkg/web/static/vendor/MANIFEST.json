@@ -55,6 +55,52 @@
       "upstreamVerified": false
     },
     {
+      "path": "vendor/gridstack-all.js",
+      "package": "gridstack",
+      "version": "14.0.0",
+      "license": "MIT",
+      "url": "https://cdn.jsdelivr.net/npm/gridstack@14.0.0/dist/gridstack-all.js",
+      "sha256": "27ae971fd981c0341affc051c793d7e5417f4a785bbfef7dd88ff7f1139d8dcf",
+      "bytes": 93333,
+      "usedFor": "dashboard widget grid (#348)",
+      "note": "The UMD bundle with the drag-and-drop engine included; it defines the GridStack global that dashboard.js uses. Its trailing sourceMappingURL names a map that is not vendored, which only affects browser devtools.",
+      "upstreamVerified": true
+    },
+    {
+      "path": "vendor/gridstack.min.css",
+      "package": "gridstack",
+      "version": "14.0.0",
+      "license": "MIT",
+      "url": "https://cdn.jsdelivr.net/npm/gridstack@14.0.0/dist/gridstack.min.css",
+      "sha256": "74efc82159c5e8d28cb2cebd9f912be9d728bb07fa83896a6b62f4a843207126",
+      "bytes": 6138,
+      "usedFor": "dashboard widget grid (#348)",
+      "upstreamVerified": true
+    },
+    {
+      "path": "vendor/uPlot.iife.min.js",
+      "package": "uplot",
+      "version": "1.6.32",
+      "license": "MIT",
+      "url": "https://cdn.jsdelivr.net/npm/uplot@1.6.32/dist/uPlot.iife.min.js",
+      "sha256": "19c8d4c6ad88929a79f4ae49d6f7161566dfd0ba3d15cc495e974f787eb78f1f",
+      "bytes": 51081,
+      "usedFor": "dashboard and summary time-series charts (#348)",
+      "note": "The IIFE build, which defines the uPlot global that dashboard.js uses.",
+      "upstreamVerified": true
+    },
+    {
+      "path": "vendor/uPlot.min.css",
+      "package": "uplot",
+      "version": "1.6.32",
+      "license": "MIT",
+      "url": "https://cdn.jsdelivr.net/npm/uplot@1.6.32/dist/uPlot.min.css",
+      "sha256": "df630c6a8d6f8eeaff264b50f73ce5b114f646ffd9a0bb74f049b0a00135fa04",
+      "bytes": 1857,
+      "usedFor": "dashboard and summary time-series charts (#348)",
+      "upstreamVerified": true
+    },
+    {
       "path": "alpine.min.js",
       "package": "alpinejs",
       "version": "3.15.12",

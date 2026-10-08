@@ -4,12 +4,13 @@
 
 ~59 test files, ~740 tests, ~14.6k lines of test code, across four layers:
 
-- **Unit tests** everywhere the earlier gaps were: web handlers (HTTP via
-  `httptest` + a scriptable `shell.Fake` runner), WS console bridges
-  (byte-level round-trips, including the local-VNC bridge), doctor checks and
-  fixes, qemu ops, kubevirt manifest/parse logic, cmd parsing.
+- **Unit tests** now cover all the earlier gaps. They cover web handlers
+  (HTTP via `httptest` + a scriptable `shell.Fake` runner) and WS console
+  bridges (byte-level round-trips, including the local-VNC bridge). They also
+  cover doctor checks and fixes, qemu ops, kubevirt manifest/parse logic, and
+  the parse logic in cmd.
 - **Demo-mode end-to-end** (`pkg/web/demo_test.go`): boots the real mux
-  against `pkg/demo`'s in-memory fake cluster and exercises list → action →
+  against the in-memory fake cluster in `pkg/demo`. It exercises list → action →
   state-flip → metrics through real handler code.
 - **UI smoke in CI** (`.github/workflows/ui-smoke.yml`): headless Chromium
   drives the actual dashboard against `corral web --demo` on every
@@ -23,7 +24,7 @@
   container engine and a minute — no KVM, no root. It runs on every pull request
   that touches the harness. Build tag `e2elayer`.
 - **A real bootc boot** (`just vmtest-e2e`, the `boot` job): `corral vmtest`
-  builds a real image into a disk and boots it with KVM, then asserts inside
+  builds a real image into a disk and boots it with KVM. Then it asserts inside
   the guest over SSH. Weekly and on demand, never on a push — it pulls
   gigabytes and boots a VM. Build tag `e2evmtest`, as `pkg/bootc` uses
   `e2ebootc`.
@@ -33,11 +34,12 @@
   Nothing cheaper ever ran the generated shell against a real image. The layer
   tier costs a minute and catches that whole class.
 
-The TUI's update loop is driven directly in `cmd/tui_flows_test.go` (list,
-context cycling, quick keys, actions gating, confirm/clone/ports/hardware
-forms, doctor, help) and `cmd/tui_views_test.go` (snapshots, events, template
-mark, CT scaling) — keypress in, state and rendered output out, against the
-in-memory demo cluster or a scripted `shell.Fake`.
+Two files drive the TUI's update loop directly. `cmd/tui_flows_test.go`
+covers the list, the context cycle, quick keys, the gate on actions, the
+confirm/clone/ports/hardware forms, doctor, and help. `cmd/tui_views_test.go`
+covers snapshots, events, the template mark, and CT scale. Keypress in, state
+and rendered output out. The tests run against the in-memory demo cluster or a
+scripted `shell.Fake`.
 
 ## Gates (refreshed 2026-09-10)
 
@@ -79,9 +81,9 @@ reach the journal code in `pkg/qemu`. The QMP code now has a fake monitor
 **Goal:** catch logic bugs before they reach the cluster. Run in CI on every
 push. No external dependencies.
 
-**Approach:** inject a `CommandRunner` interface everywhere code shells out
-to `kubectl`, `virtctl`, or `systemctl`. Today those calls are raw
-`exec.Command` scattered through the codebase. By introducing:
+**Approach:** inject a `CommandRunner` interface at every place where code
+shells out to `kubectl`, `virtctl`, or `systemctl`. Today those calls are raw
+`exec.Command` scattered through the codebase. The plan is to introduce:
 
 ```go
 type Runner interface {
@@ -90,8 +92,8 @@ type Runner interface {
 }
 ```
 
-…and a `RealRunner` (default) + `FakeRunner` (test), unit tests can simulate
-any cluster state without a real cluster.
+…and a `RealRunner` (default) + `FakeRunner` (test). With these, unit tests
+can simulate any cluster state without a real cluster.
 
 **What this unblocks:**
 
@@ -117,13 +119,13 @@ any cluster state without a real cluster.
 4. Write handler tests for the 5 highest-value handlers
 5. Backfill for remaining handlers
 
-**Cost:** moderate refactor (~200 lines of plumbing). High payoff — unlocks
+**Cost:** moderate refactor (~200 lines to pass the runner through). High payoff — unlocks
 ~80 unit tests that today can't exist.
 
 ### Layer 2 — Integration tests (needs cluster, opt-in)
 
-**Goal:** verify that real kubectl/virtctl commands produce real VMs that
-boot, accept SSH, and respond to lifecycle operations.
+**Goal:** verify that real commands from kubectl/virtctl produce real VMs
+that boot, accept SSH, and respond to lifecycle operations.
 
 **Approach:** Go build tag `//go:build integration`. Run only when a
 KubeVirt cluster is available (CI on a schedule or manual trigger, never on
@@ -177,8 +179,8 @@ func TestIntegration_CreateBootDelete(t *testing.T) {
 | Web UI E2E: Playwright against corral web | ~3 min | Medium (browser timing) |
 
 **Cluster requirements:** longhorn RWX, VolumeSnapshotClass, HotplugVolumes
-feature gate. The test suite probes capabilities and skips what isn't
-available.
+feature gate. The test suite checks for each capability and skips what
+isn't available.
 
 ### Layer 3 — Frontend tests (browser, opt-in)
 
@@ -223,9 +225,9 @@ test('image library loads datavolumes', async ({ page }) => {
 | VM detail — Snapshots | List, create, delete |
 | Tree sidebar | Node → VM navigation, drawer toggle (mobile) |
 
-**Prerequisites:** the Playwright test server needs a `FakeRunner` backing
-the API, or a static cluster snapshot. Using the fake runner (Layer 1)
-avoids needing a real cluster for frontend tests.
+**Prerequisites:** the Playwright test server needs a `FakeRunner` behind
+the API, or a static cluster snapshot. With the fake runner (Layer 1),
+frontend tests do not need a real cluster.
 
 ---
 
@@ -239,8 +241,8 @@ avoids needing a real cluster for frontend tests.
    runner)`, `web.Serve(addr, runner)`, `qemu.NewManager(runner)`.
    Default to `RealRunner` so existing code paths don't change.
 3. **Write FakeRunner** — supports exact-match, prefix-match, and regex
-   command matching. Records calls for assertion. Preload with realistic
-   kubectl JSON output.
+   command matching. Records calls for assertion. Preload it with realistic
+   JSON output from kubectl.
 
 ### Phase 2 — Handler unit tests (2-3 sessions)
 
@@ -252,7 +254,7 @@ avoids needing a real cluster for frontend tests.
    `handleSnapshot*`, `handleClone`.
 4. Tests for `handleDoctor`, `handlePlugins`, error paths (404, 503, 500).
 
-Target: 60-80 handler tests, covering every HTTP route with at least one
+Target: 60-80 handler tests. They cover every HTTP route with at least one
 happy-path and one error-path case.
 
 ### Phase 3 — Pure-logic unit tests (1 session)
@@ -275,7 +277,7 @@ happy-path and one error-path case.
 
 1. Install Playwright, write an `e2e/` directory with config. (Done: `e2e/`.)
 2. Write the test server (starts Go server with FakeRunner on random port).
-3. Write ~10 Playwright scenarios covering the critical UI paths.
+3. Write ~10 Playwright scenarios for the important UI paths.
 4. Wire into `just test-e2e` or `npm test` in the project root.
 
 ### Phase 6 — CI (1 session)
@@ -307,18 +309,17 @@ jobs:
 ## What NOT to test
 
 - **TUI layout** — how Bubble Tea and lipgloss lay out a frame is a framework
-  concern. Assert on dispatch and on the *content* a view puts on screen (does
-  it name the instance, does it surface the backend's refusal), never on
+  concern. Assert on dispatch and on the *content* a view puts on screen. Does
+  it name the instance? Does it surface the backend's refusal? Never assert on
   padding, borders, or column positions.
 - **kubectl/virtctl correctness** — those are upstream tools. Test that we
   pass the right flags, not that they work.
-- **Go `net/http` routing** — the stdlib is tested. Test the handler logic,
+- **Go `net/http` routes** — the Go project tests the stdlib. Test the handler logic,
   not the mux.
-- **100% coverage** — the web UI has 25+ handlers; 80% coverage of the
-  hot paths (create, list, action, delete, images, scale, snapshots) is the
-  target. Doctor, plugins, NADs, NICs are lower priority.
+- **100% coverage** — the web UI has 25+ handlers. The target is 80% coverage
+  of the hot paths (create, list, action, delete, images, scale, snapshots). Doctor, plugins, NADs, NICs are lower priority.
 - **Bootc plugin binary** — test bootc through the kubevirt package with a
-  real cluster in integration; the separate binary is a thin Cobra wrapper.
+  real cluster in integration. The separate binary is a thin Cobra wrapper.
 
 ---
 
@@ -378,9 +379,10 @@ async function deleteVM(page, name) { ... }
 ## Browser e2e: two tiers (2026-06-12)
 
 The Playwright suite (`e2e/corral.spec.js`) drives the real web UI against a
-real cluster, with multi-angle verification: every "the UI says it worked" is
-cross-checked from the cluster side (VMI phase, virt-launcher pod state, qemu
-container logs, guest serial output over the TTY websocket).
+real cluster, with multi-angle verification. Every "the UI says it worked"
+gets a cross-check from the cluster side. The checks look at the VMI phase, the
+virt-launcher pod state, the qemu container logs, and the guest serial output
+over the TTY websocket.
 
 **Safety:** every resource is `e2e-`-prefixed, deleted in `afterEach`
 (verified gone), and the cleanup guard refuses to touch unprefixed names —
@@ -391,21 +393,22 @@ safe to run against production.
 | CI (default) | wizard flows, catalog content, create for every source type, CDI import to Succeeded (PVC flow), scale on a stopped VM, one full boot lifecycle (cirros) | `.github/workflows/e2e.yml`: kind + KubeVirt `useEmulation` + CDI on every push/PR — `npx playwright test --grep-invert "@live-only"` |
 | `@live-only` | console websockets (VNC RFB handshake, serial output) + fullscreen/scaling controls, SSH login with an injected key, RDP probe, snapshots (longhorn), bootc build → boot → serial check, boot-from-import | manually against the real cluster: `corral web` + `cd e2e && npx playwright test` |
 
-Knobs: `CORRAL_URL` (default `http://localhost:8006`), `CORRAL_NS` (default
+Knobs: `CORRAL_URL` (default `` http://localhost:8006 ``), `CORRAL_NS` (default
 `tailvm`), `E2E_CONTAINERDISK` (lifecycle boot image; CI uses the cirros demo
 containerdisk because fedora won't boot in sensible time under TCG).
 
 ### Update (2026-06-21)
 
 - **Path-targeted CI.** Both workflows now run only when the diff touches their
-  area: the fast Go gate on `**.go`/`go.mod`; the e2e suite on Go / `pkg/web/static`
-  / `e2e` / `deploy`. Docs/marketplace-only PRs skip both; `main` pushes stay
+  area. The fast gate for Go code runs on `**.go`/`go.mod`; the e2e suite runs on
+  Go / `pkg/web/static` / `e2e` / `deploy`. Docs/marketplace-only PRs skip both; `main` pushes stay
   fully validated.
 - **Real external tools run in CI.** The fast gate installs `qemu-utils` +
-  `rclone` so `TestConvertRawToQcow2_Real` (qcow2 export) and the backup
-  plugin's `rclone copyto` round-trip run for real instead of skipping.
-- **Non-live e2e widened** to the new SPA flows: multi-select bulk bar, the
-  export format picker, tag chips + filter, `/api/whoami`, and read-only gating
-  (via a `page.route` mock — no Tailscale headers needed).
+  `rclone`. So `TestConvertRawToQcow2_Real` (qcow2 export) and the backup
+  plugin's `rclone copyto` round-trip now run for real. Before, they skipped.
+- **Non-live e2e widened** to the new SPA flows. These are the multi-select bulk
+  bar, the export format picker, tag chips + filter, `/api/whoami`, and the
+  read-only gate. The read-only test uses a `page.route` mock, so it needs no
+  Tailscale headers.
 - **`@live-only` adds** live migration between nodes and the bootc rebuild
-  SSH-survives-`--wipe` round-trip.
+  round-trip in which SSH survives `--wipe`.

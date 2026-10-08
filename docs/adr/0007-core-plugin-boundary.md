@@ -4,9 +4,9 @@ Status: accepted
 
 ## Decision
 
-The main binary owns the stable platform seam: contexts and defaults,
-canonical instance identity, inventory, lifecycle dispatch, capability
-reporting, federation transports, doctor probes, and CLI/TUI/web presentation.
+The main binary owns the stable platform seam. This seam has contexts and
+defaults, canonical instance identity, inventory, lifecycle dispatch, capability
+reports, federation transports, doctor probes, and CLI/TUI/web presentation.
 These must work before an extension is installed because every workflow needs
 the same unambiguous target selection and safety rules.
 
@@ -16,34 +16,34 @@ retention, and Windows installation. They use `corral.plugin/v1`, declare
 permissions and supported backends, and may depend on core `pkg/` adapters.
 External plugins use the same contract as first-party plugins.
 
-Incus is adopted into core because it is a compute backend, not a workflow.
-`corral-incus` remains only as a compatibility executable and is excluded from
-the marketplace. OIDC, Basic Auth, and passkeys remain in `corral-auth`; their
+Core adopts Incus because it is a compute backend, not a workflow.
+`corral-incus` remains only as a compatibility executable, and the marketplace
+excludes it. OIDC, Basic Auth, and passkeys remain in `corral-auth`; their
 identity and cryptography dependencies do not belong in the main CLI binary.
-The VDI experiment remains outside this decision and is not implemented by the
-platform-completion work.
+The VDI experiment remains outside this decision, and the platform-completion
+work does not build it.
 
-Some first-party plugin functionality is currently also reachable from the web
+Some first-party plugin functionality is now also reachable from the web
 binary through shared packages. That is a compatibility surface, not permission
-to make a marketplace plugin silently universal. UI controls must follow
+to silently make a marketplace plugin universal. UI controls must follow
 instance capabilities and plugin `supportedBackends`. Issues #129–#134 track
 the missing adapters.
 
 ## Marketplace and contribution model
 
-Marketplaces are signed/checksummed indexes of standalone binaries, not Go
-modules loaded into Corral's address space. Multiple sources, provenance,
-version pinning, compatibility ranges, immutable artifacts, explicit permission
-consent, and atomic rollback make external contribution possible without
-granting third-party code the main process's trust. Publication does not imply
-runtime sandboxing; operating-system and cluster permissions remain the actual
+Marketplaces are indexes of standalone binaries with signatures or checksums,
+not Go modules that Corral loads into its address space. Multiple sources,
+provenance, pinned versions, compatibility ranges, immutable artifacts, explicit
+permission consent, and atomic rollback make external contribution possible.
+Third-party code does not get the trust of the main process. Publication does
+not imply a runtime sandbox; operating-system and cluster permissions remain the actual
 security boundary.
 
 ## Consequences
 
-- A new compute backend requires a core adapter and doctor probe.
+- A new compute backend needs a core adapter and doctor probe.
 - A new optional workflow should begin as a plugin.
-- Reusable backend operations belong under `pkg/`, never under `cmd/`.
+- Reusable operations for a backend belong under `pkg/`, never under `cmd/`.
 - Plugins must fail clearly on unsupported selected contexts.
-- Core binary growth is evaluated from stripped artifacts; optional auth and
-  workflow dependencies remain isolated in their plugin binaries.
+- We measure the growth of the core binary from stripped artifacts. Optional
+  auth and workflow dependencies remain isolated in their plugin binaries.

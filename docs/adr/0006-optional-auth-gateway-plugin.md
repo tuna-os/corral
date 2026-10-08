@@ -7,29 +7,29 @@
 
 ADR-0003 uses identity headers asserted by Tailscale ingress. Corral now also
 supports ingress-agnostic and peer deployments, where that single trust path
-does not always exist. Pulling OIDC, sessions, and WebAuthn into the core
-would increase the main binary and couple every deployment to optional auth.
+does not always exist. If the core took in OIDC, sessions, and WebAuthn, the
+main binary would grow and every deployment would depend on optional auth.
 
 ## Decision
 
 Ship `corral-auth` as a separate reverse-proxy plugin in front of `corral web`.
-It uses `coreos/go-oidc` for discovery and ID-token verification, OAuth2
-authorization code flow with PKCE and nonce, and Gorilla encrypted cookie
-sessions. It removes client-supplied identity headers and sets the existing
-identity contract only after authentication. Go's reverse proxy preserves
-API streaming and WebSocket upgrades.
+It uses `coreos/go-oidc` for discovery and ID-token verification. It uses the
+authorization code flow of OAuth2, with PKCE and nonce. It keeps sessions in
+encrypted Gorilla cookies. It removes client-supplied identity headers and sets
+the existing identity contract only after authentication. Go's reverse proxy keeps
+API streams and WebSocket upgrades intact.
 
-Tailscale ingress remains a supported first-class identity adapter. Deployments
-choose either a trusted Tailscale-only path or the auth gateway; KubeVirt and
-the core web server remain ingress-agnostic.
+Tailscale ingress remains a supported identity adapter, and it is
+first-class. Deployments choose either a trusted Tailscale-only path or the
+auth gateway; KubeVirt and the core web server remain ingress-agnostic.
 
-Passkeys belong in this plugin using `go-webauthn`, but require a credential
-store, RP ID/origin, enrollment bootstrap, and recovery policy. They are not
-represented as complete until those pieces ship.
+Passkeys belong in this plugin with `go-webauthn`, but they need a credential
+store, RP ID/origin, enrollment bootstrap, and recovery policy. The project does
+not show them as complete until those pieces ship.
 
 ## Consequences
 
 - The main Corral binary does not link OIDC/session dependencies.
-- The gateway can be upgraded independently and reused for Corral peers.
-- The upstream Corral listener must not be publicly reachable when trusting
-  gateway identity headers.
+- Operators can upgrade the gateway independently and use it again for Corral peers.
+- When the upstream listener of Corral trusts the identity headers from the
+  gateway, it must not be publicly reachable.

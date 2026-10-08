@@ -23,7 +23,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/creack/pty"
 	"github.com/tuna-os/corral/pkg/qemu"
 	"golang.org/x/net/websocket"
 
@@ -77,6 +76,10 @@ func Serve(addr string) error {
 // newMux builds the HTTP router (wrapped in the admin gate). Split out from
 // Serve so tests can exercise the full route table with httptest.
 func newMux() (http.Handler, error) {
+	// Capture this for the router being built, then clear it so a demo mux in
+	// one test cannot turn later production-style muxes into demo consoles.
+	useDemoConsole := demoEnabled
+	demoEnabled = false
 	sub, err := fs.Sub(staticFS, "static")
 	if err != nil {
 		return nil, err
@@ -123,6 +126,11 @@ func newMux() (http.Handler, error) {
 	mux.HandleFunc("DELETE /api/cts/{ns}/{name}", handleDeleteCT)
 	mux.HandleFunc("PUT /api/cts/{ns}/{name}/scale", handleScaleCT)
 	mux.HandleFunc("GET /api/nodes", handleNodes)
+	mux.HandleFunc("GET /api/nodes/{name}/metrics/history", handleNodeMetricsHistory)
+	mux.HandleFunc("GET /api/metrics/history", handleDCMetricsHistory)
+	mux.HandleFunc("GET /api/metrics/top", handleTopVMs)
+	mux.HandleFunc("GET /api/hostpower", handleHostPower)
+	mux.HandleFunc("POST /api/hostpower/{plugin}/{action}", handleHostPowerAction)
 	mux.HandleFunc("GET /api/capabilities", handleCapabilities)
 	mux.HandleFunc("GET /api/images", handleImages)
 	mux.HandleFunc("GET /api/sources", handleListSources)
@@ -214,7 +222,14 @@ func newMux() (http.Handler, error) {
 			},
 		}
 	}
-	mux.Handle("GET /api/vnc/{ns}/{name}", wsServer(vncBridge))
+	vncHandler := websocket.Handler(vncBridge)
+	if useDemoConsole {
+		vncHandler = func(ws *websocket.Conn) {
+			defer func() { _ = ws.Close() }()
+			serveDemoVNC(ws)
+		}
+	}
+	mux.Handle("GET /api/vnc/{ns}/{name}", wsServer(vncHandler))
 	mux.Handle("GET /api/tty/{ns}/{name}", wsServer(ttyBridge))
 	mux.Handle("GET /api/rdp/{ns}/{name}", wsServer(rdpBridge))
 
@@ -1152,24 +1167,5 @@ func bridgeConsolePipes(ws *websocket.Conn, cmd *exec.Cmd) {
 	done := make(chan struct{}, 2)
 	go func() { io.Copy(stdin, ws); done <- struct{}{} }()
 	go func() { io.Copy(ws, stdout); done <- struct{}{} }()
-	<-done
-}
-
-// bridgeConsolePTY wires cmd to a real pseudo-terminal — needed for
-// commands (like kubectl exec -t) that check isatty on their own stdin.
-func bridgeConsolePTY(ws *websocket.Conn, cmd *exec.Cmd) {
-	f, err := pty.Start(cmd)
-	if err != nil {
-		return
-	}
-	defer func() {
-		f.Close()
-		cmd.Process.Kill()
-		cmd.Wait()
-	}()
-
-	done := make(chan struct{}, 2)
-	go func() { io.Copy(f, ws); done <- struct{}{} }()
-	go func() { io.Copy(ws, f); done <- struct{}{} }()
 	<-done
 }

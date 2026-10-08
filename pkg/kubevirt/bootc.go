@@ -449,21 +449,14 @@ write_files:
       printf '[storage]\ndriver = "overlay"\nrunroot = "/run/containers/storage"\ngraphroot = "/var/lib/containers/storage"\n\n[storage.options.pull_options]\nenable_partial_images = "false"\n' > /etc/containers/storage.conf
       IMG=__IMAGE__
       podman pull "$IMG" || { echo CORRAL_BUILD_FAIL pull; echo CORRAL_BUILD_FAIL pull > /dev/ttyS0 2>/dev/null; sync; sleep 2; poweroff; exit 1; }
-      # Read the image to pick the bootc storage backend (per the bootc docs the
-      # composefs-rs backend requires systemd-boot and NO bootupd; traditional
-      # ostree images ship bootupd):
-      #   - bootupd present                       -> ostree backend  (xfs)
-      #   - else systemd-boot present, no bootupd -> composefs backend (btrfs)
-      #   - neither                               -> ostree backend  (xfs)
-      # Probe by inspecting the image FILESYSTEM with podman cp (no execution):
-      # UB desktop images ship Rust uutils, where /usr/bin/test is a symlink to a
-      # multicall binary that podman --entrypoint can't dispatch (argv[0] breaks),
-      # so any "run a binary in the image" probe misdetects them. The same CTR is
-      # reused for the composefs kernel/initrd extraction below. The backend also
-      # drives the root fs: composefs images ship a btrfs-only initramfs, ostree xfs.
-      CTR=$(podman create "$IMG")
+      # Inspect real GRUB update payloads, not just bootupctl: Marlin ships
+      # both executables but installs with systemd-boot/composefs. Never run
+      # image commands for this probe (foreign architecture/uutils).
+      CTR=$(podman create "$IMG" /corral-probe-does-not-execute) || { echo CORRAL_BUILD_FAIL probe; poweroff; exit 1; }
       imghas() { podman cp "$CTR:$1" - >/dev/null 2>&1; }
-      if imghas /usr/sbin/bootupctl || imghas /usr/bin/bootupctl; then
+      imgEFI() { podman cp "$CTR:$1" - 2>/dev/null | tar -tf - 2>/dev/null | grep -Eq "/$2[^/]*\\.efi$"; }
+      if imgEFI /usr/lib/bootupd/updates/EFI grub \
+        || { imghas /usr/lib/bootupd/updates/EFI.json && imgEFI /usr/lib/efi/grub2 grub && imgEFI /usr/lib/efi/shim shim; }; then
         BACKEND_KIND=ostree
       elif imghas /usr/lib/systemd/boot/efi/systemd-bootx64.efi \
         || imghas /usr/lib/systemd/boot/efi/systemd-bootaa64.efi; then
@@ -475,12 +468,19 @@ write_files:
       if [ "$BACKEND_KIND" = composefs ]; then
         # composefs backend installs systemd-boot to the ESP removable path itself.
         COMPOSEFS=1; FS=btrfs; BACKEND=--composefs-backend
+        if imghas /usr/sbin/mkfs.ext4 || imghas /usr/bin/mkfs.ext4; then FS=ext4; fi
       else
         # ostree backend installs the bootloader via bootupd, which by default
         # only writes EFI/<vendor>/ + an efibootmgr NVRAM entry. A fresh VM has
         # empty NVRAM, so it needs the removable fallback path EFI/BOOT/BOOTX64.EFI
         # — that's exactly what --generic-image adds (and it skips firmware changes).
         COMPOSEFS=0; FS=xfs; BACKEND=--generic-image
+        # bootc formats the root with the image's own mkfs, so an image that
+        # ships no xfsprogs (Hummingbird-based desktops carry btrfs-progs
+        # only) fails "Creating rootfs: No such file or directory" on xfs.
+        if ! imghas /usr/sbin/mkfs.xfs && ! imghas /usr/bin/mkfs.xfs; then
+          if imghas /usr/sbin/mkfs.btrfs || imghas /usr/bin/mkfs.btrfs; then FS=btrfs; fi
+        fi
       fi
       echo "CORRAL_COMPOSEFS=$COMPOSEFS FS=$FS"
       podman run --rm --privileged --pid=host --security-opt label=type:unconfined_t \
