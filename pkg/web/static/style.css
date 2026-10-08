@@ -832,6 +832,10 @@ tr.ev-warn td { color: var(--yellow); }
 
 /* A segmented control: one choice out of a few, shown as a single unit so it
    does not read as three unrelated buttons. */
+/* The overflow button only earns its place where the bar cannot hold the
+   buttons; on a wide screen every action is already visible. */
+.btn-overflow { display: none; }
+
 .seg { display: inline-flex; }
 .seg .seg-btn { border-radius: 0; margin-left: -1px; }
 .seg .seg-btn:first-child { border-radius: var(--radius) 0 0 var(--radius); margin-left: 0; }
@@ -979,6 +983,18 @@ tr.ev-warn td { color: var(--yellow); }
   dl.props dt { margin-top: 8px; }
   #vnc-screen, #tty-screen { height: 60vh; }
   .toolbar { margin-left: 0; }
+
+  /* A guest's toolbar is eleven buttons. With their labels they wrapped onto
+     three rows and filled most of the first screen before any detail showed.
+     The lifecycle verbs keep their place and give up their text — play, stop
+     and restart are the icons people already read on every other device —
+     while the rarer and less guessable ones (Migrate, Clone, Make template,
+     Export, Delete) move behind "More", where they keep their words.
+     Each button carries an aria-label, so the hidden text costs no name. */
+  .toolbar .btn .btn-label { display: none; }
+  .toolbar .btn { padding: 8px 10px; }
+  .toolbar .btn.act-more { display: none; }
+  .btn-overflow { display: inline-flex; }
 
   /* Dashboard on a phone. The grid is one column here (see dashboard.js), so
      the widgets are full width and the figures stop wrapping into their own

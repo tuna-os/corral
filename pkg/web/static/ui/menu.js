@@ -152,6 +152,32 @@ function showContextMenu(e, items, triggerEl) {
   });
 }
 
+/**
+ * Open the same menu from a click on a button, anchored under it.
+ *
+ * attachContextMenu covers right-click, long-press and Shift+F10, which is
+ * right for a row. A toolbar's overflow button is a different thing: it is a
+ * control whose whole purpose is to open the menu, so it answers a plain
+ * click. Everything else — placement, keyboard handling, the read-only filter
+ * — is the same code.
+ */
+export function openMenuFrom(el, getItems) {
+  if (!el) return;
+  const items = typeof getItems === 'function' ? getItems() : getItems;
+  if (!items || !items.length) return;
+  // No pointer coordinates, so showContextMenu anchors under the trigger.
+  showContextMenu(null, items, el);
+  el.setAttribute('aria-expanded', 'true');
+  // The menu closes by several routes (Escape, a click elsewhere, an item), so
+  // the button watches for its disappearance rather than each of them.
+  const sync = setInterval(() => {
+    if (!activeContextMenu) {
+      el.setAttribute('aria-expanded', 'false');
+      clearInterval(sync);
+    }
+  }, 150);
+}
+
 export function attachContextMenu(el, getItems) {
   if (!el) return;
   if (!el.hasAttribute('tabindex')) el.setAttribute('tabindex', '0');

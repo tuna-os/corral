@@ -1712,6 +1712,101 @@ check(
   await ctx.close();
 }
 
+// ── toolbar-on-a-phone ────────────────────────────────────────────
+// A guest's toolbar is eleven buttons. With their labels they wrapped onto
+// three rows and filled most of the first screen before any detail appeared.
+// The lifecycle verbs keep their place and give up their text; the rarer ones
+// move behind "More", where they keep their words.
+{
+  await page.setViewportSize({ width: 420, height: 820 });
+  await page.goto(BASE);
+  await page.waitForSelector('#tree [data-vm-key]', { timeout: 30000 });
+  await page.click('#btn-menu');
+  await page.waitForTimeout(400);
+  await page.locator('#tree [data-vm-key]').first().click();
+  await page.waitForSelector('#content .toolbar .btn', { timeout: 15000 });
+  await page.waitForTimeout(600);
+
+  const bar = () => page.evaluate(() => {
+    const tb = document.querySelector('#content .toolbar');
+    const vis = [...tb.querySelectorAll('.btn')].filter((b) => b.offsetParent !== null);
+    return {
+      count: vis.length,
+      rows: new Set(vis.map((b) => Math.round(b.getBoundingClientRect().top))).size,
+      named: vis.every((b) => (b.getAttribute('aria-label') || '').length > 0),
+      textShown: vis.filter((b) => b.querySelector('.btn-label')?.offsetParent !== null).length,
+      minTarget: Math.min(...vis.map((b) => Math.round(b.getBoundingClientRect().height))),
+    };
+  });
+  const phone = await bar();
+  check(phone.rows === 1, `toolbar-on-a-phone: the toolbar is one row (${phone.rows})`);
+  // Hiding the text would strip the accessible name if the aria-label went too.
+  check(phone.named, 'toolbar-on-a-phone: every icon button still has a name');
+  check(phone.textShown === 0, 'toolbar-on-a-phone: the labels are the thing that gives way');
+  check(phone.minTarget >= 36, `toolbar-on-a-phone: the targets stay finger-sized (${phone.minTarget}px)`);
+
+  // The actions that left the bar are still reachable, with their words.
+  await page.click('[data-overflow]');
+  await page.waitForTimeout(600);
+  const items = await page.evaluate(() => [...document.querySelectorAll('[role="menuitem"]')].map((i) => i.textContent.trim()));
+  check(items.length >= 4, `toolbar-on-a-phone: More holds the rest (${items.join(', ')})`);
+  check(items.some((t) => /Delete/.test(t)), 'toolbar-on-a-phone: the destructive action is in the menu, not a bare icon');
+  await page.screenshot({ path: `${SHOTS}/toolbar-on-a-phone.png` });
+  await page.keyboard.press('Escape');
+
+  // Pause and Resume are one button in two states. Both use the play/pause
+  // pair, so offering both put two identical triangles on an icon-only bar.
+  // Pause one here rather than trust the demo fleet: earlier checks stop and
+  // restart guests, so whichever one ships paused may not be paused by now.
+  const fleetNow = await (await fetch(`${BASE}api/vms`)).json();
+  const victim = fleetNow.find((v) => v.ready && v.backend === 'kubevirt');
+  if (victim) {
+    await fetch(`${BASE}api/vms/${victim.namespace}/${victim.name}/pause`, { method: 'POST' }).catch(() => {});
+    await page.click('#btn-menu');
+    await page.waitForTimeout(350);
+    await page.locator('#tree .tree-item').filter({ hasText: victim.name }).first().click();
+    // Wait for the page to show the pause, not merely for the server to report
+    // it: the UI learns from its own 5s poll, so the toolbar renders from the
+    // status it last saw. Watching the API here reads a state the page has not
+    // caught up with yet, which is what made this check fail the first time.
+    await page.waitForFunction(
+      () => (document.querySelector('#content .page-head .pill')?.textContent || '').includes('Paused'),
+      null,
+      { timeout: 20000 },
+    ).catch(() => {});
+    const labels = await page.evaluate(() => [...document.querySelectorAll('#content .toolbar .btn')]
+      .filter((b) => b.offsetParent !== null).map((b) => b.getAttribute('aria-label')));
+    check(
+      labels.includes('Resume') && !labels.includes('Pause'),
+      `toolbar-on-a-phone: a paused guest offers Resume, not Pause (${labels.join(', ')})`,
+    );
+
+    await fetch(`${BASE}api/vms/${victim.namespace}/${victim.name}/unpause`, { method: 'POST' }).catch(() => {});
+    await page.waitForFunction(async (n) => {
+      const list = await (await fetch('/api/vms')).json();
+      return !(list.find((v) => v.name === n)?.status || '').includes('Paused');
+    }, victim.name, { timeout: 15000 }).catch(() => {});
+    const back = await (await fetch(`${BASE}api/vms`)).json();
+    check(
+      !(back.find((v) => v.name === victim.name)?.status || '').includes('Paused'),
+      'toolbar-on-a-phone: the paused guest is resumed so the suite stays re-runnable',
+    );
+  }
+
+  // A wide screen keeps every action and every word.
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.waitForTimeout(900);
+  const wide = await bar();
+  check(
+    wide.count > phone.count && wide.textShown === wide.count,
+    `toolbar-on-a-phone: a wide screen keeps the labels and the buttons (${wide.count} shown, ${wide.textShown} labelled)`,
+  );
+  check(
+    await page.evaluate(() => !document.querySelector('#content .toolbar [data-overflow]')?.offsetParent),
+    'toolbar-on-a-phone: and needs no More button',
+  );
+}
+
 check(pageErrors.length === 0, `no JS page errors (${pageErrors.join('; ').slice(0, 200)})`);
 
 await browser.close();

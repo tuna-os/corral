@@ -8,6 +8,7 @@ import { timeChart } from '../dashboard.js';
 import { icon } from '../icons.js';
 import { state } from '../state.js';
 import { bindBreadcrumb, breadcrumb } from '../ui/breadcrumb.js';
+import { openMenuFrom } from '../ui/menu.js';
 import { bindTags, tagChips } from '../tags.js';
 import { $, esc, toast } from '../ui/dom.js';
 import { NO_SAMPLES } from './datacenter.js';
@@ -42,6 +43,55 @@ export function renderVM(main, vm) {
     return isKubeVirt;
   });
   if (!tabs.some(([id]) => id === state.tab)) state.tab = 'summary';
+  // One list of actions, two presentations.
+  //
+  // The toolbar had eleven buttons written out as markup. At phone width they
+  // wrapped onto three rows and took most of the first screen before any
+  // detail appeared. The lifecycle verbs stay on the bar and give up their
+  // labels there; the rest move behind "More".
+  //
+  // Both read this list, so the bar and the menu cannot drift apart — which is
+  // exactly what two hand-written copies of eleven actions would do.
+  const paused = (vm.status || '').includes('Paused');
+  const TOOLBAR = [
+    { act: 'start', label: 'Start', ic: 'play', show: capability.start, off: vm.running, primary: true },
+    { act: 'stop', label: 'Stop', ic: 'stop', show: capability.stop, off: !vm.running, primary: true },
+    { act: 'restart', label: 'Restart', ic: 'restart', show: capability.start && capability.stop, off: !vm.running, primary: true },
+    // Pause and Resume are the same button in two states, not two buttons.
+    // Both carry the play/pause pair of icons, so with the labels hidden on a
+    // phone the bar showed two identical triangles — Start and Resume. Only
+    // the one that applies is offered, which also stops Resume being live on a
+    // VM that is merely running.
+    { act: 'pause', label: 'Pause', ic: 'pause', show: isKubeVirt && !paused, off: !vm.ready, primary: true },
+    { act: 'unpause', label: 'Resume', ic: 'play', show: isKubeVirt && paused, primary: true },
+    {
+      act: 'migrate', label: 'Migrate', ic: 'migrate', show: isKubeVirt,
+      off: !(vm.ready && vm.liveMigratable),
+      title: vm.liveMigratable ? 'Live-migrate to another node' : 'Not live-migratable (persistent RWO disk)',
+    },
+    { act: 'clone', label: 'Clone', ic: 'clone', show: isKubeVirt },
+    {
+      act: 'template', label: vm.isTemplate ? 'Unmark template' : 'Make template', ic: 'template',
+      show: isKubeVirt,
+      title: vm.isTemplate ? 'Remove template mark' : 'Mark as a golden template to clone from',
+    },
+    {
+      act: 'export', label: 'Export', ic: 'download', show: isKubeVirt, off: vm.running,
+      title: vm.running ? 'Stop the VM to export its disk' : 'Download a disk backup',
+    },
+    {
+      act: 'upgrade', label: 'Upgrade', ic: 'restart', show: isKubeVirt && vm.bootc && state.caps.bootc,
+      title: "Rebuild this bootc VM's disk from the latest image and restart",
+    },
+    // Destructive, and the hardest to undo after a mis-tap, so it is never one
+    // of the bare icons on the bar.
+    { act: 'delete', label: 'Delete', ic: 'trash', show: capability.delete, danger: true },
+  ].filter((a) => a.show);
+  const overflow = TOOLBAR.filter((a) => !a.primary);
+  const btn = (a) => `<button class="btn${a.danger ? ' danger' : ''}${a.primary ? '' : ' act-more'}"
+    data-act="${a.act}" aria-label="${esc(a.label)}" ${a.off ? 'disabled' : ''}
+    title="${esc(a.title || a.label)}">${icon(a.ic)}<span class="btn-label">${esc(a.label)}</span></button>`;
+
   // Where this guest sits. A detail screen reached from the palette or a
   // pop-out carries no tree context otherwise.
   const trail = [
@@ -58,22 +108,10 @@ export function renderVM(main, vm) {
       <span class="pill ${vm.ready ? 'on' : (vm.running || (vm.status && (vm.status.includes('Starting') || vm.status.includes('Creating')))) ? 'mid' : 'off'}">${esc(vm.status)}</span>
       ${isLocal ? '<span class="pill">local · qemu</span>' : ''}
       <div class="toolbar">
-        ${capability.start ? `<button class="btn" data-act="start" ${vm.running ? 'disabled' : ''}>${icon('play')} Start</button>` : ''}
-        ${capability.stop ? `<button class="btn" data-act="stop" ${vm.running ? '' : 'disabled'}>${icon('stop')} Stop</button>` : ''}
-        ${capability.start && capability.stop ? `<button class="btn" data-act="restart" ${vm.running ? '' : 'disabled'}>${icon('restart')} Restart</button>` : ''}
-        ${isKubeVirt ? `
-        <button class="btn" data-act="pause" ${vm.ready ? '' : 'disabled'}>${icon('pause')} Pause</button>
-        <button class="btn" data-act="unpause">${icon('play')} Resume</button>
-        <button class="btn" data-act="migrate" ${vm.ready && vm.liveMigratable ? '' : 'disabled'}
-          title="${vm.liveMigratable ? 'Live-migrate to another node' : 'Not live-migratable (persistent RWO disk)'}">${icon('migrate')} Migrate</button>
-        <button class="btn" data-act="clone">${icon('clone')} Clone</button>
-        <button class="btn" data-act="template" title="${vm.isTemplate ? 'Remove template mark' : 'Mark as a golden template to clone from'}">
-          ${icon('template')} ${vm.isTemplate ? 'Unmark template' : 'Make template'}</button>
-        <button class="btn" data-act="export" ${vm.running ? 'disabled' : ''}
-          title="${vm.running ? 'Stop the VM to export its disk' : 'Download a disk backup'}">${icon('download')} Export</button>
-        ${vm.bootc && state.caps.bootc ? `<button class="btn" data-act="upgrade"
-          title="Rebuild this bootc VM's disk from the latest image and restart">${icon('restart')} Upgrade</button>` : ''}` : ''}
-        ${capability.delete ? `<button class="btn danger" data-act="delete">${icon('trash')} Delete</button>` : ''}
+        ${TOOLBAR.filter((a) => a.primary).map(btn).join('')}
+        ${overflow.length ? `<button class="btn btn-overflow" data-overflow aria-haspopup="menu" aria-expanded="false"
+          aria-label="More actions" title="More actions">${icon('menu')}<span class="btn-label">More</span></button>` : ''}
+        ${overflow.map(btn).join('')}
       </div>
     </div>
     <div class="tabs">
@@ -86,6 +124,22 @@ export function renderVM(main, vm) {
   main.querySelectorAll('[data-act]').forEach((b) => {
     b.onclick = () => vmAction(vm, b.dataset.act);
   });
+  // The overflow menu runs the same actions as the buttons it stands in for.
+  const more = main.querySelector('[data-overflow]');
+  if (more) {
+    more.onclick = (e) => {
+      e.stopPropagation();
+      openMenuFrom(more, overflow.map((a) => ({
+        icon: a.ic,
+        label: a.label,
+        title: a.title,
+        danger: a.danger,
+        disabled: a.off,
+        mutate: a.act !== 'export',
+        action: () => vmAction(vm, a.act),
+      })));
+    };
+  }
   main.querySelectorAll('[data-tab]').forEach((t) => {
     t.onclick = () => { disconnectConsoles(); state.tab = t.dataset.tab; renderVM(main, vm); markRendered(); };
   });
