@@ -56,9 +56,18 @@ pkg/              Library code (importable)
     │                     doctor, plugins, NADs, NICs, images, instancetypes, datavolumes, boot options, ISO upload
     └── static/
         ├── index.html    dark SPA shell, create dialog (6 source types), CT create dialog, build dialog
-        ├── app.js        API client, tree (Server/Namespace/Pool views, VMs+CTs merged), VM/CT detail panels
-        │                 (Summary/Hardware/Options/Snapshots/Events/Console/Terminal), create wizards,
-        │                 image library + import, bootc build streaming, mobile drawer
+        ├── app.js        entry module: poll loop, content router, boot, mobile drawer
+        ├── state.js      shared state store and event bus (select, inventory, tasks)
+        ├── api.js        fetch wrapper, VM/CT API URLs and selection keys
+        ├── tree.js       sidebar tree (Server/Namespace/Pool views, VMs+CTs merged), filter, multi-select
+        ├── menus.js      context menu items per inventory object
+        ├── tags.js       VM tag chips
+        ├── console.js    noVNC, serial terminal and IronRDP consoles, console tabs
+        ├── create.js     create VM/CT dialogs, OS wizard, bootc build streaming
+        ├── dock.js       task panel (Alpine.js island)
+        ├── content/      one module per screen: datacenter, node, namespace, vm, vm-table, ct,
+        │                 multiview, hostpower, doctor, extensions, settings
+        ├── ui/           primitives: dom.js (query, toast, escape), menu.js (context menu)
         ├── icons.js      inline Heroicon SVGs
         └── style.css     dark theme, responsive, dialog/modals, cards, tables
 

@@ -552,6 +552,49 @@ await page.screenshot({ path: `${SHOTS}/bulk-select.png` });
   await page.evaluate((k) => localStorage.removeItem(k), layoutKey);
 }
 
+// ── es-modules: app.js split into native ES modules (#340) ─────────
+// The UI loads as separate modules with no build step, and the modules share
+// one state store and event bus. The page imports the same module URL the app
+// does, so it gets the same instance, and a tree click must reach a bus
+// listener with the selection the store now holds.
+{
+  await page.goto(BASE);
+  await page.waitForSelector('#tree >> text=web-prod', { timeout: 30000 }).catch(() => {});
+  const modules = ['state.js', 'api.js', 'tree.js', 'console.js', 'dock.js', 'ui/menu.js', 'content/vm.js', 'content/datacenter.js'];
+  const served = await page.evaluate(async (paths) => {
+    const res = await Promise.all(paths.map((p) => fetch(p).then((r) => r.ok && (r.headers.get('content-type') || '').includes('javascript'))));
+    return paths.filter((_, i) => !res[i]);
+  }, modules);
+  check(served.length === 0, `es-modules: every module is served as JavaScript (missing: ${served.join(', ') || 'none'})`);
+  const bus = await page.evaluate(async () => {
+    try {
+      const m = await import('/state.js');
+      window.__busEvents = [];
+      m.on('select', (d) => window.__busEvents.push({ type: 'select', key: d.selected.key || '', tab: d.tab }));
+      m.on('inventory', (d) => window.__busEvents.push({ type: 'inventory', vms: d.vms.length }));
+      return typeof m.emit === 'function' && typeof m.state === 'object';
+    } catch { return false; }
+  });
+  check(bus, 'es-modules: state.js exports the shared store and event bus');
+  await page.click('#tree >> text=web-prod');
+  await page.waitForFunction(() => (window.__busEvents || []).some((e) => e.type === 'select'), null, { timeout: 5000 }).catch(() => {});
+  const sel = await page.evaluate(async () => {
+    const ev = (window.__busEvents || []).find((e) => e.type === 'select');
+    try {
+      const { state } = await import('/state.js');
+      return { ev, storeKey: state.selected.key || '' };
+    } catch { return { ev, storeKey: null }; }
+  });
+  check(!!sel.ev && sel.ev.key.endsWith('/web-prod') && sel.ev.tab === 'summary', 'es-modules: a tree click emits a select event');
+  check(!!sel.ev && sel.ev.key === sel.storeKey, 'es-modules: the select event matches the shared store');
+  const inv = await page.waitForFunction(() => (window.__busEvents || []).find((e) => e.type === 'inventory' && e.vms > 0), null, { timeout: 12000 })
+    .then((h) => h.jsonValue()).catch(() => null);
+  check(!!inv, 'es-modules: the poll emits an inventory event');
+  // Module scope keeps the fleet out of window, so no module can lean on a global.
+  check(await page.evaluate(() => typeof window.vms === 'undefined' && typeof window.selected === 'undefined'), 'es-modules: no fleet globals on window');
+  await page.screenshot({ path: `${SHOTS}/es-modules.png` });
+}
+
 check(pageErrors.length === 0, `no JS page errors (${pageErrors.join('; ').slice(0, 200)})`);
 
 await browser.close();
