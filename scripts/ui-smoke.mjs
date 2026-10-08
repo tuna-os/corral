@@ -2252,6 +2252,65 @@ check(
   await fresh.close();
 }
 
+// ── dash-density ────────────────────────────────────────
+// The data grid has had three density modes for a while; the dashboard had
+// none, so how many widgets fit on a screen was fixed. Prism carries a Data
+// Density setting for its dashboard, and this is the same idea under the
+// grid's own names.
+//
+// A mode has to change the widget's real height, not only the gaps, or the
+// setting looks like it does nothing on a tall screen.
+{
+  await page.goto(BASE);
+  await page.waitForSelector('#dc-dash .grid-stack-item', { timeout: 30000 });
+  await page.waitForTimeout(800);
+
+  check(
+    await page.locator('#dc-dash .dash-density-select').count() === 1,
+    'dash-density: the dashboard offers a density control',
+  );
+
+  const widgetHeight = () => page.evaluate(
+    () => Math.round(document.querySelector('#dc-dash .grid-stack-item')?.getBoundingClientRect().height || 0),
+  );
+
+  await page.selectOption('#dc-dash .dash-density-select', 'compact');
+  await page.waitForTimeout(600);
+  const compact = await widgetHeight();
+  await page.selectOption('#dc-dash .dash-density-select', 'roomy');
+  await page.waitForTimeout(600);
+  const roomy = await widgetHeight();
+  check(
+    compact > 0 && compact < roomy,
+    `dash-density: compact widgets really are shorter than roomy (${compact}px vs ${roomy}px)`,
+  );
+
+  // The padding inside a widget moves with the mode too, which is the half
+  // that lives in the stylesheet rather than in GridStack.
+  check(
+    await page.evaluate(() => document.querySelector('#dc-dash')?.dataset.density) === 'roomy',
+    'dash-density: the mode reaches the stylesheet',
+  );
+
+  // The choice is kept, per dashboard, like the layout beside it.
+  await page.reload();
+  await page.waitForSelector('#dc-dash .dash-density-select', { timeout: 30000 });
+  await page.waitForTimeout(900);
+  check(
+    await page.inputValue('#dc-dash .dash-density-select') === 'roomy',
+    'dash-density: the choice survives a reload',
+  );
+
+  // Reset layout has to cover it. Anything the operator can change here needs
+  // a way back, which is the lesson the vSphere row in the survey records.
+  await page.click('#dc-dash .dash-reset');
+  await page.waitForTimeout(900);
+  check(
+    await page.inputValue('#dc-dash .dash-density-select') === 'cosy',
+    'dash-density: Reset layout puts the density back too',
+  );
+}
+
 check(pageErrors.length === 0, `no JS page errors (${pageErrors.join('; ').slice(0, 200)})`);
 
 await browser.close();

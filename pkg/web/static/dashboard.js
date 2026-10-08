@@ -38,6 +38,42 @@ function clearLayout(scope) {
   try { localStorage.removeItem(LAYOUT_PREFIX + scope); } catch { /* nothing to clear */ }
 }
 
+// ── Density ───────────────────────────────────────────────────────
+
+// How much room the dashboard gives each widget.
+//
+// The data grid has had three named density modes for a while, and the
+// dashboard had none: how many widgets fit on a screen was fixed. Prism's
+// dashboard carries a Data Density setting for exactly this, and the names
+// here are the grid's own, so one word means one thing across the UI.
+//
+// `margin` is the gap between widgets and `cellHeight` is the height of one
+// grid row, so a widget keeps the same row span and changes size with the
+// mode. The stylesheet reads the mode from a data attribute for the padding
+// inside a widget.
+const DASH_DENSITIES = [
+  { id: 'compact', label: 'Compact', margin: 2, cellHeight: 62 },
+  { id: 'cosy', label: 'Cosy', margin: 5, cellHeight: 80 },
+  { id: 'roomy', label: 'Roomy', margin: 10, cellHeight: 98 },
+];
+const DENSITY_PREFIX = 'corral.dashboard.density.';
+const DEFAULT_DENSITY = 'cosy';
+
+function loadDensity(scope) {
+  try {
+    const stored = localStorage.getItem(DENSITY_PREFIX + scope);
+    return DASH_DENSITIES.some((d) => d.id === stored) ? stored : DEFAULT_DENSITY;
+  } catch { return DEFAULT_DENSITY; }
+}
+
+function saveDensity(scope, id) {
+  try { localStorage.setItem(DENSITY_PREFIX + scope, id); } catch { /* not persisted */ }
+}
+
+function clearDensity(scope) {
+  try { localStorage.removeItem(DENSITY_PREFIX + scope); } catch { /* nothing to clear */ }
+}
+
 // ── Grid ──────────────────────────────────────────────────────────
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g,
@@ -78,6 +114,11 @@ export function mountDashboard(root, { scope, widgets, layout }) {
     <div class="dash-toolbar">
       <label class="dash-add" hidden>Add widget
         <select aria-label="Add a widget to this dashboard"><option value="">Choose…</option></select>
+      </label>
+      <label class="dash-density">Density
+        <select class="dash-density-select" aria-label="Widget density">
+          ${DASH_DENSITIES.map((d) => `<option value="${d.id}">${d.label}</option>`).join('')}
+        </select>
       </label>
       <button type="button" class="btn sm dash-reset">Reset layout</button>
       <span class="muted dash-hint">Drag a title bar to move · drag the corner to resize · or focus a title bar and use the arrow keys</span>
@@ -122,10 +163,14 @@ export function mountDashboard(root, { scope, widgets, layout }) {
 
   for (const n of saved) gridEl.appendChild(itemEl(n));
 
+  const density = () => DASH_DENSITIES.find((d) => d.id === loadDensity(scope)) || DASH_DENSITIES[1];
+  const mode = density();
+  root.dataset.density = mode.id;
+
   const grid = GridStack.init({
     column: COLUMNS,
-    cellHeight: 80,
-    margin: 5,
+    cellHeight: mode.cellHeight,
+    margin: mode.margin,
     float: false,
     animate: false,
     handle: '.widget-head',
@@ -279,8 +324,24 @@ export function mountDashboard(root, { scope, widgets, layout }) {
     announce(`${widgets[id].title} added.`);
     el.querySelector('.widget-head').focus();
   };
+  const densitySel = root.querySelector('.dash-density-select');
+  densitySel.value = mode.id;
+  densitySel.onchange = () => {
+    saveDensity(scope, densitySel.value);
+    const next = density();
+    root.dataset.density = next.id;
+    // Both, or a widget keeps its pixel height and only the gaps move.
+    grid.margin(next.margin);
+    grid.cellHeight(next.cellHeight);
+    announce(`Widget density: ${next.label}.`);
+  };
+
   root.querySelector('.dash-reset').onclick = () => {
     clearLayout(scope);
+    // Density is part of how this dashboard looks, so the way back to the
+    // defaults has to cover it. Every other thing the operator can change
+    // here is restored by this button.
+    clearDensity(scope);
     grid.destroy(false);
     mountDashboard(root, { scope, widgets, layout });
   };

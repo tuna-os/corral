@@ -188,6 +188,11 @@ layout })`. The shape is `{ id: { title, w, h, minW?, minH?, live?,
 render(body) } }`. A `live` widget polls its own data, and `refresh()` does not
 render it again. Each scope saves its own layout and gets Reset layout.
 
+Each dashboard also carries a density, in `DASH_DENSITIES`. Two of its numbers
+go to GridStack: the gap between widgets, and the height of one grid row. The
+stylesheet holds the third, the padding inside a widget, and reads the mode
+off the dashboard root. A widget with its own fixed padding will ignore it.
+
 ### A tree view
 
 Add the id to `TREE_VIEWS` in `tree.js`. Add a button to `treeViewToggle()`.

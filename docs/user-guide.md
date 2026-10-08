@@ -79,6 +79,12 @@ Access the Proxmox-style Web UI at `http://localhost:8006` or via `corral web`.
 
 ![Mobile Dashboard](screenshots/dashboard-mobile.png)
 
+#### Dashboard density
+
+The Density control above a dashboard sets how much room each widget takes:
+Compact, Cosy or Roomy. Compact fits more on one screen. Each dashboard keeps
+its own choice, and Reset layout puts it back with the arrangement.
+
 #### Links to a screen
 
 The address bar follows what you look at. Select a guest and open its console,

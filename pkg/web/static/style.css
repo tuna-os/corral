@@ -580,7 +580,14 @@ dl.props dd { margin: 0; word-break: break-all; }
 }
 .widget-menu button:hover, .widget-menu button:focus-visible { background: var(--border); outline: none; }
 .widget-menu kbd { color: var(--muted); font-size: .72rem; font-family: inherit; }
-.widget-body { flex: 1; min-height: 0; overflow: auto; padding: 10px 12px; font-size: .86rem; }
+.widget-body { flex: 1; min-height: 0; overflow: auto; padding: var(--widget-pad, 10px 12px); font-size: .86rem; }
+/* Widget density. The gap between widgets and the grid row height belong to
+   GridStack and live in DASH_DENSITIES; the padding inside a widget is here,
+   keyed off the mode the dashboard writes onto its root. */
+[data-density="compact"] .widget-body { --widget-pad: 5px 8px; }
+[data-density="compact"] .widget-head { min-height: 26px; }
+[data-density="roomy"] .widget-body { --widget-pad: 14px 16px; }
+[data-density="roomy"] .widget-head { min-height: 38px; }
 .widget-body table { font-size: .82rem; }
 .widget-body .kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; margin: 0; }
 .widget-body .kv dt { color: var(--muted); }
