@@ -12,6 +12,7 @@ import { openMenuFrom } from '../ui/menu.js';
 import { bindTags, tagChips } from '../tags.js';
 import { $, esc, toast } from '../ui/dom.js';
 import { NO_SAMPLES } from './datacenter.js';
+import { confirmDestroy } from '../ui/confirm.js';
 
 // ── VM view ───────────────────────────────────────────────────────
 
@@ -246,7 +247,12 @@ function renderTab(vm) {
 
 export async function vmAction(vm, act) {
   if (act === 'delete') {
-    if (!confirm(`Delete ${vm.name} and its disks?`)) return;
+    if (!await confirmDestroy({
+      title: `Delete ${vm.name}?`,
+      identifier: vm.name,
+      label: `Type ${vm.name} to confirm`,
+      note: 'This destroys the guest and its disks. There is no undo.',
+    })) return;
     try {
       let target = vmURL(vm);
       if (vm.backend === 'libvirt') target += `${target.includes('?') ? '&' : '?'}destroyStorage=true`;

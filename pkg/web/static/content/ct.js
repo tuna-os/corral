@@ -9,6 +9,7 @@ import { state } from '../state.js';
 import { bindBreadcrumb, breadcrumb } from '../ui/breadcrumb.js';
 import { $, esc, toast } from '../ui/dom.js';
 import { attachContextMenu } from '../ui/menu.js';
+import { confirmDestroy } from '../ui/confirm.js';
 
 export function ctTable(list) {
   if (!list.length) return '';
@@ -115,7 +116,12 @@ export function renderCT(main, c) {
 
 export async function ctAction(c, act) {
   if (act === 'delete') {
-    if (!confirm(`Delete container ${c.name}? This removes its data volume too.`)) return;
+    if (!await confirmDestroy({
+      title: `Delete container ${c.name}?`,
+      identifier: c.name,
+      label: `Type ${c.name} to confirm`,
+      note: 'This removes its data volume too. There is no undo.',
+    })) return;
     try {
       await api(`/api/cts/${c.namespace}/${c.name}`, { method: 'DELETE' });
       toast('Deleted');

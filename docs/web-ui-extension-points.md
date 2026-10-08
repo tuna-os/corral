@@ -124,6 +124,22 @@ A new gesture needs no code here. The module already covers it.
 
 ## Where to add a feature
 
+### A destructive action
+
+Call `confirmDestroy()` from `ui/confirm.js` when the action cannot be undone.
+It keeps its own button disabled until the operator types the `identifier` you
+give it. The action then needs a deliberate look at what is on screen. For one
+object, that identifier is its name. For a selection of many it is the word
+`delete`, because one name is the wrong thing to ask for.
+
+Leave everything else on a plain `confirm()`. A dialog that always demands a
+typed answer teaches people to answer without a look, which defeats it.
+
+For an action over many objects, collect each failure with what the API said
+and hand the list to `reportFailures()` in `ui/dom.js`. Nobody can act on a count in
+a toast: a lock, a missing disk and a vanished node each need something
+different done next.
+
 ### Addressable state
 
 The view, the selection and the open tab live in the URL fragment, through

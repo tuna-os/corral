@@ -2311,6 +2311,160 @@ check(
   );
 }
 
+// ── confirm-destroy ──────────────────────────────────────
+// Deleting a guest takes its disks and cannot be undone, and it used to be one
+// browser confirm(): a box whose default button is already focused, so a
+// stray Enter after a bulk selection destroyed guests and their storage.
+//
+// Proxmox makes a dangerous removal different in kind. Its dialog keeps the
+// confirm button disabled until the operator types the resource's own
+// identifier. These checks hold that gate shut, which is the whole value of
+// it: if the button is ever reachable without typing, the protection is gone.
+//
+// Nothing here deletes anything. The last step always cancels.
+{
+  await page.goto(BASE);
+  await page.waitForSelector('#content .vm-check', { timeout: 30000 });
+  await page.waitForTimeout(900);
+
+  // Select two guests and ask to delete them.
+  const boxes = page.locator('#content .vm-check');
+  await boxes.nth(0).check();
+  await boxes.nth(1).check();
+  await page.click('#content [data-bulk="delete"]');
+  await page.waitForSelector('dialog.confirm-destroy[open]', { timeout: 5000 });
+  check(true, 'confirm-destroy: a bulk delete opens the typed confirmation');
+
+  const go = page.locator('dialog.confirm-destroy .confirm-go');
+  check(await go.isDisabled(), 'confirm-destroy: the delete button starts out of reach');
+  check(
+    await page.locator('dialog.confirm-destroy .confirm-items li').count() === 2,
+    'confirm-destroy: it lists what was selected',
+  );
+
+  // The wrong word must not open the gate, and neither must a near miss.
+  await page.fill('dialog.confirm-destroy .confirm-input', 'Delete');
+  await page.waitForTimeout(200);
+  check(await go.isDisabled(), 'confirm-destroy: the wrong case does not unlock it');
+  await page.fill('dialog.confirm-destroy .confirm-input', 'del');
+  await page.waitForTimeout(200);
+  check(await go.isDisabled(), 'confirm-destroy: nor does a prefix');
+
+  // Enter while it is still locked must do nothing at all. This is the exact
+  // keystroke the old confirm() acted on.
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(400);
+  check(
+    await page.locator('dialog.confirm-destroy[open]').count() === 1,
+    'confirm-destroy: Enter does nothing while the gate is shut',
+  );
+
+  await page.fill('dialog.confirm-destroy .confirm-input', 'delete');
+  await page.waitForTimeout(200);
+  check(!(await go.isDisabled()), 'confirm-destroy: the exact word unlocks it');
+
+  // Cancel, and nothing was deleted.
+  const fleetBefore = (await (await fetch(`${BASE}api/vms`)).json()).length;
+  await page.click('dialog.confirm-destroy .confirm-cancel');
+  await page.waitForTimeout(500);
+  check(
+    await page.locator('dialog.confirm-destroy').count() === 0,
+    'confirm-destroy: cancelling removes the dialog from the page',
+  );
+  const fleetAfter = (await (await fetch(`${BASE}api/vms`)).json()).length;
+  check(
+    fleetBefore === fleetAfter && fleetAfter > 0,
+    `confirm-destroy: cancelling deleted nothing (${fleetBefore} then ${fleetAfter})`,
+  );
+
+  // A single guest asks for its own name, not a word.
+  await page.click('#tree .tree-item[data-rkey^="vm:"]');
+  await page.waitForTimeout(800);
+  const name = (await page.textContent('#content h1')).trim().split(/\s+/).pop();
+  await page.click('#content [data-act="delete"], #content .toolbar [data-bulk="delete"]').catch(() => {});
+  if (await page.locator('dialog.confirm-destroy[open]').count()) {
+    check(
+      (await page.textContent('dialog.confirm-destroy .confirm-label')).includes(name),
+      `confirm-destroy: a single guest asks for its own name (${name})`,
+    );
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(400);
+    check(
+      await page.locator('dialog.confirm-destroy').count() === 0,
+      'confirm-destroy: Escape closes it and deletes nothing',
+    );
+  }
+
+  // Put the selection back for whatever runs next.
+  await page.goto(BASE);
+  await page.waitForSelector('#content .vm-check', { timeout: 30000 });
+  await page.evaluate(() => document.querySelectorAll('#content .vm-check:checked').forEach((b) => b.click()));
+  await page.waitForTimeout(400);
+}
+
+// ── bulk-failures ──────────────────────────────────────
+// A bulk action used to report a tally: "Stop: 8 ok, 2 failed", in a toast
+// that was gone before the operator could ask which two. A lock, a missing
+// disk and a vanished node all need something different done next, so the
+// reason is the part that matters.
+//
+// Proxmox runs its bulk actions server-side and opens a task log on the
+// result. corral fans out from the browser, so the equivalent is a dialog
+// naming each guest and what the API said.
+//
+// The failure is injected into the response rather than caused for real, so
+// this leaves the demo alone.
+{
+  const fresh = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  const freshErrors = [];
+  fresh.on('pageerror', (e) => freshErrors.push(e.message));
+  await fresh.goto(BASE);
+  await fresh.waitForSelector('#content .vm-check', { timeout: 30000 });
+  await fresh.waitForTimeout(900);
+
+  // Every start fails, with a reason worth reading.
+  //
+  // A regex, not a glob: vmURL() appends ?context= for a guest that has one,
+  // so a pattern ending at /start misses those and they really start. A glob
+  // loose enough to allow the query also matches /restart.
+  await fresh.route(/\/api\/vms\/.*\/start(\?|$)/, (route) => route.fulfill({
+    status: 500,
+    contentType: 'application/json',
+    body: JSON.stringify({ error: 'guest is locked by a backup job' }),
+  }));
+
+  // The non-destructive actions still use the plain confirm, and the handler
+  // has to be in place before the click: with no handler Playwright dismisses
+  // the box, the action never runs, and nothing fails to report.
+  fresh.on('dialog', (d) => d.accept());
+
+  const boxes = fresh.locator('#content .vm-check');
+  await boxes.nth(0).check();
+  await boxes.nth(1).check();
+  await fresh.click('#content [data-bulk="start"]');
+  await fresh.waitForSelector('dialog.failure-report[open]', { timeout: 15000 });
+  check(true, 'bulk-failures: a failed bulk action opens a report');
+  check(
+    await fresh.locator('dialog.failure-report tbody tr').count() === 2,
+    'bulk-failures: it names every guest that failed',
+  );
+  check(
+    (await fresh.textContent('dialog.failure-report')).includes('locked by a backup job'),
+    'bulk-failures: and what the API said about each',
+  );
+
+  await fresh.click('dialog.failure-report .dialog-actions button');
+  await fresh.waitForTimeout(400);
+  check(
+    await fresh.locator('dialog.failure-report').count() === 0,
+    'bulk-failures: closing it takes the dialog off the page',
+  );
+  check(freshErrors.length === 0, `bulk-failures: no errors (${freshErrors.join('; ').slice(0, 120)})`);
+
+  await fresh.unroute(/\/api\/vms\/.*\/start(\?|$)/);
+  await fresh.close();
+}
+
 check(pageErrors.length === 0, `no JS page errors (${pageErrors.join('; ').slice(0, 200)})`);
 
 await browser.close();

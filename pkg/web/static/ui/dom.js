@@ -27,6 +27,35 @@ const toastRegion = (() => {
   return region;
 })();
 
+// Failures you have to read.
+//
+// A toast is right for "Stop: 8 ok" and wrong for "2 failed": it disappears,
+// it has no room for a reason, and the reason is the whole point. An operator
+// whose bulk stop left two guests running needs to know which two and why -
+// a lock, a missing disk, a node that went away - because each needs a
+// different thing done next.
+//
+// Proxmox answers this with a task log window per bulk action, since its
+// bulk endpoints run server-side and return a task. corral fans out from the
+// browser, so the equivalent is this: one dialog, every failure named with
+// what the API said about it.
+export function reportFailures(title, failures) {
+  if (!failures.length) return;
+  const dlg = document.createElement('dialog');
+  dlg.className = 'failure-report';
+  dlg.innerHTML = `
+    <h2>${esc(title)}</h2>
+    <table><tbody>${failures.map(({ name, error }) =>
+      `<tr><td>${esc(name)}</td><td class="muted">${esc(error || 'failed')}</td></tr>`).join('')}</tbody></table>
+    <div class="dialog-actions"><button type="button" class="btn">Close</button></div>`;
+  document.body.appendChild(dlg);
+  const close = () => { if (dlg.open) dlg.close(); dlg.remove(); };
+  dlg.querySelector('button').onclick = close;
+  dlg.addEventListener('cancel', close);
+  dlg.addEventListener('click', (e) => { if (e.target === dlg) close(); });
+  dlg.showModal();
+}
+
 export function toast(msg) {
   const region = toastRegion;
   region.querySelectorAll('.toast').forEach((t) => t.remove());

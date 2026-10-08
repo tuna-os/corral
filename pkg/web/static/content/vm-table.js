@@ -9,9 +9,10 @@ import { vmMenuItems } from '../menus.js';
 import { makeDraggable } from '../pools.js';
 import { state } from '../state.js';
 import { renderTree } from '../tree.js';
-import { esc, toast } from '../ui/dom.js';
+import { esc, reportFailures, toast } from '../ui/dom.js';
 import { attachContextMenu, openMenuFrom } from '../ui/menu.js';
 import { post } from './vm.js';
+import { confirmDestroy } from '../ui/confirm.js';
 
 export function vmTable(list) {
   if (!list.length) return `<p class="console-msg">No virtual machines.</p>`;
@@ -163,10 +164,24 @@ export function bindVMTable(root, list) {
         tag = (prompt(`Tag ${plural} with:`, '') || '').trim();
         if (!tag) return;
       } else if (act === 'delete') {
-        if (!confirm(`Delete ${plural} and their disks?\n\n${sel.map((v) => v.name).join('\n')}`)) return;
+        // One name would be the wrong thing to type for a selection of many,
+        // so this asks for the word instead, and lists every guest above it.
+        // The gate is there to make the operator read the list, which a
+        // single default-focused OK button never did.
+        if (!await confirmDestroy({
+          title: `Delete ${plural} and their disks?`,
+          identifier: 'delete',
+          label: 'Type delete to confirm',
+          items: sel.map((v) => v.name),
+          note: 'Every guest listed above loses its disks. There is no undo.',
+        })) return;
       } else if (!confirm(`${verb} ${plural}?`)) return;
+      // Keep what the API said about each guest, not just a tally. "2 failed"
+      // tells the operator nothing they can act on: a lock, a missing disk and
+      // a vanished node all need something different done next, and the toast
+      // that carried the count was gone before they could ask.
       let ok = 0;
-      let fail = 0;
+      const failures = [];
       await Promise.all(sel.map(async (vm) => {
         try {
           if (act === 'snapshot') await post(vm, '/snapshots', {});
@@ -178,9 +193,12 @@ export function bindVMTable(root, list) {
             state.selectedVMKeys.delete(vmKey(vm));
           } else await api(vmURL(vm, `/${act}`), { method: 'POST' });
           ok += 1;
-        } catch { fail += 1; }
+        } catch (e) { failures.push({ name: vm.name, error: e.message }); }
       }));
-      toast(`${verb}: ${ok} ok${fail ? `, ${fail} failed` : ''}`);
+      toast(`${verb}: ${ok} ok${failures.length ? `, ${failures.length} failed` : ''}`);
+      // Only when something went wrong. A dialog after a clean run would be a
+      // box to dismiss for no reason.
+      reportFailures(`${verb}: ${failures.length} of ${sel.length} failed`, failures);
       setTimeout(() => refresh(), 800);
     };
   });

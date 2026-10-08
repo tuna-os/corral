@@ -10,6 +10,7 @@ import { state } from '../state.js';
 import { capabilityAlerts, capabilityLayout, capabilityWidgets } from '../ui/capabilities.js';
 import { $, esc, toast } from '../ui/dom.js';
 import { bindTemplateTable, bindVMTable, templateTable, vmTable } from './vm-table.js';
+import { confirmDestroy } from '../ui/confirm.js';
 
 // Tag the tree/list is filtered to, or null for "show all".
 let tagFilter = null;
@@ -231,7 +232,12 @@ async function loadImages() {
   el.querySelectorAll('[data-deldv]').forEach((b) => {
     b.onclick = async () => {
       const [ns, name] = b.dataset.deldv.split('/');
-      if (!confirm(`Delete image ${name}?`)) return;
+      if (!await confirmDestroy({
+        title: `Delete image ${name}?`,
+        identifier: name,
+        label: `Type ${name} to confirm`,
+        note: 'Any guest built from it keeps its disk; the image itself is gone.',
+      })) return;
       try { await api(`/api/datavolumes/${ns}/${name}`, { method: 'DELETE' }); toast('Deleted'); }
       catch (e) { toast(e.message); }
       setTimeout(loadImages, 500);

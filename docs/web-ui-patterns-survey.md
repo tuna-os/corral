@@ -97,6 +97,9 @@ documents the keyboard model. That chapter is where the Prism rows come from.
 | Navigation goes in the URL, layout stays local | Proxmox (its `hslist` is view, resource and tab, and nothing else) | **Added.** A link says where you are. Pane widths are how you like to work, and sending those to somebody else would be rude. `deep-link` |
 | Back and forward walk the UI | Proxmox | **Added.** `deep-link` |
 | A URL short enough to paste | Proxmox (a positional list against a dictionary of every tab name) | **Declined.** That needs a central table naming each tab, which is the shape the capability registry just removed. corral uses readable keys, and accepts a longer address. |
+| Typing the name to confirm a removal | Proxmox (`ConfirmRemoveDialog`, read in the source) | **Added.** Deleting a guest takes its disks, and it was one `confirm()`: a box with its default button already focused, so a stray Enter after a bulk selection destroyed guests and their storage. `confirm-destroy` |
+| A plain confirm for everything else | Proxmox (only `dangerous` removals get the field) | **Kept.** A dialog that always demands typing teaches people to type without reading. |
+| Name each failure, not a count | Proxmox (its bulk actions return a task, and the task log names each guest) | **Added.** "2 failed" told the operator nothing to act on, in a toast that was gone before they could ask. `bulk-failures` |
 | Reset the layout | Dashboard widgets, and vSphere by its absence | **Added.** vSphere let admins lose a pane for good. `reset-layout` |
 
 ## Navigation

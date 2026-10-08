@@ -539,6 +539,25 @@ dl.props dd { margin: 0; word-break: break-all; }
 
 /* Dashboard widget grid + live charts (#348, pkg/web/static/dashboard.js).
    gridstack positions the items; these rules only dress them. */
+/* Failures from a bulk action: each guest and what the API said, because the
+   reason is what the operator acts on. */
+.failure-report { max-width: 560px; }
+.failure-report h2 { margin: 0 0 10px; font-size: 1rem; }
+.failure-report table { width: 100%; font-size: .86rem; }
+.failure-report td { padding: 3px 8px 3px 0; vertical-align: top; }
+.failure-report td:first-child { white-space: nowrap; font-weight: 600; }
+
+/* A removal you cannot undo. The field is the gate: the button beside it stays
+   disabled until what is typed matches, so the action needs a deliberate look
+   at the list rather than a dismissed box. */
+.confirm-destroy { max-width: 460px; }
+.confirm-destroy h2 { margin: 0 0 10px; font-size: 1rem; }
+.confirm-items { max-height: 180px; overflow: auto; margin: 0 0 10px; padding-left: 18px; font-size: .86rem; }
+.confirm-note { margin: 0 0 12px; color: var(--muted); font-size: .86rem; }
+.confirm-label { display: block; margin-bottom: 14px; font-size: .86rem; }
+.confirm-input { display: block; width: 100%; margin-top: 4px; }
+.confirm-destroy .btn[disabled] { opacity: .45; cursor: not-allowed; }
+
 .dash-toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; font-size: .85rem; }
 .dash-toolbar select { margin-left: 6px; }
 .dash-hint { font-size: .78rem; }
