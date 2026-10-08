@@ -2059,6 +2059,100 @@ check(
   await page.waitForTimeout(300);
 }
 
+// ── deep-link ────────────────────────────────────────────
+// The page used to have one address. Nobody could send a link to a guest, a
+// reload went back to whatever this browser had stored, and the back button
+// did nothing. Proxmox puts the view, the selection and the open tab in the
+// browser history and leaves the layout in local storage, which is the split
+// these checks hold in place.
+{
+  await page.goto(BASE);
+  await page.waitForSelector('#content .vm-check', { timeout: 30000 });
+  await page.waitForTimeout(1200);
+  check(
+    await page.evaluate(() => location.hash) === '',
+    'deep-link: the datacenter is the bare address',
+  );
+
+  await page.click('#tree .tree-item[data-rkey^="vm:"]');
+  await page.waitForTimeout(800);
+  const guestHash = await page.evaluate(() => location.hash);
+  check(guestHash.includes('sel=vm:'), `deep-link: selecting a guest writes the address (${guestHash})`);
+
+  // A non-default tab belongs in the address too, or a link to a console
+  // opens on the summary.
+  await page.click('#content .tab:has-text("Console")');
+  await page.waitForTimeout(800);
+  const tabHash = await page.evaluate(() => location.hash);
+  check(tabHash.includes('tab=console'), `deep-link: the open tab is in the address (${tabHash})`);
+
+  // The layout is not navigation. Widening the sidebar must not change where
+  // the address says you are, because a link carries it to somebody else.
+  const beforeWiden = await page.evaluate(() => location.hash);
+  await page.focus('#tree-resizer');
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('ArrowRight');
+  await page.waitForTimeout(500);
+  check(
+    await page.evaluate(() => location.hash) === beforeWiden,
+    'deep-link: resizing a pane does not touch the address',
+  );
+
+  // The 5-second poll calls the same code that writes the address. If it
+  // pushed an entry each time, the back button would be useless within a
+  // minute, so a write that changes nothing has to stay a no-op.
+  const lenBefore = await page.evaluate(() => history.length);
+  await page.waitForTimeout(6000);
+  const lenAfter = await page.evaluate(() => history.length);
+  check(
+    lenAfter === lenBefore,
+    `deep-link: a poll adds no history entries (${lenBefore} then ${lenAfter})`,
+  );
+
+  // Back returns to where we were, which is the point of using history.
+  await page.goBack();
+  await page.waitForTimeout(900);
+  check(
+    (await page.evaluate(() => location.hash)).includes('tab=console') === false,
+    'deep-link: back leaves the tab behind',
+  );
+  await page.goForward();
+  await page.waitForTimeout(900);
+  check(
+    (await page.evaluate(() => location.hash)).includes('tab=console'),
+    'deep-link: and forward returns to it',
+  );
+
+  // The real test: a cold load of a pasted address, in a page that has never
+  // rendered anything. The guest only exists once the fleet has loaded, so
+  // this is where applying the address too early would silently drop it.
+  const fresh = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  const freshErrors = [];
+  fresh.on('pageerror', (e) => freshErrors.push(e.message));
+  await fresh.goto(`${BASE}${tabHash}`);
+  await fresh.waitForTimeout(5000);
+  const heading = (await fresh.textContent('#content h1').catch(() => '')).trim();
+  check(
+    heading !== '' && heading !== 'Datacenter',
+    `deep-link: a pasted address opens that guest, not the datacenter (${heading || 'nothing'})`,
+  );
+  check(
+    await fresh.locator('#tree .tree-item.selected').count() === 1,
+    'deep-link: and the tree shows it selected',
+  );
+  check(
+    await fresh.locator('#content .tab.active:has-text("Console")').count() === 1,
+    'deep-link: on the tab the address named',
+  );
+  check(freshErrors.length === 0, `deep-link: a cold load raises no errors (${freshErrors.join('; ').slice(0, 120)})`);
+  await fresh.close();
+
+  // Leave the suite where it found it.
+  await page.goto(BASE);
+  await page.waitForSelector('#content .vm-check', { timeout: 30000 });
+  await page.waitForTimeout(600);
+}
+
 check(pageErrors.length === 0, `no JS page errors (${pageErrors.join('; ').slice(0, 200)})`);
 
 await browser.close();

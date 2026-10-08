@@ -30,6 +30,7 @@ import { bindPools, loadPools, poolState } from './pools.js';
 import { emit, state } from './state.js';
 import { focusTreeFilter, renderTree, setTreeView, treeRow, treeView, vmRow } from './tree.js';
 import { capabilityFingerprint, capabilityScreen, loadCapabilityData } from './ui/capabilities.js';
+import { decodeSelection, encodeSelection, onRouteChange, readRoute, writeRoute } from './ui/route.js';
 import { $, esc, toast } from './ui/dom.js';
 import { makeCollapsible, makeSplitter } from './ui/splitter.js';
 import { activeContextMenu, attachContextMenu } from './ui/menu.js';
@@ -40,6 +41,8 @@ import { cycleThemeMode, themeMode } from './ui/theme.js';
 // key rather than only a name, so duplicate names on peers/contexts are safe.
 const consoleRoute = new URLSearchParams(location.search).get('console');
 let consoleRouteApplied = false;
+// The hash is applied once, after the first fleet load. See applyRoute().
+let routeApplied = false;
 
 // Fingerprint of the last-rendered state. The 5s poll only re-renders when
 // the data (or what's selected) actually changed — otherwise innerHTML
@@ -152,6 +155,13 @@ export async function refresh(force = false) {
       document.title = `${vm.name} console · Corral`;
     }
   }
+  // An address can name a guest, and a guest only exists once the fleet has
+  // loaded. Applying it before that, renderContent() would fail to find the
+  // guest and fall back to the datacenter, which loses the link silently.
+  if (!routeApplied) {
+    routeApplied = true;
+    if (location.hash) { applyRoute(); return; }
+  }
   const fp = renderFingerprint();
   if (!force && fp === lastRenderFp) return; // nothing changed — keep the DOM
   // A poll must not pull the rows out from under an open context menu; the
@@ -260,6 +270,11 @@ function renderFingerprint() {
 // re-render (and reset scroll) for a change the user already saw.
 export function markRendered() {
   lastRenderFp = renderFingerprint();
+  // Also here, not only in renderContent(): a tab click redraws one screen by
+  // calling its renderer directly, so renderContent() is not the single place
+  // navigation settles. The poll calls this too, which costs nothing because
+  // writeRoute() ignores a write that would not change the address.
+  syncRoute();
 }
 
 export function select(sel, openTab = 'summary') {
@@ -300,8 +315,40 @@ async function openPool(path) {
 
 // ── Content panel ─────────────────────────────────────────────────
 
+// Keep the address in step with what is drawn. See ui/route.js for why the
+// view, the selection and the tab go in the URL and the layout does not.
+//
+// The console popout is deliberately exempt: it is addressed by ?console= and
+// is a window showing one screen, not a place to navigate from.
+function syncRoute() {
+  if (document.body.classList.contains('console-popout')) return;
+  writeRoute({ view: treeView, sel: encodeSelection(state.selected), tab: state.tab });
+}
+
+// Apply an address to the page. Used at boot, and again whenever the back or
+// forward button moves us.
+//
+// The URL wins over what this browser had stored, because a link has to mean
+// the same thing for the person who was sent it.
+function applyRoute() {
+  const route = readRoute();
+  if (route.view !== treeView) setTreeView(route.view);
+  const selected = decodeSelection(route.sel);
+  // Straight onto the state rather than through select(): select() writes the
+  // address, and this is the one path that must not, or the back button would
+  // immediately push the entry it had just left.
+  disconnectConsoles();
+  state.selected = selected;
+  state.tab = route.tab;
+  renderTree();
+  renderContent();
+  markRendered();
+  emit('select', { selected: state.selected, tab: state.tab });
+}
+
 export function renderContent() {
   const main = $('#content');
+  syncRoute();
   if (state.selected.type === 'vm') {
     const vm = findVM(state.selected.key);
     if (!vm) { state.selected = { type: 'dc' }; }
@@ -463,6 +510,10 @@ bindPalette({
   cycleTheme: () => { cycleThemeMode(); renderContent(); },
 });
 initKeys();
+
+// An address given to us decides where we start, applied by the first refresh
+// once the fleet is there to look in. Back and forward are live immediately.
+onRouteChange(applyRoute);
 
 loadWhoami();
 loadCaps();

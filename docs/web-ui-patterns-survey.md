@@ -19,7 +19,7 @@ about the product, not from the product or its own documentation.
 | KubeStellar | **Source.** We cloned kubestellar/ui and read `plugin.yml`, `PluginAPI.ts` and the plugin types. |
 | W3C APG | **Primary.** The pattern pages themselves. |
 | WCAG | **Primary.** The success criteria. |
-| Proxmox VE | **Primary.** The GUI page of the Proxmox documentation. |
+| Proxmox VE | **Source.** We cloned pve-manager and read `www/manager6/`, and the GUI page of its documentation. See the licence note below. |
 | VS Code | **Primary.** The keybindings and tips pages. |
 | Grafana | **Primary.** The panel and dashboard documentation. |
 | vSphere | **Primary** for the failure: a Broadcom support article about a lost pane. |
@@ -34,6 +34,17 @@ about the product, not from the product or its own documentation.
 
 A secondary row is still useful, because the pattern repeats across products.
 Two sources had to agree before we took a pattern from them.
+
+### Reading pve-manager, and not copying it
+
+Proxmox VE is the closest peer in this list, and it publishes its code. So we
+cloned `pve-manager` and read the ExtJS UI under `www/manager6/`. Before that,
+the documentation was all we had used, which is a thin way to study the one
+product we can read.
+
+pve-manager is AGPL-3.0 and corral is Apache-2.0. AGPL code cannot move into
+an Apache-2.0 project, so we take decisions from it and no code. Each row that
+rests on the source says which decision, and the shape corral used instead.
 
 ### Why Prism stays a secondary source
 
@@ -57,7 +68,7 @@ documents the keyboard model. That chapter is where the Prism rows come from.
 
 | Interface | Why it is here |
 |---|---|
-| [Proxmox VE](https://pve.proxmox.com/wiki/Graphical_User_Interface) | The closest peer. Same four regions, same job. |
+| [Proxmox VE](https://pve.proxmox.com/wiki/Graphical_User_Interface) | The closest peer, and the one whose code we can read. |
 | [Harvester](https://docs.harvesterhci.io/v1.8/) | The closest peer of all: a web console over KubeVirt. |
 | [Cockpit](https://docs.fedoraproject.org/en-US/fedora-server/virtualization/vm-management-cockpit/) | The same guests, managed from one host. |
 | [Portainer](https://earthly.dev/blog/portainer-for-docker-container-management/) | The container console that corral's CT views answer to. |
@@ -82,6 +93,10 @@ documents the keyboard model. That chapter is where the Prism rows come from.
 | Resizable tree and dock | Proxmox | **Added.** One splitter primitive. `workspace-layout` |
 | Hide a pane completely | Proxmox | **Added.** The separator stays, because it owns the key that restores the pane. `workspace-layout` |
 | Dockable, movable panels | vSphere Web Client | **Declined.** Two resizable edges and a tab strip cover the need. Free docking is a large build with little gain here. |
+| The URL addresses what is on screen | Proxmox (`StateProvider`, read in the source) | **Added.** The page had one address, so nobody could link to a guest and the back button did nothing. `deep-link` |
+| Navigation goes in the URL, layout stays local | Proxmox (its `hslist` is view, resource and tab, and nothing else) | **Added.** A link says where you are. Pane widths are how you like to work, and sending those to somebody else would be rude. `deep-link` |
+| Back and forward walk the UI | Proxmox | **Added.** `deep-link` |
+| A URL short enough to paste | Proxmox (a positional list against a dictionary of every tab name) | **Declined.** That needs a central table naming each tab, which is the shape the capability registry just removed. corral uses readable keys, and accepts a longer address. |
 | Reset the layout | Dashboard widgets, and vSphere by its absence | **Added.** vSphere let admins lose a pane for good. `reset-layout` |
 
 ## Navigation

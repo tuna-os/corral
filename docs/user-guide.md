@@ -79,6 +79,17 @@ Access the Proxmox-style Web UI at `http://localhost:8006` or via `corral web`.
 
 ![Mobile Dashboard](screenshots/dashboard-mobile.png)
 
+#### Links to a screen
+
+The address bar follows what you look at. Select a guest and open its console,
+and the address holds both. Send that address to somebody else and they arrive
+on the same screen. The back and forward buttons move through the screens you
+visited.
+
+The address carries the tree view, the selection and the open tab. It does not
+carry how wide you keep the sidebar, which columns you hid, or where you put
+the dashboard widgets. Those stay in your own browser.
+
 #### Web keyboard shortcuts
 
 Press `Ctrl+K` (`⌘K` on macOS) to open the command palette. Type part of a

@@ -99,6 +99,29 @@ A new gesture needs no code here. The module already covers it.
 
 ## Where to add a feature
 
+### Addressable state
+
+The view, the selection and the open tab live in the URL fragment, through
+`ui/route.js`. Everything else about the workspace lives in local storage.
+The line between them is simple. A link must mean the same thing for the
+person you send it to. So where you are belongs in the address, and how wide
+you keep your sidebar does not.
+
+A new selection type needs nothing here. `route.js` encodes the type and the
+one thing it names. On the way back it puts that payload into both `key` and
+`name`, because the UI addresses a guest by key and a node by name. It holds
+no table of types.
+
+Two rules if you add a screen:
+
+- Call `markRendered()` after you change the selection or the tab. That
+  function writes the address. A tab click redraws one screen through its own
+  renderer, so `renderContent()` is not the only place this happens.
+- Never apply an address before the fleet has loaded. A link can name a guest.
+  `renderContent()` falls back to the datacenter when it cannot find one, which
+  drops the link and reports no error. `refresh()` applies the address once,
+  after the first load.
+
 ### A capability
 
 A capability is a thing a plugin provides, such as host power. It registers
