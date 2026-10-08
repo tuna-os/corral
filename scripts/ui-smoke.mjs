@@ -1166,6 +1166,77 @@ check(
   );
 }
 
+// ── dock-tabs (#342) ──────────────────────────────────────────────
+// The dock held one hard-coded Tasks panel. It is now a tab strip built from a
+// list of panels, so adding one is a declaration rather than a rewrite of the
+// head, and it carries the cluster events for whatever is selected. Tabs follow
+// the APG pattern: one stop in the tab order, arrow keys between them, focus
+// following selection.
+{
+  await page.goto(BASE);
+  await page.waitForSelector('#tree [data-vm-key]', { timeout: 30000 });
+  const tabs = await page.locator('.dock-tab').allTextContents();
+  check(tabs.length >= 2, `dock-tabs: the dock offers more than one panel (${tabs.join(', ')})`);
+
+  // Clicking the head still toggles the dock, which is how it always worked.
+  if (await page.evaluate(() => document.querySelector('#task-panel').classList.contains('collapsed'))) {
+    await page.click('#task-panel-head');
+    await page.waitForTimeout(400);
+  }
+  check(await page.locator('#dock-panel-tasks').isVisible(), 'dock-tabs: Tasks is the panel it opens on');
+
+  await page.click('.dock-tab[data-panel="events"]');
+  await page.waitForTimeout(600);
+  check(await page.locator('#dock-panel-events').isVisible(), 'dock-tabs: picking Events shows that panel');
+  check(!(await page.locator('#dock-panel-tasks').isVisible()), 'dock-tabs: and hides the one it replaced');
+  check(
+    await page.getAttribute('.dock-tab[data-panel="events"]', 'aria-selected') === 'true',
+    'dock-tabs: the selected tab says so',
+  );
+
+  // Events are per-VM, so with nothing selected the panel asks rather than
+  // showing an empty table that looks like a failed load.
+  check(
+    await page.locator('#dock-events-hint').isVisible(),
+    'dock-tabs: with no VM selected, Events asks for one',
+  );
+  await page.locator('#tree [data-vm-key]').first().click();
+  await page.waitForTimeout(1200);
+  check(
+    !(await page.locator('#dock-events-hint').isVisible()),
+    'dock-tabs: selecting a VM scopes Events to it',
+  );
+  await page.screenshot({ path: `${SHOTS}/dock-tabs.png` });
+
+  // Arrow keys move along the strip and focus goes with the selection.
+  await page.locator('.dock-tab[data-panel="events"]').focus();
+  await page.keyboard.press('ArrowLeft');
+  await page.waitForTimeout(400);
+  check(
+    await page.evaluate(() => document.querySelector('.dock-tab.active')?.dataset.panel) === 'tasks',
+    'dock-tabs: ArrowLeft moves to the previous panel',
+  );
+  check(
+    await page.evaluate(() => document.activeElement?.dataset?.panel) === 'tasks',
+    'dock-tabs: focus follows the selection',
+  );
+
+  // Which panel you left open is a preference, like the dock height.
+  await page.click('.dock-tab[data-panel="events"]');
+  await page.waitForTimeout(300);
+  await page.reload();
+  await page.waitForSelector('.dock-tab', { timeout: 30000 });
+  await page.waitForTimeout(800);
+  check(
+    await page.evaluate(() => document.querySelector('.dock-tab.active')?.dataset.panel) === 'events',
+    'dock-tabs: the dock remembers which panel was showing',
+  );
+
+  // Back to Tasks so a later run starts where it used to.
+  await page.click('.dock-tab[data-panel="tasks"]');
+  await page.waitForTimeout(300);
+}
+
 check(pageErrors.length === 0, `no JS page errors (${pageErrors.join('; ').slice(0, 200)})`);
 
 await browser.close();

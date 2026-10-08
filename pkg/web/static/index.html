@@ -55,13 +55,30 @@
      aria-label="Resize the task dock" tabindex="0"
      title="Drag to resize · double-click to reset"></div>
 <div id="task-panel" x-data="taskPanel()" x-init="start()" :class="{ collapsed: collapsed }">
+  <!-- The head still toggles the dock when clicked, which is how it has always
+       worked; the tabs stop that click so picking a panel never closes the
+       thing you are trying to look at. Tabs follow the APG pattern: one stop
+       in the tab order, arrow keys between them. -->
   <div id="task-panel-head" @click="collapsed = !collapsed">
-    <span id="task-panel-title">Tasks</span>
+    <div id="dock-tabs" role="tablist" aria-label="Dock panels"
+         @keydown.arrow-right.prevent="move(1)" @keydown.arrow-left.prevent="move(-1)"
+         @keydown.home.prevent="pick(panels[0].id)" @keydown.end.prevent="pick(panels[panels.length - 1].id)">
+      <template x-for="p in panels" :key="p.id">
+        <button type="button" class="dock-tab" role="tab"
+          :id="`dock-tab-${p.id}`" :data-panel="p.id"
+          :aria-selected="panel === p.id ? 'true' : 'false'"
+          :aria-controls="`dock-panel-${p.id}`"
+          :tabindex="panel === p.id ? 0 : -1"
+          :class="{ active: panel === p.id }"
+          @click.stop="pick(p.id)" x-text="p.title"></button>
+      </template>
+    </div>
     <span id="task-panel-summary" class="muted" x-text="summary"></span>
     <span class="spacer"></span>
     <span id="task-panel-chevron" x-text="collapsed ? '▴' : '▾'"></span>
   </div>
   <div id="task-panel-body">
+    <div id="dock-panel-tasks" role="tabpanel" aria-labelledby="dock-tab-tasks" x-show="panel === 'tasks'">
     <table>
       <thead><tr><th>Started</th><th>Action</th><th>Target</th><th>Duration</th><th>Status</th></tr></thead>
       <tbody id="task-rows">
@@ -81,6 +98,31 @@
         </template>
       </tbody>
     </table>
+    </div>
+
+    <!-- Events come from the cluster, scoped to whatever is selected: there is
+         no cluster-wide events endpoint, and a VM's events are the ones an
+         operator is looking for when something will not start. -->
+    <div id="dock-panel-events" role="tabpanel" aria-labelledby="dock-tab-events" x-show="panel === 'events'">
+      <p class="muted" x-show="!eventsFor" id="dock-events-hint">Select a VM to see its cluster events.</p>
+      <p class="muted" x-show="eventsError" x-text="eventsError"></p>
+      <p class="muted" x-show="eventsFor && !eventsError && events.length === 0"
+         x-text="`No events recorded for ${eventsFor}.`"></p>
+      <table x-show="events.length">
+        <thead><tr><th>Time</th><th>Type</th><th>Reason</th><th>Object</th><th>Message</th></tr></thead>
+        <tbody id="dock-event-rows">
+          <template x-for="(e, i) in events.slice(0, 100)" :key="i">
+            <tr>
+              <td x-text="e.time"></td>
+              <td><span class="pill" :class="e.type === 'Warning' ? 'off' : 'on'" x-text="e.type"></span></td>
+              <td x-text="e.reason"></td>
+              <td x-text="e.object"></td>
+              <td x-text="e.message"></td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
   </div>
 </div>
 

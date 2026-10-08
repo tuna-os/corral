@@ -524,6 +524,17 @@ body.tree-collapsed #tree-resizer:focus-visible { background: var(--accent); }
   font-size: .85rem;
 }
 #task-panel-head .spacer { flex: 1; }
+/* The dock's panel tabs. One stop in the tab order (roving tabindex, set by
+   dock.js), so Tab moves past the strip rather than through every panel. */
+#dock-tabs { display: flex; gap: 2px; }
+.dock-tab {
+  background: none; border: none; border-bottom: 2px solid transparent;
+  color: var(--muted); font: inherit; padding: 2px 10px 4px; cursor: pointer;
+  border-radius: 4px 4px 0 0;
+}
+.dock-tab:hover { color: var(--fg); }
+.dock-tab.active { color: var(--fg); border-bottom-color: var(--accent); }
+.dock-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 #task-panel-body { height: var(--dock-h); overflow-y: auto; padding: 0 14px 10px; }
 #task-panel table { width: 100%; font-size: .82rem; }
 
