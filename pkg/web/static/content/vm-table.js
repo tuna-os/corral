@@ -10,7 +10,7 @@ import { makeDraggable } from '../pools.js';
 import { state } from '../state.js';
 import { renderTree } from '../tree.js';
 import { esc, toast } from '../ui/dom.js';
-import { attachContextMenu } from '../ui/menu.js';
+import { attachContextMenu, openMenuFrom } from '../ui/menu.js';
 import { post } from './vm.js';
 
 export function vmTable(list) {
@@ -50,6 +50,52 @@ const VM_GRID_COLUMNS = [
       chips.appendChild(chip);
     }
     return chips;
+  } },
+  // One action on every row, and the action is the one the row's state allows.
+  //
+  // Until now every action here needed a checkbox and then the bulk bar above,
+  // or opening the guest. Cockpit's machine list puts a single button on each
+  // row and swaps it between Run and Shut down with the guest's state, so the
+  // common case costs one click and the button never offers something the
+  // guest cannot do. The rest of the actions stay one menu away, which is the
+  // same set the row's right-click already offers.
+  { id: 'actions', label: 'Actions', width: 128, plain: true, render: (vm) => {
+    const wrap = document.createElement('span');
+    wrap.className = 'row-acts';
+    const up = vm.running || (vm.status && (vm.status.includes('Starting') || vm.status.includes('Creating')));
+    const act = up ? 'stop' : 'start';
+    const primary = document.createElement('button');
+    primary.type = 'button';
+    primary.className = 'btn sm';
+    primary.dataset.rowAction = act;
+    primary.title = up ? `Stop ${vm.name}` : `Start ${vm.name}`;
+    primary.setAttribute('aria-label', primary.title);
+    primary.innerHTML = icon(up ? 'stop' : 'play');
+    primary.onclick = async (event) => {
+      // The row itself opens the guest, so an action inside it must not also.
+      event.stopPropagation();
+      primary.disabled = true;
+      try {
+        await api(vmURL(vm, `/${act}`), { method: 'POST' });
+        toast(`${up ? 'Stop' : 'Start'} ${vm.name}: ok`);
+      } catch {
+        toast(`${up ? 'Stop' : 'Start'} ${vm.name}: failed`);
+      }
+      setTimeout(() => refresh(), 800);
+    };
+    const more = document.createElement('button');
+    more.type = 'button';
+    more.className = 'btn sm ghost';
+    more.dataset.rowAction = 'more';
+    more.title = `More actions for ${vm.name}`;
+    more.setAttribute('aria-label', more.title);
+    more.textContent = '\u22ef';
+    more.onclick = (event) => {
+      event.stopPropagation();
+      openMenuFrom(more, () => vmMenuItems(vm));
+    };
+    wrap.append(primary, more);
+    return wrap;
   } },
 ];
 

@@ -1807,6 +1807,86 @@ check(
   );
 }
 
+// ── grid-row-actions ────────────────────────────────────
+// Every action on a guest used to need a checkbox and the bulk bar, or opening
+// the guest. Cockpit's machine list carries one button per row and swaps it
+// between Run and Shut down with the guest's state. If this check fails, either
+// the button stopped following the state, which offers an action the guest
+// cannot do, or the row swallowed the keys of the controls inside it.
+{
+  await page.goto(BASE);
+  await page.waitForSelector('#content .vm-check', { timeout: 30000 });
+  const ROWS = '#content .grid-scroll table tbody tr';
+
+  check(
+    await page.locator(`${ROWS} .row-acts [data-row-action]`).count() > 0,
+    'grid-row-actions: every row carries its own actions',
+  );
+
+  // The button has to agree with the status the same row shows. Read both off
+  // the screen rather than naming a guest, because the demo fleet and the
+  // column order both move.
+  const pairs = await page.evaluate((sel) => {
+    const head = [...document.querySelectorAll('#content .grid-scroll thead tr:first-child th')]
+      .map((th) => th.textContent.trim().toLowerCase());
+    const at = head.findIndex((h) => h.startsWith('status'));
+    return [...document.querySelectorAll(sel)].map((tr) => ({
+      status: at >= 0 ? (tr.children[at]?.textContent || '').trim() : '',
+      action: tr.querySelector('.row-acts [data-row-action]')?.dataset.rowAction || '',
+    }));
+  }, ROWS);
+  const wrong = pairs.filter(({ status, action }) => {
+    if (!status || !action) return false;
+    const up = /Running|Starting|Creating|Paused/i.test(status);
+    return up ? action !== 'stop' : action !== 'start';
+  });
+  check(
+    pairs.length > 0 && wrong.length === 0,
+    `grid-row-actions: the button matches the row's state (${pairs.length} rows, ${wrong.length} disagree)`,
+  );
+
+  // A column of buttons must not claim a sort or a filter it cannot honour.
+  check(
+    await page.evaluate(() => {
+      const head = [...document.querySelectorAll('#content .grid-scroll thead tr:first-child th')];
+      const th = head.find((x) => x.textContent.trim().toLowerCase().startsWith('actions'));
+      if (!th) return false;
+      const index = head.indexOf(th);
+      const filter = document.querySelectorAll('#content .grid-scroll thead tr.grid-filters th')[index];
+      return !th.querySelector('.grid-sort') && !filter?.querySelector('input');
+    }),
+    'grid-row-actions: the actions column offers no sort and no filter',
+  );
+
+  // The overflow button reaches the same set the row's right-click offers.
+  await page.click(`${ROWS}:first-child .row-acts [data-row-action="more"]`);
+  await page.waitForTimeout(250);
+  check(
+    await page.locator('.context-menu').count() > 0,
+    'grid-row-actions: the overflow button opens the action menu',
+  );
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(150);
+
+  // The row owns Enter and Space only when the focus is on the row itself. The
+  // row opens a guest on both keys, so a checkbox that let the row see Space
+  // would navigate away instead of selecting.
+  const check1 = `${ROWS}:first-child .vm-check`;
+  await page.focus(check1);
+  await page.keyboard.press('Space');
+  await page.waitForTimeout(250);
+  check(
+    await page.isChecked(check1) && await page.locator('#content .vm-check').count() > 0,
+    'grid-row-actions: Space on a row checkbox selects it and does not open the guest',
+  );
+  // Put the selection back: the demo server outlives this run.
+  await page.keyboard.press('Space');
+  await page.waitForTimeout(200);
+  check(!await page.isChecked(check1), 'grid-row-actions: and Space clears it again');
+
+  await page.screenshot({ path: `${SHOTS}/grid-row-actions.png` });
+}
+
 check(pageErrors.length === 0, `no JS page errors (${pageErrors.join('; ').slice(0, 200)})`);
 
 await browser.close();

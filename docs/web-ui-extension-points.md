@@ -139,6 +139,12 @@ Call `mountGrid(host, { id, columns, rows, rowKey, ... })`. It returns a
 handle with `update(rows)` and `refresh()`. Use `update` for new data. Do not
 mount a second grid.
 
+A column of controls takes `plain: true`. That drops its sort button and its
+filter box, because neither can act on a button. Give it a `render(row)` that
+returns a node. Stop the click inside that node, or it reaches the row, and the
+row also opens the guest. The actions column in `content/vm-table.js` is the
+example.
+
 The grid saves the column order, the hidden columns, the widths, the sort, the
 filters, the saved views and the row density for each `id`. Row density has
 three modes. Their heights are in `DENSITIES` in `grid.js` and in the

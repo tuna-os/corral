@@ -233,17 +233,26 @@ export function mountGrid(host, options) {
       th.addEventListener('dragstart', () => { dragID = col.id; });
       th.addEventListener('dragover', (event) => event.preventDefault());
       th.addEventListener('drop', (event) => { event.preventDefault(); const from = state.order.indexOf(dragID); const to = state.order.indexOf(col.id); if (from >= 0 && to >= 0 && from !== to) { state.order.splice(from, 1); state.order.splice(to, 0, dragID); save(id, state); render(); } });
-      const button = document.createElement('button'); button.type = 'button'; button.className = 'grid-sort';
-      const sortAt = state.sort.findIndex((x) => x.id === col.id); const sort = state.sort[sortAt];
-      button.textContent = `${col.label}${sort ? ` ${sort.dir === 'asc' ? '▲' : '▼'}${state.sort.length > 1 ? sortAt + 1 : ''}` : ''}`;
-      button.title = 'Sort; hold Shift to add another column'; button.onclick = (event) => setSort(col.id, event.shiftKey);
+      // A `plain` column holds controls rather than a value, so it gets a
+      // label instead of a sort button. Sorting rows by the buttons in them
+      // means nothing, and an operator who reaches that header expects the
+      // sort it offers to do something.
+      let button;
+      if (col.plain) {
+        button = document.createElement('span'); button.className = 'grid-plain'; button.textContent = col.label;
+      } else {
+        button = document.createElement('button'); button.type = 'button'; button.className = 'grid-sort';
+        const sortAt = state.sort.findIndex((x) => x.id === col.id); const sort = state.sort[sortAt];
+        button.textContent = `${col.label}${sort ? ` ${sort.dir === 'asc' ? '▲' : '▼'}${state.sort.length > 1 ? sortAt + 1 : ''}` : ''}`;
+        button.title = 'Sort; hold Shift to add another column'; button.onclick = (event) => setSort(col.id, event.shiftKey);
+      }
       const handle = document.createElement('span'); handle.className = 'grid-resizer'; handle.setAttribute('role', 'separator'); handle.tabIndex = 0; handle.setAttribute('aria-label', `Resize ${col.label}`);
       handle.onkeydown = (event) => { if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); resize(col.id, (state.widths[col.id] || col.width || 140) + (event.key === 'ArrowLeft' ? -10 : 10)); } };
       handle.onpointerdown = (event) => { event.preventDefault(); const startX = event.clientX; const startWidth = state.widths[col.id] || th.getBoundingClientRect().width; const move = (e) => { state.widths[col.id] = clamp(startWidth + e.clientX - startX, 64, 600); const target = [...colgroup.children][cols.indexOf(col) + 1]; target.style.width = `${state.widths[col.id]}px`; }; const up = () => { document.removeEventListener('pointermove', move); document.removeEventListener('pointerup', up); save(id, state); renderColumnMenu(); }; document.addEventListener('pointermove', move); document.addEventListener('pointerup', up); };
       th.append(button, handle); labels.appendChild(th);
     });
     const filters = document.createElement('tr'); filters.className = 'grid-filters'; filters.appendChild(document.createElement('th'));
-    cols.forEach((col) => { const th = document.createElement('th'); const input = document.createElement('input'); input.type = 'search'; input.placeholder = `Filter ${col.label}`; input.setAttribute('aria-label', `Filter ${col.label}`); input.value = state.filters[col.id] || ''; input.oninput = () => { state.filters[col.id] = input.value; save(id, state); viewportStart = 0; render(); requestAnimationFrame(() => host.querySelector(`[aria-label="Filter ${CSS.escape(col.label)}"]`)?.focus()); }; th.appendChild(input); filters.appendChild(th); });
+    cols.forEach((col) => { const th = document.createElement('th'); if (col.plain) { filters.appendChild(th); return; } const input = document.createElement('input'); input.type = 'search'; input.placeholder = `Filter ${col.label}`; input.setAttribute('aria-label', `Filter ${col.label}`); input.value = state.filters[col.id] || ''; input.oninput = () => { state.filters[col.id] = input.value; save(id, state); viewportStart = 0; render(); requestAnimationFrame(() => host.querySelector(`[aria-label="Filter ${CSS.escape(col.label)}"]`)?.focus()); }; th.appendChild(input); filters.appendChild(th); });
     head.append(labels, filters);
 
     // Rows are collected and then diffed into the body rather than replacing
@@ -263,6 +272,10 @@ export function mountGrid(host, options) {
       const tr = document.createElement('tr'); tr.dataset.key = rowKey(row); tr.tabIndex = 0;
       tr.onclick = (event) => { if (!event.target.closest('.check')) onRowClick?.(row); };
       tr.onkeydown = (event) => {
+        // Only the row's own keys. A control inside the row owns its keys:
+        // Space toggles the select checkbox and Enter presses a row action, and
+        // the row must not preventDefault either of those out from under it.
+        if (event.target !== tr) return;
         if (event.key === 'Enter' || event.key === ' ') {
           // Space would otherwise scroll the pane out from under the row.
           event.preventDefault();

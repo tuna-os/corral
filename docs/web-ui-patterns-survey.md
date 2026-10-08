@@ -26,6 +26,10 @@ about the product, not from the product or its own documentation.
 | Nutanix Prism | **Secondary.** The Nutanix Bible, a community reference. |
 | Linear | **Secondary.** Write-ups about its palette and shortcuts. |
 | k9s | **Secondary.** Comparison articles that quote its `:po` prefixes. |
+| Harvester | **Secondary.** The Harvester and Rancher documentation, and its UI extension's architecture page. |
+| Cockpit | **Primary** for the list behaviour: the Fedora and Rocky guides to the Machines page. |
+| Portainer | **Secondary.** Tutorials and reviews, because the project publishes no UI guide. |
+| Rancher | **Secondary.** Its own documentation for the Virtualization Management area. |
 | Data-table conventions | **Secondary.** A 2026 design guide, not a standard. |
 
 A secondary row is still useful, because the pattern repeats across products.
@@ -36,6 +40,10 @@ Two sources had to agree before we took a pattern from them.
 | Interface | Why it is here |
 |---|---|
 | [Proxmox VE](https://pve.proxmox.com/wiki/Graphical_User_Interface) | The closest peer. Same four regions, same job. |
+| [Harvester](https://docs.harvesterhci.io/v1.8/) | The closest peer of all: a web console over KubeVirt. |
+| [Cockpit](https://docs.fedoraproject.org/en-US/fedora-server/virtualization/vm-management-cockpit/) | The same guests, managed from one host. |
+| [Portainer](https://earthly.dev/blog/portainer-for-docker-container-management/) | The container console that corral's CT views answer to. |
+| [Rancher](https://ranchermanager.docs.rancher.com/integrations-in-rancher/harvester/overview) | One console over both guests and workloads. |
 | vSphere Web Client | The same shape, and a documented failure corral can avoid. |
 | [Nutanix Prism](https://www.nutanixbible.com/3b-book-of-prism-navigation.html) | Search-first navigation over a tree. |
 | [VS Code](https://code.visualstudio.com/docs/editing/getting-started/tips-and-tricks) | The reference for a command palette and a breadcrumb. |
@@ -66,6 +74,8 @@ Two sources had to agree before we took a pattern from them.
 | Breadcrumb to the parent | VS Code, vSphere | **Added.** `breadcrumb` |
 | Search before menus | Prism, Grafana | Palette existed. **Added** a visible way in. `palette-reach` |
 | Single-key jumps | Prism, Linear | Present (`g d`, `c`, `s`). **Added** hints, because nothing told anyone. `palette-keys` |
+| A list, then a detail screen with its tools along the top | Portainer, Cockpit | Present. |
+| A wizard behind the list's Create action | Harvester | Present. |
 | Status bar | VS Code | **Declined.** The dock already holds the state a status bar would carry. |
 
 ## The command palette
@@ -89,6 +99,13 @@ Two sources had to agree before we took a pattern from them.
 | Density as named modes | Data-table conventions | **Added.** Three modes, kept per grid. `grid-density` |
 | Arrow keys move between rows | Data-table conventions | **Added.** Tab belongs to the controls in a row. `grid-keys` |
 | Quiet hover, loud focus ring | Data-table conventions | **Added** with density. |
+| One action on each row, following the row's state | Cockpit | **Added.** Every action needed a checkbox and the bulk bar, or opening the guest. `grid-row-actions` |
+| The rest of the actions one menu away | Cockpit, Portainer | **Added** with the row action, from the set the right-click already offered. `grid-row-actions` |
+| A control in a row keeps its own keys | APG practice | **Added.** Space on a row's checkbox opened the guest instead of selecting it. `grid-row-actions` |
+| Act on many rows from the list | Portainer | Present. `bulk-select` |
+| A colour and a word for state | Portainer, Cockpit | Present. |
+| Node placement in the list | Rancher | Present. |
+| Live usage bars in the rows | Cockpit | **Declined.** The CPU and Mem columns hold what a guest was given. A bar reads as a share of something in use, so it would state a number corral does not have. |
 
 ## State and redraw
 

@@ -403,6 +403,17 @@ td.check input, th.check input { cursor: pointer; vertical-align: middle; }
 .data-grid th { position: relative; padding: 0; }
 .grid-sort { width: 100%; height: 38px; padding: 0 18px 0 10px; border: 0; background: none; color: var(--muted); text-align: left; text-transform: uppercase; letter-spacing: .04em; cursor: pointer; }
 .grid-sort:hover, .grid-sort:focus-visible { color: var(--text); background: var(--panel-2); }
+/* A column of controls: the same header box as a sortable column, without the
+   affordances of one, so it does not read as a button that does nothing. */
+.grid-plain { display: block; width: 100%; height: 38px; padding: 0 18px 0 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; line-height: 38px; }
+/* Row actions sit flush and quiet until the row is hovered or holds focus,
+   so a long list does not read as a wall of buttons. */
+.row-acts { display: inline-flex; gap: 4px; }
+.row-acts .btn.sm { padding: 2px 6px; opacity: .55; transition: opacity .12s ease; }
+tr:hover .row-acts .btn.sm, tr:focus-within .row-acts .btn.sm { opacity: 1; }
+.row-acts .btn.ghost { background: none; border-color: transparent; }
+@media (prefers-reduced-motion: reduce) { .row-acts .btn.sm { transition: none; } }
+@media (hover: none) { .row-acts .btn.sm { opacity: 1; } }
 .grid-resizer { position: absolute; top: 4px; right: 0; bottom: 4px; width: 8px; border-right: 2px solid var(--border); cursor: col-resize; }
 .grid-resizer:hover, .grid-resizer:focus-visible { border-color: var(--accent); outline: 0; }
 .grid-filters input { width: calc(100% - 8px); margin: 3px 4px 5px; padding: 5px 7px; font-size: .75rem; }
