@@ -1996,6 +1996,69 @@ check(
   await page.screenshot({ path: `${SHOTS}/host-power.png` });
 }
 
+// ── dock-keys ──────────────────────────────────────────────
+// Prism gives a panel its own key rather than only a tab to click. The dock
+// panels here were reachable by mouse or by Tab and nothing else. The same key
+// hides the panel again, so one key both shows and dismisses it.
+{
+  await page.goto(BASE);
+  await page.waitForSelector('#content .vm-check', { timeout: 30000 });
+  // The dock ships shut, and an earlier check may have left it open on a
+  // panel, so start from a known state.
+  await page.evaluate(() => document.dispatchEvent(new CustomEvent('corral:reset-layout')));
+  await page.waitForTimeout(400);
+  check(
+    !(await page.locator('#dock-panel-events').isVisible()),
+    'dock-keys: the dock starts shut',
+  );
+
+  await page.keyboard.press('t');
+  await page.waitForTimeout(400);
+  check(await page.locator('#dock-panel-tasks').isVisible(), 'dock-keys: t shows Tasks');
+
+  await page.keyboard.press('e');
+  await page.waitForTimeout(400);
+  check(await page.locator('#dock-panel-events').isVisible(), 'dock-keys: e shows Events');
+
+  await page.keyboard.press('e');
+  await page.waitForTimeout(400);
+  check(
+    !(await page.locator('#dock-panel-events').isVisible()),
+    'dock-keys: the same key hides the panel again',
+  );
+
+  // A letter typed into a field is a letter. This is the rule the whole
+  // single-key scheme rests on, so the new keys have to obey it too.
+  await page.click('#tree-filter');
+  await page.fill('#tree-filter', '');
+  await page.type('#tree-filter', 'te');
+  await page.waitForTimeout(400);
+  check(
+    await page.inputValue('#tree-filter') === 'te'
+      && !(await page.locator('#dock-panel-events').isVisible()),
+    'dock-keys: typing t or e in a field does not open the dock',
+  );
+  await page.fill('#tree-filter', '');
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(300);
+
+  // The palette teaches the keys, the same way it does for c and s.
+  await page.keyboard.press('Control+k');
+  await page.waitForTimeout(300);
+  await page.fill('#palette-input', 'tasks');
+  await page.waitForTimeout(400);
+  check(
+    await page.locator('#palette-list li', { hasText: 'Tasks' }).locator('kbd', { hasText: 't' }).count() > 0,
+    'dock-keys: the palette shows the key beside the panel',
+  );
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(200);
+
+  // Put the dock back to how it ships.
+  await page.evaluate(() => document.dispatchEvent(new CustomEvent('corral:reset-layout')));
+  await page.waitForTimeout(300);
+}
+
 check(pageErrors.length === 0, `no JS page errors (${pageErrors.join('; ').slice(0, 200)})`);
 
 await browser.close();

@@ -74,6 +74,16 @@ document.addEventListener('alpine:init', () => {
         this.collapsed = true;
         this.panel = 'tasks';
       });
+      // A single key opens a panel. The key handler cannot call into an Alpine
+      // island, so it asks through the same bus that Reset layout uses.
+      document.addEventListener('corral:open-dock-panel', (e) => {
+        const id = e.detail;
+        if (!PANELS.some((x) => x.id === id)) return;
+        // The same key again shuts the dock, so one key both opens and
+        // dismisses the panel rather than only ever opening it.
+        if (!this.collapsed && this.panel === id) { this.collapsed = true; return; }
+        this.pick(id);
+      });
       // Events are per-VM, so a new selection means a different list. Listening
       // on the shared bus rather than polling the selection keeps this to one
       // fetch per actual change.

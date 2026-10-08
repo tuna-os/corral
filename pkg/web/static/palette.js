@@ -39,6 +39,8 @@ const SHORTCUT_KEYS = {
   'vm-console': ['c'],
   'vm-start': ['s'],
   'vm-stop': ['s'],
+  'dock:tasks': ['t'],
+  'dock:events': ['e'],
 };
 
 // ── entries ───────────────────────────────────────────────────────
@@ -67,6 +69,19 @@ function entries() {
       // and a screen reader would otherwise read out the letters as content.
       keys: SHORTCUT_KEYS[`view:${type}`],
       run: () => go({ type }),
+    });
+  }
+  // The dock panels, so the keys above are discoverable and the panels can be
+  // reached by search as well as by their tab.
+  for (const [id, label, sub] of [
+    ['tasks', 'Tasks', 'recent activity'],
+    ['events', 'Events', 'for the current selection'],
+  ]) {
+    add({
+      id: `dock:${id}`, kind: 'view', icon: icon(id === 'tasks' ? 'menu' : 'info'),
+      label, sub, keywords: 'dock panel log',
+      keys: SHORTCUT_KEYS[`dock:${id}`],
+      run: () => document.dispatchEvent(new CustomEvent('corral:open-dock-panel', { detail: id })),
     });
   }
   add({ id: 'action:create-vm', kind: 'create', icon: icon('plus'), label: 'Create VM', sub: 'new virtual machine', keywords: 'new', mutates: true, run: createVM });
@@ -334,6 +349,8 @@ const SHORTCUTS = [
   [['c'], 'Open the selected VM\'s console'],
   [['s'], 'Start or stop the selected VM'],
   [['g', 'd'], 'Go to the datacenter'],
+  [['t'], 'Show tasks (again to hide)'],
+  [['e'], 'Show events for the selection (again to hide)'],
   [['Esc'], 'Close a dialog'],
   [['vm:'], 'In the palette, narrow to guests (also node:, pool:, view:, do:)'],
 ];
@@ -341,6 +358,12 @@ const SHORTCUTS = [
 let help = null;
 
 function closeShortcuts() { if (help?.open) help.close(); }
+
+// The dock is an Alpine island, so it is asked rather than called. It decides
+// what to do, which keeps the toggle behaviour in one place.
+function openDockPanel(id) {
+  document.dispatchEvent(new CustomEvent('corral:open-dock-panel', { detail: id }));
+}
 
 export function openShortcuts() {
   if (!help) {
@@ -404,6 +427,10 @@ function onKey(e) {
 
   switch (e.key) {
     case '?': e.preventDefault(); openShortcuts(); break;
+    // Prism gives a panel its own key rather than only a tab to click. The
+    // letters are corral's own, because the panels are named Tasks and Events.
+    case 't': e.preventDefault(); closeShortcuts(); openDockPanel('tasks'); break;
+    case 'e': e.preventDefault(); closeShortcuts(); openDockPanel('events'); break;
     case '/': e.preventDefault(); closeShortcuts(); ctx.focusFilter(); break;
     case 'g': pendingG = Date.now(); break;
     case 'c': {
