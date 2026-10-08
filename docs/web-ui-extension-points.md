@@ -58,6 +58,20 @@ data. Put the source data in the signature and let JSON compare it:
 keyed(row, `vm:${vmKey(vm)}`, [vm, lvl, selected]);
 ```
 
+**Keep volatile values out of the fleet payload.** The signature holds the
+whole guest. So a field that changes on its own clock makes every signature
+differ on every poll. Each row then rebuilds, and the reconciliation does
+nothing: focus, drags and selections go back to being lost. An uptime, a live
+CPU value or a timestamp in `/api/vms` would do it.
+
+Two polls of that endpoint are byte-identical today. The `tree-reconcile`
+check holds that: it counts the rows that kept their identity across two
+polls, so a volatile field turns it red.
+
+Proxmox compares an explicit list of drawn fields instead, and mutates the
+record in place. That suits it, because its tree reads from a record and not
+from a closure. It does not suit this UI.
+
 The module also guarantees two things. Both come from defects that the suite
 found:
 

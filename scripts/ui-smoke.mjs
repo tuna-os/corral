@@ -2193,6 +2193,65 @@ check(
   await fresh.close();
 }
 
+// ── vanished-selection ────────────────────────────────────
+// A guest can disappear while you are looking at it: somebody deletes it, or a
+// migration finishes. corral dropped to the datacenter, the furthest place
+// from where you were. Proxmox's tree walks up and selects the nearest
+// surviving ancestor, so you land beside the guest's siblings.
+//
+// The guest is removed from the response rather than from the demo, so this
+// check leaves no state behind and the server outlives the run.
+{
+  const fresh = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  const freshErrors = [];
+  fresh.on('pageerror', (e) => freshErrors.push(e.message));
+  await fresh.goto(BASE);
+  await fresh.waitForSelector('#tree [data-vm-key]', { timeout: 30000 });
+  await fresh.waitForTimeout(1200);
+
+  // Pick a guest that is actually on a node, since a guest with no node has no
+  // ancestor to fall back to.
+  // Read the key off the row the page drew, rather than rebuild the format
+  // here: vmKey() composes peer, context, namespace and name, and a copy of
+  // that rule in this file would be one more thing to keep in step.
+  const subject = await fresh.evaluate(async () => {
+    const vms = await (await fetch('/api/vms')).json();
+    const onNode = new Set(vms.filter((v) => v.node).map((v) => v.name));
+    for (const row of document.querySelectorAll('#tree [data-vm-key]')) {
+      const name = row.dataset.guest;
+      if (!onNode.has(name)) continue;
+      return { key: row.dataset.vmKey, name, node: vms.find((v) => v.name === name).node };
+    }
+    return null;
+  });
+  check(!!subject, `vanished-selection: the demo has a guest on a node (${subject?.name || 'none'})`);
+
+  await fresh.click(`#tree [data-vm-key="${subject.key}"]`);
+  await fresh.waitForTimeout(900);
+  check(
+    (await fresh.textContent('#content h1')).includes(subject.name),
+    'vanished-selection: that guest is on screen',
+  );
+
+  // Now it is gone from the fleet, as a deletion would leave it.
+  await fresh.route('**/api/vms', async (route) => {
+    const response = await route.fetch();
+    const vms = await response.json();
+    await route.fulfill({ json: vms.filter((v) => v.name !== subject.name) });
+  });
+  // Long enough for a poll to come back and redraw.
+  await fresh.waitForTimeout(9000);
+  const landed = (await fresh.textContent('#content h1')).trim();
+  check(
+    landed.includes(subject.node),
+    `vanished-selection: lands on the guest's node, not the datacenter (${landed})`,
+  );
+  check(freshErrors.length === 0, `vanished-selection: no errors (${freshErrors.join('; ').slice(0, 120)})`);
+
+  await fresh.unroute('**/api/vms');
+  await fresh.close();
+}
+
 check(pageErrors.length === 0, `no JS page errors (${pageErrors.join('; ').slice(0, 200)})`);
 
 await browser.close();

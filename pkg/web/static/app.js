@@ -407,18 +407,43 @@ function applyRoute() {
   emit('select', { selected: state.selected, tab: state.tab });
 }
 
+// Where to go when the thing on screen stops existing.
+//
+// A guest can vanish under you: somebody deletes it, or a migration finishes
+// and it is gone from the node you were watching. This used to drop to the
+// datacenter, which is the furthest possible place from where you were.
+// Proxmox walks up the parent chain and selects the nearest ancestor that
+// still exists, so you land beside the guest's siblings instead of at the top.
+//
+// The parent has to be recorded while the guest is still here, because once it
+// is gone there is nothing left to ask. renderContent() keeps it on each draw.
+let lastParentNode = '';
+
+function fallbackSelection() {
+  if (lastParentNode && state.nodes.some((n) => n.name === lastParentNode)) {
+    return { type: 'node', name: lastParentNode };
+  }
+  return { type: 'dc' };
+}
+
 export function renderContent() {
   const main = $('#content');
   syncRoute();
   if (state.selected.type === 'vm') {
     const vm = findVM(state.selected.key);
-    if (!vm) { state.selected = { type: 'dc' }; }
-    else return renderVM(main, vm);
+    if (!vm) { state.selected = fallbackSelection(); }
+    else {
+      lastParentNode = vm.node || '';
+      return renderVM(main, vm);
+    }
   }
   if (state.selected.type === 'ct') {
     const c = findCT(state.selected.key);
-    if (!c) { state.selected = { type: 'dc' }; }
-    else return renderCT(main, c);
+    if (!c) { state.selected = fallbackSelection(); }
+    else {
+      lastParentNode = c.node || '';
+      return renderCT(main, c);
+    }
   }
   if (state.selected.type === 'node') return renderNode(main, state.selected.name);
   if (state.selected.type === 'namespace') return renderNamespace(main, state.selected.name);

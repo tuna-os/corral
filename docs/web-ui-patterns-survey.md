@@ -150,6 +150,8 @@ documents the keyboard model. That chapter is where the Prism rows come from.
 | One poll at a time | Proxmox (`UpdateStore` schedules the next load from the last load's callback) | **Added.** A fixed 5-second timer over an asynchronous refresh sent a second request before the first came back. Measured: two in flight against a slow endpoint, now one. `poll-backoff` |
 | A slow server is polled less | Proxmox (its interval is the base plus twice the last load's runtime) | **Added**, with the same arithmetic. Nobody tunes it, and a struggling server gets room. `poll-backoff` |
 | A refresh asked for during a poll is not lost | — | **Added** with the guard. The callers that force a refresh have just changed something and have to see it. |
+| Land on the nearest surviving parent | Proxmox (`ResourceTree` walks the parent chain) | **Added.** A deleted or migrated guest dropped you at the datacenter, the furthest place from where you were. `vanished-selection` |
+| Compare only the fields that are drawn | Proxmox (`changedFields`, and it mutates the record in place) | **Declined**, and measured first. corral rebuilds a row when any field of the guest changes, because its handlers close over the guest object and a reused node must not hold an old one. That is only safe while the fleet payload carries nothing volatile, which it does not: two polls of `/api/vms` are byte-identical. `tree-reconcile` is what guards it, because a volatile field would churn every signature and the kept-row count would drop. |
 
 ## Customisation
 
