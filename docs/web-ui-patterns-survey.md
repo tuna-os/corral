@@ -8,6 +8,29 @@ Each row names the pattern, where we saw it, and what corral does. "Added"
 rows name the check in `scripts/ui-smoke.mjs` that holds the behaviour in
 place.
 
+## How we checked each one
+
+Not every row rests on the same quality of evidence, so the table below says
+which. Read a "secondary" row as weaker. The pattern comes from a write-up
+about the product, not from the product or its own documentation.
+
+| Interface | Evidence |
+|---|---|
+| KubeStellar | **Source.** We cloned kubestellar/ui and read `plugin.yml`, `PluginAPI.ts` and the plugin types. |
+| W3C APG | **Primary.** The pattern pages themselves. |
+| WCAG | **Primary.** The success criteria. |
+| Proxmox VE | **Primary.** The GUI page of the Proxmox documentation. |
+| VS Code | **Primary.** The keybindings and tips pages. |
+| Grafana | **Primary.** The panel and dashboard documentation. |
+| vSphere | **Primary** for the failure: a Broadcom support article about a lost pane. |
+| Nutanix Prism | **Secondary.** The Nutanix Bible, a community reference. |
+| Linear | **Secondary.** Write-ups about its palette and shortcuts. |
+| k9s | **Secondary.** Comparison articles that quote its `:po` prefixes. |
+| Data-table conventions | **Secondary.** A 2026 design guide, not a standard. |
+
+A secondary row is still useful, because the pattern repeats across products.
+Two sources had to agree before we took a pattern from them.
+
 ## The interfaces
 
 | Interface | Why it is here |
@@ -123,3 +146,11 @@ place.
   twice.
 - **Plugin UI contributions.** RFC-0002 holds the design. A maintainer owns
   that call, because it changes the boundary in ADR-0007.
+- **Stage 0 of RFC-0002 is blocked on the demo fixture, not on the design.**
+  That stage needs no contract change: it gives the dashboard and the tree a
+  run-time registry and moves host-power onto it, which deletes most of the 43
+  lines of capability knowledge in core. The obstacle is that `corral web
+  --demo` has no host-power source, so `/api/hostpower` answers with an empty
+  list. The tree rows, the context menu and the screen that the refactor would
+  touch cannot appear, and `scripts/ui-smoke.mjs` cannot cover them. A demo
+  host-power source has to come first, or the refactor goes in unverified.
