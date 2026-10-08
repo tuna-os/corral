@@ -8,13 +8,19 @@ export async function renderExtensions(main) {
   main.innerHTML = `<div class="page-head"><h1>${icon('extension')} Extensions</h1></div>
     <p class="muted" style="margin-bottom:14px">Optional plugins from the Corral marketplace.
       Installed plugins add <code>corral &lt;name&gt;</code> commands.</p>
-    <div id="ext-list"><p class="muted">loading…</p></div>`;
+    <label class="ext-filter" hidden>
+      <span class="sr-only">Filter extensions</span>
+      <input type="search" id="ext-filter" placeholder="Filter extensions…"
+        aria-label="Filter extensions by name, description or backend" aria-controls="ext-list">
+    </label>
+    <div id="ext-list"><p class="muted">loading…</p></div>
+    <p class="muted ext-empty" hidden>No extension matches that filter.</p>`;
   let list;
   try { list = await api('/api/plugins'); }
   catch (e) { $('#ext-list').innerHTML = `<p class="console-msg">${esc(e.message)}</p>`; return; }
   if (!list.length) { $('#ext-list').innerHTML = `<p class="muted">No extensions available.</p>`; return; }
   $('#ext-list').innerHTML = `<div class="ext-grid">${list.map((p) => `
-    <div class="ext-card">
+    <div class="ext-card" data-search="${esc([p.name, p.description, p.publisher, p.source, ...(p.supportedBackends || [])].filter(Boolean).join(' ').toLowerCase())}">
       <div class="ext-head">${icon('extension')} <strong>${esc(p.name)}</strong>
         <span class="muted">${esc(p.version || '')}</span>
         ${p.installed ? '<span class="pill on">installed</span>' : ''}</div>
@@ -29,6 +35,27 @@ export async function renderExtensions(main) {
         ${p.homepage ? `<a class="btn sm" href="${esc(p.homepage)}" target="_blank" rel="noopener">Homepage</a>` : ''}
       </div>
     </div>`).join('')}</div>`;
+  // The tree and every data grid in the app filter; a marketplace list that
+  // only scrolls is the odd one out, and it is the screen where you arrive
+  // already knowing the name of the thing you came for. Hidden when there is
+  // nothing to sift through.
+  const filterBox = $('#ext-filter');
+  const filterWrap = main.querySelector('.ext-filter');
+  const emptyNote = main.querySelector('.ext-empty');
+  if (filterWrap && list.length > 4) filterWrap.hidden = false;
+  if (filterBox) {
+    filterBox.oninput = () => {
+      const q = filterBox.value.trim().toLowerCase();
+      let shown = 0;
+      main.querySelectorAll('.ext-card').forEach((card) => {
+        const hit = !q || (card.dataset.search || '').includes(q);
+        card.hidden = !hit;
+        if (hit) shown++;
+      });
+      if (emptyNote) emptyNote.hidden = shown > 0;
+    };
+  }
+
   main.querySelectorAll('[data-ext-add]').forEach((b) => {
     b.onclick = async () => {
       const permissions = b.dataset.permissions;

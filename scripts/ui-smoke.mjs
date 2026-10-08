@@ -1092,6 +1092,37 @@ check(
   }
 }
 
+// ── extensions-filter ─────────────────────────────────────────────
+// The marketplace list only scrolled, on the one screen you arrive at already
+// knowing the name of what you came for. The tree and every data grid here
+// filter; this one now does too, and stays out of the way when there is
+// nothing to sift through.
+{
+  await page.goto(BASE);
+  await page.click('#tree >> text=Extensions');
+  await page.waitForSelector('.ext-card', { timeout: 30000 });
+  const cards = await page.locator('.ext-card').count();
+  check(cards > 0, `extensions-filter: the marketplace lists plugins (${cards})`);
+  check(await page.locator('#ext-filter').isVisible(), 'extensions-filter: a filter box is offered');
+
+  const name = (await page.locator('.ext-card strong').first().textContent()).trim().slice(0, 4);
+  await page.locator('#ext-filter').fill(name);
+  await page.waitForTimeout(300);
+  const hits = await page.locator('.ext-card:visible').count();
+  check(hits > 0 && hits < cards, `extensions-filter: filtering on "${name}" narrows the list (${cards} → ${hits})`);
+
+  // An empty result has to say so: a blank grid reads as a failed load.
+  await page.locator('#ext-filter').fill('zzzznotaplugin');
+  await page.waitForTimeout(300);
+  check(await page.locator('.ext-card:visible').count() === 0, 'extensions-filter: a term matching nothing hides every card');
+  check(await page.locator('.ext-empty').isVisible(), 'extensions-filter: an empty result says so rather than looking broken');
+
+  await page.locator('#ext-filter').fill('');
+  await page.waitForTimeout(300);
+  check(await page.locator('.ext-card:visible').count() === cards, 'extensions-filter: clearing it brings every card back');
+  await page.screenshot({ path: `${SHOTS}/extensions-filter.png` });
+}
+
 check(pageErrors.length === 0, `no JS page errors (${pageErrors.join('; ').slice(0, 200)})`);
 
 await browser.close();

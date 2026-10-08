@@ -677,6 +677,11 @@ td .btn { cursor: pointer; }
 tr.ev-warn td { color: var(--yellow); }
 
 /* ── Extensions store ───────────────────────────────────── */
+.ext-filter { display: block; margin-bottom: 12px; }
+.ext-filter input { width: min(360px, 100%); }
+/* A filtered-out card is hidden, and a hidden grid child must not keep its
+   track, so the attribute wins over the grid's display. */
+.ext-card[hidden] { display: none; }
 .ext-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
 .ext-card {
   background: var(--panel);
