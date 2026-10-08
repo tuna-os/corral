@@ -7,15 +7,19 @@ package web
 // `corral web --demo`.
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/tuna-os/corral/pkg/config"
 	"github.com/tuna-os/corral/pkg/qemu"
 	"github.com/tuna-os/corral/pkg/registry"
+	"golang.org/x/net/websocket"
 )
 
 func newDemoServer(t *testing.T) *httptest.Server {
@@ -25,12 +29,20 @@ func newDemoServer(t *testing.T) *httptest.Server {
 	// context that nothing stubs. Claiming the variable first makes the test
 	// framework put it back afterwards.
 	t.Setenv("CORRAL_INCUS_REMOTE", "")
+	previousDemo := demoMode
+	previousFolderStore := folderStore
+	previousTheme := activeTheme
+	previousCLITheme := cliTheme
 	resetActivity()
 	EnableDemo()
 	tmpDir := t.TempDir()
 	store = registry.NewStoreAt(tmpDir + "/registry.json")
 	t.Cleanup(func() {
 		// Restore the seams so later tests in this package start clean.
+		demoMode = previousDemo
+		folderStore = previousFolderStore
+		activeTheme = previousTheme
+		cliTheme = previousCLITheme
 		config.SetForceKubevirtContext(false)
 		qemu.SetStateDirs("", "")
 		f := NewTestFixture()
@@ -57,6 +69,45 @@ func getJSON(t *testing.T, srv *httptest.Server, path string, out any) {
 	}
 	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
 		t.Fatalf("GET %s: decode: %v", path, err)
+	}
+}
+
+func TestDemoVNCCompletesRFBHandshake(t *testing.T) {
+	srv := newDemoServer(t)
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/api/vnc/corral-vms/web-prod"
+	ws, err := websocket.Dial(wsURL, "", srv.URL)
+	if err != nil {
+		t.Fatalf("dial demo console: %v", err)
+	}
+	defer func() { _ = ws.Close() }()
+
+	version := make([]byte, 12)
+	if _, err := io.ReadFull(ws, version); err != nil || string(version) != "RFB 003.008\n" {
+		t.Fatalf("server version = %q, err=%v", version, err)
+	}
+	if _, err := ws.Write(version); err != nil {
+		t.Fatalf("write client version: %v", err)
+	}
+	security := make([]byte, 2)
+	if _, err := io.ReadFull(ws, security); err != nil || !bytes.Equal(security, []byte{1, 1}) {
+		t.Fatalf("security types = %v, err=%v", security, err)
+	}
+	if _, err := ws.Write([]byte{1}); err != nil {
+		t.Fatalf("choose security: %v", err)
+	}
+	result := make([]byte, 4)
+	if _, err := io.ReadFull(ws, result); err != nil || !bytes.Equal(result, make([]byte, 4)) {
+		t.Fatalf("security result = %v, err=%v", result, err)
+	}
+	if _, err := ws.Write([]byte{1}); err != nil {
+		t.Fatalf("write ClientInit: %v", err)
+	}
+	serverInit := make([]byte, 24)
+	if _, err := io.ReadFull(ws, serverInit); err != nil {
+		t.Fatalf("read ServerInit: %v", err)
+	}
+	if width, height := int(serverInit[0])<<8|int(serverInit[1]), int(serverInit[2])<<8|int(serverInit[3]); width != 800 || height != 600 {
+		t.Fatalf("demo framebuffer = %dx%d, want 800x600", width, height)
 	}
 }
 
@@ -113,6 +164,7 @@ func TestDemoMode_EndToEnd(t *testing.T) {
 			// VSOCK support depends on the host's socat build, not our
 			// code: hosted runners and minimal containers lack it.
 			"VSOCK host support": true,
+			"OVMF firmware":      true,
 		}; local[c["name"].(string)] {
 			continue
 		}
@@ -144,5 +196,33 @@ func TestDemoMode_EndToEnd(t *testing.T) {
 	getJSON(t, srv, "/api/vms/corral-vms/db-prod/metrics", &m)
 	if m["cpu"] == "" {
 		t.Errorf("db-prod live cpu empty: %+v", m)
+	}
+
+	// Theme API in demo mode: PUT /api/theme updates in-memory theme and does not write config.yaml
+	cfgPath := config.DefaultPath()
+	if _, err := os.Stat(cfgPath); !os.IsNotExist(err) {
+		t.Fatalf("expected config file %q not to exist before theme update", cfgPath)
+	}
+	putBody := `{"accent":"#22c55e","brand_title":"SmokeTest"}`
+	req, err := http.NewRequest(http.MethodPut, srv.URL+"/api/theme", strings.NewReader(putBody))
+	if err != nil {
+		t.Fatalf("NewRequest PUT /api/theme: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	respTheme, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("PUT /api/theme: %v", err)
+	}
+	_ = respTheme.Body.Close()
+	if respTheme.StatusCode != http.StatusOK {
+		t.Fatalf("PUT /api/theme: status=%v", respTheme.StatusCode)
+	}
+	var theme ThemeConfig
+	getJSON(t, srv, "/api/theme", &theme)
+	if theme.Accent != "#22c55e" || theme.BrandTitle != "SmokeTest" {
+		t.Errorf("demo theme not updated in memory: %+v", theme)
+	}
+	if _, err := os.Stat(cfgPath); !os.IsNotExist(err) {
+		t.Errorf("demo PUT /api/theme created config file at %s", cfgPath)
 	}
 }
