@@ -1344,6 +1344,7 @@ function select(sel, openTab = 'summary') {
   renderTree();
   renderContent();
   markRendered();
+  window.dispatchEvent(new CustomEvent('corral:select', { detail: sel }));
 }
 
 // openVM selects a VM and, optionally, one of its tabs. "console" means the
@@ -2569,11 +2570,13 @@ async function vmAction(vm, act) {
   if (act === 'delete') {
     if (!confirm(`Delete ${vm.name} and its disks?`)) return;
     try {
+      window.dispatchEvent(new CustomEvent('corral:task-start', { detail: { action: 'delete', target: `${vm.namespace}/${vm.name}` } }));
       let target = vmURL(vm);
       if (vm.backend === 'libvirt') target += `${target.includes('?') ? '&' : '?'}destroyStorage=true`;
       await api(target, { method: 'DELETE' });
       select({ type: 'dc' });
     } catch (e) { toast(e.message); }
+    window.dispatchEvent(new CustomEvent('corral:task-updated'));
     return refresh();
   }
   if (act === 'migrate') return migrateVM(vm);
@@ -2597,8 +2600,10 @@ async function vmAction(vm, act) {
     return;
   }
   try {
+    window.dispatchEvent(new CustomEvent('corral:task-start', { detail: { action: act, target: `${vm.namespace}/${vm.name}` } }));
     await api(vmURL(vm, `/${act}`), { method: 'POST' });
   } catch (e) { toast(e.message); }
+  window.dispatchEvent(new CustomEvent('corral:task-updated'));
   setTimeout(refresh, 800);
 }
 
@@ -3917,42 +3922,203 @@ function watchBuild(taskID, vmName, opts = {}) {
   }, 2000);
 }
 
-// ── Task panel (Proxmox-style activity log) ────────────────────────
-// First Alpine.js island — see docs/adr/0004-web-ui-alpinejs-no-build.md.
-// The poll loop stays a plain setInterval (Alpine is for render, not
-// fetching); only the DOM sync (row templating, collapse toggle) moved to
-// x-data/x-for/x-show, replacing the old innerHTML-string templating.
-//
-// Registered via Alpine.data() inside an alpine:init listener, not a bare
-// `window.taskPanel = ...` assignment — Alpine (a deferred classic script)
-// can start scanning the DOM before this module script finishes running,
-// so a plain global isn't reliably defined in time. alpine:init only fires
-// when Alpine.start() actually runs (after all deferred/module scripts have
-// executed), so listening for it is timing-safe regardless of script order.
+// ── Task panel / Bottom dock (Tasks / Cluster log / Events) ───────
+// Proxmox-style bottom dock — Alpine.js island.
+// ADR-0004: client-side reactivity over /api/* JSON responses.
+
+function resolveTarget(target) {
+  if (!target || typeof target !== 'string') return null;
+  target = target.trim();
+  if (target.includes(' → ')) {
+    const parts = target.split(' → ');
+    return resolveTarget(parts[0]) || resolveTarget(parts[1]);
+  }
+  const vm = vms.find((v) =>
+    `${v.namespace}/${v.name}` === target ||
+    v.name === target ||
+    vmKey(v) === target ||
+    (v.namespace === 'local' && target === `local/${v.name}`)
+  );
+  if (vm) return { type: 'vm', key: vmKey(vm) };
+
+  const ct = cts.find((c) =>
+    `${c.namespace}/${c.name}` === target ||
+    c.name === target ||
+    ctKey(c) === target
+  );
+  if (ct) return { type: 'ct', key: ctKey(ct) };
+
+  const node = nodes.find((n) => n.name === target);
+  if (node) return { type: 'node', name: node.name };
+
+  return null;
+}
+
+function openTaskLogDialog(task) {
+  const dlg = $('#task-log-dialog');
+  if (!dlg) return;
+  $('#task-log-title').textContent = `Task: ${task.action} (${task.target})`;
+  $('#task-log-action').textContent = task.action || '—';
+  $('#task-log-target').textContent = task.target || '—';
+  $('#task-log-status').innerHTML = task.status === 'error'
+    ? '<span class="pill off">error</span>'
+    : task.status === 'running'
+    ? '<span class="pill mid">running</span>'
+    : '<span class="pill on">OK</span>';
+  $('#task-log-started').textContent = task.started ? new Date(task.started).toLocaleString() : '—';
+  $('#task-log-duration').textContent = task.duration || '…';
+  $('#task-log-user').textContent = task.user || 'root@pam';
+  $('#task-log-output').textContent = task.error || task.log || 'No error or log output recorded.';
+  dlg.showModal();
+}
+
 document.addEventListener('alpine:init', () => {
   Alpine.data('taskPanel', () => ({
     collapsed: true,
+    currentTab: 'tasks',
     tasks: [],
+    events: [],
+    eventsLoading: false,
+    eventsContext: '',
+    eventsEmptyMessage: 'No events.',
+    runningCount: 0,
+    errorCount: 0,
     summary: '',
     _lastFp: '',
 
     start() {
       this.refresh();
-      setInterval(() => this.refresh(), 5000);
+      setInterval(() => {
+        this.refresh();
+        if (this.currentTab === 'events' && !this.collapsed) this.loadEvents();
+      }, 5000);
+
+      window.addEventListener('corral:select', () => {
+        if (this.currentTab === 'events' && !this.collapsed) this.loadEvents();
+      });
+
+      window.addEventListener('corral:task-start', (e) => {
+        const { action, target } = e.detail || {};
+        if (!action) return;
+        const tempId = Date.now();
+        this.tasks.unshift({
+          id: tempId,
+          action: action,
+          target: target || 'cluster',
+          status: 'running',
+          user: me.login || 'root@pam',
+          started: new Date().toISOString(),
+          duration: '',
+        });
+        this.updateCounts();
+      });
+
+      window.addEventListener('corral:task-updated', () => {
+        this.refresh();
+      });
+
+      const dlgClose = $('#btn-task-log-close');
+      if (dlgClose) dlgClose.onclick = () => $('#task-log-dialog')?.close();
+    },
+
+    toggleCollapse(event) {
+      if (event && event.target && event.target.closest('.dock-tabs')) return;
+      this.collapsed = !this.collapsed;
+      if (!this.collapsed && this.currentTab === 'events') {
+        this.loadEvents();
+      }
+    },
+
+    switchTab(tabName) {
+      this.currentTab = tabName;
+      this.collapsed = false;
+      if (tabName === 'events') {
+        this.loadEvents();
+      }
+    },
+
+    updateCounts() {
+      this.runningCount = this.tasks.filter((t) => t.status === 'running').length;
+      this.errorCount = this.tasks.filter((t) => t.status === 'error').length;
+      this.summary = this.tasks.length
+        ? `${this.runningCount ? `${this.runningCount} running · ` : ''}${this.errorCount ? `${this.errorCount} failed · ` : ''}${this.tasks.length} total`
+        : '';
     },
 
     async refresh() {
       let log;
       try { log = await api('/api/tasklog'); } catch { return; }
       const fp = JSON.stringify(log);
-      if (fp === this._lastFp) return; // unchanged — don't reset panel scroll
+      if (fp === this._lastFp) return;
       this._lastFp = fp;
-      this.tasks = log;
-      const running = log.filter((t) => t.status === 'running').length;
-      const errors = log.filter((t) => t.status === 'error').length;
-      this.summary = log.length
-        ? `${running ? `${running} running · ` : ''}${errors ? `${errors} failed · ` : ''}${log.length} total`
-        : '';
+      this.tasks = Array.isArray(log) ? log : [];
+      this.updateCounts();
+    },
+
+    async loadEvents() {
+      if (selected.type === 'vm') {
+        const vm = findVM(selected.key);
+        if (!vm) {
+          this.events = [];
+          this.eventsContext = '';
+          this.eventsEmptyMessage = 'Select a virtual machine to view events.';
+          return;
+        }
+        this.eventsContext = `Events for VM ${vm.name} (${vm.namespace})`;
+        this.eventsLoading = true;
+        try {
+          const evs = await api(vmURL(vm, '/events'));
+          this.events = Array.isArray(evs) ? evs : [];
+          this.eventsEmptyMessage = this.events.length === 0 ? `No recent events for ${vm.name}.` : '';
+        } catch (e) {
+          this.events = [];
+          this.eventsEmptyMessage = `Could not load events: ${e.message}`;
+        } finally {
+          this.eventsLoading = false;
+        }
+      } else {
+        this.events = [];
+        this.eventsContext = selected.type === 'dc' ? 'Datacenter' : selected.name || selected.type;
+        this.eventsEmptyMessage = 'Select a virtual machine to view its Kubernetes events.';
+      }
+    },
+
+    isTargetLinkable(target) {
+      return !!resolveTarget(target);
+    },
+
+    goToTarget(target) {
+      const sel = resolveTarget(target);
+      if (sel) select(sel);
+    },
+
+    openLog(task) {
+      openTaskLogDialog(task);
+    },
+
+    async cancelTask(task) {
+      if (!task || !task.id) return;
+      try {
+        await api(`/api/tasks/${task.id}/cancel`, { method: 'POST' });
+        toast(`Cancelled task ${task.action}`);
+      } catch (e) {
+        toast(`Cancel failed: ${e.message}`);
+      }
+      this.refresh();
+    },
+
+    canMutate() {
+      return !document.body.classList.contains('read-only') && me.admin;
+    },
+
+    formatTime(iso) {
+      if (!iso) return '—';
+      try { return new Date(iso).toLocaleTimeString(); } catch { return iso; }
+    },
+
+    formatDateTime(iso) {
+      if (!iso) return '—';
+      try { return new Date(iso).toLocaleString(); } catch { return iso; }
     },
   }));
 });

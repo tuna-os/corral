@@ -153,6 +153,7 @@ func newMux() (http.Handler, error) {
 	mux.HandleFunc("POST /api/datavolumes/upload", handleUploadDataVolume)
 	mux.HandleFunc("DELETE /api/datavolumes/{ns}/{name}", handleDeleteDataVolume)
 	mux.HandleFunc("GET /api/tasks/{id}", handleTaskStatus)
+	mux.HandleFunc("POST /api/tasks/{id}/cancel", handleTaskCancel)
 	mux.HandleFunc("GET /api/tasklog", handleTaskLog)
 	registerFolderRoutes(mux)
 	registerMoveRoutes(mux)
@@ -491,6 +492,20 @@ func handleTaskStatus(w http.ResponseWriter, r *http.Request) {
 	jsonResp(w, http.StatusOK, v.(*buildTask).snapshot())
 }
 
+func handleTaskCancel(w http.ResponseWriter, r *http.Request) {
+	idStr := r.PathValue("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		errResp(w, http.StatusBadRequest, fmt.Errorf("invalid task id: %w", err))
+		return
+	}
+	if err := cancelTaskByID(id); err != nil {
+		errResp(w, http.StatusNotFound, err)
+		return
+	}
+	jsonResp(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
 // handleCreateVM dispatches to the strategy matching the request shape —
 // bootc build, Windows guided install, or everything else (catalog images,
 // container disks, import URLs, ISO installs, PVC-backed) — and translates
@@ -666,7 +681,8 @@ func handleVMAction(w http.ResponseWriter, r *http.Request) {
 
 	c := kubeClient(r, ns)
 	var err error
-	done := taskBegin(action, ns+"/"+name)
+	login, _ := caller(r)
+	done := taskBegin(action, ns+"/"+name, login)
 	switch action {
 	case "start":
 		err = c.StartVM(name)
@@ -717,7 +733,8 @@ func handleMigrate(w http.ResponseWriter, r *http.Request) {
 	id := fmt.Sprintf("migrate-%s-%d", name, time.Now().UnixNano())
 	task := newBuildTask()
 	tasks.Store(id, task)
-	done := taskBegin("migrate", ns+"/"+name)
+	login, _ := caller(r)
+	done := taskBegin("migrate", ns+"/"+name, login)
 	if b.TargetNode != "" {
 		fmt.Fprintf(task, "Live migration of %s requested → %s\n", name, b.TargetNode)
 	} else {
