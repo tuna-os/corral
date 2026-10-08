@@ -113,10 +113,16 @@ immediately `corral ssh`-able and vice versa.
 
 ### Embedded SPA — no JS build step
 
-The web UI is vanilla JavaScript and CSS embedded via `//go:embed`. There is
-no Node, no bundler, no build step. The page loads xterm.js and noVNC from a
-CDN at runtime. Only the console pages need them, and they are too large to
-embed. Heroicons are inline SVGs.
+The web UI is native ES modules and CSS embedded via `//go:embed`. There is
+no Node, no bundler, no build step. The console libraries (xterm.js, noVNC,
+iron-remote-desktop, gridstack and uPlot) are vendored under
+`pkg/web/static/vendor` with their provenance. Corral does not fetch them from
+a CDN, so a host with no outbound network still serves a working console.
+Heroicons are inline SVGs.
+
+To add a screen, a dock panel, a widget, a tree view or a resizable edge, see
+[docs/web-ui-extending.md](web-ui-extending.md). That page also gives the rules
+for DOM that holds a live connection.
 
 ### Backend transparency
 
