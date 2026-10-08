@@ -228,7 +228,14 @@ export function connectTTY(vm, body) {
   term.focus();
 }
 
+// Bumped every time the consoles are torn down. A caller holding on to the
+// element a console was mounted in can compare this to know whether what it is
+// holding is still connected or just a dead canvas.
+let generation = 0;
+export const consoleGeneration = () => generation;
+
 export function disconnectConsoles() {
+  generation++;
   try { rfb?.disconnect(); } catch { /* already gone */ }
   rfb = null;
   try { ttyWS?.close(); } catch { /* already gone */ }

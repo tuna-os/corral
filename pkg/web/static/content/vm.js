@@ -1,8 +1,8 @@
 // VM screen: the tab strip, every VM tab, and the VM actions.
 
-import { api, vmURL } from '../api.js';
+import { api, vmKey, vmURL } from '../api.js';
 import { markRendered, refresh, select } from '../app.js';
-import { connectRDP, connectTTY, connectVNC, disconnectConsoles } from '../console.js';
+import { connectRDP, connectTTY, connectVNC, consoleGeneration, disconnectConsoles } from '../console.js';
 import { watchBuild } from '../create.js';
 import { timeChart } from '../dashboard.js';
 import { icon } from '../icons.js';
@@ -78,8 +78,38 @@ export function renderVM(main, vm) {
     t.onclick = () => { disconnectConsoles(); state.tab = t.dataset.tab; renderVM(main, vm); markRendered(); };
   });
 
+  // A live console is a WebSocket attached to a canvas, and rebuilding
+  // #tab-body would drop both and reconnect — every five seconds. app.js used
+  // to avoid that by not rendering the content pane at all while a console tab
+  // was open, which froze the whole VM page: status, usage, everything stopped
+  // updating until you left the tab.
+  //
+  // Instead the element the console is mounted in is kept and moved into the
+  // freshly rendered page, so the connection is never touched and the rest of
+  // the page around it stays live. The cache is keyed by VM and tab, and
+  // checked against the console generation: every deliberate switch calls
+  // disconnectConsoles() first, which bumps it, so a stale body can never be
+  // mistaken for a connected one.
+  const want = `${vmKey(vm)}:${state.tab}`;
+  const fresh = $('#tab-body');
+  if (liveBody && liveFor === want && liveGen === consoleGeneration() && fresh !== liveBody) {
+    fresh.replaceWith(liveBody);
+    return;
+  }
+  liveBody = null;
   renderTab(vm);
+  if (LIVE_TABS.has(state.tab)) {
+    liveBody = $('#tab-body');
+    liveFor = want;
+    liveGen = consoleGeneration();
+  }
 }
+
+// The tabs whose body holds a live connection rather than markup.
+const LIVE_TABS = new Set(['console', 'terminal', 'rdp']);
+let liveBody = null;
+let liveFor = '';
+let liveGen = -1;
 
 function renderTab(vm) {
   const body = $('#tab-body');

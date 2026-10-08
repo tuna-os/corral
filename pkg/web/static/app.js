@@ -172,8 +172,11 @@ export async function refresh(force = false) {
   const gridScroll = gridScroller ? { top: gridScroller.scrollTop, left: gridScroller.scrollLeft } : null;
   const wasFocused = contentEl?.contains(document.activeElement) ? document.activeElement : null;
   renderTree();
-  // Don't clobber live consoles (or the multiview grid) on poll.
-  if (renderPopout || (state.tab !== 'console' && state.tab !== 'terminal' && state.selected.type !== 'multiview')) renderContent();
+  // The VM page keeps its live console across a render now (see content/vm.js),
+  // so a console tab no longer has to freeze the whole pane. Multiview still
+  // does: it holds a grid of connections rather than one, and its root is the
+  // content pane itself, so there is no single element to carry over.
+  if (renderPopout || state.selected.type !== 'multiview') renderContent();
   if (contentEl) contentEl.scrollTop = contentScroll;
   const scrollerNow = contentEl?.querySelector('.grid-scroll');
   if (scrollerNow && gridScroll) { scrollerNow.scrollTop = gridScroll.top; scrollerNow.scrollLeft = gridScroll.left; }

@@ -1237,6 +1237,74 @@ check(
   await page.waitForTimeout(300);
 }
 
+// ── console-stays-live (#341) ─────────────────────────────────────
+// A console tab used to freeze the whole content pane: rebuilding it would
+// have dropped the WebSocket and reconnected every five seconds, so the poll
+// skipped the pane entirely — and a VM could stop while the page still said it
+// was running. The element the console is mounted in is now carried across the
+// render, so the connection survives and everything around it stays live.
+{
+  await page.goto(BASE);
+  await page.waitForSelector('#tree [data-vm-key]', { timeout: 30000 });
+  const fleet = await (await fetch(`${BASE}api/vms`)).json();
+  const victim = fleet.find((v) => v.running && v.backend === 'kubevirt');
+  if (victim) {
+    await page.locator('#tree .tree-item').filter({ hasText: victim.name }).first().click();
+    await page.waitForTimeout(600);
+    await page.click('[data-tab="console"]');
+    await page.waitForSelector('#vnc-popout', { timeout: 30000 }).catch(() => {});
+
+    // Stamp the console body and the tab strip beside it: one must survive, the
+    // other must be rebuilt, which together prove the pane rendered *around*
+    // the live connection.
+    await page.evaluate(() => {
+      const body = document.querySelector('#tab-body');
+      const strip = document.querySelector('#content .tabs');
+      if (body) body.__smokeBody = 1;
+      if (strip) strip.__smokeStrip = 1;
+    });
+    const headBefore = (await page.textContent('#content .page-head')).replace(/\s+/g, ' ').trim();
+
+    await fetch(`${BASE}api/vms/${victim.namespace}/${victim.name}/stop`, { method: 'POST' }).catch(() => {});
+    await page.waitForFunction(
+      () => document.querySelector('#content .page-head')?.textContent?.includes('Stopped'),
+      null,
+      { timeout: 20000 },
+    ).catch(() => {});
+
+    check(
+      await page.evaluate(() => document.querySelector('#tab-body')?.__smokeBody === 1),
+      'console-stays-live: the console keeps its element through a poll',
+    );
+    check(
+      await page.evaluate(() => document.querySelector('#content .tabs')?.__smokeStrip === undefined),
+      'console-stays-live: the page around it really did re-render',
+    );
+    const headAfter = (await page.textContent('#content .page-head')).replace(/\s+/g, ' ').trim();
+    check(
+      headAfter.includes('Stopped') && headAfter !== headBefore,
+      'console-stays-live: the VM header follows the fleet while the console tab is open',
+    );
+    check(await page.locator('#vnc-popout').count() === 1, 'console-stays-live: the console controls are still there');
+    await page.screenshot({ path: `${SHOTS}/console-stays-live.png` });
+
+    // Start it again and leave the console, so later checks find the fleet as
+    // they expect it.
+    await fetch(`${BASE}api/vms/${victim.namespace}/${victim.name}/start`, { method: 'POST' }).catch(() => {});
+    await page.waitForFunction(async (name) => {
+      const list = await (await fetch('/api/vms')).json();
+      return !list.find((v) => v.name === name)?.status?.includes('Stopped');
+    }, victim.name, { timeout: 15000 }).catch(() => {});
+    await page.click('#tree >> text=Datacenter');
+    await page.waitForTimeout(500);
+    const back = await (await fetch(`${BASE}api/vms`)).json();
+    check(
+      !back.find((v) => v.name === victim.name)?.status?.includes('Stopped'),
+      'console-stays-live: the stopped VM is restarted so the suite stays re-runnable',
+    );
+  }
+}
+
 check(pageErrors.length === 0, `no JS page errors (${pageErrors.join('; ').slice(0, 200)})`);
 
 await browser.close();
