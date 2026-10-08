@@ -602,7 +602,9 @@ The server serves the embedded SPA at the root:
 |---|---|
 | `/` | `index.html` |
 | `/style.css` | `style.css` |
-| `/app.js` | `app.js` |
+| `/app.js` | `app.js` (the entry module) |
+| `/<module>.js` | the other ES modules, such as `state.js`, `api.js` and `tree.js` |
+| `/content/*.js`, `/ui/*.js` | the screen modules and the UI primitives |
 | `/icons.js` | `icons.js` |
 
 All other paths fall through to the Go 1.22 `http.ServeMux` 404.
