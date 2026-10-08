@@ -1,12 +1,12 @@
-# Extending the web UI
+# Web UI extension points
 
 This page shows where to add things to the web UI. It also gives three rules
 that are easy to get wrong.
 
 The UI is native ES modules with no build step (ADR-0004). Go serves
 `pkg/web/static` with `go:embed`. There is no component framework. The
-extension points are plain functions and lists. Each point below already has
-a user in the shipped code, so you can copy a working example.
+extension points are plain functions and lists. The shipped code already uses
+each point below, so you can copy an example that works.
 
 A feature is done when a check in `scripts/ui-smoke.mjs` passes. That suite
 drives the real UI against `corral web --demo`. It is the acceptance test for
@@ -23,11 +23,11 @@ You can rebuild markup at any time. You cannot rebuild a node that holds
 keyboard focus, an active drag, a text selection, a scroll position, or a
 WebSocket. The browser ties all of these to the node, not to its content. If
 you replace the node, the user loses them. Nothing reports an error. The
-element the user worked on stops existing.
+element the user worked on stops to exist.
 
-Two tools solve two halves of this problem.
+This problem has two halves, and a tool for each.
 
-### Lists: `ui/reconcile.js`
+## Lists: `ui/reconcile.js`
 
 `reconcile(parent, desired, { keep })` matches children by key. It compares
 them by signature. It keeps the old node when the key and the signature both
@@ -35,26 +35,27 @@ match. Mark each element with `keyed(el, key, sig)`.
 
 The signature needs care. It must cover the data that built the row. It must
 not cover only the text that the row shows. Row handlers hold a reference to
-that data. A context menu, a drag payload and a cell renderer all do this. If
-you reuse a node after a hidden field changed, those handlers use the old
+that data. A context menu, a drag payload and a cell renderer all do this.
+
+If you reuse a node after a hidden field changed, those handlers use the old
 data. Put the source data in the signature and let JSON compare it:
 
 ```js
 keyed(row, `vm:${vmKey(vm)}`, [vm, lvl, selected]);
 ```
 
-The module also guarantees two things. Both come from bugs that the suite
+The module also guarantees two things. Both come from defects that the suite
 found:
 
 - A key can repeat. The same guest can appear in two pools. Each key holds a
   queue of nodes, and each match takes one node from it.
-- An element with no signature is always rebuilt. Two missing signatures would
-  otherwise compare as equal, and the diff would keep a node that nobody
-  checked.
+- The module always rebuilds an element that has no signature. Two missing
+  signatures would otherwise compare as equal. The diff would then keep a node
+  that nobody checked.
 
 Users: the sidebar tree in `tree.js`, and the grid rows in `grid.js`.
 
-### Connections: carry the element
+## Connections: carry the element
 
 Reconciliation does not help when the live thing is a connection. Keep the
 element instead, and move it into the new markup:
@@ -74,17 +75,17 @@ Copy two details:
 
 - Cache the inner element. Do not cache the whole pane. The heading around the
   element often shows a value that changes when the cached part does not. A
-  running-VM count is one example. If you cache the pane, you freeze that
+  count of started VMs is one example. If you cache the pane, you freeze that
   value. This is the defect that the pattern repairs.
 - Make the key independent of order if the user can reorder the contents. A
-  drag rearranges the Multiview tiles and saves the new order. If the key
-  included the order, the next poll would close all of the connections.
+  drag rearranges the Multiview tiles and saves the new order. If the key held
+  the order, the next poll would close all of the connections.
 
 A move blurs the element that held focus. Therefore `refresh()` records focus
 and the grid scroll position before the render, and restores them after it.
 That is the last point at which it can read them.
 
-### Gestures: `ui/interaction.js`
+## Gestures: `ui/interaction.js`
 
 `interacting()` is true while a pointer is down or a drag is active. The poll
 does not render during that time. It runs the skipped render when the gesture
@@ -93,7 +94,7 @@ late, but it is never lost.
 
 A new gesture needs no code here. The module already covers it.
 
-## Extension points
+## Where to add a feature
 
 ### A dock panel
 
@@ -114,8 +115,8 @@ Add the id to `TREE_VIEWS` in `tree.js`. Add a button to `treeViewToggle()`.
 Write a renderer.
 
 A renderer receives a sink, not the container. The sink only answers
-`appendChild`. Rows are collected first, and the diff places them. For this
-reason, `pools.js` needs no knowledge of reconciliation.
+`appendChild`. The renderer collects the rows first, and then the diff places
+them. For this reason, `pools.js` needs no knowledge of reconciliation.
 
 If the view needs data that the fleet poll does not fetch, fetch it in
 `refresh()` while that view shows. Pool View and Storage View do this. Also
@@ -132,8 +133,8 @@ needs, for example `{ type: 'storage', name }`.
 ### A data grid
 
 Call `mountGrid(host, { id, columns, rows, rowKey, ... })`. It returns a
-handle with `update(rows)` and `refresh()`. Use `update` instead of mounting a
-second grid.
+handle with `update(rows)` and `refresh()`. Use `update` for new data. Do not
+mount a second grid.
 
 The grid saves the column order, the hidden columns, the widths, the sort, the
 filters, the saved views and the row density for each `id`. Row density has
@@ -146,17 +147,19 @@ size its spacers, so the two values must agree.
 Call `makeSplitter({ handle, axis, cssVar, storageKey, def, min, max, ... })`
 from `ui/splitter.js`. Add `makeCollapsible` if the user can hide the pane. The
 stylesheet owns the layout through the custom property. The module owns only
-the input. It follows the W3C APG window splitter pattern. This includes the
-Enter key that collapses and restores the pane, which the pattern requires.
+the input.
+
+It follows the window splitter pattern from the W3C APG. This includes the
+Enter key that collapses and restores the pane, which the pattern needs.
 
 A new edge has two obligations:
 
 - Publish `aria-valuemin` and `aria-valuemax` on every change if the maximum
   depends on the viewport. A value in the HTML becomes wrong when the user
   resizes the window.
-- Keep the separator reachable when the pane is collapsed. The separator owns
-  the key that restores the pane. If you hide it, a keyboard-only operator
-  cannot get the pane back.
+- Keep the separator reachable while the pane stays collapsed. The separator
+  owns the key that restores the pane. If you hide it, a keyboard-only
+  operator cannot get the pane back.
 
 Add anything new that persists to `resetWorkspaceLayout()` in `app.js`. A
 layout that the user can change needs a way back to the default. The vSphere
@@ -170,12 +173,13 @@ what breaks if the check fails. Then call `check(condition, 'name: what it
 proves')`.
 
 **If a check changes the demo state, change it back.** The demo server lives
-longer than one run. A check that stops a VM, writes a theme or selects a tree
-view, and then leaves it, makes the suite pass once and fail after that. The
-failure then appears in an unrelated check. The suite had this defect until
-two cases were repaired. The `bulk-select` check and the theme check show the
-shape of the repair.
+longer than one run. Some checks stop a VM, write a theme or select a tree
+view. If such a check leaves that state, the suite passes once and then fails.
+The failure then appears in an unrelated check. Two fixes to the suite repaired
+this defect. The `bulk-select` check and the theme check show the shape of a
+repair.
 
-Read values from the screen instead of writing them into the check. Earlier
-checks reorder columns, hide columns, widen the sidebar and select a view, and
-those choices persist. The first column is not always the column you expect.
+Read values from the screen. Do not put them in the check as constants.
+Earlier checks reorder the columns. They also hide columns, widen the sidebar
+and select a view. Those choices persist. The first column is not always the
+column that you expect.
