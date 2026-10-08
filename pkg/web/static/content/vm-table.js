@@ -53,6 +53,23 @@ const VM_GRID_COLUMNS = [
   } },
 ];
 
+// The mounted grid, kept across renders.
+//
+// Each poll rebuilds the markup around the grid, which hands us a fresh empty
+// .vm-grid placeholder and would mean mounting a second grid and throwing the
+// first away — along with the focused row, a checkbox mid-click and a column
+// being dragged. Instead the previously mounted grid is moved into the new
+// placeholder's position and fed the new rows, so its DOM is never rebuilt.
+// This is the same thing renderDatacenter does with its widget dashboard,
+// arranged so the three views that share this table all get it without any of
+// them restructuring their markup.
+//
+// One grid is enough because only one .vm-grid is ever on screen: the
+// Datacenter, Node and Namespace views each render one, and the template table
+// beside it is a plain table, not a grid.
+let gridHost = null;
+let gridHandle = null;
+
 export function bindVMTable(root, list) {
   const bar = root.querySelector('.bulkbar');
   if (!bar) return;
@@ -62,16 +79,30 @@ export function bindVMTable(root, list) {
     bar.hidden = n === 0;
     bar.querySelector('.bulkbar-count').textContent = `${n} selected`;
   };
-  mountGrid(root.querySelector('.vm-grid'), {
-    id: 'vms', columns: VM_GRID_COLUMNS, rows: list, rowKey: vmKey,
-    selected: state.selectedVMKeys, checkClass: 'vm-check', checkAllClass: 'vm-check-all',
-    onRowClick: (vm) => select({ type: 'vm', key: vmKey(vm) }),
-    onSelectionChange: () => { update(); renderTree(); },
-    decorateRow: (tr, vm) => {
-      attachContextMenu(tr, () => vmMenuItems(vm));
-      makeDraggable(tr, vm);
-    },
-  });
+  const placeholder = root.querySelector('.vm-grid');
+  if (gridHost && gridHandle && placeholder && placeholder !== gridHost) {
+    // Reuse the live grid: take the placeholder's place, then re-render with
+    // the new rows (which diffs them — see grid.js).
+    //
+    // Focus and the grid's own scroll position are restored by refresh() in
+    // app.js, not here: the view has already replaced the markup around this
+    // grid by the time we run, and that is what blurs the focused row, so the
+    // only place that can still see where focus was is before the render.
+    placeholder.replaceWith(gridHost);
+    gridHandle.update(list);
+  } else if (placeholder) {
+    gridHandle = mountGrid(placeholder, {
+      id: 'vms', columns: VM_GRID_COLUMNS, rows: list, rowKey: vmKey,
+      selected: state.selectedVMKeys, checkClass: 'vm-check', checkAllClass: 'vm-check-all',
+      onRowClick: (vm) => select({ type: 'vm', key: vmKey(vm) }),
+      onSelectionChange: () => { update(); renderTree(); },
+      decorateRow: (tr, vm) => {
+        attachContextMenu(tr, () => vmMenuItems(vm));
+        makeDraggable(tr, vm);
+      },
+    });
+    gridHost = gridHandle ? placeholder : null;
+  }
 
   bar.querySelectorAll('[data-bulk]').forEach((b) => {
     b.onclick = async (e) => {

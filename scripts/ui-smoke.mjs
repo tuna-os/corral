@@ -873,14 +873,20 @@ check(
     `interaction-guard: a poll does not rebuild the grid under a held pointer (${heldThrough}/${stamped} rows kept)`,
   );
 
-  // Letting go must land the change, not drop it.
+  // Letting go must land the change, not drop it. The grid diffs its rows, so
+  // the deferred render replaces the row whose data moved and keeps the rest —
+  // "some rows were rebuilt", not "all of them were".
   await page.mouse.up();
   await page.waitForFunction(
-    (sel) => [...document.querySelectorAll(sel)].every((r) => r.__smokeRow === undefined),
+    (sel) => [...document.querySelectorAll(sel)].some((r) => r.__smokeRow === undefined),
     GRID_ROWS,
     { timeout: 10000 },
   ).catch(() => {});
-  check(await stillStamped() === 0, 'interaction-guard: releasing runs the render the poll skipped');
+  const keptAfter = await stillStamped();
+  check(
+    keptAfter < stamped,
+    `interaction-guard: releasing runs the render the poll skipped (${stamped - keptAfter} of ${stamped} rows updated)`,
+  );
   check(
     (await page.textContent('#content .grid-scroll table')).includes('Stopped'),
     'interaction-guard: the deferred render shows the change made during the gesture',
@@ -1014,6 +1020,76 @@ check(
   check(await page.locator(ROWS).count() === before, 'grid-reconcile: clearing the filter brings the rows back');
   check(await page.locator('#content .vm-check').count() > 0, 'grid-reconcile: the row checkboxes still work after a diff');
   await page.screenshot({ path: `${SHOTS}/grid-reconcile.png` });
+}
+
+// ── grid-survives-poll (#341) ─────────────────────────────────────
+// The views rebuild their markup on every poll that changes anything, which
+// used to hand the inventory grid a fresh host and mount a second grid over
+// the first. The mounted grid is now moved into the new markup and fed the
+// new rows, so only the rows that actually changed are rebuilt — and the
+// focused row is still the focused row afterwards.
+{
+  await page.goto(BASE);
+  await page.waitForSelector('#content .vm-check', { timeout: 30000 });
+  const ROWS = '#content .grid-scroll table tbody tr';
+  const stampRows = () => page.evaluate((sel) => {
+    const rows = document.querySelectorAll(sel);
+    rows.forEach((r, i) => { r.__smokePoll = i; });
+    return rows.length;
+  }, ROWS);
+  const kept = () => page.evaluate(
+    (sel) => [...document.querySelectorAll(sel)].filter((r) => r.__smokePoll !== undefined).length,
+    ROWS,
+  );
+
+  const fleet = await (await fetch(`${BASE}api/vms`)).json();
+  const victim = fleet.find((v) => v.status?.includes('Running') && v.backend === 'kubevirt');
+  const total = await stampRows();
+  await page.locator(ROWS).first().focus();
+  const focusBefore = await page.evaluate(() => document.activeElement?.dataset?.key);
+  // The demo fleet already contains stopped VMs, so waiting for the word
+  // "Stopped" to appear anywhere would return before the poll had run. Wait
+  // for one *more* row to say it than said it before.
+  const stoppedRows = () => page.evaluate(
+    (sel) => [...document.querySelectorAll(sel)].filter((r) => r.textContent.includes('Stopped')).length,
+    ROWS,
+  );
+  const stoppedBefore = await stoppedRows();
+
+  // Change the fleet so the poll has something to render, then let it run with
+  // no gesture in the way.
+  if (victim) {
+    await fetch(`${BASE}api/vms/${victim.namespace}/${victim.name}/stop`, { method: 'POST' }).catch(() => {});
+  }
+  await page.waitForFunction(
+    ({ sel, was }) => [...document.querySelectorAll(sel)].filter((r) => r.textContent.includes('Stopped')).length > was,
+    { sel: ROWS, was: stoppedBefore },
+    { timeout: 15000 },
+  ).catch(() => {});
+
+  const survivors = await kept();
+  check(
+    !!victim && total > 1 && survivors >= total - 2 && survivors < total,
+    `grid-survives-poll: only the changed rows are rebuilt (${survivors}/${total} kept)`,
+  );
+  check(
+    !!focusBefore && await page.evaluate(() => document.activeElement?.dataset?.key) === focusBefore,
+    `grid-survives-poll: the focused row keeps focus through the poll (${focusBefore})`,
+  );
+  await page.screenshot({ path: `${SHOTS}/grid-survives-poll.png` });
+
+  if (victim) {
+    await fetch(`${BASE}api/vms/${victim.namespace}/${victim.name}/start`, { method: 'POST' }).catch(() => {});
+    await page.waitForFunction(async (name) => {
+      const list = await (await fetch('/api/vms')).json();
+      return !list.find((v) => v.name === name)?.status?.includes('Stopped');
+    }, victim.name, { timeout: 10000 }).catch(() => {});
+    const back = await (await fetch(`${BASE}api/vms`)).json();
+    check(
+      !back.find((v) => v.name === victim.name)?.status?.includes('Stopped'),
+      'grid-survives-poll: the stopped VM is restarted so the suite stays re-runnable',
+    );
+  }
 }
 
 check(pageErrors.length === 0, `no JS page errors (${pageErrors.join('; ').slice(0, 200)})`);

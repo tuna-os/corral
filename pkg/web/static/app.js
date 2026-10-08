@@ -154,10 +154,23 @@ export async function refresh(force = false) {
   // from markup, so it keeps the save-and-restore until it reconciles too.
   const contentEl = $('#content');
   const contentScroll = contentEl ? contentEl.scrollTop : 0;
+  // A view rebuilds the markup around whatever the operator was using, which
+  // blurs the focused element and resets the grid's own scroller. Both are
+  // noted here because this is the last moment they can still be read, and put
+  // back afterwards if the element outlived the render — the inventory grid is
+  // reused rather than rebuilt, so its rows usually do.
+  const gridScroller = contentEl?.querySelector('.grid-scroll');
+  const gridScroll = gridScroller ? { top: gridScroller.scrollTop, left: gridScroller.scrollLeft } : null;
+  const wasFocused = contentEl?.contains(document.activeElement) ? document.activeElement : null;
   renderTree();
   // Don't clobber live consoles (or the multiview grid) on poll.
   if (renderPopout || (state.tab !== 'console' && state.tab !== 'terminal' && state.selected.type !== 'multiview')) renderContent();
   if (contentEl) contentEl.scrollTop = contentScroll;
+  const scrollerNow = contentEl?.querySelector('.grid-scroll');
+  if (scrollerNow && gridScroll) { scrollerNow.scrollTop = gridScroll.top; scrollerNow.scrollLeft = gridScroll.left; }
+  // Only if the render actually dropped focus: if something else has taken it
+  // in the meantime, putting it back would steal it.
+  if (wasFocused?.isConnected && document.activeElement === document.body) wasFocused.focus();
 }
 
 async function loadCaps() {
