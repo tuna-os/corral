@@ -263,6 +263,27 @@ const putRes = await fetch(`${BASE}api/theme`, {
 const updated = await putRes.json();
 check(updated.accent === '#22c55e' || updated.error, 'PUT /api/theme accepts accent change');
 
+// Hand the theme back the way it was found. This check writes a green accent
+// and a "SmokeTest" brand, and the default-theme checks above read what the
+// server currently holds, so leaving the write in place makes those checks
+// fail on a second run against a long-lived demo server.
+//
+// The whole captured object goes back, not just the fields written: a PUT
+// carrying an accent re-derives accent_2 by darkening it, and that derived
+// shade is not the default accent_2, so restoring the accent alone would
+// leave accent_2 shifted. Sending accent_2 explicitly takes precedence over
+// the derived value.
+await fetch(`${BASE}api/theme`, {
+  method: 'PUT',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(theme),
+}).catch(() => {});
+const revertedTheme = await (await fetch(`${BASE}api/theme`)).json();
+check(
+  ['accent', 'accent_2', 'brand_title'].every((k) => revertedTheme[k] === theme[k]),
+  'theme is restored so the suite stays re-runnable',
+);
+
 
 // ── drag-migrate: drag a VM onto a node in Server View ─────────────
 // The drop opens the migrate confirmation with that node preselected; the
