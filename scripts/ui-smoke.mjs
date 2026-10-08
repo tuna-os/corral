@@ -1305,6 +1305,70 @@ check(
   }
 }
 
+// ── multiview-stays-live (#341) ───────────────────────────────────
+// Multiview was the last screen the poll refused to render, because rebuilding
+// it would disconnect every tile and dial all six again. The tile grid is now
+// carried across the render while the heading — which counts running VMs, and
+// so changes when the six on screen do not — is rebuilt around it. With this
+// there is no screen left that the poll has to skip.
+{
+  await page.goto(BASE);
+  await page.waitForSelector('#tree [data-vm-key]', { timeout: 30000 });
+  await page.click('#tree >> text=Multiview');
+  await page.waitForSelector('#mv-grid .mv-tile', { timeout: 30000 }).catch(() => {});
+  const tiles = await page.locator('#mv-grid .mv-tile').count();
+  if (tiles > 0) {
+    await page.evaluate(() => {
+      document.querySelector('#mv-grid').__smokeGrid = 1;
+      document.querySelector('#content .page-head').__smokeHead = 1;
+    });
+
+    // Tag a VM so the fleet really changes and the poll really renders.
+    const fleet = await (await fetch(`${BASE}api/vms`)).json();
+    const subject = fleet.find((v) => v.running && v.backend === 'kubevirt');
+    if (subject) {
+      await fetch(`${BASE}api/vms/${subject.namespace}/${subject.name}/tags`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tag: 'smoke-mv', on: true }),
+      }).catch(() => {});
+    }
+    await page.waitForFunction(
+      () => document.querySelector('#content .page-head')?.__smokeHead === undefined,
+      null,
+      { timeout: 20000 },
+    ).catch(() => {});
+
+    check(
+      await page.evaluate(() => document.querySelector('#mv-grid')?.__smokeGrid === 1),
+      `multiview-stays-live: the tile grid keeps its element through a poll (${tiles} tiles)`,
+    );
+    check(
+      await page.evaluate(() => document.querySelector('#content .page-head')?.__smokeHead === undefined),
+      'multiview-stays-live: the heading around it re-rendered',
+    );
+    check(
+      await page.locator('#mv-grid .mv-tile').count() === tiles,
+      'multiview-stays-live: every tile is still there',
+    );
+    await page.screenshot({ path: `${SHOTS}/multiview-stays-live.png` });
+
+    // Take the tag back off, and leave Multiview so its consoles are dropped.
+    if (subject) {
+      await fetch(`${BASE}api/vms/${subject.namespace}/${subject.name}/tags`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tag: 'smoke-mv', on: false }),
+      }).catch(() => {});
+    }
+    await page.click('#tree >> text=Datacenter');
+    await page.waitForTimeout(500);
+    const after = await (await fetch(`${BASE}api/vms`)).json();
+    check(
+      !(after.find((v) => v.name === subject?.name)?.tags || []).includes('smoke-mv'),
+      'multiview-stays-live: the tag is removed so the suite stays re-runnable',
+    );
+  }
+}
+
 check(pageErrors.length === 0, `no JS page errors (${pageErrors.join('; ').slice(0, 200)})`);
 
 await browser.close();

@@ -14,9 +14,17 @@ import { $, esc } from '../ui/dom.js';
 let multiviewRFBs = [];
 const MULTIVIEW_KEY = 'corral.multiview.v1';
 
+// The connected tile grid, kept across renders. disconnectMultiview() owns
+// teardown, so it is also what invalidates this: once the connections are gone
+// the element holding them is a grid of dead canvases.
+let liveGrid = null;
+let liveGridKey = '';
+
 export function disconnectMultiview() {
   for (const r of multiviewRFBs) { try { r.disconnect(); } catch { /* gone */ } }
   multiviewRFBs = [];
+  liveGrid = null;
+  liveGridKey = '';
 }
 
 function loadMultiviewLayout() {
@@ -41,12 +49,21 @@ function moveMultiviewTile(grid, tile, delta, layout) {
 }
 
 export async function renderMultiview(main) {
-  disconnectMultiview();
   const running = state.vms.filter((v) => v.running);
   const layout = loadMultiviewLayout();
   const rank = new Map((layout.order || []).map((key, i) => [key, i]));
   const shown = running.slice(0, 6).sort((a, b) =>
     (rank.get(vmKey(a)) ?? 999) - (rank.get(vmKey(b)) ?? 999));
+
+  // Which VMs are on screen, independent of the order they sit in: dragging a
+  // tile rearranges the DOM directly, and treating that as a change would tear
+  // down every connection on the next poll as a reward for rearranging them.
+  const want = shown.map(vmKey).slice().sort().join(',');
+  // Only the grid is kept. The heading counts running VMs, which can change
+  // while the six on screen do not, so it is rebuilt either way.
+  const reuse = !!liveGrid && liveGridKey === want && shown.length > 0;
+  if (!reuse) disconnectMultiview();
+
   main.innerHTML = `
     <div class="page-head"><h1>${icon('cube')} Multiview</h1>
       <span class="muted">${running.length} running VM${running.length === 1 ? '' : 's'}${running.length > 6 ? ' — showing first 6' : ''}</span>
@@ -55,6 +72,12 @@ export async function renderMultiview(main) {
       <div id="mv-grid" class="mv-grid"></div>`
       : `<p class="console-msg">No running VMs. Start some and they appear here, live.</p>`}`;
   if (!shown.length) return;
+
+  if (reuse) {
+    // The tiles are already connected; put them back and leave them alone.
+    $('#mv-grid').replaceWith(liveGrid);
+    return;
+  }
 
   let RFB;
   try {
@@ -121,4 +144,8 @@ export async function renderMultiview(main) {
   }
   layout.order = shown.map(vmKey);
   saveMultiviewLayout(layout);
+  // Remember the grid the connections live in, so the next poll renders the
+  // heading around it instead of tearing all six down and dialling again.
+  liveGrid = grid;
+  liveGridKey = want;
 }

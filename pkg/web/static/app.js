@@ -133,9 +133,9 @@ export async function refresh(force = false) {
   }
   try { state.cts = await api('/api/cts'); } catch { state.cts = []; } // best-effort — don't fail the whole refresh over CTs
   emit('inventory', { vms: state.vms, cts: state.cts, nodes: state.nodes });
-  // A pop-out console opens straight onto the console tab, which the guard
-  // below never renders on poll — render it once here.
-  let renderPopout = false;
+  // A pop-out console opens straight onto the console tab. It needs no nudge to
+  // render any more: setting the selection and the tab changes the fingerprint,
+  // and there is no longer a guard that would skip a console tab anyway.
   if (consoleRoute && !consoleRouteApplied) {
     consoleRouteApplied = true;
     const vm = findVM(consoleRoute);
@@ -144,10 +144,9 @@ export async function refresh(force = false) {
       state.tab = 'console';
       document.body.classList.add('console-popout');
       document.title = `${vm.name} console · Corral`;
-      renderPopout = true;
     }
   }
-    const fp = renderFingerprint();
+  const fp = renderFingerprint();
   if (!force && fp === lastRenderFp) return; // nothing changed — keep the DOM
   // A poll must not pull the rows out from under an open context menu; the
   // next tick after it closes renders the change.
@@ -172,11 +171,11 @@ export async function refresh(force = false) {
   const gridScroll = gridScroller ? { top: gridScroller.scrollTop, left: gridScroller.scrollLeft } : null;
   const wasFocused = contentEl?.contains(document.activeElement) ? document.activeElement : null;
   renderTree();
-  // The VM page keeps its live console across a render now (see content/vm.js),
-  // so a console tab no longer has to freeze the whole pane. Multiview still
-  // does: it holds a grid of connections rather than one, and its root is the
-  // content pane itself, so there is no single element to carry over.
-  if (renderPopout || state.selected.type !== 'multiview') renderContent();
+  // Every screen that holds a live connection now carries its own element
+  // across a render — the VM console tabs in content/vm.js, the Multiview grid
+  // in content/multiview.js — so the pane is always safe to render and nothing
+  // has to be skipped to protect it.
+  renderContent();
   if (contentEl) contentEl.scrollTop = contentScroll;
   const scrollerNow = contentEl?.querySelector('.grid-scroll');
   if (scrollerNow && gridScroll) { scrollerNow.scrollTop = gridScroll.top; scrollerNow.scrollLeft = gridScroll.left; }
