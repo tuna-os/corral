@@ -700,6 +700,11 @@ tr.ev-warn td { color: var(--yellow); }
 .data-grid[data-density="roomy"] { --grid-row-h: 48px; --grid-row-pad: 11px; }
 .data-grid tbody td { padding-top: var(--grid-row-pad); padding-bottom: var(--grid-row-pad); }
 .grid-density { display: inline-flex; align-items: center; gap: 6px; font-size: .78rem; color: var(--muted); }
+/* The shortcut a palette row would also answer to. Pushed to the right so the
+   labels stay aligned, and faint: it teaches the key without competing with
+   the name you came to read. */
+.palette-keys { margin-left: auto; display: inline-flex; gap: 3px; flex: none; }
+.palette-foot code { font-size: .72rem; opacity: .85; }
 /* A loud hover flickers as the cursor crosses a dense table, so it stays faint
    while the keyboard focus ring stays obvious — and the ring is an outline, not
    a colour change, so it does not depend on colour alone. */

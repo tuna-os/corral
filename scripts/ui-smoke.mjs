@@ -1432,6 +1432,66 @@ check(
   await page.screenshot({ path: `${SHOTS}/grid-density.png` });
 }
 
+// ── palette-scope-and-keys (#349) ─────────────────────────────────
+// Two patterns the palette was missing. A kind prefix narrows the list, the
+// way k9s takes ":po" and VS Code's Quick Open takes a leading ">": one input,
+// and a prefix says which list you mean. And a row shows the key that would
+// also run it, which is how VS Code and Linear teach their own shortcuts — a
+// shortcut nobody is shown is a shortcut nobody uses.
+{
+  await page.goto(BASE);
+  await page.waitForSelector('#tree [data-vm-key]', { timeout: 30000 });
+  await page.keyboard.press('Control+k');
+  await page.waitForSelector('#palette[open]', { timeout: 5000 });
+  const unscoped = await page.locator('#palette-list li').count();
+  check(unscoped > 1, `palette-scope: the palette lists everything by default (${unscoped})`);
+
+  const kindsFor = async (q) => {
+    await page.locator('#palette-input').fill(q);
+    await page.waitForTimeout(400);
+    return page.evaluate(
+      () => [...new Set([...document.querySelectorAll('#palette-list li')].map((li) => li.dataset.id?.split(':')[0]))],
+    );
+  };
+
+  const vmKinds = await kindsFor('vm:');
+  check(
+    vmKinds.length === 1 && vmKinds[0] === 'vm',
+    `palette-scope: "vm:" narrows to guests (${vmKinds.join(', ')})`,
+  );
+  const nodeKinds = await kindsFor('node:');
+  check(
+    nodeKinds.length === 1 && nodeKinds[0] === 'node',
+    `palette-scope: "node:" narrows to nodes (${nodeKinds.join(', ')})`,
+  );
+  // "do:" keeps the things that act, and no plain guests or views.
+  const doKinds = await kindsFor('do:');
+  check(
+    doKinds.length > 0 && !doKinds.includes('vm') && !doKinds.includes('view'),
+    `palette-scope: "do:" keeps only the actions (${doKinds.slice(0, 5).join(', ')})`,
+  );
+
+  // An unknown prefix is a search term, not a scope: a VM called "db:1" must
+  // still be findable.
+  await page.locator('#palette-input').fill('zzz:');
+  await page.waitForTimeout(400);
+  check(
+    (await page.textContent('#palette-count')).includes('No matches'),
+    'palette-scope: an unknown prefix stays a search term',
+  );
+
+  await page.locator('#palette-input').fill('datacenter');
+  await page.waitForTimeout(400);
+  const hint = await page.evaluate(() => document.querySelector('#palette-list li .palette-keys')?.textContent || '');
+  check(hint.includes('g') && hint.includes('d'), `palette-keys: the row shows its own shortcut (${hint})`);
+  check(
+    await page.evaluate(() => document.querySelector('#palette-list li .palette-keys')?.getAttribute('aria-hidden')) === 'true',
+    'palette-keys: the hint is hidden from the accessibility tree, since the key lives in code',
+  );
+  await page.screenshot({ path: `${SHOTS}/palette-scope.png` });
+  await page.keyboard.press('Escape');
+}
+
 check(pageErrors.length === 0, `no JS page errors (${pageErrors.join('; ').slice(0, 200)})`);
 
 await browser.close();

@@ -31,6 +31,16 @@ function remember(id) {
 
 const readOnly = () => document.body.classList.contains('read-only');
 
+// Which palette entries have a key of their own. Keyed by entry id prefix so
+// the keys and the `?` overlay below cannot drift apart: both name the same
+// handful of bindings that initKeys() actually registers.
+const SHORTCUT_KEYS = {
+  'view:dc': ['g', 'd'],
+  'vm-console': ['c'],
+  'vm-start': ['s'],
+  'vm-stop': ['s'],
+};
+
 // ── entries ───────────────────────────────────────────────────────
 // Each entry: { id, kind, label, sub, keywords, mutates, run }. The id is
 // stable across polls so "recently used" survives a refresh and a reload.
@@ -48,7 +58,16 @@ function entries() {
     ['settings', 'Settings', 'cog'],
   ];
   for (const [type, label, ic] of views) {
-    add({ id: `view:${type}`, kind: 'view', icon: icon(ic), label, sub: 'go to', run: () => go({ type }) });
+    add({
+      id: `view:${type}`, kind: 'view', icon: icon(ic), label, sub: 'go to',
+      // The palette doubles as the place people learn the keyboard: VS Code
+      // shows a command's shortcut beside it, and Linear's palette does the
+      // same. A shortcut nobody is ever shown is a shortcut nobody uses. The
+      // hint is aria-hidden because the key is registered in code, not here,
+      // and a screen reader would otherwise read out the letters as content.
+      keys: SHORTCUT_KEYS[`view:${type}`],
+      run: () => go({ type }),
+    });
   }
   add({ id: 'action:create-vm', kind: 'create', icon: icon('plus'), label: 'Create VM', sub: 'new virtual machine', keywords: 'new', mutates: true, run: createVM });
   add({ id: 'action:create-ct', kind: 'create', icon: icon('plus'), label: 'Create CT', sub: 'new container', keywords: 'new container', mutates: true, run: createCT });
@@ -76,6 +95,9 @@ function entries() {
       add({
         id: `vm-${act}:${key}`, kind: 'action', icon: icon({ console: 'desktop', start: 'play' }[act] || act),
         label: `${label} ${vm.name}`, sub: where, mutates: act !== 'console',
+        // `c` and `s` act on the selected VM, so the hint belongs only on that
+        // VM's rows. On any other guest the key would do something else.
+        keys: ctx.selectedVMKey?.() === key ? SHORTCUT_KEYS[`vm-${act}`] : undefined,
         run: () => (act === 'console' ? openVM(key, 'console') : vmAction(key, act)),
       });
     };
@@ -133,7 +155,34 @@ function scoreWord(word, text, scatter) {
 // then the fleet. Per-guest verbs come last; they are for searching.
 const BROWSE_ORDER = { view: 50, create: 40, action: 0, vm: 30, ct: 20, node: 10, pool: 10 };
 
+// Typing a kind and a colon narrows the palette to that kind: "vm:" for guests,
+// "node:" for nodes, "do:" for the things that act. k9s does this with ":po"
+// and ":svc", and VS Code's Quick Open with its leading ">": one input, and a
+// prefix says which of several lists you mean. Without it a fleet of a hundred
+// VMs buries the five views and two create actions under the guests.
+const SCOPES = {
+  vm: ['vm'], vms: ['vm'],
+  ct: ['ct'], cts: ['ct'],
+  node: ['node'], nodes: ['node'],
+  pool: ['pool'], pools: ['pool'],
+  view: ['view'], go: ['view'],
+  do: ['action', 'create'], action: ['action', 'create'], new: ['create'],
+};
+
+/** Split "vm: web" into the kinds to keep and the rest of the query. */
+export function parseScope(query) {
+  const m = /^\s*([a-z]+)\s*:\s*(.*)$/i.exec(query);
+  if (!m) return null;
+  const kinds = SCOPES[m[1].toLowerCase()];
+  return kinds ? { kinds, rest: m[2] } : null;
+}
+
 export function rank(list, query, recent) {
+  const scope = parseScope(query);
+  if (scope) {
+    list = list.filter((e) => scope.kinds.includes(e.kind));
+    query = scope.rest;
+  }
   const words = query.toLowerCase().split(/\s+/).filter(Boolean);
   const recency = new Map(recent.map((id, i) => [id, recent.length - i]));
   const scored = [];
@@ -185,7 +234,7 @@ function build() {
          count is announced politely so it waits for the typing to settle
          instead of interrupting every keystroke. -->
     <div id="palette-count" class="sr-only" role="status" aria-live="polite"></div>
-    <div class="palette-foot muted"><kbd>↑</kbd><kbd>↓</kbd> move · <kbd>Enter</kbd> run · <kbd>Esc</kbd> close · <kbd>?</kbd> shortcuts</div>`;
+    <div class="palette-foot muted"><kbd>↑</kbd><kbd>↓</kbd> move · <kbd>Enter</kbd> run · <kbd>Esc</kbd> close · <kbd>?</kbd> shortcuts · <code>vm:</code> <code>node:</code> <code>do:</code> narrow</div>`;
   document.body.appendChild(dlg);
 
   const input = dlg.querySelector('#palette-input');
@@ -218,7 +267,8 @@ function update() {
         aria-selected="${i === active}" class="${i === active ? 'active' : ''}">
         ${e.icon}<span class="palette-label">${esc(e.label)}</span>
         <span class="muted">${esc(e.sub || '')}</span>
-        ${recent.includes(e.id) ? '<span class="chip mini">recent</span>' : ''}</li>`).join('')
+        ${recent.includes(e.id) ? '<span class="chip mini">recent</span>' : ''}
+        ${(e.keys || []).length ? `<span class="palette-keys" aria-hidden="true">${e.keys.map((k) => `<kbd>${esc(k)}</kbd>`).join('')}</span>` : ''}</li>`).join('')
     : '<li class="muted palette-empty">No matches.</li>';
   if (results.length) input.setAttribute('aria-activedescendant', `palette-opt-${active}`);
   else input.removeAttribute('aria-activedescendant');
@@ -276,6 +326,7 @@ const SHORTCUTS = [
   [['s'], 'Start or stop the selected VM'],
   [['g', 'd'], 'Go to the datacenter'],
   [['Esc'], 'Close a dialog'],
+  [['vm:'], 'In the palette, narrow to guests (also node:, pool:, view:, do:)'],
 ];
 
 let help = null;
