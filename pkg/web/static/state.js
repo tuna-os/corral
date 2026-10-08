@@ -23,6 +23,11 @@ export const state = {
   // admin so the UI is fully enabled until told otherwise (single-user mode).
   me: { login: '', name: '', admin: true, enforced: false },
   availableNADs: [],
+  // The image catalogue and the imported disks behind Storage View. Loaded
+  // lazily, like pools: it only matters while that view is showing and it
+  // changes far more slowly than the fleet.
+  images: [],
+  dataVolumes: [],
   selected: { type: 'dc' }, // {type:'dc'} | {type:'node',name} | {type:'vm',key}
   // One selection model backs both the inventory grid and sidebar tree.
   selectedVMKeys: new Set(),

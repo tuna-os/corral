@@ -2,7 +2,7 @@
 // multi-select click model shared with the inventory grid.
 
 import { ctKey, vmKey } from './api.js';
-import { closeDrawer, markRendered, renderContent, select } from './app.js';
+import { closeDrawer, markRendered, refresh, renderContent, select } from './app.js';
 import { hostPowerDot, hostPowerKey } from './content/hostpower.js';
 import { migrateVM } from './content/vm.js';
 import { icon } from './icons.js';
@@ -21,7 +21,7 @@ import { keyed, reconcile } from './ui/reconcile.js';
 // KubeVirt: unlike node, it doesn't change under live migration).
 
 const TREE_VIEW_KEY = 'corral-tree-view';
-const TREE_VIEWS = ['server', 'namespace', 'pool'];
+const TREE_VIEWS = ['server', 'namespace', 'pool', 'storage'];
 // 'folder' was this view's name before user-defined pools existed. Two things
 // called folders side by side was confusing, so it became Namespace View — but
 // the old value is still in people's localStorage, and silently resetting their
@@ -39,6 +39,10 @@ export function setTreeView(v) {
   // Pool View reads a different source than the fleet poll, so switching into
   // it fetches once rather than waiting out the next 5s cycle.
   if (v === 'pool') loadPools().then(renderTree);
+  // Storage View reads the image catalogue, which the poll only fetches while
+  // that view is showing. Forcing one refresh fetches it and redraws, rather
+  // than showing an empty tree until the next 5s cycle.
+  else if (v === 'storage') refresh(true);
   else renderTree();
 }
 
@@ -79,7 +83,8 @@ function treeViewToggle() {
   div.innerHTML = `
     <button type="button" class="btn sm${treeView === 'server' ? ' active' : ''}" data-view="server">Server View</button>
     <button type="button" class="btn sm${treeView === 'namespace' ? ' active' : ''}" data-view="namespace" title="Group by Kubernetes namespace">Namespace View</button>
-    <button type="button" class="btn sm${treeView === 'pool' ? ' active' : ''}" data-view="pool" title="User-defined pools; drag to regroup or to move between backends">Pool View</button>`;
+    <button type="button" class="btn sm${treeView === 'pool' ? ' active' : ''}" data-view="pool" title="User-defined pools; drag to regroup or to move between backends">Pool View</button>
+    <button type="button" class="btn sm${treeView === 'storage' ? ' active' : ''}" data-view="storage" title="Image sources and imported disks, grouped by where they come from">Storage View</button>`;
   div.querySelectorAll('[data-view]').forEach((b) => {
     b.onclick = () => setTreeView(b.dataset.view);
   });
@@ -199,6 +204,7 @@ export function renderTree() {
   }
 
   if (treeView === 'pool') renderTreePools(sink);
+  else if (treeView === 'storage') renderTreeStorage(sink);
   else if (treeView === 'namespace') renderTreeNamespaces(sink);
   else renderTreeServer(sink);
 
@@ -320,6 +326,89 @@ function renderTreeNamespaces(sink) {
     sink.appendChild(row);
     for (const vm of nsVMs) sink.appendChild(vmRow(vm, 2));
     for (const c of nsCTs) sink.appendChild(ctRow(c, 2));
+  }
+}
+
+// Storage View: Datacenter -> source -> images, plus imported disks grouped by
+// namespace. This is the fourth of Proxmox's tree views (Server, Storage, Pool,
+// Folder) and the one corral was missing: the same objects, grouped by where
+// their bits come from rather than by what is running them.
+//
+// The rows are deliberately not drop targets. An image is not a guest, and
+// nothing in the API moves an image between sources, so a drag here would
+// promise something that cannot happen.
+function renderTreeStorage(sink) {
+  const bySource = new Map();
+  for (const img of state.images || []) {
+    const src = img.source || '(built in)';
+    if (!bySource.has(src)) bySource.set(src, []);
+    bySource.get(src).push(img);
+  }
+
+  for (const src of [...bySource.keys()].sort()) {
+    const images = bySource.get(src);
+    const custom = images.some((i) => i.custom);
+    const row = treeRow({
+      lvl: 1, icon: icon('disk'), label: src,
+      sub: `${images.length} image${images.length === 1 ? '' : 's'}${custom ? ' · custom' : ''}`,
+      key: `src:${src}`,
+      sig: [src, images, state.selected.type === 'storage' && state.selected.name === src],
+      sel: state.selected.type === 'storage' && state.selected.name === src,
+      onclick: () => select({ type: 'storage', name: src }),
+    });
+    sink.appendChild(row);
+    for (const img of images) {
+      sink.appendChild(treeRow({
+        lvl: 2, icon: icon(img.custom ? 'template' : 'disk'), label: img.name,
+        sub: img.variant || '',
+        key: `img:${src}/${img.name}`,
+        sig: [img, state.selected.type === 'storage' && state.selected.name === src],
+        sel: false,
+        onclick: () => select({ type: 'storage', name: src }),
+      }));
+    }
+  }
+
+  // Imported disks are storage too, and the only part of this view that an
+  // operator creates rather than consumes.
+  const dvs = state.dataVolumes || [];
+  if (dvs.length) {
+    const byNS = new Map();
+    for (const dv of dvs) {
+      const ns = dv.namespace || '(none)';
+      if (!byNS.has(ns)) byNS.set(ns, []);
+      byNS.get(ns).push(dv);
+    }
+    for (const ns of [...byNS.keys()].sort()) {
+      const group = byNS.get(ns);
+      sink.appendChild(treeRow({
+        lvl: 1, icon: icon('folder'), label: `${ns} disks`,
+        sub: `${group.length} imported`,
+        key: `dvns:${ns}`,
+        sig: [ns, group, state.selected.type === 'storage' && state.selected.name === `dv:${ns}`],
+        sel: state.selected.type === 'storage' && state.selected.name === `dv:${ns}`,
+        onclick: () => select({ type: 'storage', name: `dv:${ns}` }),
+      }));
+      for (const dv of group) {
+        sink.appendChild(treeRow({
+          lvl: 2, icon: icon('disk'), label: dv.name,
+          sub: dv.phase || dv.size || '',
+          key: `dv:${ns}/${dv.name}`,
+          sig: [dv],
+          sel: false,
+          onclick: () => select({ type: 'storage', name: `dv:${ns}` }),
+        }));
+      }
+    }
+  }
+
+  if (!bySource.size && !dvs.length) {
+    sink.appendChild(treeRow({
+      lvl: 1, icon: icon('disk'), label: 'No images',
+      sub: 'nothing to show yet',
+      key: 'storage:empty', sig: 'empty', sel: false,
+      onclick: () => select({ type: 'storage', name: '' }),
+    }));
   }
 }
 

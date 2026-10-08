@@ -1123,6 +1123,49 @@ check(
   await page.screenshot({ path: `${SHOTS}/extensions-filter.png` });
 }
 
+// ── storage-view (#350) ───────────────────────────────────────────
+// Proxmox offers four groupings of the same objects — Server, Storage, Pool,
+// Folder — and Storage was the one corral had no answer to. It groups images
+// by the source they come from, and imported disks by namespace: the same
+// fleet, grouped by where the bits live rather than by what is running them.
+{
+  await page.goto(BASE);
+  await page.waitForSelector('#tree [data-vm-key]', { timeout: 30000 });
+  check(await page.locator('[data-view="storage"]').count() === 1, 'storage-view: the tree offers a Storage View');
+
+  await page.click('[data-view="storage"]');
+  // Switching in fetches the catalogue rather than waiting out the 5s poll.
+  await page.waitForFunction(
+    () => [...document.querySelectorAll('#tree .tree-item')].some((r) => /image/.test(r.textContent)),
+    null,
+    { timeout: 15000 },
+  ).catch(() => {});
+  const sourceRows = await page.locator('#tree .tree-item').filter({ hasText: /\d+ images?/ }).count();
+  check(sourceRows > 0, `storage-view: images are grouped by source (${sourceRows} sources)`);
+
+  // The tree has room for a name and nothing else, so the source gets a screen.
+  const source = page.locator('#tree .tree-item').filter({ hasText: /\d+ images?/ }).first();
+  const sourceName = (await source.locator('.tree-label').textContent()).trim();
+  await source.click();
+  await page.waitForTimeout(800);
+  check(
+    (await page.textContent('#content h1')).includes(sourceName),
+    `storage-view: picking a source opens it (${sourceName})`,
+  );
+  const listed = await page.locator('#content .template-table tbody tr').count();
+  check(listed > 0, `storage-view: the source lists what it offers (${listed} images)`);
+  await page.screenshot({ path: `${SHOTS}/storage-view.png` });
+
+  // Back to Server View: the choice of view is remembered, so leaving the
+  // suite in Storage View would change what every later run starts from.
+  await page.click('[data-view="server"]');
+  await page.waitForSelector('#tree [data-vm-key]', { timeout: 15000 });
+  check(
+    await page.locator('#tree [data-vm-key]').count() > 0,
+    'storage-view: switching back to Server View restores the fleet',
+  );
+}
+
 check(pageErrors.length === 0, `no JS page errors (${pageErrors.join('; ').slice(0, 200)})`);
 
 await browser.close();

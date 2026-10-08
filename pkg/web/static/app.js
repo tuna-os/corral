@@ -16,6 +16,7 @@ import { disconnectMultiview, renderMultiview } from './content/multiview.js';
 import { renderNamespace } from './content/namespace.js';
 import { renderNode } from './content/node.js';
 import { renderSettings } from './content/settings.js';
+import { renderStorage } from './content/storage.js';
 import { renderVM, vmAction } from './content/vm.js';
 import { updateSourceFields } from './create.js';
 // The task dock registers its Alpine component on load; it exports nothing.
@@ -122,6 +123,14 @@ export async function refresh(force = false) {
   try { state.hostPower = await api('/api/hostpower'); } catch { state.hostPower = { hosts: [] }; }
   offlineShown = false;
   if (treeView === 'pool') await loadPools();
+  // The image catalogue changes far more slowly than the fleet and is only
+  // needed by Storage View, so it is fetched while that view is showing rather
+  // than on every poll. Best-effort: a storage failure must not blank the
+  // fleet, exactly as a nodes failure must not.
+  if (treeView === 'storage' || state.selected.type === 'storage') {
+    try { state.images = await api('/api/images'); } catch { /* keep what we had */ }
+    try { state.dataVolumes = await api('/api/datavolumes'); } catch { state.dataVolumes = []; }
+  }
   try { state.cts = await api('/api/cts'); } catch { state.cts = []; } // best-effort — don't fail the whole refresh over CTs
   emit('inventory', { vms: state.vms, cts: state.cts, nodes: state.nodes });
   // A pop-out console opens straight onto the console tab, which the guard
@@ -138,7 +147,7 @@ export async function refresh(force = false) {
       renderPopout = true;
     }
   }
-  const fp = JSON.stringify([state.vms, state.cts, state.nodes, state.hostPower, state.selected, state.tab]);
+    const fp = renderFingerprint();
   if (!force && fp === lastRenderFp) return; // nothing changed — keep the DOM
   // A poll must not pull the rows out from under an open context menu; the
   // next tick after it closes renders the change.
@@ -225,10 +234,23 @@ async function loadInstanceTypes() {
   fill('[name=preference]', d.preferences, '(none)');
 }
 
+// Everything the tree and content pane draw from. One definition, because the
+// poll compares against it and markRendered writes it: when the two disagreed
+// — the second was missing hostPower — a render could be judged necessary
+// every tick for a change that was already on screen. The image catalogue is
+// in here too, or Storage View would fetch its images and then conclude there
+// was nothing new to draw.
+function renderFingerprint() {
+  return JSON.stringify([
+    state.vms, state.cts, state.nodes, state.hostPower,
+    state.images, state.dataVolumes, state.selected, state.tab,
+  ]);
+}
+
 // markRendered records the just-rendered state so the next poll tick doesn't
 // re-render (and reset scroll) for a change the user already saw.
 export function markRendered() {
-  lastRenderFp = JSON.stringify([state.vms, state.cts, state.nodes, state.selected, state.tab]);
+  lastRenderFp = renderFingerprint();
 }
 
 export function select(sel, openTab = 'summary') {
@@ -287,6 +309,7 @@ export function renderContent() {
   if (state.selected.type === 'doctor') return renderDoctor(main);
   if (state.selected.type === 'hostpower') return renderHostPower(main, state.selected.key);
   if (state.selected.type === 'multiview') return renderMultiview(main);
+  if (state.selected.type === 'storage') return renderStorage(main, state.selected.name);
   if (state.selected.type === 'settings') return renderSettings(main);
   return renderDatacenter(main);
 }
