@@ -27,7 +27,7 @@ permissions:
 
 jobs:
   bump:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     # Plugin channel tags (plugins-*) also match the tag trigger; only real
     # semver releases should touch the formula.
     if: >-
