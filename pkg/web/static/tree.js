@@ -13,6 +13,7 @@ import { dropZone, loadPools, makeDraggable, renderTreePools } from './pools.js'
 import { state } from './state.js';
 import { $, esc } from './ui/dom.js';
 import { attachContextMenu } from './ui/menu.js';
+import { keyed, reconcile } from './ui/reconcile.js';
 
 // ── Tree (sidebar) ────────────────────────────────────────────────
 // Two views over the same VM list, mirroring PVE's Server/Folder view
@@ -41,7 +42,7 @@ export function setTreeView(v) {
   else renderTree();
 }
 
-export function treeRow({ lvl, icon, label, sub, sel, onclick, dot }) {
+export function treeRow({ lvl, icon, label, sub, sel, onclick, dot, key, sig }) {
   const div = document.createElement('div');
   div.className = `tree-item lvl-${lvl}${sel ? ' selected' : ''}`;
   div.setAttribute('tabindex', '0');
@@ -51,6 +52,7 @@ export function treeRow({ lvl, icon, label, sub, sel, onclick, dot }) {
   div.innerHTML = `${dot ? `<span class="dot ${dot}"></span>` : ''}${icon}` +
     ` <span class="tree-label">${esc(label)}</span>` +
     (sub ? ` <span class="muted">${esc(sub)}</span>` : '');
+  if (key !== undefined) keyed(div, key, sig);
   div.onclick = (e) => { onclick(e); closeDrawer(); };
   div.addEventListener('keydown', (e) => {
     if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key) && e.target === div) {
@@ -117,55 +119,68 @@ export function focusTreeFilter() {
   el.select();
 }
 
+// Rows are collected before they are placed, so the whole tree can be diffed
+// against what is already on screen instead of replacing it. The sink stands in
+// for the container and only has to answer appendChild, which is why the pool
+// renderer in pools.js needs no changes to take part.
+function rowSink() {
+  const rows = [];
+  return { rows, appendChild: (el) => { rows.push(el); return el; } };
+}
+
 export function renderTree() {
   const tree = $('#tree');
   const filter = treeFilterBox();
-  // Everything but the filter box goes; removing a focused input blurs it.
-  for (const child of [...tree.children]) if (child !== filter) child.remove();
-  if (!filter.isConnected) tree.appendChild(filter);
-  tree.appendChild(treeViewToggle());
+  if (!filter.isConnected) tree.insertBefore(filter, tree.firstChild);
+  const sink = rowSink();
+  sink.appendChild(keyed(treeViewToggle(), 'view-toggle', treeView));
 
   const dcRow = treeRow({
     lvl: 0, icon: icon('datacenter'), label: 'Datacenter',
+    key: 'dc', sig: state.selected.type === 'dc',
     sel: state.selected.type === 'dc',
     onclick: () => select({ type: 'dc' }),
   });
   attachContextMenu(dcRow, () => [{ icon: 'datacenter', label: 'Open Datacenter', action: () => select({ type: 'dc' }) }]);
-  tree.appendChild(dcRow);
+  sink.appendChild(dcRow);
 
   const docRow = treeRow({
     lvl: 0, icon: icon('health'), label: 'Cluster health',
+    key: 'doctor', sig: state.selected.type === 'doctor',
     sel: state.selected.type === 'doctor',
     onclick: () => select({ type: 'doctor' }),
   });
   attachContextMenu(docRow, () => [{ icon: 'health', label: 'Open Cluster health', action: () => select({ type: 'doctor' }) }]);
-  tree.appendChild(docRow);
+  sink.appendChild(docRow);
 
   const extRow = treeRow({
     lvl: 0, icon: icon('extension'), label: 'Extensions',
+    key: 'extensions', sig: state.selected.type === 'extensions',
     sel: state.selected.type === 'extensions',
     onclick: () => select({ type: 'extensions' }),
   });
   attachContextMenu(extRow, () => [{ icon: 'extension', label: 'Open Extensions', action: () => select({ type: 'extensions' }) }]);
-  tree.appendChild(extRow);
+  sink.appendChild(extRow);
 
   const mvRow = treeRow({
     lvl: 0, icon: icon('cube'), label: 'Multiview',
     sub: 'live consoles',
+    key: 'multiview', sig: state.selected.type === 'multiview',
     sel: state.selected.type === 'multiview',
     onclick: () => select({ type: 'multiview' }),
   });
   attachContextMenu(mvRow, () => [{ icon: 'cube', label: 'Open Multiview', action: () => select({ type: 'multiview' }) }]);
-  tree.appendChild(mvRow);
+  sink.appendChild(mvRow);
 
   const setRow = treeRow({
     lvl: 0, icon: icon('cog'), label: 'Settings',
     sub: 'theme & branding',
+    key: 'settings', sig: state.selected.type === 'settings',
     sel: state.selected.type === 'settings',
     onclick: () => select({ type: 'settings' }),
   });
   attachContextMenu(setRow, () => [{ icon: 'cog', label: 'Open Settings', action: () => select({ type: 'settings' }) }]);
-  tree.appendChild(setRow);
+  sink.appendChild(setRow);
 
   // Hosts that a host-power plugin can switch on and off (e.g. an on-demand
   // cloud VM node kept stopped when idle). Shown only when a plugin reports any.
@@ -174,16 +189,23 @@ export function renderTree() {
       lvl: 0, icon: icon('server'), label: h.name,
       sub: h.state,
       dot: hostPowerDot(h.state),
+      key: `hp:${hostPowerKey(h)}`,
+      sig: [h, state.selected.type === 'hostpower' && state.selected.key === hostPowerKey(h)],
       sel: state.selected.type === 'hostpower' && state.selected.key === hostPowerKey(h),
       onclick: () => select({ type: 'hostpower', key: hostPowerKey(h) }),
     });
     attachContextMenu(hpRow, () => hostPowerMenuItems(h));
-    tree.appendChild(hpRow);
+    sink.appendChild(hpRow);
   }
 
-  if (treeView === 'pool') renderTreePools(tree);
-  else if (treeView === 'namespace') renderTreeNamespaces(tree);
-  else renderTreeServer(tree);
+  if (treeView === 'pool') renderTreePools(sink);
+  else if (treeView === 'namespace') renderTreeNamespaces(sink);
+  else renderTreeServer(sink);
+
+  // The filter box is the one child that is not a keyed row: it is built once
+  // and kept, so it is handed over as something to leave alone rather than
+  // something to match.
+  reconcile(tree, sink.rows, { keep: [filter] });
   applyTreeFilter();
 }
 
@@ -195,6 +217,8 @@ function ctRow(c, lvl) {
     lvl, icon: icon('container'), label: c.name,
     sub: c.namespace,
     dot: c.ready ? 'on' : c.phase === 'Stopped' ? 'off' : 'mid',
+    key: `ct:${ctKey(c)}`,
+    sig: [c, lvl, state.selected.type === 'ct' && state.selected.key === ctKey(c)],
     sel: state.selected.type === 'ct' && state.selected.key === ctKey(c),
     onclick: () => select({ type: 'ct', key: ctKey(c) }),
   });
@@ -225,7 +249,7 @@ function dropTargetNode(row, node) {
   });
 }
 
-function renderTreeServer(tree) {
+function renderTreeServer(sink) {
   const byNode = (nodeName) => state.vms.filter((v) => v.node === nodeName);
   const ctsByNode = (nodeName) => state.cts.filter((c) => c.node === nodeName);
   const placed = new Set();
@@ -235,26 +259,28 @@ function renderTreeServer(tree) {
     const row = treeRow({
       lvl: 1, icon: icon('server'), label: n.name, sub: n.roles,
       dot: n.ready ? 'on' : 'off',
+      key: `node:${n.name}`,
+      sig: [n, state.selected.type === 'node' && state.selected.name === n.name],
       sel: state.selected.type === 'node' && state.selected.name === n.name,
       onclick: () => select({ type: 'node', name: n.name }),
     });
     attachContextMenu(row, () => nodeMenuItems(n.name));
     dropTargetNode(row, n);
-    tree.appendChild(row);
+    sink.appendChild(row);
     for (const vm of byNode(n.name)) {
       placed.add(vmKey(vm));
-      tree.appendChild(vmRow(vm, 2));
+      sink.appendChild(vmRow(vm, 2));
     }
     for (const c of ctsByNode(n.name)) {
       ctPlaced.add(ctKey(c));
-      tree.appendChild(ctRow(c, 2));
+      sink.appendChild(ctRow(c, 2));
     }
   }
 
   const orphans = state.vms.filter((v) => !placed.has(vmKey(v)));
-  for (const vm of orphans) tree.appendChild(vmRow(vm, 1));
+  for (const vm of orphans) sink.appendChild(vmRow(vm, 1));
   const ctOrphans = state.cts.filter((c) => !ctPlaced.has(ctKey(c)));
-  for (const c of ctOrphans) tree.appendChild(ctRow(c, 1));
+  for (const c of ctOrphans) sink.appendChild(ctRow(c, 1));
 }
 
 // Namespace View: Datacenter → Namespace → VMs/CTs (templates included —
@@ -264,7 +290,7 @@ function renderTreeServer(tree) {
 // This groups by an axis the *backend* defines. Pool View groups by one the
 // operator defines (ADR-0008); the names have to differ or nobody can tell
 // which tree they are looking at.
-function renderTreeNamespaces(tree) {
+function renderTreeNamespaces(sink) {
   const byNS = new Map();
   for (const vm of state.vms) {
     const ns = vm.namespace || '(none)';
@@ -285,13 +311,15 @@ function renderTreeNamespaces(tree) {
     if (nsCTs.length) parts.push(`${nsCTs.length} CT${nsCTs.length === 1 ? '' : 's'}`);
     const row = treeRow({
       lvl: 1, icon: icon('folder'), label: ns, sub: parts.join(', '),
+      key: `ns:${ns}`,
+      sig: [ns, parts, state.selected.type === 'namespace' && state.selected.name === ns],
       sel: state.selected.type === 'namespace' && state.selected.name === ns,
       onclick: () => select({ type: 'namespace', name: ns }),
     });
     attachContextMenu(row, () => namespaceMenuItems(ns));
-    tree.appendChild(row);
-    for (const vm of nsVMs) tree.appendChild(vmRow(vm, 2));
-    for (const c of nsCTs) tree.appendChild(ctRow(c, 2));
+    sink.appendChild(row);
+    for (const vm of nsVMs) sink.appendChild(vmRow(vm, 2));
+    for (const c of nsCTs) sink.appendChild(ctRow(c, 2));
   }
 }
 
@@ -300,6 +328,12 @@ export function vmRow(vm, lvl) {
     lvl, icon: icon(vm.isTemplate ? 'template' : 'cube'), label: vm.name,
     sub: vm.isTemplate ? 'template' : vm.namespace,
     dot: vm.ready ? 'on' : (vm.running ? 'mid' : 'off'),
+    key: `vm:${vmKey(vm)}`,
+    // The whole VM goes into the signature, not just what the row shows: the
+    // context menu and the drag payload close over this object, so a row
+    // reused after an invisible field changed would act on stale data.
+    sig: [vm, lvl, state.selected.type === 'vm' && state.selected.key === vmKey(vm),
+      state.selectedVMKeys.has(vmKey(vm))],
     sel: state.selected.type === 'vm' && state.selected.key === vmKey(vm),
     onclick: (e) => treeVMClick(vmKey(vm), e),
   });

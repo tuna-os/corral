@@ -141,15 +141,14 @@ export async function refresh(force = false) {
   if (!force && activeContextMenu) return;
   lastRenderFp = fp;
 
-  // Re-render, preserving scroll positions across the DOM swap.
-  const treeEl = $('#tree');
+  // The tree reconciles its rows in place, so its scroll position, focus and
+  // any in-flight drag survive on their own. The content pane still rebuilds
+  // from markup, so it keeps the save-and-restore until it reconciles too.
   const contentEl = $('#content');
-  const treeScroll = treeEl ? treeEl.scrollTop : 0;
   const contentScroll = contentEl ? contentEl.scrollTop : 0;
   renderTree();
   // Don't clobber live consoles (or the multiview grid) on poll.
   if (renderPopout || (state.tab !== 'console' && state.tab !== 'terminal' && state.selected.type !== 'multiview')) renderContent();
-  if (treeEl) treeEl.scrollTop = treeScroll;
   if (contentEl) contentEl.scrollTop = contentScroll;
 }
 

@@ -730,6 +730,56 @@ check(
   await page.screenshot({ path: `${SHOTS}/workspace-layout.png` });
 }
 
+// ── tree-reconcile (#341) ─────────────────────────────────────────
+// The 5s poll used to rebuild every sidebar row, which threw away anything
+// the browser hangs off node identity rather than markup: keyboard focus, an
+// in-progress drag, a text selection. The tree now reconciles its rows, so a
+// poll that changes nothing must leave the nodes it already has alone.
+{
+  await page.goto(BASE);
+  await page.waitForSelector('#tree [data-vm-key]', { timeout: 30000 });
+  await page.click('#tree >> text=Server View');
+  await page.waitForTimeout(500);
+
+  // Stamp the live nodes, then sit through two full poll cycles.
+  await page.evaluate(() => document.querySelectorAll('#tree .tree-item').forEach((r, i) => { r.__smoke = i; }));
+  const rowsBefore = await page.locator('#tree .tree-item').count();
+  await page.waitForTimeout(11000);
+  const survivors = await page.evaluate(
+    () => [...document.querySelectorAll('#tree .tree-item')].filter((r) => r.__smoke !== undefined).length,
+  );
+  const rowsAfter = await page.locator('#tree .tree-item').count();
+  check(rowsBefore > 0 && rowsAfter === rowsBefore, `tree-reconcile: the row count is stable across polls (${rowsBefore} → ${rowsAfter})`);
+  check(survivors === rowsBefore, `tree-reconcile: a poll reuses the existing rows (${survivors}/${rowsBefore} kept their identity)`);
+
+  // The point of keeping the nodes: focus is a property of the node, so a
+  // rebuilt row drops it and arrow-key navigation resets to the top mid-poll.
+  await page.locator('#tree [data-vm-key]').first().focus();
+  const focusBefore = await page.evaluate(() => document.activeElement?.dataset?.vmKey);
+  await page.waitForTimeout(6000);
+  const focusAfter = await page.evaluate(() => document.activeElement?.dataset?.vmKey);
+  check(!!focusBefore && focusBefore === focusAfter, `tree-reconcile: keyboard focus survives a poll (${focusBefore})`);
+
+  // Matching by key means a key that appears twice has to consume two nodes.
+  // Keeping one node per key instead left the duplicates unmatched and
+  // unremoved, and the sidebar grew a copy of a row on every poll.
+  const dupes = await page.evaluate(() => {
+    const keys = [...document.querySelectorAll('#tree [data-rkey]')].map((r) => r.dataset.rkey);
+    return keys.filter((k, i) => keys.indexOf(k) !== i);
+  });
+  check(dupes.length === 0, `tree-reconcile: no row is duplicated by the diff (${dupes.join(', ') || 'none'})`);
+
+  // A view switch replaces the groups, so the rows must not survive it.
+  await page.click('#tree >> text=Namespace View');
+  await page.waitForTimeout(500);
+  check(
+    await page.locator('#tree .tree-item[data-guest]').count() > 0,
+    'tree-reconcile: switching view still rebuilds the groups',
+  );
+  await page.click('#tree >> text=Server View');
+  await page.waitForTimeout(500);
+}
+
 check(pageErrors.length === 0, `no JS page errors (${pageErrors.join('; ').slice(0, 200)})`);
 
 await browser.close();
