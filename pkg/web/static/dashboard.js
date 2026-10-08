@@ -133,7 +133,34 @@ export function mountDashboard(root, { scope, widgets, layout }) {
   }, gridEl);
 
   const announce = (msg) => { live.textContent = msg; };
+
+  // One column on a phone.
+  //
+  // A 12-column grid scaled to 420px gives each widget about a third of the
+  // screen: the capacity figures wrap and clip, the charts collapse to a
+  // sliver, and the task table shows timestamps and nothing else. The grid is
+  // the wrong shape at that width, not merely cramped.
+  //
+  // The narrow layout is derived, never saved. Collapsing to one column moves
+  // every node, and persisting that would overwrite the arrangement the
+  // operator built on a larger screen with a single stack — a phone visit
+  // would quietly destroy their desktop dashboard. So `persist()` does nothing
+  // while the grid is narrow, and the saved layout comes back when the screen
+  // does.
+  const narrow = window.matchMedia('(max-width: 760px)');
+  let isNarrow = false;
+  const applyColumns = () => {
+    isNarrow = narrow.matches;
+    // 'list' stacks the widgets in their current order rather than trying to
+    // preserve x/y that mean nothing in one column.
+    grid.column(isNarrow ? 1 : COLUMNS, isNarrow ? 'list' : 'moveScale');
+    root.classList.toggle('dash-narrow', isNarrow);
+  };
+  applyColumns();
+  narrow.addEventListener('change', applyColumns);
+
   const persist = () => {
+    if (isNarrow) return; // derived layout — see applyColumns above
     // Read the nodes directly: grid.save() leaves out sizes that match its own
     // defaults, which would restore as this dashboard's defaults instead.
     saveLayout(scope, grid.getGridItems().map((el) => el.gridstackNode).filter(Boolean)

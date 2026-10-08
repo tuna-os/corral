@@ -843,6 +843,42 @@ tr.ev-warn td { color: var(--yellow); }
   dl.props dt { margin-top: 8px; }
   #vnc-screen, #tty-screen { height: 60vh; }
   .toolbar { margin-left: 0; }
+
+  /* Dashboard on a phone. The grid is one column here (see dashboard.js), so
+     the widgets are full width and the figures stop wrapping into their own
+     borders. */
+  .dash-hint { display: none; } /* describes dragging with a pointer */
+  .dash-toolbar { gap: 8px; }
+  /* One column also means the grid's row height is the wrong measure. A
+     widget sized for three rows beside two others becomes a tall, almost
+     empty box when it has the full width to itself: four lines of capacity
+     figures in 240px of panel, and a long scroll past nothing to reach the
+     next widget. So the items stop being positioned and simply stack, each
+     as tall as it needs.
+     This gives up dragging at this width, which is the right trade: the drag
+     hint is already hidden here, and rearranging a grid by touch on a 420px
+     screen was never the point of it. */
+  .dash-narrow .grid-stack { height: auto !important; }
+  .dash-narrow .grid-stack > .grid-stack-item {
+    position: static !important;
+    width: 100% !important;
+    height: auto !important;
+    min-height: 0 !important;
+    transform: none !important;
+    margin: 0 0 10px !important;
+    inset: auto !important;
+  }
+  .dash-narrow .grid-stack-item-content {
+    position: static !important;
+    inset: auto !important;
+    height: auto !important;
+  }
+  /* The body already scrolls (.widget-body overflow:auto), and now that the
+     item is content-height that scroll applies to width only: a table too wide
+     for the screen slides sideways instead of crushing "win11-desktop" to
+     "win11-deskto". A chart has no content height of its own, so it is given
+     one. */
+  .dash-narrow .dash-chart { min-height: 140px; }
 }
 
 /* ── Pool View: drag-and-drop tree (ADR-0008) and the move dialog (ADR-0010) ── */

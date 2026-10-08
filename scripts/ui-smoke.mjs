@@ -1525,6 +1525,62 @@ check(
   await page.screenshot({ path: `${SHOTS}/breadcrumb.png` });
 }
 
+// ── dashboard-on-a-phone (#348) ───────────────────────────────────
+// A 12-column widget grid scaled to a phone gave each widget about a third of
+// the screen: capacity figures wrapped and clipped, charts became a sliver,
+// and the task table showed timestamps and nothing else. One column at drawer
+// width, and the items stack at the height their content needs.
+//
+// The narrow layout is derived and must never be saved: collapsing to one
+// column moves every node, so persisting it would replace the arrangement
+// someone built on a big screen with a single stack.
+{
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(BASE);
+  await page.waitForSelector('#content .grid-stack-item', { timeout: 30000 });
+  await page.waitForTimeout(1200);
+
+  // Arrange something so there is a saved layout worth protecting.
+  await page.locator('#content .widget-head').first().focus();
+  for (let i = 0; i < 3; i++) await page.keyboard.press('ArrowRight');
+  await page.waitForTimeout(900);
+  const KEY = 'corral.dashboard.datacenter';
+  const savedWide = await page.evaluate((k) => localStorage.getItem(k), KEY);
+  const wideX = await page.evaluate(
+    () => [...document.querySelectorAll('#content .grid-stack-item')].map((i) => i.getAttribute('gs-x')).join(','),
+  );
+  check(!!savedWide, 'dashboard-on-a-phone: the wide layout is saved first');
+
+  await page.setViewportSize({ width: 420, height: 820 });
+  await page.waitForTimeout(1500);
+  const widths = await page.evaluate(
+    () => [...new Set([...document.querySelectorAll('#content .grid-stack-item')]
+      .map((i) => Math.round(i.getBoundingClientRect().width)))],
+  );
+  check(widths.length === 1, `dashboard-on-a-phone: every widget is full width (${widths.join(', ')}px)`);
+  // Content height, not row height: a widget of four lines must not be a 240px box.
+  const tallest = await page.evaluate(
+    () => Math.max(...[...document.querySelectorAll('#content .grid-stack-item')]
+      .map((i) => Math.round(i.getBoundingClientRect().height))),
+  );
+  check(tallest > 0 && tallest < 600, `dashboard-on-a-phone: widgets stack at content height (tallest ${tallest}px)`);
+
+  check(
+    await page.evaluate((k) => localStorage.getItem(k), KEY) === savedWide,
+    'dashboard-on-a-phone: the visit does not overwrite the saved wide layout',
+  );
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.waitForTimeout(1800);
+  check(
+    await page.evaluate(
+      () => [...document.querySelectorAll('#content .grid-stack-item')].map((i) => i.getAttribute('gs-x')).join(','),
+    ) === wideX,
+    'dashboard-on-a-phone: the wide arrangement comes back on a wide screen',
+  );
+  await page.screenshot({ path: `${SHOTS}/dashboard-on-a-phone.png` });
+}
+
 check(pageErrors.length === 0, `no JS page errors (${pageErrors.join('; ').slice(0, 200)})`);
 
 await browser.close();
