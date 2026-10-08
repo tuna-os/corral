@@ -8,6 +8,9 @@ The UI is native ES modules with no build step (ADR-0004). Go serves
 extension points are plain functions and lists. The shipped code already uses
 each point below, so you can copy an example that works.
 
+For where these patterns come from, and for the ones corral rejected, see
+[the survey of reference interfaces](web-ui-patterns-survey.md).
+
 A feature is done when a check in `scripts/ui-smoke.mjs` passes. That suite
 drives the real UI against `corral web --demo`. It is the acceptance test for
 the web epics. Nobody tests these screens by hand.
