@@ -273,7 +273,7 @@ td.check input, th.check input { cursor: pointer; vertical-align: middle; }
 .grid-result-count { margin-left: auto; font-size: .78rem; }
 .grid-scroll { overflow: auto; max-height: 52vh; border: 1px solid var(--border); border-radius: var(--radius); }
 .data-grid table { table-layout: fixed; min-width: 100%; width: max-content; }
-.data-grid th, .data-grid td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; height: 39px; }
+.data-grid th, .data-grid td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; height: var(--grid-row-h, 39px); }
 .data-grid thead { position: sticky; top: 0; z-index: 2; background: var(--panel); }
 .data-grid th { position: relative; padding: 0; }
 .grid-sort { width: 100%; height: 38px; padding: 0 18px 0 10px; border: 0; background: none; color: var(--muted); text-align: left; text-transform: uppercase; letter-spacing: .04em; cursor: pointer; }
@@ -689,6 +689,23 @@ tr.ev-warn td { color: var(--yellow); }
 
 /* ── Extensions store ───────────────────────────────────── */
 .ext-filter { display: block; margin-bottom: 12px; }
+
+/* Row density. Three named modes rather than one fixed row height, because how
+   many rows fit on a screen is a judgement about the work: triaging a fleet
+   wants as many as will go, reading one row's values wants room.
+   The heights match DENSITIES in grid.js, which the virtual scroller reads to
+   size its spacers — they have to agree. */
+.data-grid { --grid-row-h: 39px; --grid-row-pad: 6px; }
+.data-grid[data-density="compact"] { --grid-row-h: 28px; --grid-row-pad: 2px; }
+.data-grid[data-density="roomy"] { --grid-row-h: 48px; --grid-row-pad: 11px; }
+.data-grid tbody td { padding-top: var(--grid-row-pad); padding-bottom: var(--grid-row-pad); }
+.grid-density { display: inline-flex; align-items: center; gap: 6px; font-size: .78rem; color: var(--muted); }
+/* A loud hover flickers as the cursor crosses a dense table, so it stays faint
+   while the keyboard focus ring stays obvious — and the ring is an outline, not
+   a colour change, so it does not depend on colour alone. */
+.data-grid tbody tr:hover { background: color-mix(in srgb, var(--fg) 4%, transparent); }
+.data-grid tbody tr:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
 .ext-filter input { width: min(360px, 100%); }
 /* A filtered-out card is hidden, and a hidden grid child must not keep its
    track, so the attribute wins over the grid's display. */

@@ -4,10 +4,29 @@
 import { keyed, reconcile } from './ui/reconcile.js';
 
 const storageKey = (id) => `corral-grid:${id}`;
+
+// The density modes, in order, so the control can be generated from them.
+// rowHeight is here rather than only in the stylesheet because the virtual
+// scroller needs the same number to size its spacers: two copies that could
+// disagree would mis-place every row past the first screen.
+const DENSITIES = [
+  { id: 'compact', label: 'Compact', rowHeight: 28 },
+  { id: 'cosy', label: 'Cosy', rowHeight: 39 },
+  { id: 'roomy', label: 'Roomy', rowHeight: 48 },
+];
+const rowHeightFor = (density) =>
+  DENSITIES.find((d) => d.id === density)?.rowHeight ?? 39;
 const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
 
 function load(id, columns) {
-  const fallback = { order: columns.map((c) => c.id), hidden: [], widths: {}, sort: [], filters: {} };
+  const fallback = {
+    order: columns.map((c) => c.id), hidden: [], widths: {}, sort: [], filters: {},
+    // Row density, as three named modes rather than one fixed row height, and
+    // remembered per grid like every other preference here. How many rows fit
+    // on a screen is a judgement about the work, not about the data: triaging a
+    // fleet wants as many as possible, reading one row's values wants room.
+    density: 'cosy',
+  };
   try {
     const value = JSON.parse(localStorage.getItem(storageKey(id)) || 'null');
     if (!value) return fallback;
@@ -19,6 +38,7 @@ function load(id, columns) {
       hidden: (value.hidden || []).filter((x) => valid.has(x)),
       sort: (value.sort || []).filter((x) => valid.has(x.id)),
       filters: value.filters || {}, widths: value.widths || {},
+      density: DENSITIES.some((d) => d.id === value.density) ? value.density : fallback.density,
     };
   } catch { return fallback; }
 }
@@ -60,6 +80,11 @@ export function mountGrid(host, options) {
         <div class="grid-view-list"></div>
       </div></details>
       <button type="button" class="btn sm grid-export">Export CSV</button>
+      <label class="grid-density">Rows
+        <select class="grid-density-select" aria-label="Row density">
+          ${DENSITIES.map((d) => `<option value="${d.id}">${d.label}</option>`).join('')}
+        </select>
+      </label>
       <span class="grid-result-count muted" aria-live="polite"></span>
     </div><div class="grid-scroll"><table><colgroup></colgroup><thead></thead><tbody></tbody></table></div>`;
 
@@ -186,6 +211,10 @@ export function mountGrid(host, options) {
 
   function render() {
     const cols = visibleColumns();
+    // The stylesheet owns what each mode looks like; this only says which is on.
+    host.dataset.density = state.density;
+    const densitySel = host.querySelector('.grid-density-select');
+    if (densitySel && densitySel.value !== state.density) densitySel.value = state.density;
     const result = filteredRows();
     host.querySelector('.grid-result-count').textContent = `${result.length} of ${rows.length}`;
     colgroup.replaceChildren();
@@ -226,14 +255,22 @@ export function mountGrid(host, options) {
     // object, and a reused node must not keep pointing at an older one.
     const desired = [];
     const virtual = result.length > 500;
-    const rowHeight = 39;
+    const rowHeight = rowHeightFor(state.density);
     const count = virtual ? Math.ceil(scroll.clientHeight / rowHeight) + 8 : result.length;
     const shown = virtual ? result.slice(viewportStart, viewportStart + count) : result;
     if (virtual && viewportStart) { const spacer = document.createElement('tr'); spacer.className = 'grid-spacer'; spacer.style.height = `${viewportStart * rowHeight}px`; desired.push(keyed(spacer, 'spacer:top', spacer.style.height)); }
     shown.forEach((row) => {
       const tr = document.createElement('tr'); tr.dataset.key = rowKey(row); tr.tabIndex = 0;
       tr.onclick = (event) => { if (!event.target.closest('.check')) onRowClick?.(row); };
-      tr.onkeydown = (event) => { if (event.key === 'Enter') onRowClick?.(row); };
+      tr.onkeydown = (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          // Space would otherwise scroll the pane out from under the row.
+          event.preventDefault();
+          onRowClick?.(row);
+          return;
+        }
+        moveRowFocus(event, tr);
+      };
       const checkCell = document.createElement('td'); checkCell.className = 'check'; const check = document.createElement('input'); check.type = 'checkbox'; check.className = options.checkClass || 'grid-check'; check.checked = selected.has(rowKey(row)); check.setAttribute('aria-label', `Select ${rowKey(row)}`); check.onchange = () => { check.checked ? selected.add(rowKey(row)) : selected.delete(rowKey(row)); onSelectionChange?.(selected); syncSelection(); }; checkCell.appendChild(check); tr.appendChild(checkCell);
       options.decorateRow?.(tr, row);
       cols.forEach((col) => { const td = document.createElement('td'); const rendered = col.render?.(row); if (rendered instanceof Node) td.appendChild(rendered); else td.textContent = rendered ?? valueFor(row, col) ?? ''; tr.appendChild(td); });
@@ -245,7 +282,39 @@ export function mountGrid(host, options) {
     renderColumnMenu(); renderViews();
   }
 
-  scroll.onscroll = () => { if (rows.length <= 500) return; const next = Math.max(0, Math.floor(scroll.scrollTop / 39) - 3); if (next !== viewportStart) { viewportStart = next; render(); } };
+  // Everything the mouse can do here needs a key equivalent, and a table of
+  // rows is the one place where that means more than Tab: Tab belongs to the
+  // controls inside a row, so moving between rows is the arrow keys' job.
+  // Page Up and Page Down step by what is actually visible rather than a fixed
+  // number, so they match what the operator can see.
+  function moveRowFocus(event, from) {
+    const rows = [...body.querySelectorAll('tr[data-key]')];
+    const at = rows.indexOf(from);
+    if (at < 0) return;
+    const page = Math.max(1, Math.floor(scroll.clientHeight / (from.getBoundingClientRect().height || 39)) - 1);
+    const to = {
+      ArrowDown: at + 1,
+      ArrowUp: at - 1,
+      Home: 0,
+      End: rows.length - 1,
+      PageDown: Math.min(rows.length - 1, at + page),
+      PageUp: Math.max(0, at - page),
+    }[event.key];
+    if (to === undefined) return;
+    const target = rows[Math.max(0, Math.min(rows.length - 1, to))];
+    if (!target || target === from) return;
+    event.preventDefault();
+    target.focus();
+    target.scrollIntoView({ block: 'nearest' });
+  }
+
+  host.querySelector('.grid-density-select').onchange = (event) => {
+    state.density = event.target.value;
+    save(id, state);
+    render();
+  };
+
+  scroll.onscroll = () => { if (rows.length <= 500) return; const next = Math.max(0, Math.floor(scroll.scrollTop / rowHeightFor(state.density)) - 3); if (next !== viewportStart) { viewportStart = next; render(); } };
   host.querySelector('.grid-export').onclick = () => {
     const cols = visibleColumns(); const result = filteredRows();
     const csv = [cols.map((c) => csvValue(c.label)).join(','), ...result.map((row) => cols.map((c) => csvValue(valueFor(row, c))).join(','))].join('\r\n');

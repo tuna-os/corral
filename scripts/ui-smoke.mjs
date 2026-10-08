@@ -1369,6 +1369,69 @@ check(
   }
 }
 
+// ── grid-density-and-keys (#346) ──────────────────────────────────
+// Two patterns the data-grid was missing. Density as three named modes
+// remembered per grid, because how many rows fit is a judgement about the work
+// rather than about the data. And arrow-key movement between rows: Tab belongs
+// to the controls inside a row, so without arrows there was no key equivalent
+// for picking a different one.
+{
+  await page.goto(BASE);
+  await page.waitForSelector('#content .vm-check', { timeout: 30000 });
+  const ROWS = '#content .grid-scroll table tbody tr';
+  const rowHeight = () => page.evaluate(
+    (sel) => Math.round(document.querySelector(sel)?.getBoundingClientRect().height || 0), ROWS,
+  );
+
+  check(await page.locator('#content .grid-density-select').count() === 1, 'grid-density: the grid offers a density control');
+  await page.selectOption('#content .grid-density-select', 'compact');
+  await page.waitForTimeout(400);
+  const compact = await rowHeight();
+  await page.selectOption('#content .grid-density-select', 'roomy');
+  await page.waitForTimeout(400);
+  const roomy = await rowHeight();
+  check(compact > 0 && compact < roomy, `grid-density: compact really is shorter than roomy (${compact}px vs ${roomy}px)`);
+
+  // Remembered per grid, like the column widths and saved views beside it.
+  await page.reload();
+  await page.waitForSelector('#content .vm-check', { timeout: 30000 });
+  check(
+    await page.evaluate(() => document.querySelector('#content .data-grid')?.dataset.density) === 'roomy',
+    'grid-density: the choice survives a reload',
+  );
+
+  await page.selectOption('#content .grid-density-select', 'cosy');
+  await page.waitForTimeout(400);
+
+  // Arrow keys, Home and End over the rows.
+  await page.locator(ROWS).first().focus();
+  const first = await page.evaluate(() => document.activeElement?.dataset?.key);
+  await page.keyboard.press('ArrowDown');
+  const second = await page.evaluate(() => document.activeElement?.dataset?.key);
+  check(!!first && !!second && first !== second, `grid-keys: ArrowDown moves to the next row (${second})`);
+  await page.keyboard.press('ArrowUp');
+  check(
+    await page.evaluate(() => document.activeElement?.dataset?.key) === first,
+    'grid-keys: ArrowUp comes back',
+  );
+  await page.keyboard.press('End');
+  const last = await page.evaluate(() => document.activeElement?.dataset?.key);
+  check(!!last && last !== first, `grid-keys: End jumps to the last row (${last})`);
+  await page.keyboard.press('Home');
+  check(
+    await page.evaluate(() => document.activeElement?.dataset?.key) === first,
+    'grid-keys: Home jumps back to the first',
+  );
+  check(
+    await page.evaluate(() => {
+      const tr = document.querySelector('#content .grid-scroll table tbody tr');
+      return getComputedStyle(tr).getPropertyValue('cursor') !== '';
+    }),
+    'grid-keys: rows remain focusable targets',
+  );
+  await page.screenshot({ path: `${SHOTS}/grid-density.png` });
+}
+
 check(pageErrors.length === 0, `no JS page errors (${pageErrors.join('; ').slice(0, 200)})`);
 
 await browser.close();
