@@ -293,8 +293,11 @@ await page.waitForTimeout(800);
 const fleetBeforeMigrate = await (await fetch(`${BASE}api/vms`)).json();
 const fromNode = fleetBeforeMigrate.find((v) => v.name === 'web-prod')?.node;
 const toNode = ['corral-1', 'corral-2', 'corral-3'].find((n) => n !== fromNode);
-const migrateSubject = page.locator('#tree .tree-item', { hasText: 'web-prod' }).first();
-const migrateTarget = page.locator('#tree .tree-item', { hasText: toNode }).first();
+// Match the kind of row, not just its text. A machine's host-power row
+// carries the same name as the node row and is drawn above it, so a text
+// match alone would drop the guest on the wrong one.
+const migrateSubject = page.locator('#tree .tree-item[data-rkey^="vm:"]', { hasText: 'web-prod' }).first();
+const migrateTarget = page.locator(`#tree .tree-item[data-rkey="node:${toNode}"]`).first();
 await migrateSubject.dragTo(migrateTarget);
 await page.waitForSelector('.migrate-dialog[open]', { timeout: 5000 }).catch(() => {});
 check(await page.locator('.migrate-dialog[open]').count() === 1, `drag-migrate: dropping web-prod on ${toNode} opens the confirmation`);
@@ -1885,6 +1888,86 @@ check(
   check(!await page.isChecked(check1), 'grid-row-actions: and Space clears it again');
 
   await page.screenshot({ path: `${SHOTS}/grid-row-actions.png` });
+}
+
+// ── host-power ───────────────────────────────────────────
+// The host-power hook had no browser coverage at all, because demo mode
+// installs no plugins and so reported no hosts. The screens it feeds — a tree
+// row per machine, the Host power widget, its own detail screen — were
+// therefore never drawn by this suite. pkg/web/hostpower_demo.go supplies the
+// machines in demo mode, and these checks drive the UI over them.
+//
+// The intermediate state matters: a machine reports "starting" before it
+// reports "running", and the UI has to render that rather than appear to do
+// nothing for several seconds.
+{
+  await page.goto(BASE);
+  await page.waitForSelector('#content .vm-check', { timeout: 30000 });
+  // Powering a machine off asks about the guests on it. Answer, or the click
+  // hangs on a dialog nobody closes.
+  page.on('dialog', (d) => d.accept());
+  await page.waitForTimeout(1200);
+
+  const HP = '#content .hp-action';
+  check(
+    await page.locator(HP).count() > 0,
+    'host-power: the Host power widget lists machines with their actions',
+  );
+  check(
+    (await page.textContent('#tree')).includes('corral-3'),
+    'host-power: each machine gets a tree row',
+  );
+
+  // Read a machine's state off the widget by name, because the order of the
+  // list is the API's and not this check's to assume.
+  const stateOf = (name) => page.evaluate((n) => {
+    const li = [...document.querySelectorAll('#content .widget li')]
+      .find((x) => x.querySelector('[data-hpopen]')?.textContent.trim() === n);
+    return li ? li.querySelector('.muted')?.textContent.trim() : '';
+  }, name);
+  const waitFor = async (name, want, ms = 30000) => {
+    const until = Date.now() + ms;
+    while (Date.now() < until) {
+      if (await stateOf(name) === want) return true;
+      await page.waitForTimeout(500);
+    }
+    return false;
+  };
+
+  // corral-3 starts the demo stopped, so powering it on needs no answer about
+  // guests, and the check can put it back afterwards.
+  check(await stateOf('corral-3') === 'stopped', 'host-power: corral-3 begins stopped');
+  await page.click(`${HP}[data-hp="start"][data-hpkey*="i-0demo3"]`);
+  await page.waitForTimeout(700);
+  check(
+    await stateOf('corral-3') === 'starting',
+    `host-power: powering on shows the intermediate state (saw "${await stateOf('corral-3')}")`,
+  );
+  check(await waitFor('corral-3', 'running'), 'host-power: and then reports it running');
+
+  // The detail screen opens from the tree row and offers the action that the
+  // machine's new state allows.
+  await page.click('#tree .tree-item[data-rkey^="hp:"]:has-text("corral-3")');
+  await page.waitForTimeout(600);
+  const detail = await page.textContent('#content');
+  check(
+    detail.includes('corral-3') && detail.includes('running'),
+    'host-power: the tree row opens the machine detail screen',
+  );
+  check(
+    await page.locator('#content [data-hp="stop"]').count() === 1,
+    'host-power: the detail screen offers only the action the state allows',
+  );
+
+  // Put corral-3 back, so the next run of this suite finds the demo as it
+  // began. The server outlives one run.
+  await page.goto(BASE);
+  await page.waitForSelector('#content .vm-check', { timeout: 30000 });
+  await page.waitForTimeout(1200);
+  await page.click(`${HP}[data-hp="stop"][data-hpkey*="i-0demo3"]`);
+  check(await waitFor('corral-3', 'stopped'), 'host-power: powering it off returns the demo to its starting state');
+
+  await page.screenshot({ path: `${SHOTS}/host-power.png` });
 }
 
 check(pageErrors.length === 0, `no JS page errors (${pageErrors.join('; ').slice(0, 200)})`);

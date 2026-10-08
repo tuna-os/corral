@@ -163,16 +163,19 @@ Two sources had to agree before we took a pattern from them.
   twice.
 - **Plugin UI contributions.** RFC-0002 holds the design. A maintainer owns
   that call, because it changes the boundary in ADR-0007.
-- **Stage 0 of RFC-0002 waits on the demo fixture, not on the design.**
-  That stage needs no contract change. It gives the dashboard and the tree a
-  run-time registry, and moves host-power onto it. That deletes most of the 43
-  lines of capability knowledge in core.
+- **Stage 0 of RFC-0002 can now proceed.** That stage needs no contract change.
+  It gives the dashboard and the tree a run-time registry, and moves
+  host-power onto it. That deletes most of the 43 lines of capability
+  knowledge in core.
 
-  The obstacle is the demo. `corral web --demo` has no host-power source, so
-  `/api/hostpower` answers with an empty list. The tree rows, the context menu
-  and the screen that the refactor would touch never appear. So
-  `scripts/ui-smoke.mjs` has nothing to drive, and that capability's UI has no
-  browser coverage today.
+  The obstacle was the demo. `corral web --demo` installs no plugins, so
+  `/api/hostpower` answered with an empty list, and the tree rows, the context
+  menu and the screen that the refactor touches never appeared. The suite had
+  nothing to drive, so the refactor would have landed unverified.
 
-  A demo host-power source comes first. Without it, the refactor lands
-  unverified.
+  `pkg/web/hostpower_demo.go` now supplies those machines in demo mode. It is
+  a fixture, not a provider. It sits behind the demo flag, and it never joins
+  the installed plugins. A real deployment still reaches a provider only
+  through the metadata handshake. Eight checks under `host-power` now drive
+  the capability's screens, which includes the intermediate state a machine
+  reports while it changes.

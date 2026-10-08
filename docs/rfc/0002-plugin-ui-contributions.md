@@ -122,6 +122,12 @@ Stage it:
 Stage 0 is worth doing on its own. It pays for itself in core code that goes away,
 even if stages 1 and 2 never happen.
 
+Stage 0 needed browser coverage for the capability it moves, and demo mode had
+none, because it installs no plugins. `pkg/web/hostpower_demo.go` now reports
+machines in demo mode, so `scripts/ui-smoke.mjs` drives the tree rows, the
+widget and the detail screen that the refactor touches. That fixture is not a
+provider and does not change this contract.
+
 ## Risks
 
 - **A slow plugin blocks a widget.** Each call needs a timeout. The widget

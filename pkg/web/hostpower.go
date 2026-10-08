@@ -98,6 +98,13 @@ func runHostPower(name string, args ...string) ([]byte, error) {
 // GET /api/hostpower
 func handleHostPower(w http.ResponseWriter, r *http.Request) {
 	resp := hostPowerResp{Hosts: []hostPowerHost{}}
+	// Demo mode installs no plugins, so without this the hook has no hosts and
+	// the screens it feeds never appear. See hostpower_demo.go.
+	if demoMode {
+		for _, h := range demoHostPowerList() {
+			resp.Hosts = append(resp.Hosts, hostPowerHost{Host: h, Plugin: demoHostPowerPlugin})
+		}
+	}
 	for _, name := range hostPowerPlugins() {
 		out, err := runHostPower(name, "list")
 		if err != nil {
@@ -135,6 +142,14 @@ func handleHostPowerAction(w http.ResponseWriter, r *http.Request) {
 	}
 	if !hostIDPattern.MatchString(id) || strings.HasPrefix(id, "-") {
 		errResp(w, http.StatusBadRequest, fmt.Errorf("invalid host id"))
+		return
+	}
+	if demoMode && name == demoHostPowerPlugin {
+		if !demoHostPowerAct(id, action) {
+			errResp(w, http.StatusNotFound, fmt.Errorf("no host %q", id))
+			return
+		}
+		jsonResp(w, http.StatusAccepted, map[string]string{"plugin": name, "id": id, "action": action})
 		return
 	}
 	if !slices.Contains(hostPowerPlugins(), name) {
