@@ -35,8 +35,12 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: Inter, "Segoe UI", system-ui, -apple-system, sans-serif;
-  min-height: 100vh;
-  min-height: 100dvh;
+  /* An app shell, not a document: the height is the viewport's, so only the
+     panes inside scroll. With min-height the document grew past the viewport
+     and the window scrolled, which carried the header and the sidebar tree
+     off-screen — the two things an operator always needs in reach. */
+  height: 100vh;
+  height: 100dvh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -56,6 +60,18 @@ header {
 .spacer { flex: 1; }
 
 .layout { display: flex; flex: 1; min-height: 0; }
+
+/* The content pane is the only thing that scrolls. min-height:0 is what lets a
+   flex item shrink below its content; without it the pane sizes to its content
+   and the scroll moves to the document. */
+#content {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+}
 
 /* The sidebar width is an operator preference (#290): --tree-w is set by the
    drag handle below and remembered in localStorage. The clamp keeps a stored
@@ -465,20 +481,50 @@ dl.props dd { margin: 0; word-break: break-all; }
 .doc-broken { color: var(--red, #e25b5b); }
 
 /* Task panel — Proxmox-style activity log docked at the bottom */
+/* The dock is a row of the shell, not an overlay. Its height is an operator
+   preference (--dock-h, set by #dock-resizer) and the body scrolls nothing, so
+   whatever height it takes is height the content pane gives up — visible
+   rather than covered. */
+:root { --dock-h: 220px; }
 #task-panel {
-  position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
+  flex: none;
   background: var(--panel);
   border-top: 1px solid var(--border);
-  max-height: 40vh; display: flex; flex-direction: column;
+  display: flex; flex-direction: column;
+  max-height: 60vh;
 }
+#task-panel.collapsed #task-panel-body { display: none; }
+
+/* The handle only makes sense while the dock is open. */
+#dock-resizer {
+  flex: none; height: 6px; margin-bottom: -3px;
+  cursor: row-resize; background: transparent; z-index: 5;
+}
+#dock-resizer:hover, #dock-resizer:focus-visible, #dock-resizer.dragging {
+  background: var(--accent); outline: none;
+}
+body:has(#task-panel.collapsed) #dock-resizer { display: none; }
+body.resizing { user-select: none; }
+
+/* A collapsed sidebar hides the pane but never the separator. The separator
+   owns the Enter key that restores the pane, so hiding it would let a
+   keyboard-only operator collapse the sidebar and never get it back. It stays
+   as a grabbable rail at the edge, which is also how a dragged-to-zero sash
+   behaves in an editor. */
+body.tree-collapsed #tree { display: none; }
+body.tree-collapsed #tree-resizer {
+  width: 8px; margin-left: 0;
+  background: var(--border);
+}
+body.tree-collapsed #tree-resizer:hover,
+body.tree-collapsed #tree-resizer:focus-visible { background: var(--accent); }
 #task-panel-head {
   display: flex; gap: 10px; align-items: center;
   padding: 6px 14px; cursor: pointer; user-select: none;
   font-size: .85rem;
 }
 #task-panel-head .spacer { flex: 1; }
-#task-panel-body { overflow-y: auto; padding: 0 14px 10px; }
-#task-panel.collapsed #task-panel-body { display: none; }
+#task-panel-body { height: var(--dock-h); overflow-y: auto; padding: 0 14px 10px; }
 #task-panel table { width: 100%; font-size: .82rem; }
 
 /* Console workspace: several VM consoles can stay in the in-page tab strip,

@@ -472,6 +472,25 @@ check(
 );
 await page.screenshot({ path: `${SHOTS}/bulk-select.png` });
 
+// Put back what the bulk Stop took down. The demo server outlives a single
+// run, so a check that mutates power state and walks away makes the suite
+// pass once and fail after: the console checks above need a running VM, and
+// they would fail on the second run for a reason that has nothing to do with
+// the console. Restoring here keeps the suite idempotent against a
+// long-lived `corral web --demo`.
+for (const vm of stoppedFleet.filter((v) => range.includes(v.name))) {
+  await fetch(`${BASE}api/vms/${vm.namespace}/${vm.name}/start`, { method: 'POST' }).catch(() => {});
+}
+await page.waitForFunction(async (names) => {
+  const fleet = await (await fetch('/api/vms')).json();
+  return names.every((name) => !fleet.find((vm) => vm.name === name)?.status?.includes('Stopped'));
+}, range, { timeout: 10000 }).catch(() => {});
+const restoredFleet = await (await fetch(`${BASE}api/vms`)).json();
+check(
+  range.every((name) => !restoredFleet.find((vm) => vm.name === name)?.status?.includes('Stopped')),
+  'bulk-select: the stopped VMs are restarted so the suite stays re-runnable',
+);
+
 // ── dashboard-layout (#348) ───────────────────────────────────────
 // The Datacenter page opens with a widget grid. Move one widget and resize
 // another with the mouse, resize a third from the keyboard, reload, and check
@@ -593,6 +612,101 @@ await page.screenshot({ path: `${SHOTS}/bulk-select.png` });
   // Module scope keeps the fleet out of window, so no module can lean on a global.
   check(await page.evaluate(() => typeof window.vms === 'undefined' && typeof window.selected === 'undefined'), 'es-modules: no fleet globals on window');
   await page.screenshot({ path: `${SHOTS}/es-modules.png` });
+}
+
+// ── workspace-layout (#341) ───────────────────────────────────────
+// The shell is viewport-bound: the header and the sidebar stay put and only
+// the content pane scrolls. Before this, `body` used min-height, so the
+// document grew past the viewport and the window scrolled — which carried the
+// header and the whole navigation tree off-screen.
+{
+  await page.goto(BASE);
+  await page.waitForSelector('#tree .tree-item');
+  const treeW = () => page.evaluate(() => Math.round(document.querySelector('#tree').getBoundingClientRect().width));
+  const dockH = () => page.evaluate(() => Math.round(document.querySelector('#task-panel-body').getBoundingClientRect().height));
+
+  await page.evaluate(() => window.scrollTo(0, 800));
+  const pinned = await page.evaluate(() => ({
+    windowScrolled: window.scrollY !== 0,
+    headerTop: Math.round(document.querySelector('header').getBoundingClientRect().top),
+    contentScrolls: (() => { const c = document.querySelector('#content'); return c.scrollHeight > c.clientHeight; })(),
+  }));
+  check(!pinned.windowScrolled, 'workspace-layout: the window does not scroll');
+  check(pinned.headerTop === 0, `workspace-layout: the header stays pinned (top ${pinned.headerTop})`);
+  check(pinned.contentScrolls, 'workspace-layout: the content pane scrolls instead');
+
+  // Drag the sidebar wider.
+  const before = await treeW();
+  const handle = await page.$('#tree-resizer');
+  const box = await handle.boundingBox();
+  await page.mouse.move(box.x + 3, box.y + 200);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 123, box.y + 200, { steps: 8 });
+  await page.mouse.up();
+  const dragged = await treeW();
+  check(dragged > before + 80, `workspace-layout: dragging widens the sidebar (${before} → ${dragged})`);
+
+  // Keyboard sizing, with Shift for a bigger step.
+  await handle.focus();
+  await page.keyboard.press('ArrowLeft');
+  const narrowed = await treeW();
+  check(narrowed === dragged - 10, `workspace-layout: ArrowLeft narrows by 10 (${dragged} → ${narrowed})`);
+  await page.keyboard.down('Shift');
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.up('Shift');
+  const widened = await treeW();
+  check(widened === narrowed + 40, `workspace-layout: Shift+ArrowRight widens by 40 (${narrowed} → ${widened})`);
+
+  // The ARIA window-splitter contract: a separator that publishes its range.
+  const aria = await page.evaluate(() => {
+    const e = document.querySelector('#tree-resizer');
+    return { role: e.getAttribute('role'), now: e.getAttribute('aria-valuenow'),
+             min: e.getAttribute('aria-valuemin'), max: e.getAttribute('aria-valuemax') };
+  });
+  check(aria.role === 'separator' && aria.now && aria.min && aria.max,
+    `workspace-layout: the separator publishes its range (${JSON.stringify(aria)})`);
+
+  // Enter collapses and restores. The separator stays visible while collapsed
+  // because it owns that key — hiding it would strand a keyboard operator.
+  await handle.focus();
+  await page.keyboard.press('Enter');
+  const collapsed = await page.evaluate(() => document.body.classList.contains('tree-collapsed'));
+  const handleVisible = await page.evaluate(() => {
+    const e = document.querySelector('#tree-resizer');
+    return e.getBoundingClientRect().width > 0;
+  });
+  check(collapsed, 'workspace-layout: Enter collapses the sidebar');
+  check(handleVisible, 'workspace-layout: the separator survives the collapse');
+  await page.keyboard.press('Enter');
+  check(await page.evaluate(() => !document.body.classList.contains('tree-collapsed')),
+    'workspace-layout: Enter again restores the sidebar');
+
+  // The dock is a row of the shell, so making it taller shortens the content
+  // pane rather than covering it.
+  await page.click('#task-panel-head');
+  await page.waitForTimeout(250);
+  const d0 = await dockH();
+  const dockBox = await (await page.$('#dock-resizer')).boundingBox();
+  await page.mouse.move(dockBox.x + 400, dockBox.y + 3);
+  await page.mouse.down();
+  await page.mouse.move(dockBox.x + 400, dockBox.y - 90, { steps: 8 });
+  await page.mouse.up();
+  const d1 = await dockH();
+  const contentH = await page.evaluate(() => Math.round(document.querySelector('#content').getBoundingClientRect().height));
+  const shellH = await page.evaluate(() => window.innerHeight);
+  check(d1 > d0 + 50, `workspace-layout: dragging grows the dock (${d0} → ${d1})`);
+  check(contentH + d1 < shellH, 'workspace-layout: a taller dock takes height from content, not over it');
+
+  // All three preferences survive a reload.
+  const want = { tree: await treeW(), dock: d1 };
+  await page.goto(BASE);
+  await page.waitForSelector('#tree .tree-item');
+  const got = { tree: await treeW(), dock: await dockH() };
+  check(Math.abs(got.tree - want.tree) <= 2, `workspace-layout: the sidebar width persists (${want.tree} → ${got.tree})`);
+  check(Math.abs(got.dock - want.dock) <= 2, `workspace-layout: the dock height persists (${want.dock} → ${got.dock})`);
+  check(await page.evaluate(() => !document.querySelector('#task-panel').classList.contains('collapsed')),
+    'workspace-layout: the dock remembers it was open');
+  await page.screenshot({ path: `${SHOTS}/workspace-layout.png` });
 }
 
 check(pageErrors.length === 0, `no JS page errors (${pageErrors.join('; ').slice(0, 200)})`);

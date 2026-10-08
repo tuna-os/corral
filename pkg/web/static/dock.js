@@ -3,6 +3,17 @@
 import { api } from './api.js';
 import { emit } from './state.js';
 
+// Whether the dock is open is an operator preference, like the sidebar width
+// and the dock height. Without this the dock shuts on every reload and the
+// height someone chose is invisible until they open it again.
+const DOCK_OPEN_KEY = 'corral.dockOpen';
+const storedCollapsed = () => {
+  try { return localStorage.getItem(DOCK_OPEN_KEY) !== '1'; } catch { return true; }
+};
+const rememberOpen = (open) => {
+  try { localStorage.setItem(DOCK_OPEN_KEY, open ? '1' : '0'); } catch { /* private mode */ }
+};
+
 // ── Task panel (Proxmox-style activity log) ────────────────────────
 // First Alpine.js island — see docs/adr/0004-web-ui-alpinejs-no-build.md.
 // The poll loop stays a plain setInterval (Alpine is for render, not
@@ -17,12 +28,15 @@ import { emit } from './state.js';
 // executed), so listening for it is timing-safe regardless of script order.
 document.addEventListener('alpine:init', () => {
   Alpine.data('taskPanel', () => ({
-    collapsed: true,
+    collapsed: storedCollapsed(),
     tasks: [],
     summary: '',
     _lastFp: '',
 
     start() {
+      // Alpine has no hook for "a property changed" without a watcher, and the
+      // header click is the only thing that flips it, so persist from there.
+      this.$watch('collapsed', (v) => rememberOpen(!v));
       this.refresh();
       setInterval(() => this.refresh(), 5000);
     },
