@@ -291,6 +291,26 @@ const DOCK_HEIGHT_DEFAULT = 220;
 const DOCK_HEIGHT_MIN = 90;
 
 let treeCollapse = null;
+let splitters = [];
+
+/**
+ * Put the workspace back to its shipped layout.
+ *
+ * Every size and collapse state here is remembered per browser, which is the
+ * point — and also the trap. The vSphere Web Client is the cautionary example:
+ * admins who closed its Recent Tasks pane had no way back, and the vendor's own
+ * advice was to clear the browser cache. A layout you can customise needs a way
+ * to undo the customisation, so this is the same "Reset layout" the dashboard
+ * widgets already offer, for the workspace itself.
+ */
+export function resetWorkspaceLayout() {
+  for (const sp of splitters) sp.reset();
+  if (treeCollapse) treeCollapse.toggle(false); // a hidden pane is the thing hardest to get back
+  // The dock is an Alpine island and owns its own open state, so it is asked
+  // rather than reached into.
+  document.dispatchEvent(new CustomEvent('corral:reset-layout'));
+  toast('Workspace layout reset');
+}
 
 /** Collapse or restore the sidebar. Exported for the header button. */
 export function toggleTree(force) {
@@ -307,7 +327,7 @@ function initWorkspace() {
       className: 'tree-collapsed',
       storageKey: 'corral.treeCollapsed',
     });
-    makeSplitter({
+    splitters.push(makeSplitter({
       handle: treeHandle,
       axis: 'x',
       cssVar: '--tree-w',
@@ -318,7 +338,7 @@ function initWorkspace() {
       sizeFromPointer: (ev) => ev.clientX - tree.getBoundingClientRect().left,
       current: () => tree.getBoundingClientRect().width,
       collapsible: treeCollapse,
-    });
+    }));
   }
 
   const dockHandle = $('#dock-resizer');
@@ -326,7 +346,7 @@ function initWorkspace() {
   if (dockHandle && dock) {
     // The dock grows upward, so the pointer maps to the distance from the
     // bottom of the window rather than to a coordinate.
-    makeSplitter({
+    splitters.push(makeSplitter({
       handle: dockHandle,
       axis: 'y',
       cssVar: '--dock-h',
@@ -336,7 +356,7 @@ function initWorkspace() {
       max: () => Math.max(DOCK_HEIGHT_MIN, Math.round(window.innerHeight * 0.6)),
       sizeFromPointer: (ev) => window.innerHeight - ev.clientY,
       current: () => $('#task-panel-body')?.getBoundingClientRect().height || DOCK_HEIGHT_DEFAULT,
-    });
+    }));
   }
 }
 
@@ -391,6 +411,7 @@ bindPalette({
   createCT: () => $('#btn-create-ct').click(),
   selectedVMKey: () => (state.selected.type === 'vm' ? state.selected.key : null),
   focusFilter: focusTreeFilter,
+  resetLayout: resetWorkspaceLayout,
 });
 initKeys();
 

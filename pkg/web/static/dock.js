@@ -37,6 +37,9 @@ document.addEventListener('alpine:init', () => {
       // Alpine has no hook for "a property changed" without a watcher, and the
       // header click is the only thing that flips it, so persist from there.
       this.$watch('collapsed', (v) => rememberOpen(!v));
+      // "Reset layout" puts the workspace back to how it ships, and the dock
+      // ships closed. The watcher above persists the change.
+      document.addEventListener('corral:reset-layout', () => { this.collapsed = true; });
       this.refresh();
       setInterval(() => this.refresh(), 5000);
     },

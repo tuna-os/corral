@@ -36,7 +36,7 @@ const readOnly = () => document.body.classList.contains('read-only');
 // stable across polls so "recently used" survives a refresh and a reload.
 
 function entries() {
-  const { vms, cts, nodes, pools, go, openVM, vmAction, ctAction, openPool, createVM, createCT, icon } = ctx;
+  const { vms, cts, nodes, pools, go, openVM, vmAction, ctAction, openPool, createVM, createCT, icon, resetLayout } = ctx;
   const out = [];
   const add = (e) => out.push({ keywords: '', mutates: false, ...e });
 
@@ -52,6 +52,18 @@ function entries() {
   }
   add({ id: 'action:create-vm', kind: 'create', icon: icon('plus'), label: 'Create VM', sub: 'new virtual machine', keywords: 'new', mutates: true, run: createVM });
   add({ id: 'action:create-ct', kind: 'create', icon: icon('plus'), label: 'Create CT', sub: 'new container', keywords: 'new container', mutates: true, run: createCT });
+  // The sidebar width, the dock height and whether either is collapsed are all
+  // remembered, so there has to be a way back to the defaults. It is not a
+  // mutation of the fleet — only of this browser's layout — so a read-only
+  // caller gets it too.
+  if (resetLayout) {
+    add({
+      id: 'action:reset-layout', kind: 'view', icon: icon('restart'),
+      label: 'Reset layout', sub: 'sidebar, dock and panel sizes',
+      keywords: 'layout reset sidebar dock width height restore default workspace',
+      run: resetLayout,
+    });
+  }
 
   for (const vm of vms()) {
     const key = ctx.vmKey(vm);

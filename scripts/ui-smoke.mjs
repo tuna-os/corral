@@ -67,7 +67,7 @@ const sortedNames = await grid.locator('tbody tr:not(.grid-spacer) td:nth-child(
 check(columnOrder[0] === 'status' && columnOrder[1] === 'name', 'grid-columns reorder persists after reload');
 check(afterWidth > beforeWidth + 20, 'grid-columns resize persists after reload');
 check(sortedNames.join('|') === [...sortedNames].sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })).join('|'), 'grid-columns sort persists and row order is correct');
-await grid.screenshot({ path: 'grid-columns.png' });
+await grid.screenshot({ path: `${SHOTS}/grid-columns.png` });
 check(true, 'grid-columns screenshot saved');
 
 // VM summary.
@@ -120,7 +120,7 @@ await page.waitForSelector('.context-menu', { timeout: 10000 });
 check(await page.locator('.context-menu').count() > 0, 'context-menu: right-click opens action menu');
 
 // Save a screenshot with the context menu open
-await page.screenshot({ path: 'context-menu.png' }).catch(() => {});
+await page.screenshot({ path: `${SHOTS}/context-menu.png` }).catch(() => {});
 
 // Context menu closes on Escape
 await page.keyboard.press('Escape');
@@ -302,7 +302,7 @@ check(
   await page.locator('.migrate-dialog #pick-node').inputValue().catch(() => '') === toNode,
   'drag-migrate: the dropped-on node is preselected',
 );
-await page.screenshot({ path: 'drag-migrate.png' }).catch(() => {});
+await page.screenshot({ path: `${SHOTS}/drag-migrate.png` }).catch(() => {});
 await page.click('.migrate-dialog #pick-go').catch(() => {});
 await page.waitForFunction(async ([target]) => {
   const fleet = await (await fetch('/api/vms')).json();
@@ -901,6 +901,67 @@ check(
       'interaction-guard: the stopped VM is restarted so the suite stays re-runnable',
     );
   }
+}
+
+// ── reset-layout (#341) ───────────────────────────────────────────
+// Sidebar width, dock height and both collapse states are remembered per
+// browser, which is the point and also the trap: the vSphere Web Client let
+// admins close its Recent Tasks pane with no way back, and the vendor's own
+// advice was to clear the browser cache. A customisable layout needs an undo,
+// so the workspace gets the same "Reset layout" the dashboard widgets have.
+{
+  await page.goto(BASE);
+  await page.waitForSelector('#tree [data-vm-key]', { timeout: 30000 });
+  const treeWidth = () => page.evaluate(() => document.querySelector('#tree').getBoundingClientRect().width);
+  const collapsed = () => page.evaluate(() => document.body.classList.contains('tree-collapsed'));
+  const dockOpen = () => page.evaluate(() => !document.querySelector('#task-panel').classList.contains('collapsed'));
+
+  // The shipped default, not whatever is stored now: earlier checks in this
+  // same run leave the sidebar at a width they chose, and the whole point of a
+  // reset is to get back past that.
+  const TREE_DEFAULT = 270;
+  const started = await treeWidth();
+  // Customise all three, including collapsing the pane — the state that is
+  // hardest to get back out of.
+  await page.locator('#tree-resizer').focus();
+  for (let i = 0; i < 4; i++) await page.keyboard.press('Shift+ArrowRight');
+  // Open the dock if it is not already — an earlier check leaves it open, and
+  // a blind toggle would close it and quietly invert this setup.
+  if (!(await dockOpen())) {
+    await page.click('#task-panel-head');
+    await page.waitForTimeout(400);
+  }
+  const wide = await treeWidth();
+  await page.locator('#tree-resizer').focus();
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(300);
+  check(
+    wide > started && wide !== TREE_DEFAULT && await dockOpen() && await collapsed(),
+    `reset-layout: the layout is customised first (${started} → ${wide}, dock open, sidebar collapsed)`,
+  );
+
+  // Reachable by name, not just by a button someone has to already know about.
+  await page.keyboard.press('Control+k');
+  await page.waitForSelector('#palette[open]', { timeout: 5000 });
+  await page.locator('#palette-input').fill('reset layout');
+  await page.waitForTimeout(400);
+  check(
+    (await page.textContent('#palette-list li')).includes('Reset layout'),
+    'reset-layout: the palette finds it by name',
+  );
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(600);
+
+  check(await treeWidth() === TREE_DEFAULT, `reset-layout: the sidebar is back to its default width (${TREE_DEFAULT})`);
+  check(!(await collapsed()), 'reset-layout: a collapsed sidebar is restored');
+  check(!(await dockOpen()), 'reset-layout: the dock is back to shipping closed');
+
+  // The reset has to be written, not just applied: a reset that a reload undoes
+  // is no way out of a bad stored layout.
+  await page.reload();
+  await page.waitForSelector('#tree [data-vm-key]', { timeout: 30000 });
+  check(await treeWidth() === TREE_DEFAULT, 'reset-layout: the reset survives a reload');
+  await page.screenshot({ path: `${SHOTS}/reset-layout.png` });
 }
 
 check(pageErrors.length === 0, `no JS page errors (${pageErrors.join('; ').slice(0, 200)})`);
