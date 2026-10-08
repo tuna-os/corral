@@ -22,7 +22,7 @@ import { updateSourceFields } from './create.js';
 import './dock.js';
 import { icon } from './icons.js';
 import { poolMenuItems, unassignedMenuItems } from './menus.js';
-import { bindPalette, initKeys } from './palette.js';
+import { bindPalette, initKeys, openPalette } from './palette.js';
 import { bindPools, loadPools, poolState } from './pools.js';
 import { emit, state } from './state.js';
 import { focusTreeFilter, renderTree, setTreeView, treeRow, treeView, vmRow } from './tree.js';
@@ -345,6 +345,8 @@ export function closeDrawer() { $('#tree').classList.remove('open'); }
 initWorkspace();
 $('#btn-menu').innerHTML = icon('menu');
 $('#btn-create').innerHTML = `${icon('plus')} Create VM`;
+$('#btn-palette').innerHTML = `${icon('search')}<span class="btn-label">Search</span>`;
+$('#btn-palette').onclick = () => openPalette();
 
 // Pool View borrows the tree's row builders rather than growing its own, so a
 // pool row and a node row stay visually identical — the difference is what a

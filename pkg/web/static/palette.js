@@ -167,6 +167,12 @@ function build() {
       role="combobox" aria-expanded="true" aria-controls="palette-list" aria-autocomplete="list"
       placeholder="Search VMs, nodes, pools and actions…">
     <ul id="palette-list" role="listbox" aria-label="Results"></ul>
+    <!-- How many matches there are is obvious on screen and silent otherwise:
+         arrowing through a list reads out each option but never says how long
+         it is, and an empty result reads as nothing happening at all. The
+         count is announced politely so it waits for the typing to settle
+         instead of interrupting every keystroke. -->
+    <div id="palette-count" class="sr-only" role="status" aria-live="polite"></div>
     <div class="palette-foot muted"><kbd>↑</kbd><kbd>↓</kbd> move · <kbd>Enter</kbd> run · <kbd>Esc</kbd> close · <kbd>?</kbd> shortcuts</div>`;
   document.body.appendChild(dlg);
 
@@ -204,6 +210,12 @@ function update() {
     : '<li class="muted palette-empty">No matches.</li>';
   if (results.length) input.setAttribute('aria-activedescendant', `palette-opt-${active}`);
   else input.removeAttribute('aria-activedescendant');
+  const count = dlg.querySelector('#palette-count');
+  if (count) {
+    count.textContent = results.length
+      ? `${results.length} result${results.length === 1 ? '' : 's'}`
+      : 'No matches.';
+  }
 }
 
 function move(delta) {

@@ -780,6 +780,59 @@ check(
   await page.waitForTimeout(500);
 }
 
+// ── palette-reach (#349) ──────────────────────────────────────────
+// The command palette was keyboard-only: Ctrl/Cmd+K is undiscoverable without
+// a keyboard and untypeable on a phone, so the palette was unreachable there.
+// It now also has a header button, and the result count is announced.
+{
+  await page.goto(BASE);
+  await page.waitForSelector('#tree [data-vm-key]', { timeout: 30000 });
+
+  check(await page.locator('#btn-palette').count() === 1, 'palette-reach: the header has a palette button');
+  await page.click('#btn-palette');
+  await page.waitForSelector('#palette[open]', { timeout: 5000 }).catch(() => {});
+  check(await page.locator('#palette[open]').count() === 1, 'palette-reach: the button opens the palette');
+  check(
+    await page.evaluate(() => document.activeElement?.id) === 'palette-input',
+    'palette-reach: opening it focuses the input',
+  );
+
+  // The count is what a screen reader has to fall back on: arrowing a listbox
+  // reads each option but never says how many there are.
+  await page.locator('#palette-input').fill('prod');
+  await page.waitForTimeout(300);
+  const announced = await page.textContent('#palette-count');
+  check(/\d+ results?$/.test(announced.trim()), `palette-reach: the result count is announced ("${announced.trim()}")`);
+  check(
+    await page.getAttribute('#palette-count', 'aria-live') === 'polite',
+    'palette-reach: the count is announced politely, not on every keystroke',
+  );
+  await page.locator('#palette-input').fill('zzzzznope');
+  await page.waitForTimeout(300);
+  check((await page.textContent('#palette-count')).includes('No matches'), 'palette-reach: an empty result is announced too');
+  await page.screenshot({ path: `${SHOTS}/palette-reach.png` });
+  await page.keyboard.press('Escape');
+
+  // At drawer width the button has to survive — it is the only way in — so it
+  // gives up its label, not its place.
+  await page.setViewportSize({ width: 420, height: 800 });
+  await page.waitForTimeout(300);
+  check(await page.locator('#btn-palette').isVisible(), 'palette-reach: the button survives at phone width');
+  check(
+    !(await page.locator('#btn-palette .btn-label').isVisible()),
+    'palette-reach: it collapses to the icon rather than crowding the header',
+  );
+  check(
+    (await page.getAttribute('#btn-palette', 'aria-label') || '').length > 0,
+    'palette-reach: the icon-only button still has an accessible name',
+  );
+  await page.click('#btn-palette');
+  await page.waitForSelector('#palette[open]', { timeout: 5000 }).catch(() => {});
+  check(await page.locator('#palette[open]').count() === 1, 'palette-reach: the palette opens at phone width');
+  await page.keyboard.press('Escape');
+  await page.setViewportSize({ width: 1440, height: 900 });
+}
+
 check(pageErrors.length === 0, `no JS page errors (${pageErrors.join('; ').slice(0, 200)})`);
 
 await browser.close();

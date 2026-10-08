@@ -760,6 +760,11 @@ tr.ev-warn td { color: var(--yellow); }
   .brand span { display: none; }
   /* Header: keep the create buttons on one line and finger-sized. */
   header { padding: 8px 10px; gap: 8px; }
+  /* The palette button is the only way into the command palette without a
+     keyboard, so it stays at this width and gives up its label instead of its
+     place. The button keeps an aria-label, so dropping the text costs the
+     accessible name nothing. */
+  #btn-palette .btn-label { display: none; }
   header .btn { padding: 8px 10px; font-size: .82rem; }
   /* Touch targets — comfortable tap heights for rows, tabs, buttons. */
   .btn { min-height: 40px; }
