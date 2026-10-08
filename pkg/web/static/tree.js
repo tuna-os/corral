@@ -3,14 +3,14 @@
 
 import { ctKey, vmKey } from './api.js';
 import { closeDrawer, markRendered, refresh, renderContent, select } from './app.js';
-import { hostPowerDot, hostPowerKey } from './content/hostpower.js';
 import { migrateVM } from './content/vm.js';
 import { icon } from './icons.js';
 import {
-  ctMenuItems, hostPowerMenuItems, namespaceMenuItems, nodeMenuItems, vmMenuItems,
+  ctMenuItems, namespaceMenuItems, nodeMenuItems, vmMenuItems,
 } from './menus.js';
 import { dropZone, loadPools, makeDraggable, renderTreePools } from './pools.js';
 import { state } from './state.js';
+import { capabilityTreeRows } from './ui/capabilities.js';
 import { $, esc } from './ui/dom.js';
 import { attachContextMenu } from './ui/menu.js';
 import { keyed, reconcile } from './ui/reconcile.js';
@@ -187,21 +187,10 @@ export function renderTree() {
   attachContextMenu(setRow, () => [{ icon: 'cog', label: 'Open Settings', action: () => select({ type: 'settings' }) }]);
   sink.appendChild(setRow);
 
-  // Hosts that a host-power plugin can switch on and off (e.g. an on-demand
-  // cloud VM node kept stopped when idle). Shown only when a plugin reports any.
-  for (const h of state.hostPower.hosts || []) {
-    const hpRow = treeRow({
-      lvl: 0, icon: icon('server'), label: h.name,
-      sub: h.state,
-      dot: hostPowerDot(h.state),
-      key: `hp:${hostPowerKey(h)}`,
-      sig: [h, state.selected.type === 'hostpower' && state.selected.key === hostPowerKey(h)],
-      sel: state.selected.type === 'hostpower' && state.selected.key === hostPowerKey(h),
-      onclick: () => select({ type: 'hostpower', key: hostPowerKey(h) }),
-    });
-    attachContextMenu(hpRow, () => hostPowerMenuItems(h));
-    sink.appendChild(hpRow);
-  }
+  // Rows that a capability contributes, such as the machines a host-power
+  // plugin can switch on and off. Each capability builds its own rows and
+  // attaches its own menus; this file names none of them.
+  capabilityTreeRows(sink);
 
   if (treeView === 'pool') renderTreePools(sink);
   else if (treeView === 'storage') renderTreeStorage(sink);

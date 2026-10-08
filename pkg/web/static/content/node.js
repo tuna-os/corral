@@ -3,9 +3,10 @@
 import { mountDashboard } from '../dashboard.js';
 import { icon } from '../icons.js';
 import { state } from '../state.js';
+import { capabilityLayout, capabilityWidgets } from '../ui/capabilities.js';
 import { $, esc } from '../ui/dom.js';
 import { bindCTTable, ctTable } from './ct.js';
-import { chartWidget, powerWidget, topVMsWidget } from './datacenter.js';
+import { chartWidget, topVMsWidget } from './datacenter.js';
 import { bindVMTable, vmTable } from './vm-table.js';
 
 // The node page shares one saved layout across nodes; the widgets are built
@@ -16,7 +17,6 @@ const NODE_LAYOUT = [
   { id: 'mem', x: 8, y: 0, w: 4, h: 3 },
   { id: 'top-cpu', x: 0, y: 3, w: 4, h: 3 },
   { id: 'top-mem', x: 4, y: 3, w: 4, h: 3 },
-  { id: 'power', x: 8, y: 3, w: 4, h: 3 },
 ];
 
 function nodeWidgets(name) {
@@ -40,7 +40,7 @@ function nodeWidgets(name) {
     mem: chartWidget('Memory usage', hist, 'mem'),
     'top-cpu': topVMsWidget('Top VMs by CPU', 'cpu', name),
     'top-mem': topVMsWidget('Top VMs by memory', 'mem', name),
-    power: powerWidget(name),
+    ...capabilityWidgets(name),
   };
 }
 
@@ -58,7 +58,9 @@ export function renderNode(main, name) {
       </div>
       <div id="node-dash" data-node="${esc(name)}"></div>
       <div id="node-rest"></div>`;
-    nodeDash = mountDashboard($('#node-dash'), { scope: 'node', widgets: nodeWidgets(name), layout: NODE_LAYOUT });
+    nodeDash = mountDashboard($('#node-dash'), {
+      scope: 'node', widgets: nodeWidgets(name), layout: [...NODE_LAYOUT, ...capabilityLayout(name)],
+    });
   } else {
     nodeDash.refresh();
   }

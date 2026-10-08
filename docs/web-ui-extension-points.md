@@ -99,6 +99,34 @@ A new gesture needs no code here. The module already covers it.
 
 ## Where to add a feature
 
+### A capability
+
+A capability is a thing a plugin provides, such as host power. It registers
+what it adds to the UI, and core draws it. Core does not name the capability
+anywhere.
+
+Write one module under `content/`. Hold the data in the module. Then call
+`registerCapability` from `ui/capabilities.js` with the hooks you have. Every
+hook is optional:
+
+| Hook | What it gives |
+|---|---|
+| `load()`, `clear()` | Fetch on each poll. A failure clears this capability only. |
+| `fingerprint()` | What the poll compares. Leave it out and the data never draws. |
+| `screens` | A map from a selection type to a renderer. |
+| `widgets(scope)`, `layout(scope)` | Dashboard widgets, and where they sit first. |
+| `treeRows(sink)` | Rows for the sidebar. |
+| `menuItems(kind, subject)` | Entries for another object's context menu. |
+| `alerts()` | Lines for the Alerts widget. |
+
+Import the module for its side effect in `app.js`. That import is the only
+mention of it in core.
+
+Read the registry when you draw, never when your module loads. Core imports
+the Datacenter screen before it imports the capability, so a widget map built
+at load time came out empty. `content/hostpower.js` is the worked example, and
+`content/datacenter.js` shows the lazy call.
+
 ### A dock panel
 
 Add an entry to `PANELS` in `dock.js`. Add a `<div role="tabpanel"

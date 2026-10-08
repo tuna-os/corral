@@ -1967,6 +1967,32 @@ check(
   await page.click(`${HP}[data-hp="stop"][data-hpkey*="i-0demo3"]`);
   check(await waitFor('corral-3', 'stopped'), 'host-power: powering it off returns the demo to its starting state');
 
+  // The registry's other two hooks. A node's context menu gains the actions of
+  // the machine that carries it, and the Alerts widget gains a line for a
+  // machine that is off with guests still scheduled to it. Both used to be
+  // written into core; if either fails, a capability can no longer reach the
+  // place it used to be named in.
+  check(
+    (await page.textContent('#content')).includes('corral-3')
+      && /is off with \d+ VM/.test(await page.textContent('#content')),
+    'host-power: the Alerts widget carries the capability\'s own line',
+  );
+
+  await page.click('#tree >> text=Server View');
+  await page.waitForTimeout(700);
+  await page.locator('#tree .tree-item[data-rkey="node:corral-3"]').first().click({ button: 'right' });
+  await page.waitForTimeout(300);
+  check(
+    await page.locator('.context-menu', { hasText: 'Power on' }).count() > 0,
+    'host-power: a node menu offers the actions of the machine under it',
+  );
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(200);
+  // Server View is the default, but say so rather than leave it to the next
+  // check to discover.
+  await page.click('#tree >> text=Server View');
+  await page.waitForTimeout(400);
+
   await page.screenshot({ path: `${SHOTS}/host-power.png` });
 }
 

@@ -23,17 +23,21 @@ core, and the Go side holds to that. Core calls any plugin that declares the
 does not hold to it. Six core files carry 43 lines that exist only for that
 one capability:
 
-| File | Lines about host-power |
-|---|---|
-| `pkg/web/static/content/datacenter.js` | 11 |
-| `pkg/web/static/tree.js` | 10 |
-| `pkg/web/static/menus.js` | 8 |
-| `pkg/web/static/content/hostpower.js` | 7 |
-| `pkg/web/static/app.js` | 5 |
-| `pkg/web/static/state.js` | 2 |
+| File | Lines about host-power | After stage 0 |
+|---|---|---|
+| `pkg/web/static/content/datacenter.js` | 11 | none |
+| `pkg/web/static/tree.js` | 10 | none |
+| `pkg/web/static/menus.js` | 8 | none |
+| `pkg/web/static/content/hostpower.js` | 7 | the capability itself |
+| `pkg/web/static/app.js` | 5 | one import |
+| `pkg/web/static/state.js` | 2 | none |
 
 The second capability costs the same again, and so does the third. The
 marketplace can carry plugins that corral cannot show.
+
+Stage 0 has since moved all of that into the capability's own module. Core now
+holds one line: the import that loads it. The rest of this RFC is about the
+contract a plugin speaks, which stage 0 did not change.
 
 ## The borrowed idea
 
@@ -111,16 +115,16 @@ makes two of them accept entries at run time, and leaves the rest alone.
 
 Stage it:
 
-0. Give the dashboard and the tree a registry that accepts entries at run
-   time. Move host-power onto it with no change to the plugin contract. This
-   deletes most of those 43 lines and proves the shape against a real
-   consumer.
+0. **Done.** `pkg/web/static/ui/capabilities.js` holds a registry that accepts
+   entries at run time, and host-power registers with it. The plugin contract
+   did not change.
 1. Add the `ui` metadata section and the typed documents. Teach the Extensions
    screen to name what a plugin adds, so install shows more than a name.
 2. Let the marketplace carry a plugin whose only purpose is a screen.
 
-Stage 0 is worth doing on its own. It pays for itself in core code that goes away,
-even if stages 1 and 2 never happen.
+Stage 0 was worth doing on its own, and it paid for itself in core code that
+went away. Stages 1 and 2 remain a decision for a maintainer, because they
+change the contract in ADR-0007.
 
 Stage 0 needed browser coverage for the capability it moves, and demo mode had
 none, because it installs no plugins. `pkg/web/hostpower_demo.go` now reports

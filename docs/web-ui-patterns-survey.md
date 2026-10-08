@@ -150,7 +150,8 @@ Two sources had to agree before we took a pattern from them.
 |---|---|---|
 | A marketplace of plugins | KubeStellar | Present. |
 | Permissions a plugin declares | KubeStellar | Present. |
-| A plugin declares its place in the UI | KubeStellar | **Proposed**, not built. See [RFC-0002](rfc/0002-plugin-ui-contributions.md). |
+| The host places a contribution, rather than naming it | KubeStellar | **Added.** A capability registers what it adds; core draws it. `host-power` |
+| A plugin declares its place in the UI | KubeStellar | **Proposed** for the plugin contract. Stage 0 is built. See [RFC-0002](rfc/0002-plugin-ui-contributions.md). |
 | A plugin ships code the page runs | KubeStellar (WASM, `plugin-component.js`) | **Declined.** corral embeds its UI and has no build step. Script from a marketplace could read the session and call any API. |
 | Documented extension points | — | **Added.** See [the extension points](web-ui-extension-points.md). |
 
@@ -161,21 +162,12 @@ Two sources had to agree before we took a pattern from them.
 - **Dock panels beyond Tasks and Events.** #350 also asks for a cluster log.
   corral's task log already is that log, so a second tab would show one thing
   twice.
-- **Plugin UI contributions.** RFC-0002 holds the design. A maintainer owns
-  that call, because it changes the boundary in ADR-0007.
-- **Stage 0 of RFC-0002 can now proceed.** That stage needs no contract change.
-  It gives the dashboard and the tree a run-time registry, and moves
-  host-power onto it. That deletes most of the 43 lines of capability
-  knowledge in core.
+- **Plugin UI contributions, stages 1 and 2.** RFC-0002 holds the design. It
+  covers the `ui` metadata section and the typed documents. It also covers a
+  marketplace plugin whose only purpose is a screen. A maintainer owns that
+  call, because it changes the boundary in ADR-0007.
 
-  The obstacle was the demo. `corral web --demo` installs no plugins, so
-  `/api/hostpower` answered with an empty list, and the tree rows, the context
-  menu and the screen that the refactor touches never appeared. The suite had
-  nothing to drive, so the refactor would have landed unverified.
-
-  `pkg/web/hostpower_demo.go` now supplies those machines in demo mode. It is
-  a fixture, not a provider. It sits behind the demo flag, and it never joins
-  the installed plugins. A real deployment still reaches a provider only
-  through the metadata handshake. Eight checks under `host-power` now drive
-  the capability's screens, which includes the intermediate state a machine
-  reports while it changes.
+  Stage 0 is built. `ui/capabilities.js` holds a registry that accepts entries
+  at run time, and host-power registers with it. Core keeps one line about
+  that capability: the import that loads its module. See
+  [the extension points](web-ui-extension-points.md) for the hooks.

@@ -11,7 +11,9 @@ import { ctAction, renderCT } from './content/ct.js';
 import { renderDatacenter } from './content/datacenter.js';
 import { renderDoctor } from './content/doctor.js';
 import { renderExtensions } from './content/extensions.js';
-import { renderHostPower } from './content/hostpower.js';
+// Imported for its side effect: the module registers the host-power
+// capability with ui/capabilities.js. Core names nothing in it.
+import './content/hostpower.js';
 import { disconnectMultiview, renderMultiview } from './content/multiview.js';
 import { renderNamespace } from './content/namespace.js';
 import { renderNode } from './content/node.js';
@@ -27,6 +29,7 @@ import { bindPalette, initKeys, openPalette } from './palette.js';
 import { bindPools, loadPools, poolState } from './pools.js';
 import { emit, state } from './state.js';
 import { focusTreeFilter, renderTree, setTreeView, treeRow, treeView, vmRow } from './tree.js';
+import { capabilityFingerprint, capabilityScreen, loadCapabilityData } from './ui/capabilities.js';
 import { $, esc, toast } from './ui/dom.js';
 import { makeCollapsible, makeSplitter } from './ui/splitter.js';
 import { activeContextMenu, attachContextMenu } from './ui/menu.js';
@@ -121,7 +124,9 @@ export async function refresh(force = false) {
   // Nodes are the cluster topology view; a local-only deployment (QEMU/Incus/
   // libvirt) has none, and a nodes failure must never blank a working VM list.
   try { state.nodes = await api('/api/nodes'); } catch { state.nodes = []; }
-  try { state.hostPower = await api('/api/hostpower'); } catch { state.hostPower = { hosts: [] }; }
+  // Each registered capability fetches its own data, and one that fails
+  // cannot blank the rest of the page. See ui/capabilities.js.
+  await loadCapabilityData();
   offlineShown = false;
   if (treeView === 'pool') await loadPools();
   // The image catalogue changes far more slowly than the fleet and is only
@@ -239,13 +244,14 @@ async function loadInstanceTypes() {
 
 // Everything the tree and content pane draw from. One definition, because the
 // poll compares against it and markRendered writes it: when the two disagreed
-// — the second was missing hostPower — a render could be judged necessary
-// every tick for a change that was already on screen. The image catalogue is
-// in here too, or Storage View would fetch its images and then conclude there
-// was nothing new to draw.
+// — the second was missing a capability's data — a render could be judged
+// necessary every tick for a change that was already on screen. The image
+// catalogue is in here too, or Storage View would fetch its images and then
+// conclude there was nothing new to draw. A capability contributes its own
+// data through the registry, so this list does not have to name it.
 function renderFingerprint() {
   return JSON.stringify([
-    state.vms, state.cts, state.nodes, state.hostPower,
+    state.vms, state.cts, state.nodes, capabilityFingerprint(),
     state.images, state.dataVolumes, state.selected, state.tab,
   ]);
 }
@@ -310,10 +316,12 @@ export function renderContent() {
   if (state.selected.type === 'namespace') return renderNamespace(main, state.selected.name);
   if (state.selected.type === 'extensions') return renderExtensions(main);
   if (state.selected.type === 'doctor') return renderDoctor(main);
-  if (state.selected.type === 'hostpower') return renderHostPower(main, state.selected.key);
   if (state.selected.type === 'multiview') return renderMultiview(main);
   if (state.selected.type === 'storage') return renderStorage(main, state.selected.name);
   if (state.selected.type === 'settings') return renderSettings(main);
+  // A capability may own a selection type. Core does not list those types.
+  const fromCapability = capabilityScreen(state.selected.type);
+  if (fromCapability) return fromCapability(main, state.selected.key);
   return renderDatacenter(main);
 }
 

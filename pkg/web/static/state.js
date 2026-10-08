@@ -15,9 +15,6 @@ export const state = {
   vms: [],
   cts: [], // Containers (#50) — pet pods, not KubeVirt VMs
   nodes: [],
-  // Power-manageable hosts from host-power plugins (sdk.CapHostPower). Empty
-  // unless such a plugin is installed; core has no provider knowledge.
-  hostPower: { hosts: [] },
   caps: { storageClass: '', canExpand: false, canSnapshot: false },
   // Authenticated tailnet identity + privilege (see /api/whoami). Defaults to
   // admin so the UI is fully enabled until told otherwise (single-user mode).
