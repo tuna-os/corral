@@ -123,8 +123,8 @@ type Transition struct {
 
 // ValidTransitions is the allowlist of legal mode changes.
 // Any transition not listed here should either:
-//   1. Be added here if it's a legitimate flow
-//   2. Be removed from the code if it's a leftover bug
+//  1. Be added here if it's a legitimate flow
+//  2. Be removed from the code if it's a leftover bug
 //
 // Phase 2 will enforce this with a transition guard in tuiModel.setMode().
 var ValidTransitions = []Transition{
