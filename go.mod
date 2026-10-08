@@ -18,7 +18,7 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/tg123/go-htpasswd v1.2.5
 	golang.org/x/crypto v0.57.0 // GO-2026-5932: openpgp subpackage is unmaintained/unfixable; this repo only uses x/crypto/bcrypt (cmd/corral-auth), openpgp is not imported — see #193
-	golang.org/x/net v0.59.0
+	golang.org/x/net v0.60.0
 	golang.org/x/oauth2 v0.37.0
 	gopkg.in/yaml.v3 v3.0.1
 )
