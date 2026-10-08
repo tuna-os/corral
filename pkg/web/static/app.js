@@ -31,6 +31,7 @@ import { $, esc, toast } from './ui/dom.js';
 import { makeCollapsible, makeSplitter } from './ui/splitter.js';
 import { activeContextMenu, attachContextMenu } from './ui/menu.js';
 import { initInteractionTracking, interacting, onSettled } from './ui/interaction.js';
+import { cycleThemeMode, themeMode } from './ui/theme.js';
 
 // A console deep link is also the pop-out contract. It uses the canonical VM
 // key rather than only a name, so duplicate names on peers/contexts are safe.
@@ -450,6 +451,8 @@ bindPalette({
   selectedVMKey: () => (state.selected.type === 'vm' ? state.selected.key : null),
   focusFilter: focusTreeFilter,
   resetLayout: resetWorkspaceLayout,
+  themeMode,
+  cycleTheme: () => { cycleThemeMode(); renderContent(); },
 });
 initKeys();
 

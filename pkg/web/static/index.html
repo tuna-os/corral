@@ -4,6 +4,17 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Corral · Virtual Environment</title>
+<!-- Apply the stored colour scheme before the first paint. This is inline and
+     before the stylesheet on purpose: app.js is a module and therefore
+     deferred, so setting the attribute there would show a dark page to someone
+     who chose light and then swap it, which is the flash this avoids. Keep it
+     tiny and dependency-free; ui/theme.js owns everything afterwards. -->
+<script>
+  try {
+    var m = localStorage.getItem('corral.theme');
+    if (m === 'light' || m === 'dark') document.documentElement.setAttribute('data-theme', m);
+  } catch (e) { /* private mode: fall back to the system preference */ }
+</script>
 <link rel="stylesheet" href="style.css">
 <!-- Vendored (see vendor/README.md) so consoles work offline/air-gapped —
      same rationale as the vendored Alpine below (ADR-0004). -->

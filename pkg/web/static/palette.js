@@ -75,6 +75,15 @@ function entries() {
   // remembered, so there has to be a way back to the defaults. It is not a
   // mutation of the fleet — only of this browser's layout — so a read-only
   // caller gets it too.
+  add({
+    id: 'action:theme', kind: 'view', icon: icon('cog'),
+    label: `Appearance: ${ctx.themeMode()}`,
+    sub: 'system, light or dark',
+    keywords: 'theme dark light mode colour color scheme appearance night day',
+    // Like Reset layout, this changes the browser's view and not the fleet,
+    // so a read-only caller gets it too.
+    run: () => { ctx.cycleTheme(); },
+  });
   if (resetLayout) {
     add({
       id: 'action:reset-layout', kind: 'view', icon: icon('restart'),

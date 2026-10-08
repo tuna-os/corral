@@ -1,17 +1,107 @@
+/* ── Colour schemes ───────────────────────────────────────────────
+   Both palettes are written once, then aliased. There is no build step
+   (ADR-0004), so the mapping below is repeated rather than the colours: three
+   short blocks of `--bg: var(--d-bg)` is a cost worth paying to keep one
+   definition of each colour.
+
+   --accent and --accent-2 are deliberately absent from every block. The server
+   injects those at `:root` from /api/theme, and a `:root[data-theme=...]`
+   selector outranks a plain `:root`, so setting them here would silently
+   override the accent an operator configured. The accent is a mid-tone orange
+   that carries its own dark foreground, so it reads on either scheme. */
 :root {
-  --bg: #0e1116;
-  --panel: #151a22;
-  --panel-2: #1b212c;
-  --border: #2a3240;
-  --text: #d8dde6;
-  --muted: #8b96a5;
+  /* dark */
+  --d-bg: #0e1116;
+  --d-panel: #151a22;
+  --d-panel-2: #1b212c;
+  --d-border: #2a3240;
+  --d-text: #d8dde6;
+  --d-muted: #8b96a5;
+  --d-green: #3fb950;
+  --d-red: #f85149;
+  --d-yellow: #d29922;
+  --d-shadow: rgba(0,0,0,.5);
+
+  /* light. Not the dark values inverted: the greens, reds and yellows are
+     darkened so they still pass as text on a white panel, where the dark
+     scheme's brighter versions wash out. */
+  --l-bg: #f4f6f9;
+  --l-panel: #ffffff;
+  --l-panel-2: #eceff4;
+  --l-border: #d3d9e2;
+  --l-text: #1b2028;
+  --l-muted: #5a6573;
+  --l-green: #1a7f37;
+  --l-red: #cf222e;
+  --l-yellow: #8a6100;
+  --l-shadow: rgba(16,24,40,.18);
+
+  /* color-scheme tells the browser which way to paint the things CSS does not
+     reach: form controls, the scrollbar gutter, the canvas behind the page. */
+  color-scheme: dark;
+  --bg: var(--d-bg);
+  --panel: var(--d-panel);
+  --panel-2: var(--d-panel-2);
+  --border: var(--d-border);
+  --text: var(--d-text);
+  --muted: var(--d-muted);
+  --green: var(--d-green);
+  --red: var(--d-red);
+  --yellow: var(--d-yellow);
+  --shadow: var(--d-shadow);
+
   --accent: #f0883e;
   --accent-2: #d9742e;
-  --green: #3fb950;
-  --red: #f85149;
-  --yellow: #d29922;
   --radius: 8px;
   font-size: 15px;
+}
+
+/* Follow the operating system unless the operator has chosen for themselves. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+    --bg: var(--l-bg);
+    --panel: var(--l-panel);
+    --panel-2: var(--l-panel-2);
+    --border: var(--l-border);
+    --text: var(--l-text);
+    --muted: var(--l-muted);
+    --green: var(--l-green);
+    --red: var(--l-red);
+    --yellow: var(--l-yellow);
+    --shadow: var(--l-shadow);
+  }
+}
+
+/* An explicit choice. These come after the media query on purpose: the two
+   selectors have the same specificity, so source order is what lets "always
+   dark" win on a light desktop. */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: var(--l-bg);
+  --panel: var(--l-panel);
+  --panel-2: var(--l-panel-2);
+  --border: var(--l-border);
+  --text: var(--l-text);
+  --muted: var(--l-muted);
+  --green: var(--l-green);
+  --red: var(--l-red);
+  --yellow: var(--l-yellow);
+  --shadow: var(--l-shadow);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: var(--d-bg);
+  --panel: var(--d-panel);
+  --panel-2: var(--d-panel-2);
+  --border: var(--d-border);
+  --text: var(--d-text);
+  --muted: var(--d-muted);
+  --green: var(--d-green);
+  --red: var(--d-red);
+  --yellow: var(--d-yellow);
+  --shadow: var(--d-shadow);
 }
 
 * { box-sizing: border-box; }
@@ -285,7 +375,7 @@ td.check input, th.check input { cursor: pointer; vertical-align: middle; }
 .grid-spacer td { height: inherit; padding: 0; border: 0; }
 .grid-columns, .grid-views { position: relative; }
 .grid-columns summary, .grid-views summary { list-style: none; }
-.grid-menu { position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; min-width: 330px; padding: 9px; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 8px 24px #0008; }
+.grid-menu { position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; min-width: 330px; padding: 9px; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 8px 24px var(--shadow); }
 .grid-view-menu { min-width: 240px; }
 .grid-view-menu > label { display: flex; gap: 6px; align-items: center; }
 .grid-view-name { width: 130px; }
@@ -561,7 +651,7 @@ body.tree-collapsed #tree-resizer:focus-visible { background: var(--accent); }
 .send-keys-menu {
   position: absolute; z-index: 20; top: calc(100% + 4px); right: 0;
   min-width: 150px; padding: 4px; background: var(--panel);
-  border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 8px 24px #0008;
+  border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 8px 24px var(--shadow);
 }
 .send-keys-menu button {
   display: block; width: 100%; padding: 6px 8px; text-align: left;
@@ -705,6 +795,17 @@ tr.ev-warn td { color: var(--yellow); }
    the name you came to read. */
 .palette-keys { margin-left: auto; display: inline-flex; gap: 3px; flex: none; }
 
+/* A segmented control: one choice out of a few, shown as a single unit so it
+   does not read as three unrelated buttons. */
+.seg { display: inline-flex; }
+.seg .seg-btn { border-radius: 0; margin-left: -1px; }
+.seg .seg-btn:first-child { border-radius: var(--radius) 0 0 var(--radius); margin-left: 0; }
+.seg .seg-btn:last-child { border-radius: 0 var(--radius) var(--radius) 0; }
+.seg .seg-btn[aria-checked="true"] {
+  background: var(--accent); border-color: var(--accent); color: #14100b; font-weight: 600;
+  position: relative; z-index: 1;
+}
+
 /* Breadcrumb: the path above the object on screen, each step a way back. Faint
    and small, because it is orientation rather than content. */
 .breadcrumb { margin: 0 0 6px; font-size: .78rem; }
@@ -832,7 +933,7 @@ tr.ev-warn td { color: var(--yellow); }
     transform: translateX(-100%);
     transition: transform .18s ease;
     width: min(300px, 85vw);
-    box-shadow: 4px 0 24px rgba(0,0,0,.5);
+    box-shadow: 4px 0 24px var(--shadow);
   }
   #tree.open { transform: translateX(0); }
   /* The sidebar is a drawer at this width: fixed, so there is nothing to

@@ -2,6 +2,7 @@
 
 import { api } from '../api.js';
 import { icon } from '../icons.js';
+import { MODES, setThemeMode, themeMode } from '../ui/theme.js';
 import { $, esc } from '../ui/dom.js';
 
 // ── Settings: theme & branding ────────────────────────────────────
@@ -26,6 +27,15 @@ export async function renderSettings(main) {
 
   main.innerHTML = `
     <div class="page-head"><h1>${icon('cog')} Settings</h1></div>
+
+    <h2 class="section">${icon('cog')} Appearance</h2>
+    <div class="hw-edit" style="align-items:center">
+      <div class="seg" role="radiogroup" aria-label="Colour scheme">
+        ${MODES.map((m) => `<button type="button" class="btn sm seg-btn" role="radio" data-theme-mode="${m}"
+          aria-checked="${m === themeMode() ? 'true' : 'false'}">${m === 'system' ? 'System' : m === 'light' ? 'Light' : 'Dark'}</button>`).join('')}
+      </div>
+      <span class="muted">System follows this device. Remembered in this browser only.</span>
+    </div>
 
     <h2 class="section">${icon('cpu')} Accent colour</h2>
     <div class="hw-edit" style="align-items:center">
@@ -86,6 +96,17 @@ export async function renderSettings(main) {
   };
 
   // Preset swatches.
+  main.querySelectorAll('[data-theme-mode]').forEach((b) => {
+    b.onclick = () => {
+      setThemeMode(b.dataset.themeMode);
+      // Only the pressed state changes, so update it in place: re-rendering
+      // the screen would take focus off the control that was just used.
+      main.querySelectorAll('[data-theme-mode]').forEach(
+        (o) => o.setAttribute('aria-checked', o === b ? 'true' : 'false'),
+      );
+    };
+  });
+
   main.querySelectorAll('.preset').forEach((b) => {
     b.onclick = () => {
       accent.value = b.dataset.hex;

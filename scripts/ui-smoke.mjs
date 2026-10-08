@@ -1581,6 +1581,71 @@ check(
   await page.screenshot({ path: `${SHOTS}/dashboard-on-a-phone.png` });
 }
 
+// ── colour-scheme ─────────────────────────────────────────────────
+// Light mode, with three states rather than two: the console follows the
+// desktop by default, and an explicit choice overrides it. The accent belongs
+// to whoever branded this corral, so no scheme may touch it.
+{
+  const bgOf = (pg) => pg.evaluate(
+    () => getComputedStyle(document.documentElement).getPropertyValue('--bg').trim(),
+  );
+  const accentOf = (pg) => pg.evaluate(
+    () => getComputedStyle(document.documentElement).getPropertyValue('--accent').trim(),
+  );
+
+  // A separate context per system preference: colorScheme is fixed per context.
+  const darkCtx = await browser.newContext({ viewport: { width: 1280, height: 800 }, colorScheme: 'dark' });
+  const darkPage = await darkCtx.newPage();
+  await darkPage.goto(BASE);
+  await darkPage.waitForSelector('#tree [data-vm-key]', { timeout: 30000 });
+  const darkBg = await bgOf(darkPage);
+  const darkAccent = await accentOf(darkPage);
+
+  const lightCtx = await browser.newContext({ viewport: { width: 1280, height: 800 }, colorScheme: 'light' });
+  const lightPage = await lightCtx.newPage();
+  await lightPage.goto(BASE);
+  await lightPage.waitForSelector('#tree [data-vm-key]', { timeout: 30000 });
+  const lightBg = await bgOf(lightPage);
+  const lightAccent = await accentOf(lightPage);
+
+  check(!!darkBg && !!lightBg && darkBg !== lightBg, `colour-scheme: the UI follows the system (${darkBg} vs ${lightBg})`);
+  check(
+    await lightPage.evaluate(() => getComputedStyle(document.documentElement).colorScheme) === 'light',
+    'colour-scheme: color-scheme is declared, so native controls follow too',
+  );
+  // The accent comes from /api/theme. A scheme block that set it would outrank
+  // the server and silently discard an operator's branding.
+  check(
+    darkAccent === lightAccent && !!darkAccent,
+    `colour-scheme: the configured accent survives both schemes (${darkAccent})`,
+  );
+
+  // An explicit choice beats the system, and outlives a reload.
+  await lightPage.click('#tree >> text=Settings');
+  await lightPage.waitForSelector('[data-theme-mode]', { timeout: 15000 });
+  check(
+    (await lightPage.locator('[data-theme-mode]').count()) === 3,
+    'colour-scheme: Settings offers System, Light and Dark',
+  );
+  await lightPage.click('[data-theme-mode="dark"]');
+  await lightPage.waitForTimeout(600);
+  check(await bgOf(lightPage) === darkBg, 'colour-scheme: Dark overrides a light desktop');
+  await lightPage.reload();
+  await lightPage.waitForSelector('#tree [data-vm-key]', { timeout: 30000 });
+  check(await bgOf(lightPage) === darkBg, 'colour-scheme: the choice survives a reload');
+
+  // Back to following the system, which is the default state.
+  await lightPage.click('#tree >> text=Settings');
+  await lightPage.waitForSelector('[data-theme-mode]', { timeout: 15000 });
+  await lightPage.click('[data-theme-mode="system"]');
+  await lightPage.waitForTimeout(600);
+  check(await bgOf(lightPage) === lightBg, 'colour-scheme: System hands the choice back to the desktop');
+  await lightPage.screenshot({ path: `${SHOTS}/colour-scheme-light.png` });
+
+  await darkCtx.close();
+  await lightCtx.close();
+}
+
 check(pageErrors.length === 0, `no JS page errors (${pageErrors.join('; ').slice(0, 200)})`);
 
 await browser.close();
