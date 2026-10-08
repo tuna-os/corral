@@ -106,6 +106,39 @@
 
 * { box-sizing: border-box; }
 
+/* Skip link: off-screen until focused, then the first thing in the tab order.
+   WCAG calls this bypassing blocks; here the block is a sidebar with a row per
+   guest, which a keyboard user would otherwise tab through to reach what they
+   just selected. */
+.skip-link {
+  position: absolute;
+  left: 8px;
+  top: -60px;
+  z-index: 100;
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  text-decoration: none;
+  transition: top .12s ease;
+}
+.skip-link:focus { top: 8px; }
+
+/* Respect a system request for less motion. The transitions here are small —
+   a drawer sliding, a skip link dropping in — but "small" is not the test:
+   the operating system was told to stop animating, and this is part of the
+   operating system's screen. Animation that conveys nothing is simply turned
+   off rather than shortened. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 /* Scrollbars — theme them everywhere; the browser defaults render as chunky
    light bars against the dark panels. */
 * { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
@@ -155,6 +188,8 @@ header {
    flex item shrink below its content; without it the pane sizes to its content
    and the scroll moves to the document. */
 #content {
+  /* Focused only by the skip link, so it must not paint a ring of its own. */
+  outline: none;
   flex: 1;
   min-width: 0;
   min-height: 0;

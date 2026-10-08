@@ -37,6 +37,10 @@
 <script defer src="alpine.min.js"></script>
 </head>
 <body>
+<!-- The sidebar is a long list of focusable rows, and every one of them sits
+     between the top of the page and the content. Without this a keyboard user
+     tabs through the whole fleet to reach the thing they selected. -->
+<a class="skip-link" href="#content">Skip to content</a>
 <header>
   <button id="btn-menu" class="icon-btn" aria-label="Menu">☰</button>
   <div class="brand">🤠 <strong>Corral</strong> <span>Virtual Environment</span></div>
@@ -55,7 +59,8 @@
   <aside id="tree"></aside>
   <div id="tree-resizer" role="separator" aria-orientation="vertical"
        aria-label="Resize the sidebar" tabindex="0" title="Drag to resize · double-click to reset"></div>
-  <main id="content"></main>
+  <!-- tabindex="-1" so the skip link moves focus here, not just the scroll. -->
+  <main id="content" tabindex="-1"></main>
 </div>
 
 <!-- Proxmox-style task dock: recent/running server operations. It sits in the

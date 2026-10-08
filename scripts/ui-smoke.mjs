@@ -1646,6 +1646,72 @@ check(
   await lightCtx.close();
 }
 
+// ── reachable (WCAG 2.4.1, 4.1.3, 2.3.3) ──────────────────────────
+// Three things a console with a long sidebar, live toasts and animation owes
+// anyone not using a mouse. All three were missing, and the first got worse
+// when the tree rows became focusable.
+{
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(BASE);
+  await page.waitForSelector('#tree [data-vm-key]', { timeout: 30000 });
+  await page.waitForTimeout(600);
+
+  // Bypass blocks: the first stop must skip the fleet, not start it.
+  await page.keyboard.press('Tab');
+  await page.waitForTimeout(350);
+  check(
+    await page.evaluate(() => document.activeElement?.classList.contains('skip-link')) === true,
+    'reachable: the first Tab lands on a skip link',
+  );
+  check(
+    await page.evaluate(() => Math.round(document.querySelector('.skip-link').getBoundingClientRect().top)) >= 0,
+    'reachable: the skip link shows itself once focused',
+  );
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(300);
+  // Focus has to move, not just the scroll, or the next Tab resumes in the tree.
+  check(
+    await page.evaluate(() => document.activeElement?.id) === 'content',
+    'reachable: it moves focus into the content, not just the scroll',
+  );
+
+  // Status messages: a live region has to be present and empty before the
+  // message arrives, or the change is read as ordinary content, if at all.
+  const region = await page.evaluate(() => {
+    const r = document.getElementById('toast-region');
+    return r ? { role: r.getAttribute('role'), live: r.getAttribute('aria-live'), empty: r.children.length === 0 } : null;
+  });
+  check(!!region && region.live === 'polite' && region.empty,
+    `reachable: a polite status region waits empty for toasts (${JSON.stringify(region)})`);
+
+  await page.click('#btn-palette');
+  await page.waitForSelector('#palette[open]', { timeout: 5000 });
+  await page.locator('#palette-input').fill('reset layout');
+  await page.waitForTimeout(400);
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(700);
+  check(
+    await page.evaluate(() => !!document.querySelector('#toast-region .toast')),
+    'reachable: a real toast is announced from inside that region',
+  );
+  await page.screenshot({ path: `${SHOTS}/reachable.png` });
+}
+
+// Reduced motion is a separate context: the preference is fixed per context.
+{
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, reducedMotion: 'reduce' });
+  const pg = await ctx.newPage();
+  await pg.goto(BASE);
+  await pg.waitForSelector('#tree [data-vm-key]', { timeout: 30000 });
+  const durations = await pg.evaluate(() => [...document.querySelectorAll('.skip-link, #tree')]
+    .map((el) => getComputedStyle(el).transitionDuration));
+  check(
+    durations.length > 0 && durations.every((d) => parseFloat(d) < 0.01),
+    `reachable: motion is off when the system asks for it (${durations.join(', ')})`,
+  );
+  await ctx.close();
+}
+
 check(pageErrors.length === 0, `no JS page errors (${pageErrors.join('; ').slice(0, 200)})`);
 
 await browser.close();
