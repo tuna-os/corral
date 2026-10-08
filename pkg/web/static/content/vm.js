@@ -7,6 +7,7 @@ import { watchBuild } from '../create.js';
 import { timeChart } from '../dashboard.js';
 import { icon } from '../icons.js';
 import { state } from '../state.js';
+import { bindBreadcrumb, breadcrumb } from '../ui/breadcrumb.js';
 import { bindTags, tagChips } from '../tags.js';
 import { $, esc, toast } from '../ui/dom.js';
 import { NO_SAMPLES } from './datacenter.js';
@@ -41,7 +42,17 @@ export function renderVM(main, vm) {
     return isKubeVirt;
   });
   if (!tabs.some(([id]) => id === state.tab)) state.tab = 'summary';
+  // Where this guest sits. A detail screen reached from the palette or a
+  // pop-out carries no tree context otherwise.
+  const trail = [
+    { label: 'Datacenter', go: () => select({ type: 'dc' }) },
+    vm.node
+      ? { label: vm.node, go: () => select({ type: 'node', name: vm.node }) }
+      : (vm.namespace ? { label: vm.namespace, go: () => select({ type: 'namespace', name: vm.namespace }) } : null),
+    { label: vm.name },
+  ];
   main.innerHTML = `
+    ${breadcrumb(trail)}
     <div class="page-head">
       <h1>${icon('cube')} ${esc(vm.name)}</h1>
       <span class="pill ${vm.ready ? 'on' : (vm.running || (vm.status && (vm.status.includes('Starting') || vm.status.includes('Creating')))) ? 'mid' : 'off'}">${esc(vm.status)}</span>
@@ -71,6 +82,7 @@ export function renderVM(main, vm) {
     </div>
     <div id="tab-body"></div>`;
 
+  bindBreadcrumb(main, trail);
   main.querySelectorAll('[data-act]').forEach((b) => {
     b.onclick = () => vmAction(vm, b.dataset.act);
   });

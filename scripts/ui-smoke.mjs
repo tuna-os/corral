@@ -1492,6 +1492,39 @@ check(
   await page.keyboard.press('Escape');
 }
 
+// ── breadcrumb (#350) ─────────────────────────────────────────────
+// A detail screen opened with a name and a status pill and nothing saying
+// which node or namespace the guest sits on. Reached from the palette, a
+// pop-out or a link, it carried no tree context at all. vSphere's object
+// navigator and VS Code's breadcrumbs both answer that the same way: name the
+// path above the object, and make each step a way back.
+{
+  await page.goto(BASE);
+  await page.waitForSelector('#tree [data-vm-key]', { timeout: 30000 });
+  await page.locator('#tree [data-vm-key]').first().click();
+  await page.waitForSelector('#content .breadcrumb', { timeout: 10000 }).catch(() => {});
+  const crumbs = await page.locator('#content .breadcrumb .crumb').allTextContents();
+  check(crumbs.length >= 2, `breadcrumb: a guest page shows its path (${crumbs.join(' > ')})`);
+  check(crumbs[0].trim() === 'Datacenter', 'breadcrumb: the trail starts at the Datacenter');
+
+  // The last step is the page you are on, so it is not a link and it says so.
+  check(
+    (await page.textContent('#content .breadcrumb [aria-current="page"]')).trim() === crumbs[crumbs.length - 1].trim(),
+    'breadcrumb: the last step is marked as the current page',
+  );
+  const links = await page.locator('#content .breadcrumb button.crumb').count();
+  check(links === crumbs.length - 1, `breadcrumb: every step above the page is a link (${links})`);
+
+  // A trail nobody can follow is just decoration.
+  await page.locator('#content .breadcrumb button.crumb').first().click();
+  await page.waitForTimeout(700);
+  check(
+    (await page.textContent('#content h1')).includes('Datacenter'),
+    'breadcrumb: a step navigates to that ancestor',
+  );
+  await page.screenshot({ path: `${SHOTS}/breadcrumb.png` });
+}
+
 check(pageErrors.length === 0, `no JS page errors (${pageErrors.join('; ').slice(0, 200)})`);
 
 await browser.close();

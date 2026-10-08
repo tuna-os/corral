@@ -704,6 +704,17 @@ tr.ev-warn td { color: var(--yellow); }
    labels stay aligned, and faint: it teaches the key without competing with
    the name you came to read. */
 .palette-keys { margin-left: auto; display: inline-flex; gap: 3px; flex: none; }
+
+/* Breadcrumb: the path above the object on screen, each step a way back. Faint
+   and small, because it is orientation rather than content. */
+.breadcrumb { margin: 0 0 6px; font-size: .78rem; }
+.breadcrumb ol { list-style: none; display: flex; flex-wrap: wrap; gap: 4px; margin: 0; padding: 0; }
+.breadcrumb li + li::before { content: '›'; color: var(--muted); margin-right: 4px; }
+.breadcrumb .crumb { color: var(--muted); background: none; border: 0; padding: 0; font: inherit; }
+.breadcrumb button.crumb { cursor: pointer; text-decoration: underline; text-decoration-color: var(--border); }
+.breadcrumb button.crumb:hover { color: var(--fg); }
+.breadcrumb button.crumb:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.breadcrumb [aria-current="page"] { color: var(--fg); }
 .palette-foot code { font-size: .72rem; opacity: .85; }
 /* A loud hover flickers as the cursor crosses a dense table, so it stays faint
    while the keyboard focus ring stays obvious — and the ring is an outline, not
