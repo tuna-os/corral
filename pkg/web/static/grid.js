@@ -1,6 +1,8 @@
 // Small, dependency-free data grid used by Corral's inventory views.
 // State is browser-local: no layout or filter preference is sent to the API.
 
+import { keyed, reconcile } from './ui/reconcile.js';
+
 const storageKey = (id) => `corral-grid:${id}`;
 const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
 
@@ -38,7 +40,11 @@ function csvValue(value) {
 
 export function mountGrid(host, options) {
   if (!host) return;
-  const { id, columns, rows, rowKey, onRowClick, selected = new Set(), onSelectionChange } = options;
+  const { id, columns, rowKey, onRowClick, selected = new Set(), onSelectionChange } = options;
+  // `rows` is reassignable so a caller can feed new data into a mounted grid
+  // instead of mounting a new one, which is what keeps the grid's own DOM —
+  // and the focus, selection and column drag living in it — across a poll.
+  let rows = options.rows;
   const state = load(id, columns);
   const byID = new Map(columns.map((c) => [c.id, c]));
   let dragID = '';
@@ -211,12 +217,19 @@ export function mountGrid(host, options) {
     cols.forEach((col) => { const th = document.createElement('th'); const input = document.createElement('input'); input.type = 'search'; input.placeholder = `Filter ${col.label}`; input.setAttribute('aria-label', `Filter ${col.label}`); input.value = state.filters[col.id] || ''; input.oninput = () => { state.filters[col.id] = input.value; save(id, state); viewportStart = 0; render(); requestAnimationFrame(() => host.querySelector(`[aria-label="Filter ${CSS.escape(col.label)}"]`)?.focus()); }; th.appendChild(input); filters.appendChild(th); });
     head.append(labels, filters);
 
-    body.replaceChildren();
+    // Rows are collected and then diffed into the body rather than replacing
+    // it. A data poll re-renders this grid, and replacing every row threw away
+    // what the browser hangs off node identity: the focused row, a checkbox
+    // mid-click, a text selection in a cell. The signature carries the row's
+    // data and the visible columns, so a row is reused only when there is
+    // genuinely nothing to redraw in it — its cell renderers close over the row
+    // object, and a reused node must not keep pointing at an older one.
+    const desired = [];
     const virtual = result.length > 500;
     const rowHeight = 39;
     const count = virtual ? Math.ceil(scroll.clientHeight / rowHeight) + 8 : result.length;
     const shown = virtual ? result.slice(viewportStart, viewportStart + count) : result;
-    if (virtual && viewportStart) { const spacer = document.createElement('tr'); spacer.className = 'grid-spacer'; spacer.style.height = `${viewportStart * rowHeight}px`; body.appendChild(spacer); }
+    if (virtual && viewportStart) { const spacer = document.createElement('tr'); spacer.className = 'grid-spacer'; spacer.style.height = `${viewportStart * rowHeight}px`; desired.push(keyed(spacer, 'spacer:top', spacer.style.height)); }
     shown.forEach((row) => {
       const tr = document.createElement('tr'); tr.dataset.key = rowKey(row); tr.tabIndex = 0;
       tr.onclick = (event) => { if (!event.target.closest('.check')) onRowClick?.(row); };
@@ -224,9 +237,10 @@ export function mountGrid(host, options) {
       const checkCell = document.createElement('td'); checkCell.className = 'check'; const check = document.createElement('input'); check.type = 'checkbox'; check.className = options.checkClass || 'grid-check'; check.checked = selected.has(rowKey(row)); check.setAttribute('aria-label', `Select ${rowKey(row)}`); check.onchange = () => { check.checked ? selected.add(rowKey(row)) : selected.delete(rowKey(row)); onSelectionChange?.(selected); syncSelection(); }; checkCell.appendChild(check); tr.appendChild(checkCell);
       options.decorateRow?.(tr, row);
       cols.forEach((col) => { const td = document.createElement('td'); const rendered = col.render?.(row); if (rendered instanceof Node) td.appendChild(rendered); else td.textContent = rendered ?? valueFor(row, col) ?? ''; tr.appendChild(td); });
-      body.appendChild(tr);
+      desired.push(keyed(tr, `row:${rowKey(row)}`, [row, cols.map((c) => c.id), selected.has(rowKey(row))]));
     });
-    if (virtual && viewportStart + shown.length < result.length) { const spacer = document.createElement('tr'); spacer.className = 'grid-spacer'; spacer.style.height = `${(result.length - viewportStart - shown.length) * rowHeight}px`; body.appendChild(spacer); }
+    if (virtual && viewportStart + shown.length < result.length) { const spacer = document.createElement('tr'); spacer.className = 'grid-spacer'; spacer.style.height = `${(result.length - viewportStart - shown.length) * rowHeight}px`; desired.push(keyed(spacer, 'spacer:bottom', spacer.style.height)); }
+    reconcile(body, desired);
     table.setAttribute('aria-rowcount', String(result.length));
     renderColumnMenu(); renderViews();
   }
@@ -238,4 +252,11 @@ export function mountGrid(host, options) {
     const link = document.createElement('a'); link.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' })); link.download = `${id}.csv`; link.click(); setTimeout(() => URL.revokeObjectURL(link.href), 0);
   };
   render();
+
+  // The handle a caller keeps so a later poll can refresh this grid in place,
+  // the way the dashboard widgets already do, rather than replacing it.
+  return {
+    update(nextRows) { rows = nextRows; render(); },
+    refresh: render,
+  };
 }

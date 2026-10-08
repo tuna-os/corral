@@ -964,6 +964,58 @@ check(
   await page.screenshot({ path: `${SHOTS}/reset-layout.png` });
 }
 
+// ── grid-reconcile (#346) ─────────────────────────────────────────
+// The grid re-renders on sort, on every keystroke in a column filter, on a
+// column reorder and on virtual scroll. It used to replace every row each
+// time, which threw away the focused row, a checkbox mid-click and any text
+// selection in a cell — the same reason the column filter needs a
+// requestAnimationFrame to put focus back. Rows are now diffed by key.
+{
+  await page.goto(BASE);
+  await page.waitForSelector('#content .vm-check', { timeout: 30000 });
+  const ROWS = '#content .grid-scroll table tbody tr';
+  const stampRows = () => page.evaluate((sel) => {
+    const rows = document.querySelectorAll(sel);
+    rows.forEach((r, i) => { r.__smokeGrid = i; });
+    return rows.length;
+  }, ROWS);
+  const kept = () => page.evaluate(
+    (sel) => [...document.querySelectorAll(sel)].filter((r) => r.__smokeGrid !== undefined).length,
+    ROWS,
+  );
+
+  // Sorting reorders the same rows; none of them need rebuilding.
+  const before = await stampRows();
+  await page.locator('#content .grid-sort').first().click();
+  await page.waitForTimeout(400);
+  check(before > 0 && await kept() === before, `grid-reconcile: sorting reuses the rows (${await kept()}/${before})`);
+
+  // Filtering removes the rows that no longer match and keeps the ones that do
+  // — it must not rebuild the survivors.
+  await stampRows();
+  // The term comes from the data actually on screen, not a guessed name: an
+  // earlier check reorders and hides columns and that choice persists, so the
+  // first column here is whatever that check left behind.
+  const firstCell = (await page.evaluate((sel) => {
+    const cells = document.querySelectorAll(`${sel}:first-child td`);
+    return cells[1]?.textContent?.trim() || '';
+  }, ROWS)).slice(0, 4);
+  await page.locator('#content .grid-filters input').first().fill(firstCell);
+  await page.waitForTimeout(500);
+  const shown = await page.locator(ROWS).count();
+  check(
+    !!firstCell && shown > 0 && shown < before,
+    `grid-reconcile: the filter narrows the grid on "${firstCell}" (${before} → ${shown})`,
+  );
+  check(await kept() === shown, `grid-reconcile: the rows that still match are kept, not rebuilt (${await kept()}/${shown})`);
+
+  await page.locator('#content .grid-filters input').first().fill('');
+  await page.waitForTimeout(400);
+  check(await page.locator(ROWS).count() === before, 'grid-reconcile: clearing the filter brings the rows back');
+  check(await page.locator('#content .vm-check').count() > 0, 'grid-reconcile: the row checkboxes still work after a diff');
+  await page.screenshot({ path: `${SHOTS}/grid-reconcile.png` });
+}
+
 check(pageErrors.length === 0, `no JS page errors (${pageErrors.join('; ').slice(0, 200)})`);
 
 await browser.close();
