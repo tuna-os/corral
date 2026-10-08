@@ -289,21 +289,34 @@ func clusterChecks() []Check {
 		fix:     installCDI,
 	})
 
-	cfg := kubevirtConfig()
+	kvCR, cfg := kubevirtState()
+	// A CR an operator reconciles is not corral's to patch, so the rows below
+	// report but do not offer a fix: HCO would revert it. The detail says so,
+	// because "not fixable" without a reason reads as a corral limitation.
+	kvFixable := kvInstalled && kvCR.ManagedBy == ""
+	// Where an operator owns the CR, a failing row says so. Only a failing row:
+	// on a passing one the advice is noise, and these five rows pass on a
+	// healthy HCO cluster.
+	managed := func(detail string, ok bool) string {
+		if ok || kvCR.ManagedBy == "" {
+			return detail
+		}
+		return detail + "; set via the HyperConverged CR — " + kvCR.ManagedBy + " reverts direct edits"
+	}
 	rollout := cfg.RolloutStrategy == "LiveUpdate"
 	checks = append(checks, Check{
 		Name:    "LiveUpdate rollout strategy",
 		OK:      rollout,
-		Detail:  "lets CPU/RAM hotplug live-migrate; offline fallback otherwise",
-		Fixable: kvInstalled && !rollout,
+		Detail:  managed("lets CPU/RAM hotplug live-migrate; offline fallback otherwise", rollout),
+		Fixable: kvFixable && !rollout,
 		fix:     reconcileKubeVirt,
 	})
 	liveMig := contains(cfg.WorkloadUpdateMethods, "LiveMigrate")
 	checks = append(checks, Check{
 		Name:    "LiveMigrate workload updates",
 		OK:      liveMig,
-		Detail:  "required by live CPU/RAM hotplug",
-		Fixable: kvInstalled && !liveMig,
+		Detail:  managed("required by live CPU/RAM hotplug", liveMig),
+		Fixable: kvFixable && !liveMig,
 		fix:     reconcileKubeVirt,
 	})
 	for _, gate := range []string{"Snapshot", "HotplugVolumes", "VMExport"} {
@@ -311,8 +324,8 @@ func clusterChecks() []Check {
 		checks = append(checks, Check{
 			Name:    "Feature gate: " + gate,
 			OK:      has,
-			Detail:  gateDetail(gate),
-			Fixable: kvInstalled && !has,
+			Detail:  managed(gateDetail(gate), has),
+			Fixable: kvFixable && !has,
 			fix:     reconcileKubeVirt,
 		})
 	}
@@ -441,29 +454,35 @@ func clusterChecks() []Check {
 
 // permittedGPUResourceNames returns the resourceName of every PCI/mediated
 // device permitted in the KubeVirt CR (empty if none, or no CR yet).
+// Listed with -A for the same reason kubevirtState is: under the Hyperconverged
+// Cluster Operator the CR is not named `kubevirt` in namespace `kubevirt`, and
+// asking for that name reported every permitted device as absent (#383).
 func permittedGPUResourceNames() []string {
-	out, err := run("kubectl", "get", "kubevirt", "kubevirt", "-n", "kubevirt", "-o", "json")
+	out, err := run("kubectl", "get", "kubevirt", "-A", "-o", "json")
 	if err != nil {
 		return nil
 	}
-	var kv struct {
-		Spec struct {
-			Configuration struct {
-				PermittedHostDevices struct {
-					PCIHostDevices  []struct{ ResourceName string } `json:"pciHostDevices"`
-					MediatedDevices []struct{ ResourceName string } `json:"mediatedDevices"`
-				} `json:"permittedHostDevices"`
-			} `json:"configuration"`
-		} `json:"spec"`
+	var list struct {
+		Items []struct {
+			Spec struct {
+				Configuration struct {
+					PermittedHostDevices struct {
+						PCIHostDevices  []struct{ ResourceName string } `json:"pciHostDevices"`
+						MediatedDevices []struct{ ResourceName string } `json:"mediatedDevices"`
+					} `json:"permittedHostDevices"`
+				} `json:"configuration"`
+			} `json:"spec"`
+		} `json:"items"`
 	}
-	if json.Unmarshal(out, &kv) != nil {
+	if json.Unmarshal(out, &list) != nil || len(list.Items) == 0 {
 		return nil
 	}
+	devices := list.Items[0].Spec.Configuration.PermittedHostDevices
 	var names []string
-	for _, d := range kv.Spec.Configuration.PermittedHostDevices.PCIHostDevices {
+	for _, d := range devices.PCIHostDevices {
 		names = append(names, d.ResourceName)
 	}
-	for _, d := range kv.Spec.Configuration.PermittedHostDevices.MediatedDevices {
+	for _, d := range devices.MediatedDevices {
 		names = append(names, d.ResourceName)
 	}
 	return names
@@ -619,38 +638,104 @@ type kvConfig struct {
 	FeatureGates          []string
 }
 
-func kubevirtConfig() kvConfig {
-	out, err := run("kubectl", "get", "kubevirt", "kubevirt", "-n", "kubevirt", "-o", "json")
+// kvRef is where the KubeVirt CR actually is, and who owns it.
+type kvRef struct {
+	Name      string
+	Namespace string
+	// ManagedBy is the operator that reconciles this CR, or "" when the CR is
+	// corral's to edit. It decides whether a fix is offered at all.
+	ManagedBy string
+}
+
+// Found reports whether a CR was located.
+func (r kvRef) Found() bool { return r.Name != "" }
+
+// kubevirtState locates the KubeVirt CR and reads its configuration.
+//
+// The CR is found by listing, not by name. The upstream manifests install it as
+// `kubevirt` in namespace `kubevirt`, and this used to ask for exactly that —
+// but the Hyperconverged Cluster Operator names it
+// `kubevirt-kubevirt-hyperconverged` in `kubevirt-hyperconverged`, so the
+// lookup failed and every row below it read as disabled on a cluster that had
+// them all enabled (#383). The installed-check above never had this problem
+// because it already listed with -A; the two answers to "where is the CR"
+// are now one.
+func kubevirtState() (kvRef, kvConfig) {
+	out, err := run("kubectl", "get", "kubevirt", "-A", "-o", "json")
 	if err != nil {
-		return kvConfig{}
+		return kvRef{}, kvConfig{}
 	}
-	var kv struct {
-		Spec struct {
-			Configuration struct {
-				VMRolloutStrategy      string `json:"vmRolloutStrategy"`
-				DeveloperConfiguration struct {
-					FeatureGates []string `json:"featureGates"`
-				} `json:"developerConfiguration"`
-			} `json:"configuration"`
-			WorkloadUpdateStrategy struct {
-				WorkloadUpdateMethods []string `json:"workloadUpdateMethods"`
-			} `json:"workloadUpdateStrategy"`
-		} `json:"spec"`
+	var list struct {
+		Items []struct {
+			Metadata struct {
+				Name            string            `json:"name"`
+				Namespace       string            `json:"namespace"`
+				Labels          map[string]string `json:"labels"`
+				OwnerReferences []struct {
+					Kind string `json:"kind"`
+				} `json:"ownerReferences"`
+			} `json:"metadata"`
+			Spec struct {
+				Configuration struct {
+					VMRolloutStrategy      string `json:"vmRolloutStrategy"`
+					DeveloperConfiguration struct {
+						FeatureGates []string `json:"featureGates"`
+					} `json:"developerConfiguration"`
+				} `json:"configuration"`
+				WorkloadUpdateStrategy struct {
+					WorkloadUpdateMethods []string `json:"workloadUpdateMethods"`
+				} `json:"workloadUpdateStrategy"`
+			} `json:"spec"`
+		} `json:"items"`
 	}
-	if json.Unmarshal(out, &kv) != nil {
-		return kvConfig{}
+	if json.Unmarshal(out, &list) != nil || len(list.Items) == 0 {
+		return kvRef{}, kvConfig{}
 	}
-	return kvConfig{
-		RolloutStrategy:       kv.Spec.Configuration.VMRolloutStrategy,
-		WorkloadUpdateMethods: kv.Spec.WorkloadUpdateStrategy.WorkloadUpdateMethods,
-		FeatureGates:          kv.Spec.Configuration.DeveloperConfiguration.FeatureGates,
+	// One KubeVirt CR per cluster is the supported shape: the operator is
+	// cluster-scoped in effect and a second CR does not reconcile. Taking the
+	// first is therefore not a guess between equals.
+	item := list.Items[0]
+	ref := kvRef{Name: item.Metadata.Name, Namespace: item.Metadata.Namespace}
+	for _, owner := range item.Metadata.OwnerReferences {
+		if owner.Kind == "HyperConverged" {
+			ref.ManagedBy = "the Hyperconverged Cluster Operator"
+		}
+	}
+	// Belt and braces: an HCO install that lost its owner reference still
+	// labels its operands, and patching it would still be reverted.
+	if ref.ManagedBy == "" {
+		if by := item.Metadata.Labels["app.kubernetes.io/managed-by"]; strings.Contains(by, "hco") {
+			ref.ManagedBy = "the Hyperconverged Cluster Operator"
+		}
+	}
+	return ref, kvConfig{
+		RolloutStrategy:       item.Spec.Configuration.VMRolloutStrategy,
+		WorkloadUpdateMethods: item.Spec.WorkloadUpdateStrategy.WorkloadUpdateMethods,
+		FeatureGates:          item.Spec.Configuration.DeveloperConfiguration.FeatureGates,
 	}
 }
 
 // reconcileKubeVirt enables LiveUpdate + LiveMigrate + the Snapshot/
 // HotplugVolumes/VMExport gates, preserving any other gates already set.
 func reconcileKubeVirt() error {
-	cfg := kubevirtConfig()
+	ref, cfg := kubevirtState()
+	if !ref.Found() {
+		return fmt.Errorf("no KubeVirt CR found in any namespace — " +
+			"if KubeVirt is installed, please report the output of `kubectl get kubevirt -A`")
+	}
+	// A managed CR must not be patched. HCO reconciles its operands and
+	// documents that users are expected not to modify them directly, so this
+	// patch would apply, report success, and then be silently reverted — a fix
+	// that un-fixes itself is worse than no fix, because the row goes green
+	// once and the operator stops looking.
+	if ref.ManagedBy != "" {
+		return fmt.Errorf("the KubeVirt CR %s/%s is managed by %s, which reverts direct edits to it\n"+
+			"set these through the HyperConverged CR instead:\n"+
+			"  workloadUpdateMethods: spec.workloadUpdateStrategy.workloadUpdateMethods\n"+
+			"  feature gates and vmRolloutStrategy: the kubevirt.kubevirt.io/jsonpatch annotation\n"+
+			"see https://github.com/kubevirt/hyperconverged-cluster-operator/blob/main/docs/cluster-configuration.md",
+			ref.Namespace, ref.Name, ref.ManagedBy)
+	}
 	gates := union(cfg.FeatureGates, []string{"Snapshot", "HotplugVolumes", "VMExport"})
 	methods := union(cfg.WorkloadUpdateMethods, []string{"LiveMigrate"})
 	patch := map[string]any{
@@ -663,7 +748,7 @@ func reconcileKubeVirt() error {
 		},
 	}
 	body, _ := json.Marshal(patch)
-	out, err := run("kubectl", "patch", "kubevirt", "kubevirt", "-n", "kubevirt",
+	out, err := run("kubectl", "patch", "kubevirt", ref.Name, "-n", ref.Namespace,
 		"--type", "merge", "-p", string(body))
 	if err != nil {
 		return fmt.Errorf("patching KubeVirt: %s", strings.TrimSpace(string(out)))

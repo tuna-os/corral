@@ -37,7 +37,8 @@ func scriptReachable(fake *shell.Fake) {
 	fake.AddResponse("kubectl get --raw /livez --request-timeout=3s", "ok", nil)
 }
 
-const healthyKubeVirtJSON = `{
+const healthyKubeVirtJSON = `{"items":[{
+  "metadata":{"name":"kubevirt","namespace":"kubevirt"},
   "spec": {
     "configuration": {
       "vmRolloutStrategy": "LiveUpdate",
@@ -49,7 +50,7 @@ const healthyKubeVirtJSON = `{
       "workloadUpdateMethods": ["LiveMigrate"]
     }
   }
-}`
+}]}`
 
 const healthySCJSON = `{
   "items": [
@@ -71,7 +72,7 @@ func scriptHealthyCluster(fake *shell.Fake) {
 	scriptReachable(fake)
 	fake.AddResponse("kubectl get kubevirt -A -o name", "kubevirt.kubevirt.io/kubevirt", nil)
 	fake.AddResponse("kubectl get deploy -A -l cdi.kubevirt.io=cdi-operator -o name", "deployment.apps/cdi-operator", nil)
-	fake.AddResponse("kubectl get kubevirt kubevirt -n kubevirt -o json", healthyKubeVirtJSON, nil)
+	fake.AddResponse("kubectl get kubevirt -A -o json", healthyKubeVirtJSON, nil)
 	fake.AddResponse("kubectl get sc -o json", healthySCJSON, nil)
 	fake.AddResponse("kubectl get volumesnapshotclass -o name",
 		"volumesnapshotclass.snapshot.storage.k8s.io/longhorn-snapshot\n", nil)
@@ -245,7 +246,7 @@ func TestRun_MisconfiguredKubeVirt_FlagsFixable(t *testing.T) {
 	fake := withFake(t)
 	scriptHealthyCluster(fake)
 	// KubeVirt installed but with default (unconfigured) spec.
-	fake.AddResponse("kubectl get kubevirt kubevirt -n kubevirt -o json", `{"spec":{}}`, nil)
+	fake.AddResponse("kubectl get kubevirt -A -o json", `{"items":[{"metadata":{"name":"kubevirt","namespace":"kubevirt"},"spec":{}}]}`, nil)
 
 	checks := Run()
 	for _, name := range []string{
@@ -325,12 +326,13 @@ func TestRun_GPUPassthrough_NotPermitted_CheckAbsent(t *testing.T) {
 func TestRun_GPUPassthrough_PermittedButNotAllocatable_Fails(t *testing.T) {
 	fake := withFake(t)
 	scriptHealthyCluster(fake)
-	fake.AddResponse("kubectl get kubevirt kubevirt -n kubevirt -o json", `{
+	fake.AddResponse("kubectl get kubevirt -A -o json", `{"items":[{
+		"metadata":{"name":"kubevirt","namespace":"kubevirt"},
 		"spec":{"configuration":{
 			"vmRolloutStrategy":"LiveUpdate",
 			"developerConfiguration":{"featureGates":["Snapshot","HotplugVolumes","VMExport"]},
 			"permittedHostDevices":{"pciHostDevices":[{"resourceName":"amd.com/gpu","pciVendorSelector":"1002:744c"}]}
-		},"workloadUpdateStrategy":{"workloadUpdateMethods":["LiveMigrate"]}}}`, nil)
+		},"workloadUpdateStrategy":{"workloadUpdateMethods":["LiveMigrate"]}}}]}`, nil)
 	fake.AddResponse("kubectl get nodes -o json", `{"items":[{"status":{"allocatable":{"cpu":"8"}}}]}`, nil)
 
 	checks := Run()
@@ -346,12 +348,13 @@ func TestRun_GPUPassthrough_PermittedButNotAllocatable_Fails(t *testing.T) {
 func TestRun_GPUPassthrough_Allocatable_OK(t *testing.T) {
 	fake := withFake(t)
 	scriptHealthyCluster(fake)
-	fake.AddResponse("kubectl get kubevirt kubevirt -n kubevirt -o json", `{
+	fake.AddResponse("kubectl get kubevirt -A -o json", `{"items":[{
+		"metadata":{"name":"kubevirt","namespace":"kubevirt"},
 		"spec":{"configuration":{
 			"vmRolloutStrategy":"LiveUpdate",
 			"developerConfiguration":{"featureGates":["Snapshot","HotplugVolumes","VMExport"]},
 			"permittedHostDevices":{"pciHostDevices":[{"resourceName":"amd.com/gpu","pciVendorSelector":"1002:744c"}]}
-		},"workloadUpdateStrategy":{"workloadUpdateMethods":["LiveMigrate"]}}}`, nil)
+		},"workloadUpdateStrategy":{"workloadUpdateMethods":["LiveMigrate"]}}}]}`, nil)
 	fake.AddResponse("kubectl get nodes -o json", `{"items":[{"status":{"allocatable":{"amd.com/gpu":"1"}}}]}`, nil)
 
 	checks := Run()
@@ -365,8 +368,8 @@ func TestFix_PatchesKubeVirtOnce(t *testing.T) {
 	fake := withFake(t)
 	scriptHealthyCluster(fake)
 	// Misconfigured KubeVirt with one pre-existing custom gate to preserve.
-	fake.AddResponse("kubectl get kubevirt kubevirt -n kubevirt -o json",
-		`{"spec":{"configuration":{"developerConfiguration":{"featureGates":["ExpandDisks"]}}}}`, nil)
+	fake.AddResponse("kubectl get kubevirt -A -o json",
+		`{"items":[{"metadata":{"name":"kubevirt","namespace":"kubevirt"},"spec":{"configuration":{"developerConfiguration":{"featureGates":["ExpandDisks"]}}}}]}`, nil)
 	fake.AddPrefixResponse("kubectl patch kubevirt kubevirt -n kubevirt --type merge -p", "patched", nil)
 
 	fixed, err := Fix()
@@ -415,7 +418,7 @@ func TestFix_HealthyCluster_NoPatches(t *testing.T) {
 func TestFix_PatchFails_ReturnsError(t *testing.T) {
 	fake := withFake(t)
 	scriptHealthyCluster(fake)
-	fake.AddResponse("kubectl get kubevirt kubevirt -n kubevirt -o json", `{"spec":{}}`, nil)
+	fake.AddResponse("kubectl get kubevirt -A -o json", `{"items":[{"metadata":{"name":"kubevirt","namespace":"kubevirt"},"spec":{}}]}`, nil)
 	// No patch response registered → the patch command errors.
 
 	if _, err := Fix(); err == nil {
@@ -425,9 +428,9 @@ func TestFix_PatchFails_ReturnsError(t *testing.T) {
 
 func TestKubevirtConfig_InvalidJSON(t *testing.T) {
 	fake := withFake(t)
-	fake.AddResponse("kubectl get kubevirt kubevirt -n kubevirt -o json", "not json", nil)
+	fake.AddResponse("kubectl get kubevirt -A -o json", "not json", nil)
 
-	cfg := kubevirtConfig()
+	_, cfg := kubevirtState()
 	if cfg.RolloutStrategy != "" || len(cfg.FeatureGates) != 0 || len(cfg.WorkloadUpdateMethods) != 0 {
 		t.Errorf("invalid JSON should yield zero config, got %+v", cfg)
 	}
@@ -582,7 +585,7 @@ func scriptHCOCluster(fake *shell.Fake) {
 		"kubevirt.kubevirt.io/kubevirt-kubevirt-hyperconverged", nil)
 	fake.AddResponse("kubectl get cdi -A -o name", "cdi.cdi.kubevirt.io/cdi-kubevirt-hyperconverged", nil)
 	fake.AddResponse("kubectl get deploy -A -l cdi.kubevirt.io=cdi-operator -o name", "", nil)
-	fake.AddResponse("kubectl get kubevirt kubevirt -n kubevirt -o json", healthyKubeVirtJSON, nil)
+	fake.AddResponse("kubectl get kubevirt -A -o json", healthyKubeVirtJSON, nil)
 }
 
 func TestRun_HCONamespace_DetectsKubeVirtAndCDI(t *testing.T) {
@@ -650,5 +653,163 @@ func TestInstallRefusesToDuplicateAnExistingOperator(t *testing.T) {
 		if len(call.Args) > 0 && call.Args[0] == "apply" {
 			t.Fatalf("a duplicate install was applied anyway: %v", call.Args)
 		}
+	}
+}
+
+// The Hyperconverged Cluster Operator's KubeVirt CR, as reported in #383.
+//
+// HCO names the CR after itself and puts it in its own namespace, so the old
+// `get kubevirt kubevirt -n kubevirt` lookup found nothing. The values here are
+// the ones the reporter pasted from a live HCO v1.18.1 / KubeVirt v1.8.4
+// cluster: everything corral reported as missing was in fact enabled.
+const hcoKubeVirtJSON = `{"items":[{
+  "metadata": {
+    "name": "kubevirt-kubevirt-hyperconverged",
+    "namespace": "kubevirt-hyperconverged",
+    "labels": {"app.kubernetes.io/managed-by": "hco-operator"},
+    "ownerReferences": [{"kind": "HyperConverged", "name": "kubevirt-hyperconverged"}]
+  },
+  "spec": {
+    "configuration": {
+      "vmRolloutStrategy": "LiveUpdate",
+      "developerConfiguration": {
+        "featureGates": ["CPUManager", "Snapshot", "ExpandDisks", "HostDevices",
+          "VMExport", "KubevirtSeccompProfile", "LiveUpdateNADRef", "WithHostModelCPU",
+          "HypervStrictCheck", "VideoConfig", "DecentralizedLiveMigration", "HotplugVolumes"]
+      }
+    },
+    "workloadUpdateStrategy": {"workloadUpdateMethods": ["LiveMigrate"]}
+  }
+}]}`
+
+// The bug: five rows read as disabled on a cluster that had them all enabled.
+func TestKubeVirtChecks_DetectedUnderHCO(t *testing.T) {
+	fake := withFake(t)
+	scriptReachable(fake)
+	fake.AddResponse("kubectl get kubevirt -A -o name",
+		"kubevirt.kubevirt.io/kubevirt-kubevirt-hyperconverged", nil)
+	fake.AddResponse("kubectl get kubevirt -A -o json", hcoKubeVirtJSON, nil)
+
+	checks := Run()
+	for _, name := range []string{
+		"LiveUpdate rollout strategy",
+		"LiveMigrate workload updates",
+		"Feature gate: Snapshot",
+		"Feature gate: HotplugVolumes",
+		"Feature gate: VMExport",
+	} {
+		c := checkByName(t, checks, name)
+		if !c.OK {
+			t.Errorf("%q reported as disabled, but HCO has it enabled: %s", name, c.Detail)
+		}
+	}
+}
+
+// A CR that HCO owns must not be offered as fixable. HCO reconciles its
+// operands, so the patch would apply, the row would go green, and HCO would
+// revert it — the operator stops looking at a problem that is still there.
+func TestKubeVirtChecks_NotFixableUnderHCO(t *testing.T) {
+	fake := withFake(t)
+	scriptReachable(fake)
+	fake.AddResponse("kubectl get kubevirt -A -o name",
+		"kubevirt.kubevirt.io/kubevirt-kubevirt-hyperconverged", nil)
+	// An HCO-managed CR with nothing configured: the rows fail, but the fix
+	// is still not corral's to offer.
+	fake.AddResponse("kubectl get kubevirt -A -o json", `{"items":[{
+		"metadata":{"name":"kubevirt-kubevirt-hyperconverged","namespace":"kubevirt-hyperconverged",
+			"ownerReferences":[{"kind":"HyperConverged"}]},
+		"spec":{}}]}`, nil)
+
+	checks := Run()
+	c := checkByName(t, checks, "Feature gate: Snapshot")
+	if c.OK {
+		t.Fatal("the gate is absent and should report as such")
+	}
+	if c.Fixable {
+		t.Error("an HCO-managed CR must not be offered as fixable — HCO reverts the patch")
+	}
+	// The row has to say why, or "not fixable" reads as a corral limitation.
+	if !strings.Contains(c.Detail, "HyperConverged") {
+		t.Errorf("the detail should point at the HyperConverged CR: %s", c.Detail)
+	}
+}
+
+// And the fix itself refuses rather than issuing a patch that gets reverted.
+func TestReconcileKubeVirt_RefusesManagedCR(t *testing.T) {
+	fake := withFake(t)
+	fake.AddResponse("kubectl get kubevirt -A -o json", hcoKubeVirtJSON, nil)
+
+	err := reconcileKubeVirt()
+	if err == nil {
+		t.Fatal("patching an HCO-managed CR should be refused")
+	}
+	for _, want := range []string{"Hyperconverged Cluster Operator", "HyperConverged CR", "jsonpatch"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal should say where to set these instead (%q): %v", want, err)
+		}
+	}
+	// Nothing may have been patched.
+	for _, call := range fake.Calls() {
+		if len(call.Args) > 0 && call.Args[0] == "patch" {
+			t.Errorf("a managed CR was patched anyway: %v", call.Args)
+		}
+	}
+}
+
+// The fix must target the CR that exists, not the name upstream happens to use.
+func TestReconcileKubeVirt_PatchesTheDiscoveredCR(t *testing.T) {
+	fake := withFake(t)
+	// Unmanaged, but installed somewhere non-default — a plain operator install
+	// into another namespace.
+	fake.AddResponse("kubectl get kubevirt -A -o json", `{"items":[{
+		"metadata":{"name":"kubevirt","namespace":"virtualization"},
+		"spec":{}}]}`, nil)
+	fake.AddPrefixResponse("kubectl patch kubevirt kubevirt -n virtualization --type merge -p", "patched", nil)
+
+	if err := reconcileKubeVirt(); err != nil {
+		t.Fatalf("reconcileKubeVirt: %v", err)
+	}
+	var patched bool
+	for _, call := range fake.Calls() {
+		if len(call.Args) > 0 && call.Args[0] == "patch" {
+			patched = true
+			joined := strings.Join(call.Args, " ")
+			if !strings.Contains(joined, "-n virtualization") {
+				t.Errorf("patched the wrong namespace: %v", call.Args)
+			}
+		}
+	}
+	if !patched {
+		t.Error("no patch was issued")
+	}
+}
+
+// No CR anywhere is a different failure from a CR corral cannot parse, and the
+// error has to be actionable rather than a bare kubectl message.
+func TestReconcileKubeVirt_NoCRFound(t *testing.T) {
+	fake := withFake(t)
+	fake.AddResponse("kubectl get kubevirt -A -o json", `{"items":[]}`, nil)
+
+	err := reconcileKubeVirt()
+	if err == nil {
+		t.Fatal("expected an error when no KubeVirt CR exists")
+	}
+	if !strings.Contains(err.Error(), "kubectl get kubevirt -A") {
+		t.Errorf("the error should tell the reporter what to paste: %v", err)
+	}
+}
+
+// GPU passthrough reads the same CR and had the same hard-coded lookup.
+func TestPermittedGPUResourceNames_UnderHCO(t *testing.T) {
+	fake := withFake(t)
+	fake.AddResponse("kubectl get kubevirt -A -o json", `{"items":[{
+		"metadata":{"name":"kubevirt-kubevirt-hyperconverged","namespace":"kubevirt-hyperconverged"},
+		"spec":{"configuration":{"permittedHostDevices":{
+			"pciHostDevices":[{"resourceName":"nvidia.com/GP102GL"}],
+			"mediatedDevices":[{"resourceName":"nvidia.com/GRID_T4-1B"}]}}}}]}`, nil)
+
+	names := permittedGPUResourceNames()
+	if len(names) != 2 {
+		t.Fatalf("permitted devices not found under HCO: %v", names)
 	}
 }

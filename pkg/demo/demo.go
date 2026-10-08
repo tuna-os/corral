@@ -709,7 +709,11 @@ func (d *demoCluster) ctPodsJSON() []byte {
 // demoKubeVirtCRJSON makes `corral doctor` (and the Cluster health page)
 // report a healthy, fully-featured cluster — every gate the UI can render
 // as green is on, so the healthy state is exercisable too.
-var demoKubeVirtCRJSON = []byte(`{
+// Served as a list, because that is how doctor asks: it locates the CR with
+// `get kubevirt -A -o json` rather than by name, so that a cluster where the
+// Hyperconverged Cluster Operator named it something else still resolves (#383).
+var demoKubeVirtCRJSON = []byte(`{"items": [{
+  "metadata": {"name": "kubevirt", "namespace": "kubevirt"},
   "spec": {
     "configuration": {
       "vmRolloutStrategy": "LiveUpdate",
@@ -718,7 +722,7 @@ var demoKubeVirtCRJSON = []byte(`{
     "workloadUpdateStrategy": {"workloadUpdateMethods": ["LiveMigrate"]}
   },
   "status": {"phase": "Deployed"}
-}`)
+}]}`)
 
 var demoStorageClassJSON = []byte(`{"items": [{
   "metadata": {
