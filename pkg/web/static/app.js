@@ -253,12 +253,24 @@ async function refreshOnce(force = false) {
   // in content/multiview.js — so the pane is always safe to render and nothing
   // has to be skipped to protect it.
   renderContent();
+  // Focus before the scroll, and without letting the focus move the view.
+  //
+  // Putting focus on an element scrolls it into view. Restoring the scroll
+  // first and focusing second therefore undoes the scroll whenever the render
+  // moved that element — rows added or removed above it — and the pane jumps
+  // to the focused row instead of staying where the operator left it. Proxmox
+  // carries an override on its grid view for this exact order, with the same
+  // reason written on it. `preventScroll` says it outright, and the scroll
+  // restore still comes after, so the operator's position always wins.
+  //
+  // Only if the render actually dropped focus: if something else has taken it
+  // in the meantime, putting it back would steal it.
+  if (wasFocused?.isConnected && document.activeElement === document.body) {
+    wasFocused.focus({ preventScroll: true });
+  }
   if (contentEl) contentEl.scrollTop = contentScroll;
   const scrollerNow = contentEl?.querySelector('.grid-scroll');
   if (scrollerNow && gridScroll) { scrollerNow.scrollTop = gridScroll.top; scrollerNow.scrollLeft = gridScroll.left; }
-  // Only if the render actually dropped focus: if something else has taken it
-  // in the meantime, putting it back would steal it.
-  if (wasFocused?.isConnected && document.activeElement === document.body) wasFocused.focus();
 }
 
 async function loadCaps() {

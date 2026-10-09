@@ -113,6 +113,12 @@ A move blurs the element that held focus. Therefore `refresh()` records focus
 and the grid scroll position before the render, and restores them after it.
 That is the last point at which it can read them.
 
+The order of that restore matters, and it is the opposite of the obvious one.
+Focus goes back first, with `preventScroll`, and the scroll position goes back
+second. A plain `focus()` scrolls its element into view, so a scroll restored
+first is thrown away whenever the render moved that element. Proxmox carries an
+override on its own grid view for this, with the same reason on it.
+
 ## Gestures: `ui/interaction.js`
 
 `interacting()` is true while a pointer is down or a drag is active. The poll

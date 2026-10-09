@@ -150,6 +150,9 @@ documents the keyboard model. That chapter is where the Prism rows come from.
 | Update rows in place | Every live console | **Added.** The poll rebuilt everything every 5 s. `tree-reconcile`, `grid-reconcile` |
 | Keep a live console across a redraw | Proxmox, vSphere | **Added.** The page used to freeze instead. `console-stays-live`, `multiview-stays-live` |
 | Hold off during a gesture | General | **Added.** `interaction-guard` |
+| Say whether the server refused or never answered | Proxmox (`getResponseErrorMessage` returns "Connection error" when there is no status) | **Added.** `fetch` rejects with "Failed to fetch", which says nothing about corral being down. `api-errors` |
+| Never show an empty error | Proxmox (its message always carries the status) | **Added.** `statusText` is the HTTP reason phrase and HTTP/2 has none, so behind any proxy speaking h2 a non-JSON failure threw a blank message. `api-errors` |
+| Focus before the scroll, and without moving the view | Proxmox (an override on its grid view, for this exact order) | **Added.** corral restored the scroll and focused after, and focusing scrolls the element into view, so a render that moved the focused row threw the position away. |
 | One poll at a time | Proxmox (`UpdateStore` schedules the next load from the last load's callback) | **Added.** A fixed 5-second timer over an asynchronous refresh sent a second request before the first came back. Measured: two in flight against a slow endpoint, now one. `poll-backoff` |
 | A slow server is polled less | Proxmox (its interval is the base plus twice the last load's runtime) | **Added**, with the same arithmetic. Nobody tunes it, and a struggling server gets room. `poll-backoff` |
 | A refresh asked for during a poll is not lost | — | **Added** with the guard. The callers that force a refresh have just changed something and have to see it. |

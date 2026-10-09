@@ -2465,6 +2465,55 @@ check(
   await fresh.close();
 }
 
+// ── api-errors ───────────────────────────────────────────
+// Every request goes through api(), so every failure an operator reads is
+// shaped there. Proxmox's getResponseErrorMessage() draws two lines this used
+// to miss.
+//
+// A request that never reached the server is not one the server refused, and
+// `fetch` rejects with "Failed to fetch", which says nothing about corral
+// being down.
+//
+// And the message must never be empty. statusText is the HTTP reason phrase,
+// and HTTP/2 has none: it is always '' behind any proxy speaking h2. The demo
+// server here is HTTP/1.1, so that case cannot be reached by asking it
+// nicely — the fetch is stubbed to produce exactly that shape instead.
+{
+  const messages = await page.evaluate(async () => {
+    const { api } = await import('/api.js');
+    const real = window.fetch;
+    const call = async (stub) => {
+      window.fetch = stub;
+      try { await api('/api/probe'); return '(no error thrown)'; }
+      catch (e) { return e.message; }
+      finally { window.fetch = real; }
+    };
+    return {
+      // HTTP/2's shape: a status, no reason phrase, a body that is not JSON.
+      noReasonPhrase: await call(async () => new Response('upstream exploded', { status: 502, statusText: '' })),
+      // The server explained itself in JSON.
+      jsonError: await call(async () => new Response(JSON.stringify({ error: 'guest is locked' }), {
+        status: 409, statusText: '', headers: { 'content-type': 'application/json' },
+      })),
+      // Nothing answered at all.
+      unreachable: await call(async () => { throw new TypeError('Failed to fetch'); }),
+    };
+  });
+
+  check(
+    messages.noReasonPhrase.includes('502') && messages.noReasonPhrase !== '',
+    `api-errors: a status with no reason phrase still says something (${messages.noReasonPhrase})`,
+  );
+  check(
+    messages.jsonError.includes('guest is locked') && messages.jsonError.includes('409'),
+    `api-errors: the server's own words, and the code (${messages.jsonError})`,
+  );
+  check(
+    !messages.unreachable.includes('Failed to fetch') && /reach/i.test(messages.unreachable),
+    `api-errors: an unreachable server says so, not "Failed to fetch" (${messages.unreachable})`,
+  );
+}
+
 check(pageErrors.length === 0, `no JS page errors (${pageErrors.join('; ').slice(0, 200)})`);
 
 await browser.close();
