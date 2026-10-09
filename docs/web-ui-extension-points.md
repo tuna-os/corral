@@ -210,6 +210,13 @@ layout })`. The shape is `{ id: { title, w, h, minW?, minH?, live?,
 render(body) } }`. A `live` widget polls its own data, and `refresh()` does not
 render it again. Each scope saves its own layout and gets Reset layout.
 
+A scope can hold several dashboards. `mountDashboard()` reads the current one
+and keys the arrangement and the density off it. A widget map stays per scope,
+and everything the operator arranges is per dashboard. The default
+dashboard writes to the storage keys that existed before this, so an older
+layout survives with no migration step. Every action in the picker remounts
+into the same root, which is the one path that builds a dashboard.
+
 Each dashboard also carries a density, in `DASH_DENSITIES`. Two of its numbers
 go to GridStack: the gap between widgets, and the height of one grid row. The
 stylesheet holds the third, the padding inside a widget, and reads the mode

@@ -19,23 +19,74 @@ const uPlot = globalThis.uPlot;
 
 const COLUMNS = 12;
 const LAYOUT_PREFIX = 'corral.dashboard.';
+const LIST_PREFIX = 'corral.dashboards.';
+const CURRENT_PREFIX = 'corral.dashboard.current.';
 
-// ── Layout persistence ────────────────────────────────────────────
+// ── Named dashboards ───────────────────────────────
+//
+// One scope can hold several dashboards, each with its own arrangement and its
+// own density. Prism calls this Manage Dashboard, and the point is that an
+// operator watching capacity wants a different screen from one chasing a
+// failure. Neither should have to rebuild the other to see it.
+//
+// Four decisions, none of them forced by the reference:
+//
+// - They live in this browser, like every other layout here. Nothing about a
+//   dashboard reaches the server, so none of this is shared or synced.
+// - The first one is called Default and keeps the old storage key. An
+//   arrangement built before this change is still there afterwards, and there
+//   is no migration step to get wrong.
+// - Deleting a dashboard deletes its arrangement. Every widget is still in
+//   Add widget, so there is nothing else to keep.
+// - The last dashboard will not delete. A scope with none has no screen.
 
-function loadLayout(scope) {
+const DEFAULT_ID = 'default';
+
+// The default dashboard writes to the key that already existed. Anything else
+// takes a suffix, so the two cannot collide.
+const layoutKey = (scope, id) => `${LAYOUT_PREFIX}${scope}${id === DEFAULT_ID ? '' : `.${id}`}`;
+
+function dashboards(scope) {
   try {
-    const raw = localStorage.getItem(LAYOUT_PREFIX + scope);
+    const raw = localStorage.getItem(LIST_PREFIX + scope);
+    const parsed = raw ? JSON.parse(raw) : null;
+    if (Array.isArray(parsed) && parsed.length) return parsed;
+  } catch { /* fall through to the default */ }
+  return [{ id: DEFAULT_ID, name: 'Default' }];
+}
+
+function saveDashboards(scope, list) {
+  try { localStorage.setItem(LIST_PREFIX + scope, JSON.stringify(list)); } catch { /* not persisted */ }
+}
+
+function currentDashboard(scope) {
+  const list = dashboards(scope);
+  let id = null;
+  try { id = localStorage.getItem(CURRENT_PREFIX + scope); } catch { /* not stored */ }
+  // A stored id can name a dashboard deleted here or in another tab.
+  return list.some((d) => d.id === id) ? id : list[0].id;
+}
+
+function setCurrentDashboard(scope, id) {
+  try { localStorage.setItem(CURRENT_PREFIX + scope, id); } catch { /* not persisted */ }
+}
+
+// ── Layout persistence ────────────────────────────
+
+function loadLayout(scope, id) {
+  try {
+    const raw = localStorage.getItem(layoutKey(scope, id));
     const parsed = raw ? JSON.parse(raw) : null;
     return Array.isArray(parsed) ? parsed : null;
   } catch { return null; } // private window / blocked storage: use defaults
 }
 
-function saveLayout(scope, layout) {
-  try { localStorage.setItem(LAYOUT_PREFIX + scope, JSON.stringify(layout)); } catch { /* not persisted */ }
+function saveLayout(scope, id, layout) {
+  try { localStorage.setItem(layoutKey(scope, id), JSON.stringify(layout)); } catch { /* not persisted */ }
 }
 
-function clearLayout(scope) {
-  try { localStorage.removeItem(LAYOUT_PREFIX + scope); } catch { /* nothing to clear */ }
+function clearLayout(scope, id) {
+  try { localStorage.removeItem(layoutKey(scope, id)); } catch { /* nothing to clear */ }
 }
 
 // ── Density ───────────────────────────────────────────────────────
@@ -59,19 +110,24 @@ const DASH_DENSITIES = [
 const DENSITY_PREFIX = 'corral.dashboard.density.';
 const DEFAULT_DENSITY = 'cosy';
 
-function loadDensity(scope) {
+// Per dashboard, not per scope: a dashboard built to fit everything on one
+// screen and one built to read charts want different answers. The default
+// dashboard keeps the key that already existed, as its layout does.
+const densityKey = (scope, id) => `${DENSITY_PREFIX}${scope}${id === DEFAULT_ID ? '' : `.${id}`}`;
+
+function loadDensity(scope, id) {
   try {
-    const stored = localStorage.getItem(DENSITY_PREFIX + scope);
+    const stored = localStorage.getItem(densityKey(scope, id));
     return DASH_DENSITIES.some((d) => d.id === stored) ? stored : DEFAULT_DENSITY;
   } catch { return DEFAULT_DENSITY; }
 }
 
-function saveDensity(scope, id) {
-  try { localStorage.setItem(DENSITY_PREFIX + scope, id); } catch { /* not persisted */ }
+function saveDensity(scope, id, mode) {
+  try { localStorage.setItem(densityKey(scope, id), mode); } catch { /* not persisted */ }
 }
 
-function clearDensity(scope) {
-  try { localStorage.removeItem(DENSITY_PREFIX + scope); } catch { /* nothing to clear */ }
+function clearDensity(scope, id) {
+  try { localStorage.removeItem(densityKey(scope, id)); } catch { /* nothing to clear */ }
 }
 
 // ── Grid ──────────────────────────────────────────────────────────
@@ -109,12 +165,21 @@ const KEY_ACTIONS = {
 // The handle's refresh() re-renders every non-live widget in place, so a
 // data poll never tears down the grid, an open menu or keyboard focus.
 export function mountDashboard(root, { scope, widgets, layout }) {
-  const saved = (loadLayout(scope) || layout).filter((n) => widgets[n.id]);
+  // Which of this scope's dashboards is showing. Everything below keys off
+  // this, so a remount after a switch loads that dashboard's own arrangement.
+  const board = currentDashboard(scope);
+  const saved = (loadLayout(scope, board) || layout).filter((n) => widgets[n.id]);
   root.innerHTML = `
     <div class="dash-toolbar">
       <label class="dash-add" hidden>Add widget
         <select aria-label="Add a widget to this dashboard"><option value="">Choose…</option></select>
       </label>
+      <label class="dash-pick">Dashboard
+        <select class="dash-select" aria-label="Which dashboard"></select>
+      </label>
+      <button type="button" class="btn sm dash-new">New</button>
+      <button type="button" class="btn sm dash-rename">Rename</button>
+      <button type="button" class="btn sm dash-delete">Delete</button>
       <label class="dash-density">Density
         <select class="dash-density-select" aria-label="Widget density">
           ${DASH_DENSITIES.map((d) => `<option value="${d.id}">${d.label}</option>`).join('')}
@@ -163,7 +228,7 @@ export function mountDashboard(root, { scope, widgets, layout }) {
 
   for (const n of saved) gridEl.appendChild(itemEl(n));
 
-  const density = () => DASH_DENSITIES.find((d) => d.id === loadDensity(scope)) || DASH_DENSITIES[1];
+  const density = () => DASH_DENSITIES.find((d) => d.id === loadDensity(scope, board)) || DASH_DENSITIES[1];
   const mode = density();
   root.dataset.density = mode.id;
 
@@ -208,7 +273,7 @@ export function mountDashboard(root, { scope, widgets, layout }) {
     if (isNarrow) return; // derived layout — see applyColumns above
     // Read the nodes directly: grid.save() leaves out sizes that match its own
     // defaults, which would restore as this dashboard's defaults instead.
-    saveLayout(scope, grid.getGridItems().map((el) => el.gridstackNode).filter(Boolean)
+    saveLayout(scope, board, grid.getGridItems().map((el) => el.gridstackNode).filter(Boolean)
       .map(({ id, x, y, w, h }) => ({ id, x, y, w, h })));
     syncAddMenu();
   };
@@ -324,10 +389,61 @@ export function mountDashboard(root, { scope, widgets, layout }) {
     announce(`${widgets[id].title} added.`);
     el.querySelector('.widget-head').focus();
   };
+  // ── The dashboard picker ─────────────────────────────
+  //
+  // Each of these remounts into the same root, which is how Reset layout
+  // already works. The remount re-reads the store, so there is one path that
+  // builds a dashboard and no second way for the two to disagree.
+  const remount = () => {
+    grid.destroy(false);
+    mountDashboard(root, { scope, widgets, layout });
+  };
+
+  const boardSel = root.querySelector('.dash-select');
+  const list = dashboards(scope);
+  boardSel.innerHTML = list.map((d) =>
+    `<option value="${esc(d.id)}"${d.id === board ? ' selected' : ''}>${esc(d.name)}</option>`).join('');
+  boardSel.onchange = () => { setCurrentDashboard(scope, boardSel.value); remount(); };
+
+  root.querySelector('.dash-new').onclick = () => {
+    const name = (prompt('Name for the new dashboard:', '') || '').trim();
+    if (!name) return;
+    // An id derived from the clock, because two dashboards may share a name
+    // and the id is what the storage keys are built from.
+    const id = `d${Date.now().toString(36)}`;
+    saveDashboards(scope, [...dashboards(scope), { id, name }]);
+    setCurrentDashboard(scope, id);
+    // No layout saved for it, so the remount lays out the defaults.
+    remount();
+  };
+
+  root.querySelector('.dash-rename').onclick = () => {
+    const current = dashboards(scope).find((d) => d.id === board);
+    const name = (prompt('Rename this dashboard:', current?.name || '') || '').trim();
+    if (!name) return;
+    saveDashboards(scope, dashboards(scope).map((d) => (d.id === board ? { ...d, name } : d)));
+    remount();
+  };
+
+  const delBtn = root.querySelector('.dash-delete');
+  // The last one cannot go: a scope with no dashboard has no screen to draw.
+  delBtn.disabled = list.length < 2;
+  delBtn.title = delBtn.disabled ? 'A scope keeps at least one dashboard' : '';
+  delBtn.onclick = () => {
+    const current = dashboards(scope).find((d) => d.id === board);
+    if (!confirm(`Delete the dashboard "${current?.name || board}"? Its arrangement goes with it.`)) return;
+    clearLayout(scope, board);
+    clearDensity(scope, board);
+    const rest = dashboards(scope).filter((d) => d.id !== board);
+    saveDashboards(scope, rest);
+    setCurrentDashboard(scope, rest[0].id);
+    remount();
+  };
+
   const densitySel = root.querySelector('.dash-density-select');
   densitySel.value = mode.id;
   densitySel.onchange = () => {
-    saveDensity(scope, densitySel.value);
+    saveDensity(scope, board, densitySel.value);
     const next = density();
     root.dataset.density = next.id;
     // Both, or a widget keeps its pixel height and only the gaps move.
@@ -337,13 +453,12 @@ export function mountDashboard(root, { scope, widgets, layout }) {
   };
 
   root.querySelector('.dash-reset').onclick = () => {
-    clearLayout(scope);
+    clearLayout(scope, board);
     // Density is part of how this dashboard looks, so the way back to the
     // defaults has to cover it. Every other thing the operator can change
     // here is restored by this button.
-    clearDensity(scope);
-    grid.destroy(false);
-    mountDashboard(root, { scope, widgets, layout });
+    clearDensity(scope, board);
+    remount();
   };
   syncAddMenu();
 

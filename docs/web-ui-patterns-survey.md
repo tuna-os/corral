@@ -167,6 +167,7 @@ documents the keyboard model. That chapter is where the Prism rows come from.
 | Layout kept per browser | Grafana, Proxmox | Present, and **extended** to the workspace. |
 | Light and dark | Most modern UIs | **Added.** Follows the desktop. `colour-scheme` |
 | Accent colour | Proxmox theming | Present, through `/api/theme`. |
+| Several dashboards for one scope | Prism (Manage Dashboard) | **Added.** A scope had exactly one, so watching capacity and chasing a failure meant rebuilding the same screen twice. The arrangement and the density belong to the dashboard. `named-dashboards` |
 | Density for the dashboard, not only for a table | Prism (its Data Density setting) | **Added.** Three modes under the data grid's own names, kept per dashboard, and Reset layout restores them. `dash-density` |
 
 ## Small screens
@@ -214,7 +215,6 @@ to find them again.
 |---|---|
 | A context-aware view switch (`O` overview, `D` diagram, `T` table) | **Open.** corral has no diagram of a fleet, so the pattern has only two states to move between, and the tree already switches those. The pattern needs the view first. |
 | Search that takes field filters, such as `severity=critical` | **Open.** The palette narrows by prefix and the grid filters each column. A query language is a larger piece of work than either. |
-| Several named dashboards, and Manage Dashboard to keep them | **Open.** corral has one dashboard for each scope, and Reset layout. This rests on the vendor's documentation as a search result quoted it. |
 
 ## What the survey still leaves open
 

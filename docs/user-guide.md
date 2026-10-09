@@ -79,6 +79,20 @@ Access the Proxmox-style Web UI at `http://localhost:8006` or via `corral web`.
 
 ![Mobile Dashboard](screenshots/dashboard-mobile.png)
 
+#### Several dashboards
+
+A Datacenter or node screen can hold more than one dashboard. Use the picker
+above the widgets to switch, and New to add one. Each dashboard keeps its own
+arrangement and its own density. So you can keep one screen for capacity and
+another for a failure you need to chase.
+
+Rename changes the name of the current dashboard. Delete removes it and its
+arrangement; the widgets stay available under Add widget. A screen always
+keeps at least one dashboard, so the last one does not delete.
+
+Dashboards live in your own browser, like the rest of the layout. corral
+shares them with nobody.
+
 #### Dashboard density
 
 The Density control above a dashboard sets how much room each widget takes:

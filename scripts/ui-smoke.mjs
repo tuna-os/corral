@@ -1904,8 +1904,11 @@ check(
   await page.goto(BASE);
   await page.waitForSelector('#content .vm-check', { timeout: 30000 });
   // Powering a machine off asks about the guests on it. Answer, or the click
-  // hangs on a dialog nobody closes.
-  page.on('dialog', (d) => d.accept());
+  // hangs on a dialog nobody closes. Removed at the end of this block: left
+  // registered it answers every later dialog on this page, and a prompt that
+  // needs a typed value would come back empty.
+  const answerDialogs = (d) => d.accept();
+  page.on('dialog', answerDialogs);
   await page.waitForTimeout(1200);
 
   const HP = '#content .hp-action';
@@ -1994,6 +1997,7 @@ check(
   await page.waitForTimeout(400);
 
   await page.screenshot({ path: `${SHOTS}/host-power.png` });
+  page.off('dialog', answerDialogs);
 }
 
 // ── dock-keys ──────────────────────────────────────────────
@@ -2512,6 +2516,103 @@ check(
     !messages.unreachable.includes('Failed to fetch') && /reach/i.test(messages.unreachable),
     `api-errors: an unreachable server says so, not "Failed to fetch" (${messages.unreachable})`,
   );
+}
+
+// ── named-dashboards ──────────────────────────────────
+// A scope had exactly one dashboard, so an operator watching capacity had to
+// rebuild it to chase a failure and then rebuild it back. Prism calls this
+// Manage Dashboard. The arrangement and the density belong to the dashboard,
+// not to the scope, which is the part worth holding in place.
+{
+  // Its own page: this block answers prompts with a typed value, and a
+  // handler another block left on the shared page would accept them first.
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  page.on('pageerror', (e) => pageErrors.push(e.message));
+  await page.goto(BASE);
+  await page.waitForSelector('#dc-dash .grid-stack-item', { timeout: 30000 });
+  await page.waitForTimeout(800);
+
+  check(
+    await page.locator('#dc-dash .dash-select').count() === 1,
+    'named-dashboards: the dashboard offers a picker',
+  );
+  const first = await page.locator('#dc-dash .dash-select option').count();
+  check(first >= 1, `named-dashboards: it starts with one (${first})`);
+  check(
+    await page.locator('#dc-dash .dash-delete').isDisabled(),
+    'named-dashboards: the only dashboard will not delete',
+  );
+
+  // Create one. prompt() is how the rest of this UI asks for a name.
+  page.once('dialog', (d) => d.accept('Capacity'));
+  await page.click('#dc-dash .dash-new');
+  await page.waitForTimeout(1200);
+  check(
+    (await page.locator('#dc-dash .dash-select option').allTextContents()).includes('Capacity'),
+    'named-dashboards: a new one appears in the picker',
+  );
+  check(
+    await page.inputValue('#dc-dash .dash-select') !== 'default',
+    'named-dashboards: and the page switches to it',
+  );
+  check(
+    !(await page.locator('#dc-dash .dash-delete').isDisabled()),
+    'named-dashboards: with two, delete becomes available',
+  );
+
+  // The point of the feature: this dashboard's density is its own.
+  await page.selectOption('#dc-dash .dash-density-select', 'compact');
+  await page.waitForTimeout(700);
+  await page.selectOption('#dc-dash .dash-select', 'default');
+  await page.waitForTimeout(1000);
+  check(
+    await page.inputValue('#dc-dash .dash-density-select') === 'cosy',
+    'named-dashboards: the other dashboard kept its own density',
+  );
+
+  // And its own arrangement: remove a widget here, and it must still be on
+  // the one we left.
+  const beforeCount = await page.locator('#dc-dash .grid-stack-item').count();
+  const victim = page.locator('#dc-dash .grid-stack-item').first();
+  const victimId = await victim.getAttribute('gs-id');
+  await victim.locator('.widget-menu-btn').click().catch(() => {});
+  await page.waitForTimeout(300);
+  const removed = page.locator('#dc-dash .widget-menu:not([hidden]) button', { hasText: /Remove/i }).first();
+  if (await removed.count()) {
+    await removed.click();
+    await page.waitForTimeout(800);
+    check(
+      await page.locator('#dc-dash .grid-stack-item').count() === beforeCount - 1,
+      'named-dashboards: removing a widget changes this dashboard',
+    );
+    await page.selectOption('#dc-dash .dash-select', { label: 'Capacity' });
+    await page.waitForTimeout(1000);
+    check(
+      await page.locator(`#dc-dash .grid-stack-item[gs-id="${victimId}"]`).count() === 1,
+      'named-dashboards: the other dashboard still has that widget',
+    );
+    await page.selectOption('#dc-dash .dash-select', 'default');
+    await page.waitForTimeout(900);
+    // Put the default dashboard back the way the suite found it.
+    await page.click('#dc-dash .dash-reset');
+    await page.waitForTimeout(900);
+  }
+
+  // Clean up: delete the one this check made, so the next run starts level.
+  await page.selectOption('#dc-dash .dash-select', { label: 'Capacity' });
+  await page.waitForTimeout(900);
+  page.once('dialog', (d) => d.accept());
+  await page.click('#dc-dash .dash-delete');
+  await page.waitForTimeout(1200);
+  check(
+    (await page.locator('#dc-dash .dash-select option').allTextContents()).includes('Capacity') === false,
+    'named-dashboards: deleting one removes it, leaving the suite level',
+  );
+  check(
+    await page.locator('#dc-dash .grid-stack-item').count() > 0,
+    'named-dashboards: and the remaining dashboard still draws',
+  );
+  await page.close();
 }
 
 check(pageErrors.length === 0, `no JS page errors (${pageErrors.join('; ').slice(0, 200)})`);

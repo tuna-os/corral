@@ -539,6 +539,12 @@ dl.props dd { margin: 0; word-break: break-all; }
 
 /* Dashboard widget grid + live charts (#348, pkg/web/static/dashboard.js).
    gridstack positions the items; these rules only dress them. */
+/* The dashboard picker. The three buttons sit tight to the select so the row
+   reads as one control rather than four. */
+.dash-pick select { max-width: 180px; }
+.dash-toolbar .dash-new, .dash-toolbar .dash-rename, .dash-toolbar .dash-delete { padding: 2px 8px; }
+.dash-toolbar .btn[disabled] { opacity: .45; cursor: not-allowed; }
+
 /* Failures from a bulk action: each guest and what the API said, because the
    reason is what the operator acts on. */
 .failure-report { max-width: 560px; }
