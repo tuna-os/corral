@@ -112,6 +112,7 @@ documents the keyboard model. That chapter is where the Prism rows come from.
 | Breadcrumb to the parent | VS Code, vSphere | **Added.** `breadcrumb` |
 | Search before menus | Prism, Grafana | Palette existed. **Added** a visible way in. `palette-reach` |
 | Single-key jumps | Prism, Linear | Present (`g d`, `c`, `s`). **Added** hints, because nothing told anyone. `palette-keys` |
+| A diagram of the fleet | Prism (the D in its overview / diagram / table switch) | **Added.** A card per node with its guests inside, coloured by state and summed at the top. Guests drag between nodes to migrate, through the tree's own drop rule. Cards reflow instead of a node-and-edge drawing, which stops being readable at fleet sizes. `g t`. `topology` |
 | The view switch has a key | Prism (`O`/`D`/`T`, page-aware) | **Added.** Four views of the same fleet, reachable by mouse alone until now. `v` walks them. `palette-filters` |
 | A list, then a detail screen with its tools along the top | Portainer, Cockpit | Present. |
 | A wizard behind the list's Create action | Harvester | Present. |
@@ -211,16 +212,6 @@ documents the keyboard model. That chapter is where the Prism rows come from.
 | A plugin declares its place in the UI | KubeStellar | **Proposed** for the plugin contract. Stage 0 is built. See [RFC-0002](rfc/0002-plugin-ui-contributions.md). |
 | A plugin ships code the page runs | KubeStellar (WASM, `plugin-component.js`) | **Declined.** corral embeds its UI and has no build step. Script from a marketplace could read the session and call any API. |
 | Documented extension points | — | **Added.** See [the extension points](web-ui-extension-points.md). |
-
-## Taken from Prism, and not taken
-
-Prism's navigation chapter documents a keyboard model, and one of its ideas
-needs a screen corral does not have. This page keeps it, so the next person
-does not have to find it again.
-
-| Pattern | corral |
-|---|---|
-| A diagram of the fleet, as a third view | **Open.** Prism switches between overview, diagram and table. corral has no diagram, so that view has to exist before a switch can reach it. The key below walks the four views it does have. |
 
 ## What the survey still leaves open
 

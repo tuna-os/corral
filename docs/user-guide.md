@@ -79,6 +79,16 @@ Access the Proxmox-style Web UI at `http://localhost:8006` or via `corral web`.
 
 ![Mobile Dashboard](screenshots/dashboard-mobile.png)
 
+#### Topology
+
+Topology, under Datacenter in the tree, draws the fleet as the machines it
+runs on. Each node is a card, with its guests inside and the CPU and memory
+they take summed at the top. A tile's left edge shows the guest's state.
+
+To migrate a guest, drag its tile onto another node's card. corral asks you
+to confirm first. If it cannot make the move, it says why and refuses it. The
+keys `g` then `t` open the topology from anywhere.
+
 #### Several dashboards
 
 A Datacenter or node screen can hold more than one dashboard. Use the picker
@@ -127,6 +137,7 @@ The items that you used last show at the top of the list.
 | `c` | Open the console of the selected VM |
 | `s` | Start or stop the selected VM |
 | `g` then `d` | Go to the datacenter |
+| `g` then `t` | Go to the topology |
 | `v` | Switch the tree to the next view |
 | `t` | Show the Tasks panel, and hide it again |
 | `e` | Show the Events panel for the selection, and hide it again |

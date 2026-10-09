@@ -93,6 +93,17 @@ export function capabilityMenuItems(kind, subject) {
   return items;
 }
 
+// Short marks a capability puts on a node wherever a node is drawn - today the
+// topology view - such as the power state of the machine under it. Each is
+// { label, tone }, where tone is one of the dot classes 'on', 'off' or 'mid'.
+// A screen that draws nodes asks here, so it never has to know which
+// capability knows what about a node.
+export function capabilityNodeBadges(nodeName) {
+  const badges = [];
+  for (const cap of registered) badges.push(...(cap.nodeBadges?.(nodeName) || []));
+  return badges;
+}
+
 // Lines for the Alerts widget, as HTML strings, in the same shape that widget
 // already builds for nodes and VMs.
 export function capabilityAlerts() {

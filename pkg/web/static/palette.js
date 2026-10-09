@@ -36,6 +36,7 @@ const readOnly = () => document.body.classList.contains('read-only');
 // handful of bindings that initKeys() actually registers.
 const SHORTCUT_KEYS = {
   'view:dc': ['g', 'd'],
+  'view:topology': ['g', 't'],
   'vm-console': ['c'],
   'vm-start': ['s'],
   'vm-stop': ['s'],
@@ -55,6 +56,7 @@ function entries() {
 
   const views = [
     ['dc', 'Datacenter', 'datacenter'],
+    ['topology', 'Topology', 'server'],
     ['doctor', 'Cluster health', 'health'],
     ['extensions', 'Extensions', 'extension'],
     ['multiview', 'Multiview', 'cube'],
@@ -407,6 +409,7 @@ const SHORTCUTS = [
   [['c'], 'Open the selected VM\'s console'],
   [['s'], 'Start or stop the selected VM'],
   [['g', 'd'], 'Go to the datacenter'],
+  [['g', 't'], 'Go to the topology'],
   [['v'], 'Switch the tree to the next view'],
   [['t'], 'Show tasks (again to hide)'],
   [['e'], 'Show events for the selection (again to hide)'],
@@ -480,6 +483,7 @@ function onKey(e) {
   if (pendingG && Date.now() - pendingG < 1200) {
     pendingG = 0;
     if (e.key === 'd') { e.preventDefault(); closeShortcuts(); ctx.go({ type: 'dc' }); }
+    if (e.key === 't') { e.preventDefault(); closeShortcuts(); ctx.go({ type: 'topology' }); }
     return;
   }
   pendingG = 0;

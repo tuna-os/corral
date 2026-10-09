@@ -2922,6 +2922,100 @@ check(
   await ctx.close();
 }
 
+// ── topology ─────────────────────────────────────────────
+// Every other screen lists guests; this one places them. It is the diagram
+// Prism's overview / diagram / table switch implies, and corral had none. It
+// is also interactive: a tile drags onto another node to migrate, through the
+// tree's own drop rule, so what the tree refuses this refuses too.
+{
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage({ viewport: { width: 1440, height: 900 } });
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  page.on('dialog', (d) => d.dismiss());
+  await page.goto(BASE);
+  await page.waitForSelector('#tree [data-vm-key]', { timeout: 30000 });
+  await page.waitForTimeout(800);
+
+  // Reachable from the tree, from the palette's keys, and by address.
+  await page.click('#tree .tree-item[data-rkey="topology"]');
+  await page.waitForSelector('#topo-grid .topo-node', { timeout: 10000 });
+  check(true, 'topology: the tree row opens it');
+  await page.click('#tree .tree-item[data-rkey="dc"]');
+  await page.waitForTimeout(500);
+  await page.keyboard.press('g');
+  await page.keyboard.press('t');
+  await page.waitForTimeout(700);
+  check(await page.locator('#topo-grid').count() === 1, 'topology: g then t opens it');
+  check((await page.evaluate(() => location.hash)).includes('sel=topology'), 'topology: and it has an address');
+
+  // Every guest is drawn exactly once, whatever its backend or state.
+  const fleet = await (await fetch(`${BASE}api/vms`)).json();
+  const tiles = await page.locator('#topo-grid .topo-guest').count();
+  check(tiles === fleet.length, `topology: every guest drawn once (${tiles} tiles, ${fleet.length} guests)`);
+
+  // A guest with no node is not drawn inside a node it is not on. The KubeVirt
+  // backend reports that as a literal "—", which once became a card named
+  // after the dash.
+  const cardNames = await page.locator('#topo-grid .topo-name').allTextContents();
+  check(!cardNames.includes('—'), `topology: no card is named after the no-node sentinel (${cardNames.join(', ')})`);
+  const nodes = await (await fetch(`${BASE}api/nodes`)).json();
+  check(
+    nodes.every((n) => cardNames.includes(n.name)),
+    'topology: every cluster node has a card, guests or not',
+  );
+
+  // A capability marks a node without the screen knowing it exists.
+  check(
+    (await page.textContent('#topo-grid')).includes('power '),
+    'topology: host power marks its nodes through the registry',
+  );
+
+  // Tiles keep their identity across a poll, like every list in this UI.
+  await page.evaluate(() => document.querySelectorAll('#topo-grid .topo-guest').forEach((t) => { t.__smoke = 1; }));
+  await page.waitForTimeout(11000);
+  const kept = await page.evaluate(() => [...document.querySelectorAll('#topo-grid .topo-guest')].filter((t) => t.__smoke).length);
+  check(kept === tiles, `topology: a poll keeps the tiles it has (${kept}/${tiles})`);
+
+  // The legend's swatches carry the state colours. They once came out grey,
+  // because the border shorthand reset the colour the state class set.
+  const swatches = await page.evaluate(() => [...document.querySelectorAll('.topo-legend .topo-key')]
+    .map((k) => getComputedStyle(k).borderLeftColor));
+  check(new Set(swatches).size >= 4, `topology: the legend shows distinct state colours (${new Set(swatches).size})`);
+
+  // Drag a KubeVirt guest onto another cluster node: the tree's confirmation
+  // opens with that node chosen. Cancelled, so nothing moves.
+  const mover = fleet.find((v) => v.backend === 'kubevirt' && v.node && nodes.some((n) => n.name === v.node));
+  const target = nodes.find((n) => n.ready && n.name !== mover?.node && /^corral-/.test(n.name));
+  if (mover && target) {
+    const tile = page.locator(`#topo-grid .topo-guest`, { hasText: mover.name }).first();
+    await tile.dragTo(page.locator(`#topo-grid .topo-node[data-node="${target.name}"]`));
+    await page.waitForSelector('.migrate-dialog[open]', { timeout: 5000 }).catch(() => {});
+    check(
+      await page.locator('.migrate-dialog[open]').count() === 1,
+      `topology: dropping ${mover.name} on ${target.name} opens the migrate confirmation`,
+    );
+    check(
+      await page.inputValue('.migrate-dialog #pick-node').catch(() => '') === target.name,
+      'topology: with the dropped-on node chosen',
+    );
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(400);
+  }
+
+  // A tile opens its guest from the keyboard.
+  await page.locator('#topo-grid .topo-guest').first().focus();
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(700);
+  check((await page.evaluate(() => location.hash)).includes('sel=vm:'), 'topology: Enter on a tile opens the guest');
+
+  check(errors.length === 0, `topology: no errors (${errors.join('; ').slice(0, 120)})`);
+  await page.goto(`${BASE}#sel=topology`);
+  await page.waitForSelector('#topo-grid .topo-guest', { timeout: 15000 });
+  await page.screenshot({ path: `${SHOTS}/topology.png` });
+  await ctx.close();
+}
+
 check(pageErrors.length === 0, `no JS page errors (${pageErrors.join('; ').slice(0, 200)})`);
 
 await browser.close();

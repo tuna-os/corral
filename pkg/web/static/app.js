@@ -19,6 +19,7 @@ import { renderNamespace } from './content/namespace.js';
 import { renderNode } from './content/node.js';
 import { renderSettings } from './content/settings.js';
 import { renderStorage } from './content/storage.js';
+import { renderTopology } from './content/topology.js';
 import { renderVM, vmAction } from './content/vm.js';
 import { applyInventoryGridAddress, inventoryGridAddress } from './content/vm-table.js';
 import { updateSourceFields } from './create.js';
@@ -532,6 +533,7 @@ export function renderContent() {
   if (state.selected.type === 'extensions') return renderExtensions(main);
   if (state.selected.type === 'doctor') return renderDoctor(main);
   if (state.selected.type === 'multiview') return renderMultiview(main);
+  if (state.selected.type === 'topology') return renderTopology(main);
   if (state.selected.type === 'storage') return renderStorage(main, state.selected.name);
   if (state.selected.type === 'settings') return renderSettings(main);
   // A capability may own a selection type. Core does not list those types.

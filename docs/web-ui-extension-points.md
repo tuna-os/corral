@@ -217,6 +217,7 @@ hook is optional:
 | `treeRows(sink)` | Rows for the sidebar. |
 | `menuItems(kind, subject)` | Entries for another object's context menu. |
 | `alerts()` | Lines for the Alerts widget. |
+| `nodeBadges(node)` | Short marks on a node wherever one is drawn, such as its power state in the topology. |
 
 Import the module for its side effect in `app.js`. That import is the only
 mention of it in core.
