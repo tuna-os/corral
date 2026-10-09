@@ -58,19 +58,20 @@ func handleDoctorFix(w http.ResponseWriter, r *http.Request) {
 // ── Extensions (plugins) store ────────────────────────────────────
 
 type pluginItem struct {
-	Name              string   `json:"name"`
-	Description       string   `json:"description"`
-	Version           string   `json:"version"`
-	Homepage          string   `json:"homepage,omitempty"`
-	Installed         bool     `json:"installed"`
-	InStore           bool     `json:"inStore"`
-	Source            string   `json:"source,omitempty"`
-	Publisher         string   `json:"publisher,omitempty"`
-	License           string   `json:"license,omitempty"`
-	Capabilities      []string `json:"capabilities,omitempty"`
-	Permissions       []string `json:"permissions,omitempty"`
-	SupportedBackends []string `json:"supportedBackends,omitempty"`
-	Pinned            bool     `json:"pinned,omitempty"`
+	Name              string         `json:"name"`
+	Description       string         `json:"description"`
+	Version           string         `json:"version"`
+	Homepage          string         `json:"homepage,omitempty"`
+	Installed         bool           `json:"installed"`
+	InStore           bool           `json:"inStore"`
+	Source            string         `json:"source,omitempty"`
+	Publisher         string         `json:"publisher,omitempty"`
+	License           string         `json:"license,omitempty"`
+	Capabilities      []string       `json:"capabilities,omitempty"`
+	Permissions       []string       `json:"permissions,omitempty"`
+	SupportedBackends []string       `json:"supportedBackends,omitempty"`
+	Pinned            bool           `json:"pinned,omitempty"`
+	UI                *pluginUIEntry `json:"ui,omitempty"`
 }
 
 // GET /api/plugins — marketplace entries merged with installed state.
@@ -84,7 +85,7 @@ func handlePlugins(w http.ResponseWriter, r *http.Request) {
 	if idx, _ := plugin.FetchAll(); idx != nil {
 		for _, e := range idx.Plugins {
 			state, _ := plugin.ReadState(e.Name)
-			items = append(items, pluginItem{Name: e.Name, Description: e.Description, Version: e.Version, Homepage: e.Homepage, Installed: installed[e.Name], InStore: true, Source: e.Source, Publisher: e.Publisher.Name, License: e.License, Capabilities: e.Capabilities, Permissions: e.Permissions, SupportedBackends: e.SupportedBackends, Pinned: state.Pinned})
+			items = append(items, pluginItem{Name: e.Name, Description: e.Description, Version: e.Version, Homepage: e.Homepage, Installed: installed[e.Name], InStore: true, Source: e.Source, Publisher: e.Publisher.Name, License: e.License, Capabilities: e.Capabilities, Permissions: e.Permissions, SupportedBackends: e.SupportedBackends, Pinned: state.Pinned, UI: browserUI(e.Name, e.UI)})
 			seen[e.Name] = true
 		}
 	}

@@ -335,6 +335,20 @@ corral plugin remove <name>
 - `windows`: First-class creation of Windows VMs (UEFI, TPM, virtio drivers).
 - `vdi`: Desktop pools for Virtual Desktop Infrastructure (VDI).
 
+#### Plugin screens and widgets
+
+Some plugins add screens and dashboard widgets to the web UI. The Extensions
+screen shows what each plugin adds, before and after you install it.
+
+- A plugin widget does not appear on its own. Add it from "Add widget" on the
+  Datacenter dashboard.
+- A plugin screen opens from "Added by plugins" on the Extensions screen, or
+  from the command palette.
+- A plugin screen is read-only. It shows information, and it cannot change the
+  fleet.
+- If a plugin does not answer, the widget or screen tells you why. Click "Try
+  again" to ask again.
+
 ---
 
 ## 4. Diagnostics & Troubleshooting

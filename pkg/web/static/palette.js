@@ -9,6 +9,8 @@
 // that mutates is not offered to a read-only caller, exactly as the toolbar
 // that holds the same buttons is hidden from them.
 
+import { capabilityPaletteEntries } from './ui/capabilities.js';
+
 // Injected by app.js so this module does not import the entry point back.
 let ctx = {};
 export function bindPalette(helpers) { ctx = helpers; }
@@ -102,6 +104,10 @@ function entries() {
     // so a read-only caller gets it too.
     run: () => { ctx.cycleTheme(); },
   });
+  // Screens a capability adds, such as a plugin's sections.
+  for (const e of capabilityPaletteEntries()) {
+    add({ ...e, kind: 'view', icon: icon(e.icon), mutates: false });
+  }
   if (resetLayout) {
     add({
       id: 'action:reset-layout', kind: 'view', icon: icon('restart'),

@@ -218,6 +218,7 @@ hook is optional:
 | `menuItems(kind, subject)` | Entries for another object's context menu. |
 | `alerts()` | Lines for the Alerts widget. |
 | `nodeBadges(node)` | Short marks on a node wherever one is drawn, such as its power state in the topology. |
+| `paletteEntries()` | Command palette entries. They must not change the fleet. |
 
 Import the module for its side effect in `app.js`. That import is the only
 mention of it in core.
@@ -226,6 +227,10 @@ Read the registry when you draw, never when your module loads. Core imports
 the Datacenter screen before it imports the capability, so a widget map built
 at load time came out empty. `content/hostpower.js` is the worked example, and
 `content/datacenter.js` shows the lazy call.
+
+A plugin does not write a module like this. It declares widgets and screens
+in its metadata, and `content/pluginui.js` registers them for it. See "Adding
+a screen or a widget" in `docs/plugin-marketplace.md`.
 
 ### A dock panel
 

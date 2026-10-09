@@ -3016,6 +3016,78 @@ check(
   await ctx.close();
 }
 
+// ── plugin screens and widgets (RFC-0002) ────────────────
+// A plugin declares a widget or a screen in its metadata; corral runs the
+// command it names and draws the document it prints. Demo mode carries a
+// fixture in place of a plugin. What has to hold: the page draws only the
+// three document shapes, shows a plugin's markup as text, leaves the operator's
+// dashboard alone until they add the widget, and says so when a plugin fails.
+{
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage({ viewport: { width: 1440, height: 900 } });
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  let alerted = false;
+  page.on('dialog', (d) => { alerted = true; d.dismiss(); });
+  await page.goto(BASE);
+  await page.waitForSelector('#tree [data-vm-key]', { timeout: 30000 });
+  await page.waitForSelector('#dc-dash .grid-stack-item', { timeout: 10000 });
+
+  const widgetId = 'plugin:demo-ui/spend';
+  check(await page.locator(`#dc-dash .grid-stack-item[gs-id="${widgetId}"]`).count() === 0,
+    'plugin-ui: installing a plugin does not put its widget on the dashboard');
+  const offered = await page.locator('#dc-dash .dash-add select option').allTextContents();
+  check(offered.includes('Cloud spend'), `plugin-ui: the widget waits in Add widget (${offered.join(', ')})`);
+  await page.selectOption('#dc-dash .dash-add select', widgetId);
+  const widget = page.locator(`#dc-dash .grid-stack-item[gs-id="${widgetId}"]`);
+  await widget.locator('.pdoc-rows').waitFor({ timeout: 10000 });
+  const text = await widget.locator('.widget-body').textContent();
+  check(text.includes('$412.08') && text.includes('Forecast'), 'plugin-ui: the widget draws the rows the plugin sent');
+  check(text.includes('<img src=x onerror=alert(1)>') && await widget.locator('img').count() === 0,
+    'plugin-ui: markup in a document is shown as text, never parsed');
+  check(await widget.locator('.pdoc-warn').count() === 1, 'plugin-ui: a row state becomes a colour, not a class the plugin names');
+
+  // Sections: reached from Extensions and the palette, never from the tree.
+  check(await page.locator('#tree', { hasText: 'Backups' }).count() === 0, 'plugin-ui: a section adds nothing to the sidebar tree');
+  await page.goto(`${BASE}#sel=extensions`);
+  await page.waitForSelector('.ext-added', { timeout: 10000 });
+  const added = await page.locator('.ext-added').textContent();
+  check(added.includes('Backups') && added.includes('Datacenter → Add widget'),
+    'plugin-ui: Extensions lists what plugins add, and where a widget is');
+  await page.click('.ext-added [data-section-id="backups"]');
+  await page.waitForSelector('.pdoc-section .pdoc-table', { timeout: 10000 });
+  const head = await page.locator('.pdoc-table th').allTextContents();
+  check(head.join('|') === 'Guest|Last backup|Size', `plugin-ui: a table section draws its columns (${head.join('|')})`);
+  check(await page.locator('.pdoc-table tbody tr').count() === 3, 'plugin-ui: and its rows');
+  check((await page.evaluate(() => location.hash)).includes('sel=pluginui'), 'plugin-ui: a section has an address');
+
+  await page.keyboard.press('Control+k');
+  await page.waitForSelector('#palette[open] #palette-input', { timeout: 5000 });
+  await page.keyboard.type('offline report');
+  await page.waitForTimeout(200);
+  check((await page.textContent('#palette-list li.active .palette-label').catch(() => '')) === 'Offline report',
+    'plugin-ui: the palette finds a section');
+  await page.keyboard.press('Enter');
+  await page.waitForSelector('.pdoc-error', { timeout: 10000 });
+  const failed = await page.locator('.pdoc-error').textContent();
+  check(failed.includes('did not answer') && failed.includes('report server unreachable'),
+    'plugin-ui: a failing plugin says so, with its own reason');
+  check(await page.locator('.pdoc-error .pdoc-retry').count() === 1, 'plugin-ui: and offers to try again');
+
+  // An address for a section nobody offers any more is a message, not a crash.
+  await page.goto(`${BASE}#sel=pluginui:gone/away`);
+  await page.waitForSelector('#content .page-head', { timeout: 10000 });
+  check((await page.locator('#content').textContent()).includes('No installed plugin offers this screen'),
+    'plugin-ui: a stale address explains itself');
+
+  check(!alerted, 'plugin-ui: nothing a plugin sent ran as script');
+  check(errors.length === 0, `plugin-ui: no errors (${errors.join('; ').slice(0, 120)})`);
+  await page.goto(`${BASE}#sel=pluginui:demo-ui/backups`);
+  await page.waitForSelector('.pdoc-table', { timeout: 15000 });
+  await page.screenshot({ path: `${SHOTS}/plugin-section.png` });
+  await ctx.close();
+}
+
 check(pageErrors.length === 0, `no JS page errors (${pageErrors.join('; ').slice(0, 200)})`);
 
 await browser.close();

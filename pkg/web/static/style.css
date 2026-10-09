@@ -1366,3 +1366,21 @@ tbody tr:focus-visible {
 
 /* Tree multi-select (#344): rows in the shared VM selection. */
 .tree-item.multi-selected { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+
+/* ── Plugin documents (RFC-0002) ──────────────────────────────── */
+/* The three shapes a plugin's widget or section can take. Nothing here is
+   the plugin's: it sends data, and these rules decide how it looks. */
+.pdoc-rows { width: 100%; }
+.pdoc-rows td:first-child { width: 40%; }
+.pdoc-ok { color: var(--green); }
+.pdoc-warn { color: var(--yellow); }
+.pdoc-bad { color: var(--red); }
+.pdoc-muted { color: var(--muted); }
+.pdoc-scroll { overflow-x: auto; }
+.pdoc-table { width: 100%; }
+.pdoc-message { white-space: pre-wrap; overflow-wrap: anywhere; }
+.pdoc-stale { font-size: 12px; margin-bottom: 6px; }
+.pdoc-error p { margin: 0 0 6px; }
+.pdoc-source { margin-bottom: 14px; }
+.ext-added { margin-bottom: 18px; }
+.ext-added li { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 3px 0; }

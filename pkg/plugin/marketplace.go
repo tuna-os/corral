@@ -21,6 +21,7 @@ import (
 
 	semver "github.com/Masterminds/semver/v3"
 	"github.com/tuna-os/corral/pkg/config"
+	"github.com/tuna-os/corral/pkg/plugin/sdk"
 )
 
 const (
@@ -61,8 +62,12 @@ type Entry struct {
 	SupportedBackends []string         `json:"supportedBackends,omitempty"`
 	Platforms         map[string]Build `json:"platforms"`
 	Source            string           `json:"source,omitempty"`
-	SourceURL         string           `json:"-"`
-	SchemaVersion     string           `json:"-"`
+	// UI is what the plugin says it adds to the web UI, so the operator can
+	// see it before installing. At run time corral reads the declaration from
+	// the installed binary's own metadata instead (RFC-0002).
+	UI            *sdk.UI `json:"ui,omitempty"`
+	SourceURL     string  `json:"-"`
+	SchemaVersion string  `json:"-"`
 	// Unverified marks an entry that came from a source the operator
 	// explicitly opted out of integrity checks for. It is never set from
 	// index JSON — only fetchSource sets it, and only for a source carrying
@@ -367,6 +372,9 @@ func (e *Entry) Validate() error {
 	}
 	if len(e.Platforms) == 0 {
 		return fmt.Errorf("%s has no platform artifacts", e.Name)
+	}
+	if err := e.UI.Validate(); err != nil {
+		return fmt.Errorf("%s: %w", e.Name, err)
 	}
 	if !e.Unverified {
 		if e.Publisher.Name == "" {

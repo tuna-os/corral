@@ -14,6 +14,7 @@ import { renderExtensions } from './content/extensions.js';
 // Imported for its side effect: the module registers the host-power
 // capability with ui/capabilities.js. Core names nothing in it.
 import './content/hostpower.js';
+import './content/pluginui.js';
 import { disconnectMultiview, renderMultiview } from './content/multiview.js';
 import { renderNamespace } from './content/namespace.js';
 import { renderNode } from './content/node.js';

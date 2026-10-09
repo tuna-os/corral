@@ -104,6 +104,15 @@ export function capabilityNodeBadges(nodeName) {
   return badges;
 }
 
+// Command palette entries, each { id, icon, label, sub, keywords, run }, where
+// icon is an icon name. They are views: the palette offers them to a read-only
+// caller too, so an entry here must not change the fleet.
+export function capabilityPaletteEntries() {
+  const entries = [];
+  for (const cap of registered) entries.push(...(cap.paletteEntries?.() || []));
+  return entries;
+}
+
 // Lines for the Alerts widget, as HTML strings, in the same shape that widget
 // already builds for nodes and VMs.
 export function capabilityAlerts() {
