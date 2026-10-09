@@ -66,6 +66,24 @@ export function mountGrid(host, options) {
   // and the focus, selection and column drag living in it — across a poll.
   let rows = options.rows;
   const state = load(id, columns);
+
+  // The part of this grid's state that says what is being looked at, as
+  // opposed to how the operator likes the grid laid out. A link can carry the
+  // first - "the stopped guests, by memory" means the same to whoever opens
+  // it - while column order, widths and density are this browser's business.
+  // Saved views stay local for the same reason: a view's name means nothing
+  // in someone else's browser, but its filters and sort travel fine.
+  const addressable = () => ({
+    sort: state.sort.map((x) => ({ id: x.id, dir: x.dir })),
+    filters: Object.fromEntries(Object.entries(state.filters).filter(([, v]) => String(v).trim())),
+  });
+
+  // Every change goes through here, so a caller tracking the addressable part
+  // cannot miss one, whichever control made it.
+  const persist = () => {
+    save(id, state);
+    options.onStateChange?.(addressable());
+  };
   const byID = new Map(columns.map((c) => [c.id, c]));
   let dragID = '';
   let viewportStart = 0;
@@ -118,7 +136,7 @@ export function mountGrid(host, options) {
     if (!append) state.sort = [];
     else state.sort = state.sort.filter((x) => x.id !== columnID);
     if (next) state.sort.push({ id: columnID, dir: next });
-    save(id, state);
+    persist();
     render();
   }
 
@@ -128,13 +146,13 @@ export function mountGrid(host, options) {
     if (at === to) return;
     state.order.splice(at, 1);
     state.order.splice(to, 0, columnID);
-    save(id, state);
+    persist();
     render();
   }
 
   function resize(columnID, width) {
     state.widths[columnID] = clamp(Math.round(width), 64, 600);
-    save(id, state);
+    persist();
     render();
   }
 
@@ -157,7 +175,7 @@ export function mountGrid(host, options) {
       const buttons = row.querySelectorAll('button');
       row.querySelector('input').onchange = (event) => {
         state.hidden = event.target.checked ? state.hidden.filter((x) => x !== columnID) : [...state.hidden, columnID];
-        save(id, state); render();
+        persist(); render();
       };
       buttons[0].disabled = index === 0; buttons[0].onclick = () => move(columnID, -1);
       buttons[1].disabled = index === state.order.length - 1; buttons[1].onclick = () => move(columnID, 1);
@@ -181,7 +199,7 @@ export function mountGrid(host, options) {
       row.className = 'grid-saved-view';
       const apply = document.createElement('button');
       apply.type = 'button'; apply.className = 'grid-view-apply'; apply.textContent = name;
-      apply.onclick = () => { Object.assign(state, views()[name]); save(id, state); render(); };
+      apply.onclick = () => { Object.assign(state, views()[name]); persist(); render(); };
       const remove = document.createElement('button');
       remove.type = 'button'; remove.title = `Delete ${name}`; remove.setAttribute('aria-label', `Delete saved view ${name}`); remove.textContent = '×';
       remove.onclick = () => { const all = views(); delete all[name]; saveViews(all); renderViews(); };
@@ -232,7 +250,7 @@ export function mountGrid(host, options) {
       const th = document.createElement('th'); th.draggable = true; th.dataset.column = col.id;
       th.addEventListener('dragstart', () => { dragID = col.id; });
       th.addEventListener('dragover', (event) => event.preventDefault());
-      th.addEventListener('drop', (event) => { event.preventDefault(); const from = state.order.indexOf(dragID); const to = state.order.indexOf(col.id); if (from >= 0 && to >= 0 && from !== to) { state.order.splice(from, 1); state.order.splice(to, 0, dragID); save(id, state); render(); } });
+      th.addEventListener('drop', (event) => { event.preventDefault(); const from = state.order.indexOf(dragID); const to = state.order.indexOf(col.id); if (from >= 0 && to >= 0 && from !== to) { state.order.splice(from, 1); state.order.splice(to, 0, dragID); persist(); render(); } });
       // A `plain` column holds controls rather than a value, so it gets a
       // label instead of a sort button. Sorting rows by the buttons in them
       // means nothing, and an operator who reaches that header expects the
@@ -248,11 +266,11 @@ export function mountGrid(host, options) {
       }
       const handle = document.createElement('span'); handle.className = 'grid-resizer'; handle.setAttribute('role', 'separator'); handle.tabIndex = 0; handle.setAttribute('aria-label', `Resize ${col.label}`);
       handle.onkeydown = (event) => { if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); resize(col.id, (state.widths[col.id] || col.width || 140) + (event.key === 'ArrowLeft' ? -10 : 10)); } };
-      handle.onpointerdown = (event) => { event.preventDefault(); const startX = event.clientX; const startWidth = state.widths[col.id] || th.getBoundingClientRect().width; const move = (e) => { state.widths[col.id] = clamp(startWidth + e.clientX - startX, 64, 600); const target = [...colgroup.children][cols.indexOf(col) + 1]; target.style.width = `${state.widths[col.id]}px`; }; const up = () => { document.removeEventListener('pointermove', move); document.removeEventListener('pointerup', up); save(id, state); renderColumnMenu(); }; document.addEventListener('pointermove', move); document.addEventListener('pointerup', up); };
+      handle.onpointerdown = (event) => { event.preventDefault(); const startX = event.clientX; const startWidth = state.widths[col.id] || th.getBoundingClientRect().width; const move = (e) => { state.widths[col.id] = clamp(startWidth + e.clientX - startX, 64, 600); const target = [...colgroup.children][cols.indexOf(col) + 1]; target.style.width = `${state.widths[col.id]}px`; }; const up = () => { document.removeEventListener('pointermove', move); document.removeEventListener('pointerup', up); persist(); renderColumnMenu(); }; document.addEventListener('pointermove', move); document.addEventListener('pointerup', up); };
       th.append(button, handle); labels.appendChild(th);
     });
     const filters = document.createElement('tr'); filters.className = 'grid-filters'; filters.appendChild(document.createElement('th'));
-    cols.forEach((col) => { const th = document.createElement('th'); if (col.plain) { filters.appendChild(th); return; } const input = document.createElement('input'); input.type = 'search'; input.placeholder = `Filter ${col.label}`; input.setAttribute('aria-label', `Filter ${col.label}`); input.value = state.filters[col.id] || ''; input.oninput = () => { state.filters[col.id] = input.value; save(id, state); viewportStart = 0; render(); requestAnimationFrame(() => host.querySelector(`[aria-label="Filter ${CSS.escape(col.label)}"]`)?.focus()); }; th.appendChild(input); filters.appendChild(th); });
+    cols.forEach((col) => { const th = document.createElement('th'); if (col.plain) { filters.appendChild(th); return; } const input = document.createElement('input'); input.type = 'search'; input.placeholder = `Filter ${col.label}`; input.setAttribute('aria-label', `Filter ${col.label}`); input.value = state.filters[col.id] || ''; input.oninput = () => { state.filters[col.id] = input.value; persist(); viewportStart = 0; render(); requestAnimationFrame(() => host.querySelector(`[aria-label="Filter ${CSS.escape(col.label)}"]`)?.focus()); }; th.appendChild(input); filters.appendChild(th); });
     head.append(labels, filters);
 
     // Rows are collected and then diffed into the body rather than replacing
@@ -323,7 +341,7 @@ export function mountGrid(host, options) {
 
   host.querySelector('.grid-density-select').onchange = (event) => {
     state.density = event.target.value;
-    save(id, state);
+    persist();
     render();
   };
 
@@ -340,5 +358,17 @@ export function mountGrid(host, options) {
   return {
     update(nextRows) { rows = nextRows; render(); },
     refresh: render,
+    addressable,
+    // Apply a sort and filters that arrived from outside, an address above
+    // all. Columns this grid does not have are dropped, so a link from a build
+    // with different columns degrades rather than breaks.
+    applyAddressable({ sort = [], filters = {} } = {}) {
+      const valid = new Set(columns.map((c) => c.id));
+      state.sort = sort.filter((x) => valid.has(x.id) && (x.dir === 'asc' || x.dir === 'desc'));
+      state.filters = Object.fromEntries(Object.entries(filters).filter(([k]) => valid.has(k)));
+      viewportStart = 0;
+      save(id, state);
+      render();
+    },
   };
 }

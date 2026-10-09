@@ -172,6 +172,17 @@ The line between them is simple. A link must mean the same thing for the
 person you send it to. So where you are belongs in the address, and how wide
 you keep your sidebar does not.
 
+The inventory grid's sort and filters go in the address too, as
+`sort=mem:desc` and `f.status=stopped`, so a filtered list is something to
+send. Column order, widths and density stay local, for the same reason as the
+sidebar width. A saved view's name stays local as well, because it means
+nothing in another browser. When the operator picks a view, its filters and
+sort go in the address instead.
+
+A change to the place pushes a history entry. A change to the grid alone
+replaces the current one. Without that rule, each letter of a filter would
+add an entry, and back would spell the word out in reverse.
+
 A new selection type needs nothing here. `route.js` encodes the type and the
 one thing it names. On the way back it puts that payload into both `key` and
 `name`, because the UI addresses a guest by key and a node by name. It holds

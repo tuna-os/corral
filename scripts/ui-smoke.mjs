@@ -2834,6 +2834,94 @@ check(
   await cold.close();
 }
 
+// ── grid-address ─────────────────────────────────────────
+// The address carried the screen but not the list on it, so "the stopped
+// guests, by name" was still not something you could send. The grid's sort
+// and filters now ride in the address. Column order, widths and density stay
+// in this browser: they are how the operator likes the grid, not what it
+// shows.
+{
+  // Its own context, so a fresh one later has no local storage at all and the
+  // address is the only thing that can explain what it shows.
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage({ viewport: { width: 1440, height: 900 } });
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto(BASE);
+  await page.waitForSelector('#content .vm-check', { timeout: 30000 });
+  await page.waitForTimeout(1200);
+  const ROWS = '#content .grid-scroll tbody tr[data-key]';
+  const all = await page.locator(ROWS).count();
+
+  // A filter, typed a letter at a time the way a person types it.
+  const before = await page.evaluate(() => history.length);
+  const box = page.locator('#content input[aria-label="Filter Status"]');
+  await box.click();
+  await box.type('stop', { delay: 60 });
+  await page.waitForTimeout(600);
+  check(
+    (await page.evaluate(() => location.hash)).includes('f.status=stop'),
+    'grid-address: a filter goes into the address',
+  );
+  // Four keystrokes must not be four history entries, or back would spell the
+  // word out in reverse before reaching the previous screen.
+  check(
+    await page.evaluate(() => history.length) === before,
+    'grid-address: typing in a filter adds no history entries',
+  );
+  const filtered = await page.locator(ROWS).count();
+  check(filtered > 0 && filtered < all, `grid-address: and the list narrows (${filtered} of ${all})`);
+
+  await page.locator('#content .grid-sort', { hasText: /^Name/ }).first().click();
+  await page.waitForTimeout(500);
+  const link = await page.evaluate(() => location.href);
+  check(/sort=name:(asc|desc)/.test(link), 'grid-address: a sort goes into the address too');
+
+  // The layout is not part of it.
+  check(
+    !/order=|width|density|hidden/.test(link.split('#')[1] || ''),
+    'grid-address: column order, widths and density stay out of the link',
+  );
+
+  // The real test: someone else opens the link, with nothing stored.
+  const other = await browser.newContext();
+  const theirs = await other.newPage({ viewport: { width: 1440, height: 900 } });
+  await theirs.goto(link);
+  await theirs.waitForSelector('#content .vm-check', { timeout: 30000 }).catch(() => {});
+  await theirs.waitForTimeout(2500);
+  check(
+    await theirs.inputValue('#content input[aria-label="Filter Status"]').catch(() => '') === 'stop',
+    'grid-address: a fresh browser opening the link gets the filter',
+  );
+  check(
+    await theirs.locator(ROWS).count() === filtered,
+    `grid-address: and the same rows (${await theirs.locator(ROWS).count()} of ${filtered})`,
+  );
+  await other.close();
+
+  // A guest, and back. The list comes back with its filter, because back
+  // returns to the entry that held it.
+  await page.locator(ROWS).first().click();
+  await page.waitForTimeout(800);
+  check(
+    !(await page.evaluate(() => location.hash)).includes('f.status'),
+    'grid-address: a guest screen carries no grid state',
+  );
+  await page.goBack();
+  await page.waitForTimeout(1200);
+  check(
+    await page.inputValue('#content input[aria-label="Filter Status"]').catch(() => '') === 'stop',
+    'grid-address: back returns to the filtered list',
+  );
+
+  // The grid keeps its filters in local storage, and this context shares it
+  // with nothing else, but clear it anyway so the check leaves no trace.
+  await page.fill('#content input[aria-label="Filter Status"]', '');
+  await page.waitForTimeout(400);
+  check(errors.length === 0, `grid-address: no errors (${errors.join('; ').slice(0, 120)})`);
+  await ctx.close();
+}
+
 check(pageErrors.length === 0, `no JS page errors (${pageErrors.join('; ').slice(0, 200)})`);
 
 await browser.close();

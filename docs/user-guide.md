@@ -106,7 +106,9 @@ and the address holds both. Send that address to somebody else and they arrive
 on the same screen. The back and forward buttons move through the screens you
 visited.
 
-The address carries the tree view, the selection and the open tab. It does not
+The address carries the tree view, the selection and the open tab. On a screen
+with the guest list, it also carries the list's filters and sort. So you can
+send somebody the stopped guests on one node, sorted by memory. It does not
 carry how wide you keep the sidebar, which columns you hid, or where you put
 the dashboard widgets. Those stay in your own browser.
 

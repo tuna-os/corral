@@ -20,6 +20,7 @@ import { renderNode } from './content/node.js';
 import { renderSettings } from './content/settings.js';
 import { renderStorage } from './content/storage.js';
 import { renderVM, vmAction } from './content/vm.js';
+import { applyInventoryGridAddress, inventoryGridAddress } from './content/vm-table.js';
 import { updateSourceFields } from './create.js';
 // The task dock registers its Alpine component on load; it exports nothing.
 import './dock.js';
@@ -452,9 +453,16 @@ async function openPool(path) {
 //
 // The console popout is deliberately exempt: it is addressed by ?console= and
 // is a window showing one screen, not a place to navigate from.
-function syncRoute() {
+export function syncRoute() {
   if (document.body.classList.contains('console-popout')) return;
-  writeRoute({ view: treeView, sel: encodeSelection(state.selected), tab: state.tab });
+  writeRoute({
+    view: treeView,
+    sel: encodeSelection(state.selected),
+    tab: state.tab,
+    // The inventory grid's sort and filters, when a grid is on screen. A link
+    // to a filtered list then opens on the same list.
+    grid: inventoryGridAddress(),
+  });
 }
 
 // Apply an address to the page. Used at boot, and again whenever the back or
@@ -474,6 +482,9 @@ function applyRoute() {
   state.tab = route.tab;
   renderTree();
   renderContent();
+  // After the render, so a grid the render just mounted takes the sort and
+  // filters at once; one not yet mounted takes them on its first mount.
+  applyInventoryGridAddress(route.grid);
   markRendered();
   emit('select', { selected: state.selected, tab: state.tab });
 }

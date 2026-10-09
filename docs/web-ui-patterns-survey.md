@@ -96,6 +96,8 @@ documents the keyboard model. That chapter is where the Prism rows come from.
 | The URL addresses what is on screen | Proxmox (`StateProvider`, read in the source) | **Added.** The page had one address, so nobody could link to a guest and the back button did nothing. `deep-link` |
 | Navigation goes in the URL, layout stays local | Proxmox (its `hslist` is view, resource and tab, and nothing else) | **Added.** A link says where you are. Pane widths are how you like to work, and sending those to somebody else would be rude. `deep-link` |
 | Back and forward walk the UI | Proxmox | **Added.** `deep-link` |
+| The list's filters and sort in the address | — | **Added**, past the reference: Proxmox addresses the resource, not the grid. A filtered list became something to send. `grid-address` |
+| A filter keystroke is not a history entry | — | **Added** with it. A change to the place pushes; a change to the grid alone replaces. `grid-address` |
 | A URL short enough to paste | Proxmox (a positional list against a dictionary of every tab name) | **Declined.** That needs a central table naming each tab, which is the shape the capability registry just removed. corral uses readable keys, and accepts a longer address. |
 | Typing the name to confirm a removal | Proxmox (`ConfirmRemoveDialog`, read in the source) | **Added.** Deleting a guest takes its disks, and it was one `confirm()`: a box with its default button already focused, so a stray Enter after a bulk selection destroyed guests and their storage. `confirm-destroy` |
 | A plain confirm for everything else | Proxmox (only `dangerous` removals get the field) | **Kept.** A dialog that always demands typing teaches people to type without reading. |
