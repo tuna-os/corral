@@ -25,6 +25,13 @@ Corral asks a slow server less often, and nobody has to tune it. And two polls
 can never be in flight together, which a fixed timer allowed as soon as the
 server took longer than the interval.
 
+Nothing polls while nobody can see the page. A tab behind another, or a
+minimised window, makes no requests. Each poller then runs once the moment the
+page comes back into view, so nobody reads stale data as current. A new poller uses
+`pollWhileVisible(fn, ms, alive)` from `ui/visibility.js`. Pass `alive` when
+the poller belongs to one element: the poller then stops, listener and all,
+once that element leaves the page.
+
 `refresh()` holds that guarantee: it runs one refresh at a time. A refresh
 asked for while one runs waits, and then happens. A caller that forces one has
 changed something and has to see it. Do not reach past this function.

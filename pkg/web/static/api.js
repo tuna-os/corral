@@ -35,7 +35,11 @@ export async function api(path, opts = {}) {
     if (!msg) msg = r.statusText;
     // The code always, because 403 and 500 need different things done, and
     // because it is the only thing left when there is no reason phrase.
-    throw new Error(msg ? `${msg} (${r.status})` : `Request failed with status ${r.status}`);
+    const err = new Error(msg ? `${msg} (${r.status})` : `Request failed with status ${r.status}`);
+    // Kept as a field too, so a caller can act on the status rather than
+    // parse it back out of the message.
+    err.status = r.status;
+    throw err;
   }
   return r.headers.get('content-type')?.includes('json') ? r.json() : r.text();
 }

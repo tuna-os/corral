@@ -59,7 +59,7 @@ func SetCLITheme(accent, brandTitle, brandEmoji, brandSubtitle, customCSS string
 func applyCLITheme() {
 	if cliTheme.Accent != "" {
 		activeTheme.Accent = cliTheme.Accent
-		activeTheme.Accent2 = darkenHex(cliTheme.Accent)
+		activeTheme.Accent2 = deriveAccent2(cliTheme.Accent)
 	}
 	if cliTheme.BrandTitle != "" {
 		activeTheme.BrandTitle = cliTheme.BrandTitle
@@ -81,7 +81,7 @@ func applyCLITheme() {
 func loadThemeFromConfig(cfg *config.Config) {
 	if cfg.Web.Accent != "" {
 		activeTheme.Accent = cfg.Web.Accent
-		activeTheme.Accent2 = darkenHex(cfg.Web.Accent)
+		activeTheme.Accent2 = deriveAccent2(cfg.Web.Accent)
 	}
 	if cfg.Web.Accent2 != "" {
 		activeTheme.Accent2 = cfg.Web.Accent2
@@ -98,6 +98,25 @@ func loadThemeFromConfig(cfg *config.Config) {
 	if cfg.Web.CustomCSS != "" {
 		activeTheme.CustomCSS = cfg.Web.CustomCSS
 	}
+}
+
+// deriveAccent2 is the second accent to use when only the first was given.
+//
+// Three places set the accent - a CLI flag, config.yaml and a PUT to
+// /api/theme - and each used to compute accent_2 as darkenHex(accent). That
+// rule disagrees with the built-in pair: the default accent darkens to #d27736,
+// but the default accent_2 is the hand-picked #d9742e. So sending the default
+// accent back, which is what restoring a theme does, silently shifted accent_2
+// to a colour nobody chose.
+//
+// The default accent keeps the companion it was designed with, and any other
+// accent gets a derived one. Case is ignored because #F0883E is the same
+// colour; an explicit accent_2 from any source still wins over both.
+func deriveAccent2(accent string) string {
+	if strings.EqualFold(accent, themeDefaults.Accent) {
+		return themeDefaults.Accent2
+	}
+	return darkenHex(accent)
 }
 
 // darkenHex returns a slightly darkened variant of a CSS hex colour string by
@@ -176,7 +195,7 @@ func handleGetTheme(w http.ResponseWriter, r *http.Request) {
 func applyThemeUpdate(req ThemeConfig) {
 	if req.Accent != "" {
 		activeTheme.Accent = req.Accent
-		activeTheme.Accent2 = darkenHex(req.Accent)
+		activeTheme.Accent2 = deriveAccent2(req.Accent)
 	}
 	if req.Accent2 != "" {
 		activeTheme.Accent2 = req.Accent2

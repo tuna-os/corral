@@ -14,6 +14,8 @@
 // Both libraries are classic scripts loaded ahead of this module (see
 // index.html), so they are globals here — no build step (ADR-0004).
 
+import { pollWhileVisible } from './ui/visibility.js';
+
 const GridStack = globalThis.GridStack;
 const uPlot = globalThis.uPlot;
 
@@ -511,7 +513,6 @@ export function timeChart(box, { load, metric, label, empty, height, every = 150
   const el = box.querySelector('.dash-chart');
   const note = box.querySelector('.dash-chart-note');
   let plot = null;
-  let timer = null;
 
   const size = () => ({
     width: Math.max(160, el.clientWidth || box.clientWidth || 300),
@@ -521,7 +522,7 @@ export function timeChart(box, { load, metric, label, empty, height, every = 150
   el._resize = () => plot?.setSize(size());
 
   const draw = async () => {
-    if (!el.isConnected) { clearInterval(timer); return; }
+    if (!el.isConnected) return; // pollWhileVisible stops on the next tick
     let samples;
     try { samples = await load(); } catch { samples = null; }
     if (!el.isConnected) return;
@@ -552,8 +553,9 @@ export function timeChart(box, { load, metric, label, empty, height, every = 150
     }, data, el);
   };
 
-  draw();
-  timer = setInterval(draw, every);
+  // Draws now, then on the interval while the page is visible and the chart is
+  // on it. A hidden tab fetches no samples; see ui/visibility.js.
+  pollWhileVisible(draw, every, () => el.isConnected);
   if (typeof ResizeObserver === 'function') {
     const ro = new ResizeObserver(() => { if (el.isConnected) el._resize(); else ro.disconnect(); });
     ro.observe(box);

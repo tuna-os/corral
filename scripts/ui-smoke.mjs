@@ -268,11 +268,24 @@ check(updated.accent === '#22c55e' || updated.error, 'PUT /api/theme accepts acc
 // server currently holds, so leaving the write in place makes those checks
 // fail on a second run against a long-lived demo server.
 //
-// The whole captured object goes back, not just the fields written: a PUT
-// carrying an accent re-derives accent_2 by darkening it, and that derived
-// shade is not the default accent_2, so restoring the accent alone would
-// leave accent_2 shifted. Sending accent_2 explicitly takes precedence over
-// the derived value.
+// Sending the default accent back must bring the default accent_2 with it.
+// It used not to: every path that set an accent recomputed accent_2 by
+// darkening it, and the default accent darkens to #d27736 rather than the
+// designed #d9742e, so restoring a theme shifted accent_2 to a colour nobody
+// chose. This suite worked round that for a long time by sending accent_2
+// explicitly. Now the accent alone has to be enough, and this asserts it.
+await fetch(`${BASE}api/theme`, {
+  method: 'PUT',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ accent: '#f0883e' }),
+}).catch(() => {});
+const accentOnly = await (await fetch(`${BASE}api/theme`)).json();
+check(
+  accentOnly.accent_2 === '#d9742e',
+  `theme: the default accent restores the default accent_2 (${accentOnly.accent_2})`,
+);
+
+// Then the whole captured object goes back, which also restores the brand.
 await fetch(`${BASE}api/theme`, {
   method: 'PUT',
   headers: { 'Content-Type': 'application/json' },
@@ -2700,6 +2713,125 @@ check(
     await viewName() === before,
     'palette-filters: and wraps back to where it started',
   );
+}
+
+// ── quiet-when-unseen ────────────────────────────────────
+// Three ways the page kept talking when it should not have.
+//
+// A tab behind another kept polling every five seconds: the fleet, the dock's
+// task log, every chart, every widget with its own data.
+//
+// A poll that failed raised a toast each time it failed. A server that is down
+// fails every poll, so the page drowned in one sentence. Toasts replace each
+// other, so the storm never shows as a pile; these count insertions.
+//
+// And a 401 - the tailnet identity corral authorises against stopped arriving
+// - was reported as "No cluster connected, point kubectl at a cluster", which
+// is the wrong advice for an identity problem.
+{
+  const fresh = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  const freshErrors = [];
+  fresh.on('pageerror', (e) => freshErrors.push(e.message));
+  let vmsRequests = 0;
+  fresh.on('request', (r) => { if (/\/api\/vms(\?|$)/.test(r.url())) vmsRequests += 1; });
+  await fresh.goto(BASE);
+  await fresh.waitForSelector('#content .vm-check', { timeout: 30000 });
+  await fresh.waitForTimeout(1500);
+
+  // Hidden: the browser has no switch for this, so set what the page reads.
+  const setHidden = (hidden) => fresh.evaluate((h) => {
+    Object.defineProperty(document, 'visibilityState', { value: h ? 'hidden' : 'visible', configurable: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+  }, hidden);
+
+  await setHidden(true);
+  const whileHidden = vmsRequests;
+  // Two full poll intervals and then some.
+  await fresh.waitForTimeout(13000);
+  check(
+    vmsRequests === whileHidden,
+    `quiet-when-unseen: a hidden page polls nothing (${vmsRequests - whileHidden} requests in 13s)`,
+  );
+  await setHidden(false);
+  await fresh.waitForTimeout(1200);
+  check(
+    vmsRequests > whileHidden,
+    'quiet-when-unseen: and fetches at once when it is shown again',
+  );
+
+  // Count every toast the page raises from here on.
+  await fresh.evaluate(() => {
+    window.__toasts = 0;
+    new MutationObserver((records) => {
+      for (const r of records) for (const n of r.addedNodes) if (n.classList?.contains('toast')) window.__toasts += 1;
+    }).observe(document.getElementById('toast-region'), { childList: true });
+  });
+
+  // The server goes away. One toast, however many polls fail.
+  await fresh.route(/\/api\/vms(\?|$)/, (route) => route.abort('connectionrefused'));
+  await fresh.waitForTimeout(14000);
+  const downToasts = await fresh.evaluate(() => window.__toasts);
+  check(
+    downToasts === 1,
+    `quiet-when-unseen: a server that stays down raises one toast, not one per poll (${downToasts})`,
+  );
+  await fresh.unroute(/\/api\/vms(\?|$)/);
+  await fresh.waitForTimeout(7000);
+
+  // The identity goes away.
+  await fresh.evaluate(() => { window.__toasts = 0; });
+  await fresh.route(/\/api\/vms(\?|$)/, (route) => route.fulfill({
+    status: 401, contentType: 'application/json', body: JSON.stringify({ error: 'authentication required' }),
+  }));
+  await fresh.waitForSelector('#identity-lost', { timeout: 15000 }).catch(() => {});
+  const lostText = await fresh.textContent('#content').catch(() => '');
+  check(
+    await fresh.locator('#identity-lost').count() === 1,
+    'quiet-when-unseen: a 401 shows the identity screen',
+  );
+  check(
+    !/kubectl|No cluster connected/i.test(lostText),
+    'quiet-when-unseen: and does not send the operator to fix a cluster',
+  );
+  await fresh.waitForTimeout(11000);
+  check(
+    await fresh.evaluate(() => window.__toasts) === 0,
+    'quiet-when-unseen: and raises no toasts while it waits',
+  );
+
+  // The identity comes back, and the page recovers without a reload.
+  await fresh.unroute(/\/api\/vms(\?|$)/);
+  await fresh.waitForSelector('#content .vm-check', { timeout: 20000 }).catch(() => {});
+  check(
+    await fresh.locator('#identity-lost').count() === 0
+      && await fresh.locator('#content .vm-check').count() > 0,
+    'quiet-when-unseen: when it returns the page recovers by itself',
+  );
+  check(freshErrors.length === 0, `quiet-when-unseen: no errors (${freshErrors.join('; ').slice(0, 120)})`);
+  await fresh.close();
+
+  // The same 401 from the very first request, before anything has rendered.
+  // This is where the wrong advice actually lived: mid-session the old code
+  // only raised toasts, but on a first load it fell into the no-cluster screen
+  // and told the operator to point kubectl at a cluster. The assertion above
+  // runs mid-session, so on its own it would pass against the old code too.
+  const cold = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  const coldErrors = [];
+  cold.on('pageerror', (e) => coldErrors.push(e.message));
+  // whoami is exempt on the server, so it stays reachable here too.
+  await cold.route(/\/api\/(?!whoami)/, (route) => route.fulfill({
+    status: 401, contentType: 'application/json', body: JSON.stringify({ error: 'authentication required' }),
+  }));
+  await cold.goto(BASE);
+  await cold.waitForSelector('#identity-lost', { timeout: 15000 }).catch(() => {});
+  const coldText = await cold.textContent('#content').catch(() => '');
+  check(
+    await cold.locator('#identity-lost').count() === 1 && !/kubectl|No cluster connected/i.test(coldText),
+    'quiet-when-unseen: a 401 on first load shows the identity screen, not cluster setup',
+  );
+  // Boot also asks for capabilities and instance types, and those 401 too.
+  check(coldErrors.length === 0, `quiet-when-unseen: a first-load 401 throws nothing uncaught (${coldErrors.join('; ').slice(0, 120)})`);
+  await cold.close();
 }
 
 check(pageErrors.length === 0, `no JS page errors (${pageErrors.join('; ').slice(0, 200)})`);
