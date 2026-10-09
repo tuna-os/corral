@@ -2615,6 +2615,93 @@ check(
   await page.close();
 }
 
+// ── palette-filters ──────────────────────────────────────
+// The last two open items from the Prism research.
+//
+// Its search takes field filters, as `vm alerts severity=critical`, because on
+// any real fleet "every guest on the node that is down" is a question worth
+// asking directly rather than by eye. The palette narrowed by kind prefix and
+// by name, and a name match cannot tell a node from a guest called after one.
+//
+// And its view switch has a key. corral has four views of the same fleet and
+// reached them by mouse alone.
+{
+  await page.goto(BASE);
+  await page.waitForSelector('#tree [data-vm-key]', { timeout: 30000 });
+  await page.waitForTimeout(900);
+
+  const open = async (query) => {
+    await page.keyboard.press('Control+k');
+    await page.waitForSelector('#palette[open] #palette-input', { timeout: 5000 });
+    await page.fill('#palette-input', query);
+    await page.waitForTimeout(400);
+    const labels = await page.locator('#palette-list li .palette-label').allTextContents();
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(250);
+    return labels;
+  };
+
+  // Read the truth off the API, so this does not hard-code the demo fleet.
+  const fleet = await (await fetch(`${BASE}api/vms`)).json();
+  const node = fleet.find((v) => v.node)?.node;
+  const onNode = fleet.filter((v) => v.node === node).map((v) => v.name).sort();
+  const offNode = fleet.filter((v) => v.node !== node).map((v) => v.name);
+
+  const byNode = await open(`node=${node}`);
+  check(
+    onNode.every((n) => byNode.includes(n)),
+    `palette-filters: node=${node} keeps every guest on it (${onNode.join(', ')})`,
+  );
+  check(
+    !offNode.some((n) => byNode.includes(n)),
+    'palette-filters: and nothing that is somewhere else',
+  );
+
+  // A filter and a search word together, which is the shape that matters.
+  const target = onNode[0];
+  const both = await open(`node=${node} ${target}`);
+  check(
+    both.includes(target) && both.length < byNode.length,
+    `palette-filters: a filter and a word narrow together (${both.length} of ${byNode.length})`,
+  );
+
+  // A field a guest does not have answers with nothing, rather than a list
+  // that looks like it answered the question.
+  check(
+    (await open('severity=critical')).length === 0,
+    'palette-filters: an unknown field matches nothing',
+  );
+
+  // Status is the one an operator reaches for most.
+  const stopped = fleet.filter((v) => /stopped/i.test(v.status || '')).map((v) => v.name);
+  if (stopped.length) {
+    const byStatus = await open('status=stopped');
+    check(
+      stopped.every((n) => byStatus.includes(n)),
+      `palette-filters: status=stopped finds the stopped guests (${stopped.join(', ')})`,
+    );
+  }
+
+  // The view switch, on a key.
+  const viewName = () => page.evaluate(
+    () => document.querySelector('#tree .tree-view-toggle .active, #tree [data-view].active')?.textContent?.trim() || '',
+  );
+  const before = await viewName();
+  await page.keyboard.press('v');
+  await page.waitForTimeout(700);
+  const after = await viewName();
+  check(
+    before !== after,
+    `palette-filters: v moves to the next tree view (${before || '?'} then ${after || '?'})`,
+  );
+  // Four views, so pressing it four times comes back round.
+  for (let i = 0; i < 3; i += 1) { await page.keyboard.press('v'); await page.waitForTimeout(500); }
+  check(
+    await viewName() === before,
+    'palette-filters: and wraps back to where it started',
+  );
+}
+
 check(pageErrors.length === 0, `no JS page errors (${pageErrors.join('; ').slice(0, 200)})`);
 
 await browser.close();

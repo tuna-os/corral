@@ -41,6 +41,7 @@ const SHORTCUT_KEYS = {
   'vm-stop': ['s'],
   'dock:tasks': ['t'],
   'dock:events': ['e'],
+  'action:next-view': ['v'],
 };
 
 // ── entries ───────────────────────────────────────────────────────
@@ -111,7 +112,17 @@ function entries() {
   for (const vm of vms()) {
     const key = ctx.vmKey(vm);
     const where = [vm.backend, vm.namespace, vm.node].filter(Boolean).join(' · ');
-    add({ id: `vm:${key}`, kind: 'vm', icon: icon(vm.isTemplate ? 'template' : 'cube'), label: vm.name, sub: where, keywords: (vm.tags || []).join(' '), run: () => openVM(key) });
+    // What a field filter can ask about. `sub` already shows most of it, but
+    // as one string: "node=corral-1" has to mean the node and not a guest
+    // whose name happens to contain it.
+    const facts = {
+      node: vm.node || '',
+      namespace: vm.namespace || '',
+      status: vm.status || '',
+      backend: vm.backend || '',
+      tag: vm.tags || [],
+    };
+    add({ id: `vm:${key}`, kind: 'vm', icon: icon(vm.isTemplate ? 'template' : 'cube'), label: vm.name, sub: where, keywords: (vm.tags || []).join(' '), facts, run: () => openVM(key) });
 
     const cap = vm.capabilities || {};
     const verb = (act, label, when = true) => {
@@ -134,7 +145,12 @@ function entries() {
 
   for (const c of cts()) {
     const key = `${c.namespace}/${c.name}`;
-    add({ id: `ct:${key}`, kind: 'ct', icon: icon('container'), label: c.name, sub: `container · ${c.namespace}`, run: () => go({ type: 'ct', key }) });
+    add({
+      id: `ct:${key}`, kind: 'ct', icon: icon('container'), label: c.name,
+      sub: `container · ${c.namespace}`,
+      facts: { node: c.node || '', namespace: c.namespace || '', status: c.phase || '', backend: 'container', tag: [] },
+      run: () => go({ type: 'ct', key }),
+    });
     const running = c.ready || c.phase === 'Running';
     add({
       id: `ct-${running ? 'stop' : 'start'}:${key}`, kind: 'action', icon: icon(running ? 'stop' : 'play'),
@@ -193,6 +209,41 @@ const SCOPES = {
   do: ['action', 'create'], action: ['action', 'create'], new: ['create'],
 };
 
+// Fields a query can name. Prism's search takes the same shape, as
+// `vm alerts severity=critical`, and the reason is that a fleet of any size
+// makes "every guest on the node that is down" a thing worth asking directly
+// rather than by eye.
+//
+// Only fields a guest actually has. An unknown field matches nothing, which is
+// the honest answer: silently ignoring it would show a list that looks like it
+// answered the question.
+const FILTER_FIELDS = ['node', 'namespace', 'status', 'backend', 'tag'];
+
+/**
+ * Pull `field=value` out of a query, and return the words that are left.
+ * "node=corral-1 web" filters by node and then searches for "web".
+ */
+export function parseFilters(query) {
+  const filters = [];
+  const rest = [];
+  for (const token of query.split(/\s+/)) {
+    const m = /^([a-z]+)=(.*)$/i.exec(token);
+    if (m && m[2]) filters.push({ key: m[1].toLowerCase(), value: m[2].toLowerCase() });
+    else if (token) rest.push(token);
+  }
+  return { filters, rest: rest.join(' ') };
+}
+
+// One filter against one entry. An entry with no facts cannot answer a
+// question about a node, so it drops out rather than ranking low.
+function matchesFilter(entry, { key, value }) {
+  if (!FILTER_FIELDS.includes(key)) return false;
+  const fact = entry.facts?.[key];
+  if (fact === undefined) return false;
+  const values = Array.isArray(fact) ? fact : [fact];
+  return values.some((v) => String(v).toLowerCase().includes(value));
+}
+
 /** Split "vm: web" into the kinds to keep and the rest of the query. */
 export function parseScope(query) {
   const m = /^\s*([a-z]+)\s*:\s*(.*)$/i.exec(query);
@@ -206,6 +257,13 @@ export function rank(list, query, recent) {
   if (scope) {
     list = list.filter((e) => scope.kinds.includes(e.kind));
     query = scope.rest;
+  }
+  // Field filters come off before the words, so "status=running web" does not
+  // try to match "status=running" as a name.
+  const { filters, rest } = parseFilters(query);
+  if (filters.length) {
+    list = list.filter((e) => filters.every((f) => matchesFilter(e, f)));
+    query = rest;
   }
   const words = query.toLowerCase().split(/\s+/).filter(Boolean);
   const recency = new Map(recent.map((id, i) => [id, recent.length - i]));
@@ -349,6 +407,7 @@ const SHORTCUTS = [
   [['c'], 'Open the selected VM\'s console'],
   [['s'], 'Start or stop the selected VM'],
   [['g', 'd'], 'Go to the datacenter'],
+  [['v'], 'Switch the tree to the next view'],
   [['t'], 'Show tasks (again to hide)'],
   [['e'], 'Show events for the selection (again to hide)'],
   [['Esc'], 'Close a dialog'],
@@ -429,6 +488,9 @@ function onKey(e) {
     case '?': e.preventDefault(); openShortcuts(); break;
     // Prism gives a panel its own key rather than only a tab to click. The
     // letters are corral's own, because the panels are named Tasks and Events.
+    // Prism gives the view switch a key of its own. corral has four views of
+    // the same fleet and reached them by mouse only, so this walks them.
+    case 'v': e.preventDefault(); closeShortcuts(); ctx.nextTreeView(); break;
     case 't': e.preventDefault(); closeShortcuts(); openDockPanel('tasks'); break;
     case 'e': e.preventDefault(); closeShortcuts(); openDockPanel('events'); break;
     case '/': e.preventDefault(); closeShortcuts(); ctx.focusFilter(); break;

@@ -46,6 +46,15 @@ export function setTreeView(v) {
   else renderTree();
 }
 
+// The next view in the strip, wrapping. Prism gives its view switch a key, and
+// corral's four views of the same fleet were reachable by mouse alone.
+export function nextTreeView() {
+  const at = TREE_VIEWS.indexOf(treeView);
+  const next = TREE_VIEWS[(at + 1) % TREE_VIEWS.length];
+  setTreeView(next);
+  return next;
+}
+
 export function treeRow({ lvl, icon, label, sub, sel, onclick, dot, key, sig }) {
   const div = document.createElement('div');
   div.className = `tree-item lvl-${lvl}${sel ? ' selected' : ''}`;

@@ -28,7 +28,7 @@ import { poolMenuItems, unassignedMenuItems } from './menus.js';
 import { bindPalette, initKeys, openPalette } from './palette.js';
 import { bindPools, loadPools, poolState } from './pools.js';
 import { emit, state } from './state.js';
-import { focusTreeFilter, renderTree, setTreeView, treeRow, treeView, vmRow } from './tree.js';
+import { focusTreeFilter, nextTreeView, renderTree, setTreeView, treeRow, treeView, vmRow } from './tree.js';
 import { capabilityFingerprint, capabilityScreen, loadCapabilityData } from './ui/capabilities.js';
 import { decodeSelection, encodeSelection, onRouteChange, readRoute, writeRoute } from './ui/route.js';
 import { $, esc, toast } from './ui/dom.js';
@@ -603,6 +603,7 @@ bindPalette({
   createCT: () => $('#btn-create-ct').click(),
   selectedVMKey: () => (state.selected.type === 'vm' ? state.selected.key : null),
   focusFilter: focusTreeFilter,
+  nextTreeView: () => { const v = nextTreeView(); toast(`${v.charAt(0).toUpperCase()}${v.slice(1)} View`); },
   resetLayout: resetWorkspaceLayout,
   themeMode,
   cycleTheme: () => { cycleThemeMode(); renderContent(); },

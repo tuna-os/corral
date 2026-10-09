@@ -130,6 +130,17 @@ A new gesture needs no code here. The module already covers it.
 
 ## Where to add a feature
 
+### A palette entry that a field filter can find
+
+A query can carry `field=value`, and an entry answers it only from its `facts`
+object. Give a new entry one when it has facts worth asking about, with the
+keys in `FILTER_FIELDS`. An entry with no `facts` drops out of a filtered
+query, which is right for a view or a verb: neither sits on a node.
+
+A value may be a string or an array, and `tag` is the array case. An unknown
+field matches nothing on purpose. To ignore it would show a list that looks
+like it answered the question.
+
 ### A destructive action
 
 Call `confirmDestroy()` from `ui/confirm.js` when the action cannot be undone.

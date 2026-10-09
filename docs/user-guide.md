@@ -125,8 +125,14 @@ The items that you used last show at the top of the list.
 | `c` | Open the console of the selected VM |
 | `s` | Start or stop the selected VM |
 | `g` then `d` | Go to the datacenter |
+| `v` | Switch the tree to the next view |
 | `t` | Show the Tasks panel, and hide it again |
 | `e` | Show the Events panel for the selection, and hide it again |
+
+You can also narrow the palette by a field. Type `node=corral-1` to see only
+the guests on that node, or `status=stopped` to see the stopped ones. The
+fields are `node`, `namespace`, `status`, `backend` and `tag`. A field and a
+name work together: `node=corral-1 web` searches only that node.
 
 The one-key shortcuts do not operate when you type in a field or in a console.
 A read-only user does not see the actions that change a guest.

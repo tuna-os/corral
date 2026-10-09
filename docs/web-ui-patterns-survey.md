@@ -110,6 +110,7 @@ documents the keyboard model. That chapter is where the Prism rows come from.
 | Breadcrumb to the parent | VS Code, vSphere | **Added.** `breadcrumb` |
 | Search before menus | Prism, Grafana | Palette existed. **Added** a visible way in. `palette-reach` |
 | Single-key jumps | Prism, Linear | Present (`g d`, `c`, `s`). **Added** hints, because nothing told anyone. `palette-keys` |
+| The view switch has a key | Prism (`O`/`D`/`T`, page-aware) | **Added.** Four views of the same fleet, reachable by mouse alone until now. `v` walks them. `palette-filters` |
 | A list, then a detail screen with its tools along the top | Portainer, Cockpit | Present. |
 | A wizard behind the list's Create action | Harvester | Present. |
 | Status bar | VS Code | **Declined.** The dock already holds the state a status bar would carry. |
@@ -121,6 +122,7 @@ documents the keyboard model. That chapter is where the Prism rows come from.
 | `Ctrl/Cmd+K` | VS Code, Grafana, Linear | Present. |
 | A visible trigger | Every touch UI | **Added.** On a phone the palette could not open at all. `palette-reach` |
 | Typed prefix narrows the list | k9s (`:po`), VS Code Quick Open | **Added.** `palette-scope` |
+| `field=value` in the query | Prism (`vm alerts severity=critical`) | **Added.** node, namespace, status, backend and tag. A name match cannot tell a node from a guest called after one, and an unknown field matches nothing rather than look answered. `palette-filters` |
 | The palette teaches its shortcuts | VS Code, Linear | **Added.** `palette-keys` |
 | Recent entries first | VS Code, Linear | Present. |
 | Result count announced | APG combobox | **Added.** `palette-reach` |
@@ -207,14 +209,13 @@ documents the keyboard model. That chapter is where the Prism rows come from.
 
 ## Taken from Prism, and not taken
 
-Prism's navigation chapter documents a keyboard model, and four of its ideas
-do not fit corral yet. This page keeps them, so the next person does not have
-to find them again.
+Prism's navigation chapter documents a keyboard model, and one of its ideas
+needs a screen corral does not have. This page keeps it, so the next person
+does not have to find it again.
 
 | Pattern | corral |
 |---|---|
-| A context-aware view switch (`O` overview, `D` diagram, `T` table) | **Open.** corral has no diagram of a fleet, so the pattern has only two states to move between, and the tree already switches those. The pattern needs the view first. |
-| Search that takes field filters, such as `severity=critical` | **Open.** The palette narrows by prefix and the grid filters each column. A query language is a larger piece of work than either. |
+| A diagram of the fleet, as a third view | **Open.** Prism switches between overview, diagram and table. corral has no diagram, so that view has to exist before a switch can reach it. The key below walks the four views it does have. |
 
 ## What the survey still leaves open
 
