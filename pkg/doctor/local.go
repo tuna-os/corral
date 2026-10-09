@@ -174,6 +174,6 @@ var statDevKVM = func() error {
 	if err != nil {
 		return err
 	}
-	f.Close()
+	_ = f.Close()
 	return nil
 }
