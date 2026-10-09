@@ -9,9 +9,10 @@ import { vmMenuItems } from '../menus.js';
 import { makeDraggable } from '../pools.js';
 import { state } from '../state.js';
 import { renderTree } from '../tree.js';
-import { esc, toast } from '../ui/dom.js';
-import { attachContextMenu } from '../ui/menu.js';
+import { esc, reportFailures, toast } from '../ui/dom.js';
+import { attachContextMenu, openMenuFrom } from '../ui/menu.js';
 import { post } from './vm.js';
+import { confirmDestroy } from '../ui/confirm.js';
 
 export function vmTable(list) {
   if (!list.length) return `<p class="console-msg">No virtual machines.</p>`;
@@ -51,7 +52,70 @@ const VM_GRID_COLUMNS = [
     }
     return chips;
   } },
+  // One action on every row, and the action is the one the row's state allows.
+  //
+  // Until now every action here needed a checkbox and then the bulk bar above,
+  // or opening the guest. Cockpit's machine list puts a single button on each
+  // row and swaps it between Run and Shut down with the guest's state, so the
+  // common case costs one click and the button never offers something the
+  // guest cannot do. The rest of the actions stay one menu away, which is the
+  // same set the row's right-click already offers.
+  { id: 'actions', label: 'Actions', width: 128, plain: true, render: (vm) => {
+    const wrap = document.createElement('span');
+    wrap.className = 'row-acts';
+    const up = vm.running || (vm.status && (vm.status.includes('Starting') || vm.status.includes('Creating')));
+    const act = up ? 'stop' : 'start';
+    const primary = document.createElement('button');
+    primary.type = 'button';
+    primary.className = 'btn sm';
+    primary.dataset.rowAction = act;
+    primary.title = up ? `Stop ${vm.name}` : `Start ${vm.name}`;
+    primary.setAttribute('aria-label', primary.title);
+    primary.innerHTML = icon(up ? 'stop' : 'play');
+    primary.onclick = async (event) => {
+      // The row itself opens the guest, so an action inside it must not also.
+      event.stopPropagation();
+      primary.disabled = true;
+      try {
+        await api(vmURL(vm, `/${act}`), { method: 'POST' });
+        toast(`${up ? 'Stop' : 'Start'} ${vm.name}: ok`);
+      } catch {
+        toast(`${up ? 'Stop' : 'Start'} ${vm.name}: failed`);
+      }
+      setTimeout(() => refresh(), 800);
+    };
+    const more = document.createElement('button');
+    more.type = 'button';
+    more.className = 'btn sm ghost';
+    more.dataset.rowAction = 'more';
+    more.title = `More actions for ${vm.name}`;
+    more.setAttribute('aria-label', more.title);
+    more.textContent = '\u22ef';
+    more.onclick = (event) => {
+      event.stopPropagation();
+      openMenuFrom(more, () => vmMenuItems(vm));
+    };
+    wrap.append(primary, more);
+    return wrap;
+  } },
 ];
+
+// The mounted grid, kept across renders.
+//
+// Each poll rebuilds the markup around the grid, which hands us a fresh empty
+// .vm-grid placeholder and would mean mounting a second grid and throwing the
+// first away — along with the focused row, a checkbox mid-click and a column
+// being dragged. Instead the previously mounted grid is moved into the new
+// placeholder's position and fed the new rows, so its DOM is never rebuilt.
+// This is the same thing renderDatacenter does with its widget dashboard,
+// arranged so the three views that share this table all get it without any of
+// them restructuring their markup.
+//
+// One grid is enough because only one .vm-grid is ever on screen: the
+// Datacenter, Node and Namespace views each render one, and the template table
+// beside it is a plain table, not a grid.
+let gridHost = null;
+let gridHandle = null;
 
 export function bindVMTable(root, list) {
   const bar = root.querySelector('.bulkbar');
@@ -62,16 +126,30 @@ export function bindVMTable(root, list) {
     bar.hidden = n === 0;
     bar.querySelector('.bulkbar-count').textContent = `${n} selected`;
   };
-  mountGrid(root.querySelector('.vm-grid'), {
-    id: 'vms', columns: VM_GRID_COLUMNS, rows: list, rowKey: vmKey,
-    selected: state.selectedVMKeys, checkClass: 'vm-check', checkAllClass: 'vm-check-all',
-    onRowClick: (vm) => select({ type: 'vm', key: vmKey(vm) }),
-    onSelectionChange: () => { update(); renderTree(); },
-    decorateRow: (tr, vm) => {
-      attachContextMenu(tr, () => vmMenuItems(vm));
-      makeDraggable(tr, vm);
-    },
-  });
+  const placeholder = root.querySelector('.vm-grid');
+  if (gridHost && gridHandle && placeholder && placeholder !== gridHost) {
+    // Reuse the live grid: take the placeholder's place, then re-render with
+    // the new rows (which diffs them — see grid.js).
+    //
+    // Focus and the grid's own scroll position are restored by refresh() in
+    // app.js, not here: the view has already replaced the markup around this
+    // grid by the time we run, and that is what blurs the focused row, so the
+    // only place that can still see where focus was is before the render.
+    placeholder.replaceWith(gridHost);
+    gridHandle.update(list);
+  } else if (placeholder) {
+    gridHandle = mountGrid(placeholder, {
+      id: 'vms', columns: VM_GRID_COLUMNS, rows: list, rowKey: vmKey,
+      selected: state.selectedVMKeys, checkClass: 'vm-check', checkAllClass: 'vm-check-all',
+      onRowClick: (vm) => select({ type: 'vm', key: vmKey(vm) }),
+      onSelectionChange: () => { update(); renderTree(); },
+      decorateRow: (tr, vm) => {
+        attachContextMenu(tr, () => vmMenuItems(vm));
+        makeDraggable(tr, vm);
+      },
+    });
+    gridHost = gridHandle ? placeholder : null;
+  }
 
   bar.querySelectorAll('[data-bulk]').forEach((b) => {
     b.onclick = async (e) => {
@@ -86,10 +164,24 @@ export function bindVMTable(root, list) {
         tag = (prompt(`Tag ${plural} with:`, '') || '').trim();
         if (!tag) return;
       } else if (act === 'delete') {
-        if (!confirm(`Delete ${plural} and their disks?\n\n${sel.map((v) => v.name).join('\n')}`)) return;
+        // One name would be the wrong thing to type for a selection of many,
+        // so this asks for the word instead, and lists every guest above it.
+        // The gate is there to make the operator read the list, which a
+        // single default-focused OK button never did.
+        if (!await confirmDestroy({
+          title: `Delete ${plural} and their disks?`,
+          identifier: 'delete',
+          label: 'Type delete to confirm',
+          items: sel.map((v) => v.name),
+          note: 'Every guest listed above loses its disks. There is no undo.',
+        })) return;
       } else if (!confirm(`${verb} ${plural}?`)) return;
+      // Keep what the API said about each guest, not just a tally. "2 failed"
+      // tells the operator nothing they can act on: a lock, a missing disk and
+      // a vanished node all need something different done next, and the toast
+      // that carried the count was gone before they could ask.
       let ok = 0;
-      let fail = 0;
+      const failures = [];
       await Promise.all(sel.map(async (vm) => {
         try {
           if (act === 'snapshot') await post(vm, '/snapshots', {});
@@ -101,9 +193,12 @@ export function bindVMTable(root, list) {
             state.selectedVMKeys.delete(vmKey(vm));
           } else await api(vmURL(vm, `/${act}`), { method: 'POST' });
           ok += 1;
-        } catch { fail += 1; }
+        } catch (e) { failures.push({ name: vm.name, error: e.message }); }
       }));
-      toast(`${verb}: ${ok} ok${fail ? `, ${fail} failed` : ''}`);
+      toast(`${verb}: ${ok} ok${failures.length ? `, ${failures.length} failed` : ''}`);
+      // Only when something went wrong. A dialog after a clean run would be a
+      // box to dismiss for no reason.
+      reportFailures(`${verb}: ${failures.length} of ${sel.length} failed`, failures);
       setTimeout(() => refresh(), 800);
     };
   });

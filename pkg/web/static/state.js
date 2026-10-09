@@ -15,14 +15,16 @@ export const state = {
   vms: [],
   cts: [], // Containers (#50) — pet pods, not KubeVirt VMs
   nodes: [],
-  // Power-manageable hosts from host-power plugins (sdk.CapHostPower). Empty
-  // unless such a plugin is installed; core has no provider knowledge.
-  hostPower: { hosts: [] },
   caps: { storageClass: '', canExpand: false, canSnapshot: false },
   // Authenticated tailnet identity + privilege (see /api/whoami). Defaults to
   // admin so the UI is fully enabled until told otherwise (single-user mode).
   me: { login: '', name: '', admin: true, enforced: false },
   availableNADs: [],
+  // The image catalogue and the imported disks behind Storage View. Loaded
+  // lazily, like pools: it only matters while that view is showing and it
+  // changes far more slowly than the fleet.
+  images: [],
+  dataVolumes: [],
   selected: { type: 'dc' }, // {type:'dc'} | {type:'node',name} | {type:'vm',key}
   // One selection model backs both the inventory grid and sidebar tree.
   selectedVMKeys: new Set(),

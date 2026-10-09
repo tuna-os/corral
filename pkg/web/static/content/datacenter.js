@@ -7,9 +7,10 @@ import { watchBuild } from '../create.js';
 import { fmtBytes, fmtCPU, mountDashboard, timeChart } from '../dashboard.js';
 import { icon } from '../icons.js';
 import { state } from '../state.js';
+import { capabilityAlerts, capabilityLayout, capabilityWidgets } from '../ui/capabilities.js';
 import { $, esc, toast } from '../ui/dom.js';
-import { hostPowerDot, hostPowerKey } from './hostpower.js';
 import { bindTemplateTable, bindVMTable, templateTable, vmTable } from './vm-table.js';
+import { confirmDestroy } from '../ui/confirm.js';
 
 // Tag the tree/list is filtered to, or null for "show all".
 let tagFilter = null;
@@ -71,46 +72,6 @@ export function topVMsWidget(title, by, node) {
   };
 }
 
-// Host-power hosts (sdk.CapHostPower plugins), optionally only one node's.
-// The power buttons carry .hp-action, which read-only mode hides.
-export function powerWidget(node) {
-  return {
-    title: 'Host power', w: 4, h: 3,
-    render(body) {
-      const hosts = (state.hostPower.hosts || []).filter((h) => !node || h.node === node);
-      if (!hosts.length) {
-        body.innerHTML = `<p class="muted">${node ? 'No host-power plugin manages this node.'
-          : 'No host-power plugin is installed. Hosts show here when one is (see Extensions).'}</p>`;
-        return;
-      }
-      body.innerHTML = `<ul class="plain">${hosts.map((h) => {
-        const btn = (action, label) => ((h.actions || []).includes(action)
-          ? `<button class="btn sm hp-action" data-hp="${action}" data-hpkey="${esc(hostPowerKey(h))}">${label}</button>` : '');
-        return `<li><span class="dot ${hostPowerDot(h.state)}"></span>
-          <a href="#" data-hpopen="${esc(hostPowerKey(h))}">${esc(h.name)}</a>
-          <span class="muted">${esc(h.state)}</span> ${btn('start', 'Power on')} ${btn('stop', 'Power off')}</li>`;
-      }).join('')}</ul>`;
-      body.querySelectorAll('[data-hpopen]').forEach((a) => {
-        a.onclick = (e) => { e.preventDefault(); select({ type: 'hostpower', key: a.dataset.hpopen }); };
-      });
-      body.querySelectorAll('[data-hp]').forEach((b) => {
-        b.onclick = async () => {
-          const h = hosts.find((x) => hostPowerKey(x) === b.dataset.hpkey);
-          const action = b.dataset.hp;
-          const onNode = h.node ? state.vms.filter((v) => v.node === h.node) : [];
-          if (action === 'stop' && onNode.length && !confirm(`Power off ${h.name}? ${onNode.length} VM(s) on it will stop.`)) return;
-          b.disabled = true;
-          try {
-            await api(`/api/hostpower/${encodeURIComponent(h.plugin)}/${action}?id=${encodeURIComponent(h.id)}`, { method: 'POST' });
-            toast(`${action === 'start' ? 'Powering on' : 'Powering off'} ${h.name}`);
-          } catch (e) { toast(e.message); }
-          refresh(true);
-        };
-      });
-    },
-  };
-}
-
 function recentTasksWidget() {
   return {
     title: 'Recent tasks', w: 4, h: 3, live: true,
@@ -140,10 +101,9 @@ function alertsWidget() {
       for (const v of state.vms) {
         if (/error|fail|crash|unschedulable/i.test(v.status || '')) alerts.push(`VM <strong>${esc(v.name)}</strong>: ${esc(v.status)}`);
       }
-      for (const h of state.hostPower.hosts || []) {
-        const onNode = h.node ? state.vms.filter((v) => v.node === h.node).length : 0;
-        if (h.state === 'stopped' && onNode) alerts.push(`Host <strong>${esc(h.name)}</strong> is off with ${onNode} VM(s) on it`);
-      }
+      // Lines a capability contributes, such as a machine that is off with
+      // guests still scheduled to it.
+      alerts.push(...capabilityAlerts());
       const draw = (failed) => {
         const all = alerts.concat(failed.map((t) => `Task <strong>${esc(t.action)}</strong> ${esc(t.target)} failed${t.error ? `: ${esc(t.error)}` : ''}`));
         body.innerHTML = all.length
@@ -175,7 +135,14 @@ function capacityWidget() {
   };
 }
 
-const DC_WIDGETS = {
+// Built when the dashboard mounts, not when this module loads.
+//
+// A capability registers itself as its own module is evaluated, and the order
+// in which the modules load is not this file's to rely on: core imports this
+// screen before it imports the capability, so a map built at load time came
+// out without the capability's widgets in it. Reading the registry at mount
+// time is the whole point of a run-time registry.
+const dcWidgets = () => ({
   capacity: capacityWidget(),
   alerts: alertsWidget(),
   tasks: recentTasksWidget(),
@@ -183,10 +150,12 @@ const DC_WIDGETS = {
   mem: chartWidget('Memory usage', '/api/metrics/history', 'mem'),
   'top-cpu': topVMsWidget('Top VMs by CPU', 'cpu'),
   'top-mem': topVMsWidget('Top VMs by memory', 'mem'),
-  power: powerWidget(),
-};
+  // Widgets a capability registers, for example Host power. This screen does
+  // not name them.
+  ...capabilityWidgets(),
+});
 
-const DC_LAYOUT = [
+const dcLayout = () => ([
   { id: 'capacity', x: 0, y: 0, w: 4, h: 2 },
   { id: 'alerts', x: 4, y: 0, w: 4, h: 2 },
   { id: 'tasks', x: 8, y: 0, w: 4, h: 3 },
@@ -194,8 +163,8 @@ const DC_LAYOUT = [
   { id: 'mem', x: 4, y: 2, w: 4, h: 3 },
   { id: 'top-cpu', x: 0, y: 5, w: 4, h: 3 },
   { id: 'top-mem', x: 4, y: 5, w: 4, h: 3 },
-  { id: 'power', x: 8, y: 3, w: 4, h: 3 },
-];
+  ...capabilityLayout(),
+]);
 
 let dcDash = null;
 
@@ -205,7 +174,7 @@ export function renderDatacenter(main) {
   if (!main.querySelector('#dc-dash')) {
     main.innerHTML = `<div class="page-head"><h1>Datacenter</h1></div>
       <div id="dc-dash"></div><div id="dc-rest"></div>`;
-    dcDash = mountDashboard($('#dc-dash'), { scope: 'datacenter', widgets: DC_WIDGETS, layout: DC_LAYOUT });
+    dcDash = mountDashboard($('#dc-dash'), { scope: 'datacenter', widgets: dcWidgets(), layout: dcLayout() });
   } else {
     dcDash.refresh();
   }
@@ -263,7 +232,12 @@ async function loadImages() {
   el.querySelectorAll('[data-deldv]').forEach((b) => {
     b.onclick = async () => {
       const [ns, name] = b.dataset.deldv.split('/');
-      if (!confirm(`Delete image ${name}?`)) return;
+      if (!await confirmDestroy({
+        title: `Delete image ${name}?`,
+        identifier: name,
+        label: `Type ${name} to confirm`,
+        note: 'Any guest built from it keeps its disk; the image itself is gone.',
+      })) return;
       try { await api(`/api/datavolumes/${ns}/${name}`, { method: 'DELETE' }); toast('Deleted'); }
       catch (e) { toast(e.message); }
       setTimeout(loadImages, 500);

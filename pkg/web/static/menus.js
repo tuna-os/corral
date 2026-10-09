@@ -4,11 +4,11 @@
 import { api, ctKey, vmKey, vmURL } from './api.js';
 import { markRendered, refresh, renderContent, select } from './app.js';
 import { ctAction } from './content/ct.js';
-import { hostPowerKey } from './content/hostpower.js';
 import { cloneVM, exportVM, migrateVM, post, vmAction } from './content/vm.js';
 import { loadPools, poolState, showMoveDialog, summariseOutcomes } from './pools.js';
 import { state } from './state.js';
 import { setTag } from './tags.js';
+import { capabilityMenuItems } from './ui/capabilities.js';
 import { toast } from './ui/dom.js';
 
 export function vmMenuItems(vm) {
@@ -286,41 +286,11 @@ export function nodeMenuItems(nodeName) {
     },
   ];
 
-  const h = (state.hostPower.hosts || []).find((x) => x.node === nodeName || x.name === nodeName);
-  if (h) {
-    items.push({ separator: true });
-    if ((h.actions || []).includes('start')) {
-      items.push({
-        icon: 'play',
-        label: 'Power on',
-        mutate: true,
-        disabled: h.state === 'running',
-        action: async () => {
-          try {
-            await api(`/api/hostpower/${encodeURIComponent(h.plugin)}/start?id=${encodeURIComponent(h.id)}`, { method: 'POST' });
-            toast(`Powering on ${h.name}`);
-            refresh(true);
-          } catch (e) { toast(e.message); }
-        },
-      });
-    }
-    if ((h.actions || []).includes('stop')) {
-      items.push({
-        icon: 'stop',
-        label: 'Power off',
-        mutate: true,
-        disabled: h.state === 'stopped',
-        action: async () => {
-          const onNode = h.node ? state.vms.filter((v) => v.node === h.node) : [];
-          if (onNode.length && !confirm(`Power off ${h.name}? ${onNode.length} VM(s) on it will stop.`)) return;
-          try {
-            await api(`/api/hostpower/${encodeURIComponent(h.plugin)}/stop?id=${encodeURIComponent(h.id)}`, { method: 'POST' });
-            toast(`Powering off ${h.name}`);
-            refresh(true);
-          } catch (e) { toast(e.message); }
-        },
-      });
-    }
+  // Entries a capability adds for this node, for example the power actions of
+  // the machine that carries it.
+  const extra = capabilityMenuItems('node', nodeName);
+  if (extra.length) {
+    items.push({ separator: true }, ...extra);
   }
 
   items.push({ separator: true });
@@ -344,49 +314,6 @@ export function nodeMenuItems(nodeName) {
   return items;
 }
 
-export function hostPowerMenuItems(h) {
-  const items = [
-    {
-      icon: 'server',
-      label: 'View host',
-      action: () => select({ type: 'hostpower', key: hostPowerKey(h) }),
-    },
-  ];
-  items.push({ separator: true });
-  if ((h.actions || []).includes('start')) {
-    items.push({
-      icon: 'play',
-      label: 'Power on',
-      mutate: true,
-      disabled: h.state === 'running',
-      action: async () => {
-        try {
-          await api(`/api/hostpower/${encodeURIComponent(h.plugin)}/start?id=${encodeURIComponent(h.id)}`, { method: 'POST' });
-          toast(`Powering on ${h.name}`);
-          refresh(true);
-        } catch (e) { toast(e.message); }
-      },
-    });
-  }
-  if ((h.actions || []).includes('stop')) {
-    items.push({
-      icon: 'stop',
-      label: 'Power off',
-      mutate: true,
-      disabled: h.state === 'stopped',
-      action: async () => {
-        const onNode = h.node ? state.vms.filter((v) => v.node === h.node) : [];
-        if (onNode.length && !confirm(`Power off ${h.name}? ${onNode.length} VM(s) on it will stop.`)) return;
-        try {
-          await api(`/api/hostpower/${encodeURIComponent(h.plugin)}/stop?id=${encodeURIComponent(h.id)}`, { method: 'POST' });
-          toast(`Powering off ${h.name}`);
-          refresh(true);
-        } catch (e) { toast(e.message); }
-      },
-    });
-  }
-  return items;
-}
 
 export function namespaceMenuItems(ns) {
   const nsVMs = state.vms.filter((v) => (v.namespace || '(none)') === ns);

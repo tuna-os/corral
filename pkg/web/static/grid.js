@@ -1,11 +1,32 @@
 // Small, dependency-free data grid used by Corral's inventory views.
 // State is browser-local: no layout or filter preference is sent to the API.
 
+import { keyed, reconcile } from './ui/reconcile.js';
+
 const storageKey = (id) => `corral-grid:${id}`;
+
+// The density modes, in order, so the control can be generated from them.
+// rowHeight is here rather than only in the stylesheet because the virtual
+// scroller needs the same number to size its spacers: two copies that could
+// disagree would mis-place every row past the first screen.
+const DENSITIES = [
+  { id: 'compact', label: 'Compact', rowHeight: 28 },
+  { id: 'cosy', label: 'Cosy', rowHeight: 39 },
+  { id: 'roomy', label: 'Roomy', rowHeight: 48 },
+];
+const rowHeightFor = (density) =>
+  DENSITIES.find((d) => d.id === density)?.rowHeight ?? 39;
 const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
 
 function load(id, columns) {
-  const fallback = { order: columns.map((c) => c.id), hidden: [], widths: {}, sort: [], filters: {} };
+  const fallback = {
+    order: columns.map((c) => c.id), hidden: [], widths: {}, sort: [], filters: {},
+    // Row density, as three named modes rather than one fixed row height, and
+    // remembered per grid like every other preference here. How many rows fit
+    // on a screen is a judgement about the work, not about the data: triaging a
+    // fleet wants as many as possible, reading one row's values wants room.
+    density: 'cosy',
+  };
   try {
     const value = JSON.parse(localStorage.getItem(storageKey(id)) || 'null');
     if (!value) return fallback;
@@ -17,6 +38,7 @@ function load(id, columns) {
       hidden: (value.hidden || []).filter((x) => valid.has(x)),
       sort: (value.sort || []).filter((x) => valid.has(x.id)),
       filters: value.filters || {}, widths: value.widths || {},
+      density: DENSITIES.some((d) => d.id === value.density) ? value.density : fallback.density,
     };
   } catch { return fallback; }
 }
@@ -38,7 +60,11 @@ function csvValue(value) {
 
 export function mountGrid(host, options) {
   if (!host) return;
-  const { id, columns, rows, rowKey, onRowClick, selected = new Set(), onSelectionChange } = options;
+  const { id, columns, rowKey, onRowClick, selected = new Set(), onSelectionChange } = options;
+  // `rows` is reassignable so a caller can feed new data into a mounted grid
+  // instead of mounting a new one, which is what keeps the grid's own DOM —
+  // and the focus, selection and column drag living in it — across a poll.
+  let rows = options.rows;
   const state = load(id, columns);
   const byID = new Map(columns.map((c) => [c.id, c]));
   let dragID = '';
@@ -54,6 +80,11 @@ export function mountGrid(host, options) {
         <div class="grid-view-list"></div>
       </div></details>
       <button type="button" class="btn sm grid-export">Export CSV</button>
+      <label class="grid-density">Rows
+        <select class="grid-density-select" aria-label="Row density">
+          ${DENSITIES.map((d) => `<option value="${d.id}">${d.label}</option>`).join('')}
+        </select>
+      </label>
       <span class="grid-result-count muted" aria-live="polite"></span>
     </div><div class="grid-scroll"><table><colgroup></colgroup><thead></thead><tbody></tbody></table></div>`;
 
@@ -180,6 +211,10 @@ export function mountGrid(host, options) {
 
   function render() {
     const cols = visibleColumns();
+    // The stylesheet owns what each mode looks like; this only says which is on.
+    host.dataset.density = state.density;
+    const densitySel = host.querySelector('.grid-density-select');
+    if (densitySel && densitySel.value !== state.density) densitySel.value = state.density;
     const result = filteredRows();
     host.querySelector('.grid-result-count').textContent = `${result.length} of ${rows.length}`;
     colgroup.replaceChildren();
@@ -198,44 +233,112 @@ export function mountGrid(host, options) {
       th.addEventListener('dragstart', () => { dragID = col.id; });
       th.addEventListener('dragover', (event) => event.preventDefault());
       th.addEventListener('drop', (event) => { event.preventDefault(); const from = state.order.indexOf(dragID); const to = state.order.indexOf(col.id); if (from >= 0 && to >= 0 && from !== to) { state.order.splice(from, 1); state.order.splice(to, 0, dragID); save(id, state); render(); } });
-      const button = document.createElement('button'); button.type = 'button'; button.className = 'grid-sort';
-      const sortAt = state.sort.findIndex((x) => x.id === col.id); const sort = state.sort[sortAt];
-      button.textContent = `${col.label}${sort ? ` ${sort.dir === 'asc' ? '▲' : '▼'}${state.sort.length > 1 ? sortAt + 1 : ''}` : ''}`;
-      button.title = 'Sort; hold Shift to add another column'; button.onclick = (event) => setSort(col.id, event.shiftKey);
+      // A `plain` column holds controls rather than a value, so it gets a
+      // label instead of a sort button. Sorting rows by the buttons in them
+      // means nothing, and an operator who reaches that header expects the
+      // sort it offers to do something.
+      let button;
+      if (col.plain) {
+        button = document.createElement('span'); button.className = 'grid-plain'; button.textContent = col.label;
+      } else {
+        button = document.createElement('button'); button.type = 'button'; button.className = 'grid-sort';
+        const sortAt = state.sort.findIndex((x) => x.id === col.id); const sort = state.sort[sortAt];
+        button.textContent = `${col.label}${sort ? ` ${sort.dir === 'asc' ? '▲' : '▼'}${state.sort.length > 1 ? sortAt + 1 : ''}` : ''}`;
+        button.title = 'Sort; hold Shift to add another column'; button.onclick = (event) => setSort(col.id, event.shiftKey);
+      }
       const handle = document.createElement('span'); handle.className = 'grid-resizer'; handle.setAttribute('role', 'separator'); handle.tabIndex = 0; handle.setAttribute('aria-label', `Resize ${col.label}`);
       handle.onkeydown = (event) => { if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); resize(col.id, (state.widths[col.id] || col.width || 140) + (event.key === 'ArrowLeft' ? -10 : 10)); } };
       handle.onpointerdown = (event) => { event.preventDefault(); const startX = event.clientX; const startWidth = state.widths[col.id] || th.getBoundingClientRect().width; const move = (e) => { state.widths[col.id] = clamp(startWidth + e.clientX - startX, 64, 600); const target = [...colgroup.children][cols.indexOf(col) + 1]; target.style.width = `${state.widths[col.id]}px`; }; const up = () => { document.removeEventListener('pointermove', move); document.removeEventListener('pointerup', up); save(id, state); renderColumnMenu(); }; document.addEventListener('pointermove', move); document.addEventListener('pointerup', up); };
       th.append(button, handle); labels.appendChild(th);
     });
     const filters = document.createElement('tr'); filters.className = 'grid-filters'; filters.appendChild(document.createElement('th'));
-    cols.forEach((col) => { const th = document.createElement('th'); const input = document.createElement('input'); input.type = 'search'; input.placeholder = `Filter ${col.label}`; input.setAttribute('aria-label', `Filter ${col.label}`); input.value = state.filters[col.id] || ''; input.oninput = () => { state.filters[col.id] = input.value; save(id, state); viewportStart = 0; render(); requestAnimationFrame(() => host.querySelector(`[aria-label="Filter ${CSS.escape(col.label)}"]`)?.focus()); }; th.appendChild(input); filters.appendChild(th); });
+    cols.forEach((col) => { const th = document.createElement('th'); if (col.plain) { filters.appendChild(th); return; } const input = document.createElement('input'); input.type = 'search'; input.placeholder = `Filter ${col.label}`; input.setAttribute('aria-label', `Filter ${col.label}`); input.value = state.filters[col.id] || ''; input.oninput = () => { state.filters[col.id] = input.value; save(id, state); viewportStart = 0; render(); requestAnimationFrame(() => host.querySelector(`[aria-label="Filter ${CSS.escape(col.label)}"]`)?.focus()); }; th.appendChild(input); filters.appendChild(th); });
     head.append(labels, filters);
 
-    body.replaceChildren();
+    // Rows are collected and then diffed into the body rather than replacing
+    // it. A data poll re-renders this grid, and replacing every row threw away
+    // what the browser hangs off node identity: the focused row, a checkbox
+    // mid-click, a text selection in a cell. The signature carries the row's
+    // data and the visible columns, so a row is reused only when there is
+    // genuinely nothing to redraw in it — its cell renderers close over the row
+    // object, and a reused node must not keep pointing at an older one.
+    const desired = [];
     const virtual = result.length > 500;
-    const rowHeight = 39;
+    const rowHeight = rowHeightFor(state.density);
     const count = virtual ? Math.ceil(scroll.clientHeight / rowHeight) + 8 : result.length;
     const shown = virtual ? result.slice(viewportStart, viewportStart + count) : result;
-    if (virtual && viewportStart) { const spacer = document.createElement('tr'); spacer.className = 'grid-spacer'; spacer.style.height = `${viewportStart * rowHeight}px`; body.appendChild(spacer); }
+    if (virtual && viewportStart) { const spacer = document.createElement('tr'); spacer.className = 'grid-spacer'; spacer.style.height = `${viewportStart * rowHeight}px`; desired.push(keyed(spacer, 'spacer:top', spacer.style.height)); }
     shown.forEach((row) => {
       const tr = document.createElement('tr'); tr.dataset.key = rowKey(row); tr.tabIndex = 0;
       tr.onclick = (event) => { if (!event.target.closest('.check')) onRowClick?.(row); };
-      tr.onkeydown = (event) => { if (event.key === 'Enter') onRowClick?.(row); };
+      tr.onkeydown = (event) => {
+        // Only the row's own keys. A control inside the row owns its keys:
+        // Space toggles the select checkbox and Enter presses a row action, and
+        // the row must not preventDefault either of those out from under it.
+        if (event.target !== tr) return;
+        if (event.key === 'Enter' || event.key === ' ') {
+          // Space would otherwise scroll the pane out from under the row.
+          event.preventDefault();
+          onRowClick?.(row);
+          return;
+        }
+        moveRowFocus(event, tr);
+      };
       const checkCell = document.createElement('td'); checkCell.className = 'check'; const check = document.createElement('input'); check.type = 'checkbox'; check.className = options.checkClass || 'grid-check'; check.checked = selected.has(rowKey(row)); check.setAttribute('aria-label', `Select ${rowKey(row)}`); check.onchange = () => { check.checked ? selected.add(rowKey(row)) : selected.delete(rowKey(row)); onSelectionChange?.(selected); syncSelection(); }; checkCell.appendChild(check); tr.appendChild(checkCell);
       options.decorateRow?.(tr, row);
       cols.forEach((col) => { const td = document.createElement('td'); const rendered = col.render?.(row); if (rendered instanceof Node) td.appendChild(rendered); else td.textContent = rendered ?? valueFor(row, col) ?? ''; tr.appendChild(td); });
-      body.appendChild(tr);
+      desired.push(keyed(tr, `row:${rowKey(row)}`, [row, cols.map((c) => c.id), selected.has(rowKey(row))]));
     });
-    if (virtual && viewportStart + shown.length < result.length) { const spacer = document.createElement('tr'); spacer.className = 'grid-spacer'; spacer.style.height = `${(result.length - viewportStart - shown.length) * rowHeight}px`; body.appendChild(spacer); }
+    if (virtual && viewportStart + shown.length < result.length) { const spacer = document.createElement('tr'); spacer.className = 'grid-spacer'; spacer.style.height = `${(result.length - viewportStart - shown.length) * rowHeight}px`; desired.push(keyed(spacer, 'spacer:bottom', spacer.style.height)); }
+    reconcile(body, desired);
     table.setAttribute('aria-rowcount', String(result.length));
     renderColumnMenu(); renderViews();
   }
 
-  scroll.onscroll = () => { if (rows.length <= 500) return; const next = Math.max(0, Math.floor(scroll.scrollTop / 39) - 3); if (next !== viewportStart) { viewportStart = next; render(); } };
+  // Everything the mouse can do here needs a key equivalent, and a table of
+  // rows is the one place where that means more than Tab: Tab belongs to the
+  // controls inside a row, so moving between rows is the arrow keys' job.
+  // Page Up and Page Down step by what is actually visible rather than a fixed
+  // number, so they match what the operator can see.
+  function moveRowFocus(event, from) {
+    const rows = [...body.querySelectorAll('tr[data-key]')];
+    const at = rows.indexOf(from);
+    if (at < 0) return;
+    const page = Math.max(1, Math.floor(scroll.clientHeight / (from.getBoundingClientRect().height || 39)) - 1);
+    const to = {
+      ArrowDown: at + 1,
+      ArrowUp: at - 1,
+      Home: 0,
+      End: rows.length - 1,
+      PageDown: Math.min(rows.length - 1, at + page),
+      PageUp: Math.max(0, at - page),
+    }[event.key];
+    if (to === undefined) return;
+    const target = rows[Math.max(0, Math.min(rows.length - 1, to))];
+    if (!target || target === from) return;
+    event.preventDefault();
+    target.focus();
+    target.scrollIntoView({ block: 'nearest' });
+  }
+
+  host.querySelector('.grid-density-select').onchange = (event) => {
+    state.density = event.target.value;
+    save(id, state);
+    render();
+  };
+
+  scroll.onscroll = () => { if (rows.length <= 500) return; const next = Math.max(0, Math.floor(scroll.scrollTop / rowHeightFor(state.density)) - 3); if (next !== viewportStart) { viewportStart = next; render(); } };
   host.querySelector('.grid-export').onclick = () => {
     const cols = visibleColumns(); const result = filteredRows();
     const csv = [cols.map((c) => csvValue(c.label)).join(','), ...result.map((row) => cols.map((c) => csvValue(valueFor(row, c))).join(','))].join('\r\n');
     const link = document.createElement('a'); link.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' })); link.download = `${id}.csv`; link.click(); setTimeout(() => URL.revokeObjectURL(link.href), 0);
   };
   render();
+
+  // The handle a caller keeps so a later poll can refresh this grid in place,
+  // the way the dashboard widgets already do, rather than replacing it.
+  return {
+    update(nextRows) { rows = nextRows; render(); },
+    refresh: render,
+  };
 }

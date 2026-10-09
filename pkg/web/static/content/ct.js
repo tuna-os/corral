@@ -6,8 +6,10 @@ import { connectTTY, disconnectConsoles } from '../console.js';
 import { icon } from '../icons.js';
 import { ctMenuItems } from '../menus.js';
 import { state } from '../state.js';
+import { bindBreadcrumb, breadcrumb } from '../ui/breadcrumb.js';
 import { $, esc, toast } from '../ui/dom.js';
 import { attachContextMenu } from '../ui/menu.js';
+import { confirmDestroy } from '../ui/confirm.js';
 
 export function ctTable(list) {
   if (!list.length) return '';
@@ -46,7 +48,13 @@ const CT_TABS = [['summary', 'Summary'], ['hardware', 'Hardware'], ['terminal', 
 
 export function renderCT(main, c) {
   const running = c.phase === 'Running';
+  const trail = [
+    { label: 'Datacenter', go: () => select({ type: 'dc' }) },
+    c.namespace ? { label: c.namespace, go: () => select({ type: 'namespace', name: c.namespace }) } : null,
+    { label: c.name },
+  ];
   main.innerHTML = `
+    ${breadcrumb(trail)}
     <div class="page-head">
       <h1>${icon('cube')} ${esc(c.name)}</h1>
       <span class="pill ${c.ready ? 'on' : 'off'}">${esc(c.phase)}</span>
@@ -62,6 +70,7 @@ export function renderCT(main, c) {
     </div>
     <div id="ct-tab-body"></div>`;
 
+  bindBreadcrumb(main, trail);
   main.querySelectorAll('[data-ctact]').forEach((b) => {
     b.onclick = () => ctAction(c, b.dataset.ctact);
   });
@@ -107,7 +116,12 @@ export function renderCT(main, c) {
 
 export async function ctAction(c, act) {
   if (act === 'delete') {
-    if (!confirm(`Delete container ${c.name}? This removes its data volume too.`)) return;
+    if (!await confirmDestroy({
+      title: `Delete container ${c.name}?`,
+      identifier: c.name,
+      label: `Type ${c.name} to confirm`,
+      note: 'This removes its data volume too. There is no undo.',
+    })) return;
     try {
       await api(`/api/cts/${c.namespace}/${c.name}`, { method: 'DELETE' });
       toast('Deleted');
