@@ -169,7 +169,11 @@ body {
   overflow: hidden;
 }
 
-header {
+/* The app bar, and only the app bar. This was a bare `header` selector, so
+   every <header> in the page - each dashboard widget's head, each topology
+   card's - inherited the bar's background, padding and border, and had to
+   override them one by one or show them. */
+body > header {
   display: flex;
   align-items: center;
   gap: 12px;
@@ -539,6 +543,40 @@ dl.props dd { margin: 0; word-break: break-all; }
 
 /* Dashboard widget grid + live charts (#348, pkg/web/static/dashboard.js).
    gridstack positions the items; these rules only dress them. */
+/* Topology. Cards reflow to the window rather than draw a graph: at fleet sizes
+   a wall of cards stays readable where nodes and edges do not. Every colour is
+   a theme token, so light and dark both work without a second set of rules. */
+#topo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; align-items: start; }
+.topo-hint { margin: -4px 0 12px; font-size: .85rem; }
+.topo-node { border: 1px solid var(--border); border-radius: 6px; background: var(--panel); padding: 10px 12px; min-height: 96px; }
+.topo-node.is-empty { border-style: dashed; }
+.topo-node.is-unplaced { background: var(--panel-2); }
+.topo-node.drop-target { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent) inset; }
+.topo-node.drop-invalid { opacity: .55; }
+.topo-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.topo-name { font-weight: 600; background: none; border: 0; padding: 0; color: var(--text); cursor: pointer; font-size: .95rem; }
+.topo-name:disabled { cursor: default; }
+.topo-name:not(:disabled):hover, .topo-name:focus-visible { color: var(--accent); text-decoration: underline; }
+.topo-role { font-size: .78rem; }
+.topo-badges { margin-left: auto; display: inline-flex; gap: 4px; }
+.topo-meta { font-size: .8rem; margin: 4px 0 8px; }
+.topo-guests { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 5px; }
+.topo-guest { font-size: .8rem; padding: 3px 8px; border-radius: 4px; cursor: pointer; border: 1px solid var(--border);
+  border-left-width: 4px; background: var(--panel-2); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.topo-guest:hover { border-color: var(--accent); }
+.topo-guest:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* State is the left edge, and the legend uses the same classes. A colour alone
+   is never the only cue: the tile's label and tooltip carry the status. */
+.is-running { border-left-color: var(--green); }
+.is-changing { border-left-color: var(--yellow); }
+.is-paused { border-left-color: var(--accent); }
+.is-stopped { border-left-color: var(--muted); }
+.is-failed { border-left-color: var(--red); }
+.topo-legend { display: inline-flex; align-items: center; gap: 4px 6px; flex-wrap: wrap; font-size: .78rem; }
+/* Longhand, not `border-left`: the shorthand resets the colour, and this rule
+   comes after the state classes that set it, so every swatch came out grey. */
+.topo-key { display: inline-block; width: 0; height: 12px; border-left-width: 4px; border-left-style: solid; margin-left: 6px; }
+
 /* The dashboard picker. The three buttons sit tight to the select so the row
    reads as one control rather than four. */
 .dash-pick select { max-width: 180px; }
@@ -577,6 +615,9 @@ dl.props dd { margin: 0; word-break: break-all; }
 }
 .widget-head {
   display: flex; align-items: center; gap: 6px;
+  /* It used to inherit this from the app bar's rule; a short widget would
+     otherwise squeeze its title row before its body. */
+  flex-shrink: 0;
   position: relative;
   padding: 6px 8px 6px 12px;
   border-bottom: 1px solid var(--border);
@@ -736,7 +777,7 @@ body.tree-collapsed #tree-resizer:focus-visible { background: var(--accent); }
   border: 0; background: none; color: var(--text); cursor: pointer;
 }
 .send-keys-menu button:hover, .send-keys-menu button:focus { background: var(--panel-2); }
-body.console-popout header, body.console-popout #tree,
+body.console-popout > header, body.console-popout #tree,
 body.console-popout #tree-resizer, body.console-popout #task-panel,
 body.console-popout .page-head, body.console-popout .tabs { display: none; }
 body.console-popout .layout { display: block; height: 100vh; }
@@ -991,13 +1032,13 @@ tr.ev-warn td { color: var(--yellow); }
   .icon-btn { display: block; }
   .brand span { display: none; }
   /* Header: keep the create buttons on one line and finger-sized. */
-  header { padding: 8px 10px; gap: 8px; }
+  body > header { padding: 8px 10px; gap: 8px; }
   /* The palette button is the only way into the command palette without a
      keyboard, so it stays at this width and gives up its label instead of its
      place. The button keeps an aria-label, so dropping the text costs the
      accessible name nothing. */
   #btn-palette .btn-label { display: none; }
-  header .btn { padding: 8px 10px; font-size: .82rem; }
+  body > header .btn { padding: 8px 10px; font-size: .82rem; }
   /* Touch targets — comfortable tap heights for rows, tabs, buttons. */
   .btn { min-height: 40px; }
   .btn.sm { min-height: 34px; }
@@ -1325,3 +1366,21 @@ tbody tr:focus-visible {
 
 /* Tree multi-select (#344): rows in the shared VM selection. */
 .tree-item.multi-selected { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+
+/* ── Plugin documents (RFC-0002) ──────────────────────────────── */
+/* The three shapes a plugin's widget or section can take. Nothing here is
+   the plugin's: it sends data, and these rules decide how it looks. */
+.pdoc-rows { width: 100%; }
+.pdoc-rows td:first-child { width: 40%; }
+.pdoc-ok { color: var(--green); }
+.pdoc-warn { color: var(--yellow); }
+.pdoc-bad { color: var(--red); }
+.pdoc-muted { color: var(--muted); }
+.pdoc-scroll { overflow-x: auto; }
+.pdoc-table { width: 100%; }
+.pdoc-message { white-space: pre-wrap; overflow-wrap: anywhere; }
+.pdoc-stale { font-size: 12px; margin-bottom: 6px; }
+.pdoc-error p { margin: 0 0 6px; }
+.pdoc-source { margin-bottom: 14px; }
+.ext-added { margin-bottom: 18px; }
+.ext-added li { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 3px 0; }

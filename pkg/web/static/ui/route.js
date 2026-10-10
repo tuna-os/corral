@@ -21,6 +21,7 @@
 // plain readable keys instead and nothing has to be registered.
 //
 //   #view=storage&sel=vm:/corral-vms/web-prod&tab=console
+//   #sort=mem:desc&f.status=stopped        a filtered, sorted inventory list
 //
 // A guest's key already begins with a slash, so its address reads `vm://ns/name`.
 // That is left alone: trimming the slash would mean knowing which selection
@@ -30,8 +31,8 @@
 
 const DEFAULTS = { view: 'server', sel: 'dc', tab: 'summary' };
 
-// Read the current address. Unknown keys are ignored rather than carried, so
-// a stale link from an older build degrades to its defaults.
+// Read the current address. Keys this module does not know are ignored rather
+// than carried, so a stale link from an older build degrades to its defaults.
 export function readRoute() {
   const hash = location.hash.replace(/^#/, '');
   const params = new URLSearchParams(hash);
@@ -40,7 +41,29 @@ export function readRoute() {
     const value = params.get(key);
     if (value) route[key] = value;
   }
+  route.grid = readGrid(params);
   return route;
+}
+
+// The inventory grid's sort and filters, when the address carries them.
+//
+//   sort=mem:desc,name:asc      one or more columns, in priority order
+//   f.status=stopped            a filter per column, by column id
+//
+// Null when the address says nothing about the grid, so a link to a guest does
+// not reset somebody's filters to empty. Column ids are not checked here: the
+// grid drops any it does not have, and this module knows no column names.
+function readGrid(params) {
+  const sort = (params.get('sort') || '').split(',').filter(Boolean).map((part) => {
+    const [id, dir] = part.split(':');
+    return { id, dir: dir === 'desc' ? 'desc' : 'asc' };
+  }).filter((x) => x.id);
+  const filters = {};
+  for (const [key, value] of params) {
+    if (key.startsWith('f.') && key.length > 2 && value) filters[key.slice(2)] = value;
+  }
+  if (!sort.length && !Object.keys(filters).length) return null;
+  return { sort, filters };
 }
 
 // `sel` is one string: the selection's type, and the thing it names.
@@ -63,10 +86,24 @@ export function encodeSelection(selected) {
   return payload ? `${selected.type}:${payload}` : selected.type;
 }
 
-function encode(route) {
+// The part of an address that names a place: view, selection and tab. Two
+// addresses that agree on this are the same place, whatever the grid shows.
+function encodePlace(route) {
   const params = new URLSearchParams();
   for (const key of Object.keys(DEFAULTS)) {
     if (route[key] && route[key] !== DEFAULTS[key]) params.set(key, route[key]);
+  }
+  return params.toString();
+}
+
+function encode(route) {
+  const params = new URLSearchParams(encodePlace(route));
+  const grid = route.grid;
+  if (grid) {
+    if (grid.sort?.length) params.set('sort', grid.sort.map((x) => `${x.id}:${x.dir}`).join(','));
+    for (const [id, value] of Object.entries(grid.filters || {})) {
+      if (String(value).trim()) params.set(`f.${id}`, value);
+    }
   }
   // URLSearchParams escapes the separators inside a guest key, which makes a
   // readable address unreadable. They are safe in a fragment, so put them back.
@@ -82,10 +119,18 @@ export function writeRoute(route) {
   const next = encode(route);
   const current = location.hash.replace(/^#/, '');
   if (next === current) return;
-  // A navigation is a history entry, so back and forward walk through them.
+  const url = next ? `#${next}` : location.pathname + location.search;
+  // A move to a different place is a history entry, so back and forward walk
+  // the screens. A change to the grid alone is not: a filter typed one letter
+  // at a time would otherwise leave an entry per keystroke, and back would
+  // spell the word out in reverse before reaching the last screen. So the
+  // grid's changes replace the current entry rather than add one.
+  //
   // `pushState` rather than assigning location.hash, because assigning it
   // fires hashchange and the listener would apply the state we just wrote.
-  history.pushState(null, '', next ? `#${next}` : location.pathname + location.search);
+  const samePlace = encodePlace(route) === encodePlace(readRoute());
+  if (samePlace) history.replaceState(null, '', url);
+  else history.pushState(null, '', url);
 }
 
 // Called when the address changes under us: the back button, the forward

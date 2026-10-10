@@ -268,11 +268,24 @@ check(updated.accent === '#22c55e' || updated.error, 'PUT /api/theme accepts acc
 // server currently holds, so leaving the write in place makes those checks
 // fail on a second run against a long-lived demo server.
 //
-// The whole captured object goes back, not just the fields written: a PUT
-// carrying an accent re-derives accent_2 by darkening it, and that derived
-// shade is not the default accent_2, so restoring the accent alone would
-// leave accent_2 shifted. Sending accent_2 explicitly takes precedence over
-// the derived value.
+// Sending the default accent back must bring the default accent_2 with it.
+// It used not to: every path that set an accent recomputed accent_2 by
+// darkening it, and the default accent darkens to #d27736 rather than the
+// designed #d9742e, so restoring a theme shifted accent_2 to a colour nobody
+// chose. This suite worked round that for a long time by sending accent_2
+// explicitly. Now the accent alone has to be enough, and this asserts it.
+await fetch(`${BASE}api/theme`, {
+  method: 'PUT',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ accent: '#f0883e' }),
+}).catch(() => {});
+const accentOnly = await (await fetch(`${BASE}api/theme`)).json();
+check(
+  accentOnly.accent_2 === '#d9742e',
+  `theme: the default accent restores the default accent_2 (${accentOnly.accent_2})`,
+);
+
+// Then the whole captured object goes back, which also restores the brand.
 await fetch(`${BASE}api/theme`, {
   method: 'PUT',
   headers: { 'Content-Type': 'application/json' },
@@ -2700,6 +2713,379 @@ check(
     await viewName() === before,
     'palette-filters: and wraps back to where it started',
   );
+}
+
+// ── quiet-when-unseen ────────────────────────────────────
+// Three ways the page kept talking when it should not have.
+//
+// A tab behind another kept polling every five seconds: the fleet, the dock's
+// task log, every chart, every widget with its own data.
+//
+// A poll that failed raised a toast each time it failed. A server that is down
+// fails every poll, so the page drowned in one sentence. Toasts replace each
+// other, so the storm never shows as a pile; these count insertions.
+//
+// And a 401 - the tailnet identity corral authorises against stopped arriving
+// - was reported as "No cluster connected, point kubectl at a cluster", which
+// is the wrong advice for an identity problem.
+{
+  const fresh = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  const freshErrors = [];
+  fresh.on('pageerror', (e) => freshErrors.push(e.message));
+  let vmsRequests = 0;
+  fresh.on('request', (r) => { if (/\/api\/vms(\?|$)/.test(r.url())) vmsRequests += 1; });
+  await fresh.goto(BASE);
+  await fresh.waitForSelector('#content .vm-check', { timeout: 30000 });
+  await fresh.waitForTimeout(1500);
+
+  // Hidden: the browser has no switch for this, so set what the page reads.
+  const setHidden = (hidden) => fresh.evaluate((h) => {
+    Object.defineProperty(document, 'visibilityState', { value: h ? 'hidden' : 'visible', configurable: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+  }, hidden);
+
+  await setHidden(true);
+  const whileHidden = vmsRequests;
+  // Two full poll intervals and then some.
+  await fresh.waitForTimeout(13000);
+  check(
+    vmsRequests === whileHidden,
+    `quiet-when-unseen: a hidden page polls nothing (${vmsRequests - whileHidden} requests in 13s)`,
+  );
+  await setHidden(false);
+  await fresh.waitForTimeout(1200);
+  check(
+    vmsRequests > whileHidden,
+    'quiet-when-unseen: and fetches at once when it is shown again',
+  );
+
+  // Count every toast the page raises from here on.
+  await fresh.evaluate(() => {
+    window.__toasts = 0;
+    new MutationObserver((records) => {
+      for (const r of records) for (const n of r.addedNodes) if (n.classList?.contains('toast')) window.__toasts += 1;
+    }).observe(document.getElementById('toast-region'), { childList: true });
+  });
+
+  // The server goes away. One toast, however many polls fail.
+  await fresh.route(/\/api\/vms(\?|$)/, (route) => route.abort('connectionrefused'));
+  await fresh.waitForTimeout(14000);
+  const downToasts = await fresh.evaluate(() => window.__toasts);
+  check(
+    downToasts === 1,
+    `quiet-when-unseen: a server that stays down raises one toast, not one per poll (${downToasts})`,
+  );
+  await fresh.unroute(/\/api\/vms(\?|$)/);
+  await fresh.waitForTimeout(7000);
+
+  // The identity goes away.
+  await fresh.evaluate(() => { window.__toasts = 0; });
+  await fresh.route(/\/api\/vms(\?|$)/, (route) => route.fulfill({
+    status: 401, contentType: 'application/json', body: JSON.stringify({ error: 'authentication required' }),
+  }));
+  await fresh.waitForSelector('#identity-lost', { timeout: 15000 }).catch(() => {});
+  const lostText = await fresh.textContent('#content').catch(() => '');
+  check(
+    await fresh.locator('#identity-lost').count() === 1,
+    'quiet-when-unseen: a 401 shows the identity screen',
+  );
+  check(
+    !/kubectl|No cluster connected/i.test(lostText),
+    'quiet-when-unseen: and does not send the operator to fix a cluster',
+  );
+  await fresh.waitForTimeout(11000);
+  check(
+    await fresh.evaluate(() => window.__toasts) === 0,
+    'quiet-when-unseen: and raises no toasts while it waits',
+  );
+
+  // The identity comes back, and the page recovers without a reload.
+  await fresh.unroute(/\/api\/vms(\?|$)/);
+  await fresh.waitForSelector('#content .vm-check', { timeout: 20000 }).catch(() => {});
+  check(
+    await fresh.locator('#identity-lost').count() === 0
+      && await fresh.locator('#content .vm-check').count() > 0,
+    'quiet-when-unseen: when it returns the page recovers by itself',
+  );
+  check(freshErrors.length === 0, `quiet-when-unseen: no errors (${freshErrors.join('; ').slice(0, 120)})`);
+  await fresh.close();
+
+  // The same 401 from the very first request, before anything has rendered.
+  // This is where the wrong advice actually lived: mid-session the old code
+  // only raised toasts, but on a first load it fell into the no-cluster screen
+  // and told the operator to point kubectl at a cluster. The assertion above
+  // runs mid-session, so on its own it would pass against the old code too.
+  const cold = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  const coldErrors = [];
+  cold.on('pageerror', (e) => coldErrors.push(e.message));
+  // whoami is exempt on the server, so it stays reachable here too.
+  await cold.route(/\/api\/(?!whoami)/, (route) => route.fulfill({
+    status: 401, contentType: 'application/json', body: JSON.stringify({ error: 'authentication required' }),
+  }));
+  await cold.goto(BASE);
+  await cold.waitForSelector('#identity-lost', { timeout: 15000 }).catch(() => {});
+  const coldText = await cold.textContent('#content').catch(() => '');
+  check(
+    await cold.locator('#identity-lost').count() === 1 && !/kubectl|No cluster connected/i.test(coldText),
+    'quiet-when-unseen: a 401 on first load shows the identity screen, not cluster setup',
+  );
+  // Boot also asks for capabilities and instance types, and those 401 too.
+  check(coldErrors.length === 0, `quiet-when-unseen: a first-load 401 throws nothing uncaught (${coldErrors.join('; ').slice(0, 120)})`);
+  await cold.close();
+}
+
+// ── grid-address ─────────────────────────────────────────
+// The address carried the screen but not the list on it, so "the stopped
+// guests, by name" was still not something you could send. The grid's sort
+// and filters now ride in the address. Column order, widths and density stay
+// in this browser: they are how the operator likes the grid, not what it
+// shows.
+{
+  // Its own context, so a fresh one later has no local storage at all and the
+  // address is the only thing that can explain what it shows.
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage({ viewport: { width: 1440, height: 900 } });
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto(BASE);
+  await page.waitForSelector('#content .vm-check', { timeout: 30000 });
+  await page.waitForTimeout(1200);
+  const ROWS = '#content .grid-scroll tbody tr[data-key]';
+  const all = await page.locator(ROWS).count();
+
+  // A filter, typed a letter at a time the way a person types it.
+  const before = await page.evaluate(() => history.length);
+  const box = page.locator('#content input[aria-label="Filter Status"]');
+  await box.click();
+  await box.type('stop', { delay: 60 });
+  await page.waitForTimeout(600);
+  check(
+    (await page.evaluate(() => location.hash)).includes('f.status=stop'),
+    'grid-address: a filter goes into the address',
+  );
+  // Four keystrokes must not be four history entries, or back would spell the
+  // word out in reverse before reaching the previous screen.
+  check(
+    await page.evaluate(() => history.length) === before,
+    'grid-address: typing in a filter adds no history entries',
+  );
+  const filtered = await page.locator(ROWS).count();
+  check(filtered > 0 && filtered < all, `grid-address: and the list narrows (${filtered} of ${all})`);
+
+  await page.locator('#content .grid-sort', { hasText: /^Name/ }).first().click();
+  await page.waitForTimeout(500);
+  const link = await page.evaluate(() => location.href);
+  check(/sort=name:(asc|desc)/.test(link), 'grid-address: a sort goes into the address too');
+
+  // The layout is not part of it.
+  check(
+    !/order=|width|density|hidden/.test(link.split('#')[1] || ''),
+    'grid-address: column order, widths and density stay out of the link',
+  );
+
+  // The real test: someone else opens the link, with nothing stored.
+  const other = await browser.newContext();
+  const theirs = await other.newPage({ viewport: { width: 1440, height: 900 } });
+  await theirs.goto(link);
+  await theirs.waitForSelector('#content .vm-check', { timeout: 30000 }).catch(() => {});
+  await theirs.waitForTimeout(2500);
+  check(
+    await theirs.inputValue('#content input[aria-label="Filter Status"]').catch(() => '') === 'stop',
+    'grid-address: a fresh browser opening the link gets the filter',
+  );
+  check(
+    await theirs.locator(ROWS).count() === filtered,
+    `grid-address: and the same rows (${await theirs.locator(ROWS).count()} of ${filtered})`,
+  );
+  await other.close();
+
+  // A guest, and back. The list comes back with its filter, because back
+  // returns to the entry that held it.
+  await page.locator(ROWS).first().click();
+  await page.waitForTimeout(800);
+  check(
+    !(await page.evaluate(() => location.hash)).includes('f.status'),
+    'grid-address: a guest screen carries no grid state',
+  );
+  await page.goBack();
+  await page.waitForTimeout(1200);
+  check(
+    await page.inputValue('#content input[aria-label="Filter Status"]').catch(() => '') === 'stop',
+    'grid-address: back returns to the filtered list',
+  );
+
+  // The grid keeps its filters in local storage, and this context shares it
+  // with nothing else, but clear it anyway so the check leaves no trace.
+  await page.fill('#content input[aria-label="Filter Status"]', '');
+  await page.waitForTimeout(400);
+  check(errors.length === 0, `grid-address: no errors (${errors.join('; ').slice(0, 120)})`);
+  await ctx.close();
+}
+
+// ── topology ─────────────────────────────────────────────
+// Every other screen lists guests; this one places them. It is the diagram
+// Prism's overview / diagram / table switch implies, and corral had none. It
+// is also interactive: a tile drags onto another node to migrate, through the
+// tree's own drop rule, so what the tree refuses this refuses too.
+{
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage({ viewport: { width: 1440, height: 900 } });
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  page.on('dialog', (d) => d.dismiss());
+  await page.goto(BASE);
+  await page.waitForSelector('#tree [data-vm-key]', { timeout: 30000 });
+  await page.waitForTimeout(800);
+
+  // Reachable from the tree, from the palette's keys, and by address.
+  await page.click('#tree .tree-item[data-rkey="topology"]');
+  await page.waitForSelector('#topo-grid .topo-node', { timeout: 10000 });
+  check(true, 'topology: the tree row opens it');
+  await page.click('#tree .tree-item[data-rkey="dc"]');
+  await page.waitForTimeout(500);
+  await page.keyboard.press('g');
+  await page.keyboard.press('t');
+  await page.waitForTimeout(700);
+  check(await page.locator('#topo-grid').count() === 1, 'topology: g then t opens it');
+  check((await page.evaluate(() => location.hash)).includes('sel=topology'), 'topology: and it has an address');
+
+  // Every guest is drawn exactly once, whatever its backend or state.
+  const fleet = await (await fetch(`${BASE}api/vms`)).json();
+  const tiles = await page.locator('#topo-grid .topo-guest').count();
+  check(tiles === fleet.length, `topology: every guest drawn once (${tiles} tiles, ${fleet.length} guests)`);
+
+  // A guest with no node is not drawn inside a node it is not on. The KubeVirt
+  // backend reports that as a literal "—", which once became a card named
+  // after the dash.
+  const cardNames = await page.locator('#topo-grid .topo-name').allTextContents();
+  check(!cardNames.includes('—'), `topology: no card is named after the no-node sentinel (${cardNames.join(', ')})`);
+  const nodes = await (await fetch(`${BASE}api/nodes`)).json();
+  check(
+    nodes.every((n) => cardNames.includes(n.name)),
+    'topology: every cluster node has a card, guests or not',
+  );
+
+  // A capability marks a node without the screen knowing it exists.
+  check(
+    (await page.textContent('#topo-grid')).includes('power '),
+    'topology: host power marks its nodes through the registry',
+  );
+
+  // Tiles keep their identity across a poll, like every list in this UI.
+  await page.evaluate(() => document.querySelectorAll('#topo-grid .topo-guest').forEach((t) => { t.__smoke = 1; }));
+  await page.waitForTimeout(11000);
+  const kept = await page.evaluate(() => [...document.querySelectorAll('#topo-grid .topo-guest')].filter((t) => t.__smoke).length);
+  check(kept === tiles, `topology: a poll keeps the tiles it has (${kept}/${tiles})`);
+
+  // The legend's swatches carry the state colours. They once came out grey,
+  // because the border shorthand reset the colour the state class set.
+  const swatches = await page.evaluate(() => [...document.querySelectorAll('.topo-legend .topo-key')]
+    .map((k) => getComputedStyle(k).borderLeftColor));
+  check(new Set(swatches).size >= 4, `topology: the legend shows distinct state colours (${new Set(swatches).size})`);
+
+  // Drag a KubeVirt guest onto another cluster node: the tree's confirmation
+  // opens with that node chosen. Cancelled, so nothing moves.
+  const mover = fleet.find((v) => v.backend === 'kubevirt' && v.node && nodes.some((n) => n.name === v.node));
+  const target = nodes.find((n) => n.ready && n.name !== mover?.node && /^corral-/.test(n.name));
+  if (mover && target) {
+    const tile = page.locator(`#topo-grid .topo-guest`, { hasText: mover.name }).first();
+    await tile.dragTo(page.locator(`#topo-grid .topo-node[data-node="${target.name}"]`));
+    await page.waitForSelector('.migrate-dialog[open]', { timeout: 5000 }).catch(() => {});
+    check(
+      await page.locator('.migrate-dialog[open]').count() === 1,
+      `topology: dropping ${mover.name} on ${target.name} opens the migrate confirmation`,
+    );
+    check(
+      await page.inputValue('.migrate-dialog #pick-node').catch(() => '') === target.name,
+      'topology: with the dropped-on node chosen',
+    );
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(400);
+  }
+
+  // A tile opens its guest from the keyboard.
+  await page.locator('#topo-grid .topo-guest').first().focus();
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(700);
+  check((await page.evaluate(() => location.hash)).includes('sel=vm:'), 'topology: Enter on a tile opens the guest');
+
+  check(errors.length === 0, `topology: no errors (${errors.join('; ').slice(0, 120)})`);
+  await page.goto(`${BASE}#sel=topology`);
+  await page.waitForSelector('#topo-grid .topo-guest', { timeout: 15000 });
+  await page.screenshot({ path: `${SHOTS}/topology.png` });
+  await ctx.close();
+}
+
+// ── plugin screens and widgets (RFC-0002) ────────────────
+// A plugin declares a widget or a screen in its metadata; corral runs the
+// command it names and draws the document it prints. Demo mode carries a
+// fixture in place of a plugin. What has to hold: the page draws only the
+// three document shapes, shows a plugin's markup as text, leaves the operator's
+// dashboard alone until they add the widget, and says so when a plugin fails.
+{
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage({ viewport: { width: 1440, height: 900 } });
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  let alerted = false;
+  page.on('dialog', (d) => { alerted = true; d.dismiss(); });
+  await page.goto(BASE);
+  await page.waitForSelector('#tree [data-vm-key]', { timeout: 30000 });
+  await page.waitForSelector('#dc-dash .grid-stack-item', { timeout: 10000 });
+
+  const widgetId = 'plugin:demo-ui/spend';
+  check(await page.locator(`#dc-dash .grid-stack-item[gs-id="${widgetId}"]`).count() === 0,
+    'plugin-ui: installing a plugin does not put its widget on the dashboard');
+  const offered = await page.locator('#dc-dash .dash-add select option').allTextContents();
+  check(offered.includes('Cloud spend'), `plugin-ui: the widget waits in Add widget (${offered.join(', ')})`);
+  await page.selectOption('#dc-dash .dash-add select', widgetId);
+  const widget = page.locator(`#dc-dash .grid-stack-item[gs-id="${widgetId}"]`);
+  await widget.locator('.pdoc-rows').waitFor({ timeout: 10000 });
+  const text = await widget.locator('.widget-body').textContent();
+  check(text.includes('$412.08') && text.includes('Forecast'), 'plugin-ui: the widget draws the rows the plugin sent');
+  check(text.includes('<img src=x onerror=alert(1)>') && await widget.locator('img').count() === 0,
+    'plugin-ui: markup in a document is shown as text, never parsed');
+  check(await widget.locator('.pdoc-warn').count() === 1, 'plugin-ui: a row state becomes a colour, not a class the plugin names');
+
+  // Sections: reached from Extensions and the palette, never from the tree.
+  check(await page.locator('#tree', { hasText: 'Backups' }).count() === 0, 'plugin-ui: a section adds nothing to the sidebar tree');
+  await page.goto(`${BASE}#sel=extensions`);
+  await page.waitForSelector('.ext-added', { timeout: 10000 });
+  const added = await page.locator('.ext-added').textContent();
+  check(added.includes('Backups') && added.includes('Datacenter → Add widget'),
+    'plugin-ui: Extensions lists what plugins add, and where a widget is');
+  await page.click('.ext-added [data-section-id="backups"]');
+  await page.waitForSelector('.pdoc-section .pdoc-table', { timeout: 10000 });
+  const head = await page.locator('.pdoc-table th').allTextContents();
+  check(head.join('|') === 'Guest|Last backup|Size', `plugin-ui: a table section draws its columns (${head.join('|')})`);
+  check(await page.locator('.pdoc-table tbody tr').count() === 3, 'plugin-ui: and its rows');
+  check((await page.evaluate(() => location.hash)).includes('sel=pluginui'), 'plugin-ui: a section has an address');
+
+  await page.keyboard.press('Control+k');
+  await page.waitForSelector('#palette[open] #palette-input', { timeout: 5000 });
+  await page.keyboard.type('offline report');
+  await page.waitForTimeout(200);
+  check((await page.textContent('#palette-list li.active .palette-label').catch(() => '')) === 'Offline report',
+    'plugin-ui: the palette finds a section');
+  await page.keyboard.press('Enter');
+  await page.waitForSelector('.pdoc-error', { timeout: 10000 });
+  const failed = await page.locator('.pdoc-error').textContent();
+  check(failed.includes('did not answer') && failed.includes('report server unreachable'),
+    'plugin-ui: a failing plugin says so, with its own reason');
+  check(await page.locator('.pdoc-error .pdoc-retry').count() === 1, 'plugin-ui: and offers to try again');
+
+  // An address for a section nobody offers any more is a message, not a crash.
+  await page.goto(`${BASE}#sel=pluginui:gone/away`);
+  await page.waitForSelector('#content .page-head', { timeout: 10000 });
+  check((await page.locator('#content').textContent()).includes('No installed plugin offers this screen'),
+    'plugin-ui: a stale address explains itself');
+
+  check(!alerted, 'plugin-ui: nothing a plugin sent ran as script');
+  check(errors.length === 0, `plugin-ui: no errors (${errors.join('; ').slice(0, 120)})`);
+  await page.goto(`${BASE}#sel=pluginui:demo-ui/backups`);
+  await page.waitForSelector('.pdoc-table', { timeout: 15000 });
+  await page.screenshot({ path: `${SHOTS}/plugin-section.png` });
+  await ctx.close();
 }
 
 check(pageErrors.length === 0, `no JS page errors (${pageErrors.join('; ').slice(0, 200)})`);

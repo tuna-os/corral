@@ -158,6 +158,17 @@ export function renderTree() {
   attachContextMenu(dcRow, () => [{ icon: 'datacenter', label: 'Open Datacenter', action: () => select({ type: 'dc' }) }]);
   sink.appendChild(dcRow);
 
+  // The fleet drawn as the machines it runs on. Beside the Datacenter because
+  // it is the same scope seen another way, not a grouping of the tree.
+  const topoRow = treeRow({
+    lvl: 0, icon: icon('server'), label: 'Topology',
+    key: 'topology', sig: state.selected.type === 'topology',
+    sel: state.selected.type === 'topology',
+    onclick: () => select({ type: 'topology' }),
+  });
+  attachContextMenu(topoRow, () => [{ icon: 'server', label: 'Open Topology', action: () => select({ type: 'topology' }) }]);
+  sink.appendChild(topoRow);
+
   const docRow = treeRow({
     lvl: 0, icon: icon('health'), label: 'Cluster health',
     key: 'doctor', sig: state.selected.type === 'doctor',
@@ -236,7 +247,7 @@ function ctRow(c, lvl) {
 // dropTargetNode accepts a dragged VM and proposes migrating it to that node.
 // Invalid drops (node not ready, VM already there, non-KubeVirt VM) are
 // refused with the reason as the row's tooltip.
-function dropTargetNode(row, node) {
+export function dropTargetNode(row, node) {
   dropZone(row, {
     defaultTitle: node.ready ? `Drop a VM here to migrate it to ${node.name}` : `Node ${node.name} (not ready)`,
     checkValid: (vm) => {

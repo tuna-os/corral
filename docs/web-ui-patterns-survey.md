@@ -96,6 +96,8 @@ documents the keyboard model. That chapter is where the Prism rows come from.
 | The URL addresses what is on screen | Proxmox (`StateProvider`, read in the source) | **Added.** The page had one address, so nobody could link to a guest and the back button did nothing. `deep-link` |
 | Navigation goes in the URL, layout stays local | Proxmox (its `hslist` is view, resource and tab, and nothing else) | **Added.** A link says where you are. Pane widths are how you like to work, and sending those to somebody else would be rude. `deep-link` |
 | Back and forward walk the UI | Proxmox | **Added.** `deep-link` |
+| The list's filters and sort in the address | — | **Added**, past the reference: Proxmox addresses the resource, not the grid. A filtered list became something to send. `grid-address` |
+| A filter keystroke is not a history entry | — | **Added** with it. A change to the place pushes; a change to the grid alone replaces. `grid-address` |
 | A URL short enough to paste | Proxmox (a positional list against a dictionary of every tab name) | **Declined.** That needs a central table naming each tab, which is the shape the capability registry just removed. corral uses readable keys, and accepts a longer address. |
 | Typing the name to confirm a removal | Proxmox (`ConfirmRemoveDialog`, read in the source) | **Added.** Deleting a guest takes its disks, and it was one `confirm()`: a box with its default button already focused, so a stray Enter after a bulk selection destroyed guests and their storage. `confirm-destroy` |
 | A plain confirm for everything else | Proxmox (only `dangerous` removals get the field) | **Kept.** A dialog that always demands typing teaches people to type without reading. |
@@ -110,6 +112,7 @@ documents the keyboard model. That chapter is where the Prism rows come from.
 | Breadcrumb to the parent | VS Code, vSphere | **Added.** `breadcrumb` |
 | Search before menus | Prism, Grafana | Palette existed. **Added** a visible way in. `palette-reach` |
 | Single-key jumps | Prism, Linear | Present (`g d`, `c`, `s`). **Added** hints, because nothing told anyone. `palette-keys` |
+| A diagram of the fleet | Prism (the D in its overview / diagram / table switch) | **Added.** A card per node with its guests inside, coloured by state and summed at the top. Guests drag between nodes to migrate, through the tree's own drop rule. Cards reflow instead of a node-and-edge drawing, which stops being readable at fleet sizes. `g t`. `topology` |
 | The view switch has a key | Prism (`O`/`D`/`T`, page-aware) | **Added.** Four views of the same fleet, reachable by mouse alone until now. `v` walks them. `palette-filters` |
 | A list, then a detail screen with its tools along the top | Portainer, Cockpit | Present. |
 | A wizard behind the list's Create action | Harvester | Present. |
@@ -158,6 +161,9 @@ documents the keyboard model. That chapter is where the Prism rows come from.
 | One poll at a time | Proxmox (`UpdateStore` schedules the next load from the last load's callback) | **Added.** A fixed 5-second timer over an asynchronous refresh sent a second request before the first came back. Measured: two in flight against a slow endpoint, now one. `poll-backoff` |
 | A slow server is polled less | Proxmox (its interval is the base plus twice the last load's runtime) | **Added**, with the same arithmetic. Nobody tunes it, and a struggling server gets room. `poll-backoff` |
 | A refresh asked for during a poll is not lost | — | **Added** with the guard. The callers that force a refresh have just changed something and have to see it. |
+| Poll nothing while nobody can see the page | — | **Added**, one step past the reference: Proxmox polls a hidden tab too. Every poller in the UI stops, and each catches up the moment the page is shown. `quiet-when-unseen` |
+| Report a repeated failure once | — | **Added.** A server that is down fails every poll, and a toast each time buried the page under one sentence. `quiet-when-unseen` |
+| A missing identity is not a missing cluster | — | **Added.** corral authorises against the identity the Tailscale ingress passes on, and has no login of its own. A 401 on first load fell into the no-cluster screen and told the operator to fix `kubectl`. It now says what is wrong, and the page recovers by itself when the identity returns. `quiet-when-unseen` |
 | Land on the nearest surviving parent | Proxmox (`ResourceTree` walks the parent chain) | **Added.** A deleted or migrated guest dropped you at the datacenter, the furthest place from where you were. `vanished-selection` |
 | Compare only the fields that are drawn | Proxmox (`changedFields`, and it mutates the record in place) | **Declined**, and measured first. corral rebuilds a row when any field of the guest changes, because its handlers close over the guest object and a reused node must not hold an old one. That is only safe while the fleet payload carries nothing volatile, which it does not: two polls of `/api/vms` are byte-identical. `tree-reconcile` is what guards it, because a volatile field would churn every signature and the kept-row count would drop. |
 
@@ -206,16 +212,6 @@ documents the keyboard model. That chapter is where the Prism rows come from.
 | A plugin declares its place in the UI | KubeStellar | **Proposed** for the plugin contract. Stage 0 is built. See [RFC-0002](rfc/0002-plugin-ui-contributions.md). |
 | A plugin ships code the page runs | KubeStellar (WASM, `plugin-component.js`) | **Declined.** corral embeds its UI and has no build step. Script from a marketplace could read the session and call any API. |
 | Documented extension points | — | **Added.** See [the extension points](web-ui-extension-points.md). |
-
-## Taken from Prism, and not taken
-
-Prism's navigation chapter documents a keyboard model, and one of its ideas
-needs a screen corral does not have. This page keeps it, so the next person
-does not have to find it again.
-
-| Pattern | corral |
-|---|---|
-| A diagram of the fleet, as a third view | **Open.** Prism switches between overview, diagram and table. corral has no diagram, so that view has to exist before a switch can reach it. The key below walks the four views it does have. |
 
 ## What the survey still leaves open
 

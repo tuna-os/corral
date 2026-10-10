@@ -79,6 +79,16 @@ Access the Proxmox-style Web UI at `http://localhost:8006` or via `corral web`.
 
 ![Mobile Dashboard](screenshots/dashboard-mobile.png)
 
+#### Topology
+
+Topology, under Datacenter in the tree, draws the fleet as the machines it
+runs on. Each node is a card, with its guests inside and the CPU and memory
+they take summed at the top. A tile's left edge shows the guest's state.
+
+To migrate a guest, drag its tile onto another node's card. corral asks you
+to confirm first. If it cannot make the move, it says why and refuses it. The
+keys `g` then `t` open the topology from anywhere.
+
 #### Several dashboards
 
 A Datacenter or node screen can hold more than one dashboard. Use the picker
@@ -106,7 +116,9 @@ and the address holds both. Send that address to somebody else and they arrive
 on the same screen. The back and forward buttons move through the screens you
 visited.
 
-The address carries the tree view, the selection and the open tab. It does not
+The address carries the tree view, the selection and the open tab. On a screen
+with the guest list, it also carries the list's filters and sort. So you can
+send somebody the stopped guests on one node, sorted by memory. It does not
 carry how wide you keep the sidebar, which columns you hid, or where you put
 the dashboard widgets. Those stay in your own browser.
 
@@ -125,6 +137,7 @@ The items that you used last show at the top of the list.
 | `c` | Open the console of the selected VM |
 | `s` | Start or stop the selected VM |
 | `g` then `d` | Go to the datacenter |
+| `g` then `t` | Go to the topology |
 | `v` | Switch the tree to the next view |
 | `t` | Show the Tasks panel, and hide it again |
 | `e` | Show the Events panel for the selection, and hide it again |
@@ -321,6 +334,20 @@ corral plugin remove <name>
 - `gpu`: GPU / PCI passthrough, via discovery of the device plugin.
 - `windows`: First-class creation of Windows VMs (UEFI, TPM, virtio drivers).
 - `vdi`: Desktop pools for Virtual Desktop Infrastructure (VDI).
+
+#### Plugin screens and widgets
+
+Some plugins add screens and dashboard widgets to the web UI. The Extensions
+screen shows what each plugin adds, before and after you install it.
+
+- A plugin widget does not appear on its own. Add it from "Add widget" on the
+  Datacenter dashboard.
+- A plugin screen opens from "Added by plugins" on the Extensions screen, or
+  from the command palette.
+- A plugin screen is read-only. It shows information, and it cannot change the
+  fleet.
+- If a plugin does not answer, the widget or screen tells you why. Click "Try
+  again" to ask again.
 
 ---
 

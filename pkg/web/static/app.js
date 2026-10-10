@@ -14,12 +14,15 @@ import { renderExtensions } from './content/extensions.js';
 // Imported for its side effect: the module registers the host-power
 // capability with ui/capabilities.js. Core names nothing in it.
 import './content/hostpower.js';
+import './content/pluginui.js';
 import { disconnectMultiview, renderMultiview } from './content/multiview.js';
 import { renderNamespace } from './content/namespace.js';
 import { renderNode } from './content/node.js';
 import { renderSettings } from './content/settings.js';
 import { renderStorage } from './content/storage.js';
+import { renderTopology } from './content/topology.js';
 import { renderVM, vmAction } from './content/vm.js';
+import { applyInventoryGridAddress, inventoryGridAddress } from './content/vm-table.js';
 import { updateSourceFields } from './create.js';
 // The task dock registers its Alpine component on load; it exports nothing.
 import './dock.js';
@@ -36,6 +39,7 @@ import { makeCollapsible, makeSplitter } from './ui/splitter.js';
 import { activeContextMenu, attachContextMenu } from './ui/menu.js';
 import { initInteractionTracking, interacting, onSettled } from './ui/interaction.js';
 import { cycleThemeMode, themeMode } from './ui/theme.js';
+import { onPageVisible, pageHidden } from './ui/visibility.js';
 
 // A console deep link is also the pop-out contract. It uses the canonical VM
 // key rather than only a name, so duplicate names on peers/contexts are safe.
@@ -43,6 +47,11 @@ const consoleRoute = new URLSearchParams(location.search).get('console');
 let consoleRouteApplied = false;
 // The hash is applied once, after the first fleet load. See applyRoute().
 let routeApplied = false;
+// Set while the tailnet identity is missing, so its screen is drawn once and
+// the poll that keeps checking does not redraw it every few seconds.
+let identityLost = false;
+// The last poll failure already reported, so a repeat of it stays quiet.
+let lastRefreshFailure = '';
 
 // Fingerprint of the last-rendered state. The 5s poll only re-renders when
 // the data (or what's selected) actually changed — otherwise innerHTML
@@ -59,6 +68,36 @@ let offlineShown = false;
 // configured backends — only nag about connecting a KubeVirt cluster when
 // kubevirt is actually a configured target. A host that only runs local
 // QEMU/Incus/libvirt VMs should never be told to go install KubeVirt.
+// The page lost the identity corral authorises against.
+//
+// corral has no login of its own. The Tailscale ingress in front of it proves
+// who the caller is and passes that on with each request, and with
+// CORRAL_AUTH_REQUIRED set, a request without it is refused with a 401. So
+// this is not a session that ran out and there is no form to fill in: the fix
+// is on the operator's device. Polling continues underneath, so the page
+// recovers by itself when the identity returns.
+function renderIdentityLost() {
+  const content = $('#content');
+  if (!content) return;
+  content.innerHTML = `
+    <div class="empty-state" id="identity-lost">
+      <div class="empty-icon">🔒</div>
+      <h1>corral can no longer tell who you are</h1>
+      <p class="muted">It reads your identity from your tailnet connection, and
+        that stopped arriving with this page's requests.</p>
+      <ul>
+        <li>Check that Tailscale is connected on this device, and that its
+          session has not expired.</li>
+        <li>Open corral by its tailnet address. A port-forward or a local
+          address carries no identity.</li>
+      </ul>
+      <p class="muted">corral keeps checking, and this page comes back by
+        itself once you are reconnected.</p>
+      <button class="btn primary" id="identity-retry">Check now</button>
+    </div>`;
+  content.querySelector('#identity-retry').onclick = () => refresh(true);
+}
+
 async function renderOffline(msg) {
   const content = $('#content');
   if (!content) return;
@@ -136,7 +175,9 @@ const POLL_MS = 5000;
 async function pollLoop() {
   const started = Date.now();
   try {
-    await refresh();
+    // Nobody is looking, so nothing is fetched. The loop keeps its cadence,
+    // and onPageVisible below catches up the moment the page is shown.
+    if (!pageHidden()) await refresh();
   } finally {
     setTimeout(pollLoop, POLL_MS + (Date.now() - started) * 2);
   }
@@ -173,6 +214,16 @@ async function refreshOnce(force = false) {
   try {
     state.vms = await api('/api/vms');
   } catch (e) {
+    // The identity the tailnet vouches for stopped arriving. That is not a
+    // missing cluster, so it gets its own screen and its own advice.
+    if (e.status === 401) {
+      if (!identityLost) {
+        identityLost = true;
+        renderTree();
+        renderIdentityLost();
+      }
+      return;
+    }
     // Couldn't list VMs from any configured backend → genuinely nothing to
     // show. A blank page with a toast reads as "broken"; show setup guidance
     // once instead, and keep the static tree rows (Extensions works offline).
@@ -180,10 +231,21 @@ async function refreshOnce(force = false) {
       offlineShown = true;
       renderTree();
       renderOffline(e.message);
-    } else if (lastRenderFp) {
+    } else if (lastRenderFp && e.message !== lastRefreshFailure) {
+      // Once per distinct failure. A server that is down fails every poll,
+      // and a toast each time buries the page under the same sentence.
       toast(`Refresh failed: ${e.message}`);
     }
+    lastRefreshFailure = e.message;
     return;
+  }
+  lastRefreshFailure = '';
+  // Identity came back. The pane still shows the identity screen, and the
+  // data may be exactly what the last render drew, so the fingerprint would
+  // decide there is nothing to do. Force the render that replaces the screen.
+  if (identityLost) {
+    identityLost = false;
+    force = true;
   }
   // Nodes are the cluster topology view; a local-only deployment (QEMU/Incus/
   // libvirt) has none, and a nodes failure must never blank a working VM list.
@@ -393,9 +455,16 @@ async function openPool(path) {
 //
 // The console popout is deliberately exempt: it is addressed by ?console= and
 // is a window showing one screen, not a place to navigate from.
-function syncRoute() {
+export function syncRoute() {
   if (document.body.classList.contains('console-popout')) return;
-  writeRoute({ view: treeView, sel: encodeSelection(state.selected), tab: state.tab });
+  writeRoute({
+    view: treeView,
+    sel: encodeSelection(state.selected),
+    tab: state.tab,
+    // The inventory grid's sort and filters, when a grid is on screen. A link
+    // to a filtered list then opens on the same list.
+    grid: inventoryGridAddress(),
+  });
 }
 
 // Apply an address to the page. Used at boot, and again whenever the back or
@@ -415,6 +484,9 @@ function applyRoute() {
   state.tab = route.tab;
   renderTree();
   renderContent();
+  // After the render, so a grid the render just mounted takes the sort and
+  // filters at once; one not yet mounted takes them on its first mount.
+  applyInventoryGridAddress(route.grid);
   markRendered();
   emit('select', { selected: state.selected, tab: state.tab });
 }
@@ -462,6 +534,7 @@ export function renderContent() {
   if (state.selected.type === 'extensions') return renderExtensions(main);
   if (state.selected.type === 'doctor') return renderDoctor(main);
   if (state.selected.type === 'multiview') return renderMultiview(main);
+  if (state.selected.type === 'topology') return renderTopology(main);
   if (state.selected.type === 'storage') return renderStorage(main, state.selected.name);
   if (state.selected.type === 'settings') return renderSettings(main);
   // A capability may own a selection type. Core does not list those types.
@@ -619,3 +692,6 @@ loadCaps();
 loadInstanceTypes();
 refresh();
 setTimeout(pollLoop, POLL_MS);
+// Back from a hidden tab: fetch now rather than show data up to one interval
+// old as if it were current. See ui/visibility.js.
+onPageVisible(() => refresh());

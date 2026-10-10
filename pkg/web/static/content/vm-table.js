@@ -2,7 +2,7 @@
 // Namespace screens share.
 
 import { api, findVM, vmKey, vmURL } from '../api.js';
-import { refresh, select } from '../app.js';
+import { refresh, select, syncRoute } from '../app.js';
 import { mountGrid } from '../grid.js';
 import { icon } from '../icons.js';
 import { vmMenuItems } from '../menus.js';
@@ -117,6 +117,27 @@ const VM_GRID_COLUMNS = [
 let gridHost = null;
 let gridHandle = null;
 
+// A sort and filters that arrived in the address before the grid existed: a
+// pasted link opens on a cold page, and the grid mounts only after the first
+// fleet load. Held here and applied the moment the grid is mounted.
+let pendingAddress = null;
+
+// What the address should say about the grid: its sort and filters, or null
+// when no grid is on screen. The grid outlives the screens that show it, so
+// "mounted" is not enough; it has to be in the page right now.
+export function inventoryGridAddress() {
+  if (!gridHandle || !gridHost?.isConnected) return null;
+  const a = gridHandle.addressable();
+  return a.sort.length || Object.keys(a.filters).length ? a : null;
+}
+
+// Apply a sort and filters from the address, now or on the next mount.
+export function applyInventoryGridAddress(address) {
+  if (!address) return;
+  if (gridHandle) gridHandle.applyAddressable(address);
+  else pendingAddress = address;
+}
+
 export function bindVMTable(root, list) {
   const bar = root.querySelector('.bulkbar');
   if (!bar) return;
@@ -147,8 +168,15 @@ export function bindVMTable(root, list) {
         attachContextMenu(tr, () => vmMenuItems(vm));
         makeDraggable(tr, vm);
       },
+      // A sort or a filter changed: put it in the address, so the list on
+      // screen is the list a copied link opens.
+      onStateChange: () => syncRoute(),
     });
     gridHost = gridHandle ? placeholder : null;
+    if (gridHandle && pendingAddress) {
+      gridHandle.applyAddressable(pendingAddress);
+      pendingAddress = null;
+    }
   }
 
   bar.querySelectorAll('[data-bulk]').forEach((b) => {

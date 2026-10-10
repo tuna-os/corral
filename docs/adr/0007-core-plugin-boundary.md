@@ -39,6 +39,10 @@ Third-party code does not get the trust of the main process. Publication does
 not imply a runtime sandbox; operating-system and cluster permissions remain the actual
 security boundary.
 
+A plugin can add widgets and screens to the web UI. It declares them in its
+metadata (RFC-0002). It sends typed documents, and corral draws them. No plugin
+code runs in the browser.
+
 ## Consequences
 
 - A new compute backend needs a core adapter and doctor probe.
