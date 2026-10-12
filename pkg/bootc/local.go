@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/tuna-os/corral/pkg/qemu"
 	"github.com/tuna-os/corral/pkg/types"
 )
 
@@ -486,6 +487,20 @@ func (LibvirtTarget) Requires() []string {
 
 // DomainXML is exported so the definition can be inspected and tested without
 // defining anything.
+//
+// When OVMF firmware resolves to concrete host files (the distro candidate
+// table in pkg/qemu, overridable with CORRAL_OVMF_CODE/VARS), the domain
+// names the loader explicitly instead of asking libvirt to auto-select with
+// <os firmware='efi'>. Auto-selection depends on the daemon's
+// firmware-descriptor cache, which is not uniformly populated: on the same
+// host a qemu:///session daemon can resolve nothing while qemu:///system
+// defines fine, failing the define with "Unable to find 'efi' firmware"
+// (e2e-incus #482). An explicit pflash loader defines on either URI; the
+// <nvram> carries only the vars template and libvirt allocates the
+// per-domain NVRAM file itself, which keeps this working for both the system
+// daemon (root-owned nvram dir) and the session daemon (user-owned one).
+// When no firmware file resolves, the domain falls back to firmware='efi'
+// auto-selection so descriptor-only hosts keep working.
 func (LibvirtTarget) DomainXML(name, diskPath string, opts CreateOpts) string {
 	memory := opts.Memory
 	if memory == "" {
@@ -495,14 +510,25 @@ func (LibvirtTarget) DomainXML(name, diskPath string, opts CreateOpts) string {
 	if cpu <= 0 {
 		cpu = 2
 	}
+	osXML := `  <os firmware='efi'>
+    <type arch='x86_64' machine='q35'>hvm</type>
+    <boot dev='hd'/>
+  </os>`
+	if code, vars, err := qemu.FindUEFIFirmware(); err == nil {
+		var b strings.Builder
+		b.WriteString("  <os>\n    <type arch='x86_64' machine='q35'>hvm</type>\n")
+		fmt.Fprintf(&b, "    <loader readonly='yes' type='pflash'>%s</loader>\n", xmlEscape(code))
+		if vars != "" {
+			fmt.Fprintf(&b, "    <nvram template='%s'/>\n", xmlEscape(vars))
+		}
+		b.WriteString("    <boot dev='hd'/>\n  </os>")
+		osXML = b.String()
+	}
 	return fmt.Sprintf(`<domain type='kvm'>
   <name>%s</name>
   <memory unit='MiB'>%s</memory>
   <vcpu>%d</vcpu>
-  <os firmware='efi'>
-    <type arch='x86_64' machine='q35'>hvm</type>
-    <boot dev='hd'/>
-  </os>
+%s
   <features><acpi/><apic/></features>
   <cpu mode='host-passthrough'/>
   <devices>
@@ -520,7 +546,7 @@ func (LibvirtTarget) DomainXML(name, diskPath string, opts CreateOpts) string {
     <console type='pty'/>
   </devices>
 </domain>
-`, xmlEscape(name), memoryMiB(memory), cpu, xmlEscape(diskPath))
+`, xmlEscape(name), memoryMiB(memory), cpu, osXML, xmlEscape(diskPath))
 }
 
 func (l LibvirtTarget) Import(ref types.InstanceRef, disk string, opts CreateOpts) error {

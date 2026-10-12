@@ -34,8 +34,21 @@ jobs:
           sudo incus admin init --minimal
           sudo usermod -aG incus-admin $USER
           sudo chmod 666 /var/lib/incus/unix.socket
-          sudo systemctl start libvirtd
+          # libvirt loads its firmware descriptors once at daemon start, so a
+          # restart (not just start) picks up the OVMF files installed above
+          # in the same apt run. The UEFI libvirt domains then resolve their
+          # firmware to those host files (see LibvirtTarget.DomainXML), so
+          # fail fast here if the files are absent rather than mid-suite with
+          # "Unable to find 'efi' firmware" (e2e-incus #482).
+          sudo systemctl restart libvirtd
           sudo chmod 666 /run/libvirt/libvirt-sock
+          shopt -s nullglob
+          ovmf=(/usr/share/OVMF/*.fd /usr/share/edk2/ovmf/*.fd /usr/share/qemu/*.fd)
+          if [ ${#ovmf[@]} -eq 0 ]; then
+            echo "::error::no OVMF firmware files found — UEFI libvirt domains cannot be defined"
+            exit 1
+          fi
+          echo "OVMF firmware: ${ovmf[0]}"
 
       - name: Build Corral
         run: |

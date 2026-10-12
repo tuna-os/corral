@@ -361,10 +361,46 @@ func TestQEMUTarget_ReportsAMissingBuild(t *testing.T) {
 // A bootc image installs a UEFI bootloader. A BIOS domain boots it to a blank
 // screen with no error, which is the worst way to find out.
 func TestLibvirtTarget_DomainIsUEFI(t *testing.T) {
+	// No firmware on the host: ask libvirt to auto-select an EFI firmware.
+	t.Setenv("CORRAL_OVMF_CODE", "/nonexistent/OVMF_CODE.fd")
+	t.Setenv("CORRAL_OVMF_VARS", "/nonexistent/OVMF_VARS.fd")
 	doc := (LibvirtTarget{}).DomainXML("dev", "/disks/dev.qcow2", CreateOpts{CPU: 2, Memory: "4Gi"})
 	if !strings.Contains(doc, "firmware='efi'") {
-		t.Errorf("the domain is not UEFI, so a bootc disk will not boot:\n%s", doc)
+		t.Errorf("without host firmware the domain should request auto-selected EFI, got:\n%s", doc)
 	}
+	assertDomainShape(t, doc)
+
+	// Firmware on the host: name the loader explicitly. Auto-selection
+	// depends on the daemon's firmware-descriptor cache, which a
+	// qemu:///session daemon can lack while qemu:///system defines fine
+	// (e2e-incus #482) — an explicit pflash loader defines on either URI.
+	dir := t.TempDir()
+	code := filepath.Join(dir, "OVMF_CODE.fd")
+	vars := filepath.Join(dir, "OVMF_VARS.fd")
+	for _, p := range []string{code, vars} {
+		if err := os.WriteFile(p, []byte("firmware"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("CORRAL_OVMF_CODE", code)
+	t.Setenv("CORRAL_OVMF_VARS", vars)
+	doc = (LibvirtTarget{}).DomainXML("dev", "/disks/dev.qcow2", CreateOpts{CPU: 2, Memory: "4Gi"})
+	for what, want := range map[string]string{
+		"explicit pflash loader": "<loader readonly='yes' type='pflash'>" + code + "</loader>",
+		"vars template":          "<nvram template='" + vars + "'/>",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("domain is missing the %s (%q):\n%s", what, want, doc)
+		}
+	}
+	if strings.Contains(doc, "firmware='efi'") {
+		t.Errorf("explicit loader and auto-selection must not be mixed:\n%s", doc)
+	}
+	assertDomainShape(t, doc)
+}
+
+func assertDomainShape(t *testing.T, doc string) {
+	t.Helper()
 	for what, want := range map[string]string{
 		"q35 machine type": "machine='q35'",
 		"virtio boot disk": "bus='virtio'",
@@ -378,9 +414,30 @@ func TestLibvirtTarget_DomainIsUEFI(t *testing.T) {
 }
 
 func TestLibvirtTarget_DomainXMLIsWellFormed(t *testing.T) {
-	doc := (LibvirtTarget{}).DomainXML("dev", "/disks/dev.qcow2", CreateOpts{})
-	if err := wellFormed(doc); err != nil {
-		t.Fatalf("generated domain XML is not well-formed: %v\n%s", err, doc)
+	// Every firmware spelling must parse: the auto-selection fallback
+	// without host firmware, the explicit loader with code and vars, and
+	// the explicit loader with code alone.
+	code := filepath.Join(t.TempDir(), "OVMF_CODE.fd")
+	if err := os.WriteFile(code, []byte("firmware"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	vars := filepath.Join(t.TempDir(), "OVMF_VARS.fd")
+	if err := os.WriteFile(vars, []byte("firmware"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for name, env := range map[string][2]string{
+		"auto-selection fallback": {"/nonexistent/OVMF_CODE.fd", "/nonexistent/OVMF_VARS.fd"},
+		"explicit loader":         {code, vars},
+		"loader without vars":     {code, ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("CORRAL_OVMF_CODE", env[0])
+			t.Setenv("CORRAL_OVMF_VARS", env[1])
+			doc := (LibvirtTarget{}).DomainXML("dev", "/disks/dev.qcow2", CreateOpts{})
+			if err := wellFormed(doc); err != nil {
+				t.Fatalf("generated domain XML is not well-formed: %v\n%s", err, doc)
+			}
+		})
 	}
 }
 
