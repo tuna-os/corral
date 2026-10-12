@@ -346,7 +346,7 @@ func TestPowerOps(t *testing.T) {
 	f.handlers["VM.start"] = func(string) string { return success(`<string></string>`) }
 	f.handlers["VM.clean_reboot"] = func(string) string { return success(`<string></string>`) }
 	f.handlers["VM.suspend"] = func(string) string { return success(`<string></string>`) }
-	f.handlers["VM.shutdown"] = func(string) string { return success(`<string></string>`) }
+	f.handlers["VM.clean_shutdown"] = func(string) string { return success(`<string></string>`) }
 	c := testClient(t, f)
 	for _, op := range []func(string) error{c.Start, c.Stop, c.Reboot, c.Suspend} {
 		if err := op("web-1"); err != nil {
@@ -355,11 +355,36 @@ func TestPowerOps(t *testing.T) {
 	}
 }
 
+// TestStopCleanNeverForcesPowerOff proves a successful graceful shutdown
+// issues no hard_shutdown: the pool answers METHOD_UNKNOWN to the
+// nonexistent VM.shutdown, so sending anything but VM.clean_shutdown turns
+// every normal stop into a forced power-off.
+func TestStopCleanNeverForcesPowerOff(t *testing.T) {
+	f := newFakePool(t)
+	f.handlers["session.login_with_password"] = loginHandler(testSession)
+	resolveHandlers(f, "OpaqueRef:vm-running")
+	f.handlers["VM.clean_shutdown"] = func(string) string { return success(`<string></string>`) }
+	f.handlers["VM.hard_shutdown"] = func(string) string { return success(`<string></string>`) }
+	c := testClient(t, f)
+	if err := c.Stop("web-1"); err != nil {
+		t.Fatal(err)
+	}
+	if f.served("VM.clean_shutdown") != 1 {
+		t.Fatal("Stop did not issue VM.clean_shutdown")
+	}
+	if f.served("VM.hard_shutdown") != 0 {
+		t.Fatal("successful clean shutdown also issued VM.hard_shutdown")
+	}
+	if f.served("VM.shutdown") != 0 {
+		t.Fatal("Stop invoked the nonexistent VM.shutdown method")
+	}
+}
+
 func TestStopFallsBackToHardShutdown(t *testing.T) {
 	f := newFakePool(t)
 	f.handlers["session.login_with_password"] = loginHandler(testSession)
 	resolveHandlers(f, "OpaqueRef:vm-running")
-	f.handlers["VM.shutdown"] = func(string) string {
+	f.handlers["VM.clean_shutdown"] = func(string) string {
 		return failure("VM_REQUIRES_TOOLS", "OpaqueRef:vm-running")
 	}
 	f.handlers["VM.hard_shutdown"] = func(string) string { return success(`<string></string>`) }
@@ -376,7 +401,7 @@ func TestStopBadPowerStateIsNotRetried(t *testing.T) {
 	f := newFakePool(t)
 	f.handlers["session.login_with_password"] = loginHandler(testSession)
 	resolveHandlers(f, "OpaqueRef:vm-halted")
-	f.handlers["VM.shutdown"] = func(string) string {
+	f.handlers["VM.clean_shutdown"] = func(string) string {
 		return failure("VM_BAD_POWER_STATE", "OpaqueRef:vm-halted", "halted")
 	}
 	f.handlers["VM.hard_shutdown"] = func(string) string { return success(`<string></string>`) }

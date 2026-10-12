@@ -5,7 +5,7 @@
 // (https://xapi-project.github.io/xen-api/classes/vm.html):
 //
 //	VM.start(session, ref, paused, force)
-//	VM.shutdown / VM.hard_shutdown(session, ref)
+//	VM.clean_shutdown / VM.hard_shutdown(session, ref)
 //	VM.clean_reboot / VM.hard_reboot(session, ref)
 //	VM.suspend(session, ref)
 //	VM.snapshot(session, ref, new_name, empty VDI set)
@@ -47,7 +47,7 @@ func (c *Client) Stop(name string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := c.call("VM.shutdown", ref); err == nil {
+	if _, err := c.call("VM.clean_shutdown", ref); err == nil {
 		return nil
 	} else if apiErr, ok := err.(*APIError); ok && apiErr.Code == "VM_BAD_POWER_STATE" {
 		return err
