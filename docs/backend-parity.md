@@ -27,33 +27,33 @@ to the matrix.
 Legend: ✅ shipped · 🔨 the backend can do this and Corral does not yet · — the
 backend cannot, or it is meaningless there.
 
-| Operation | kubevirt | qemu | incus | libvirt | proxmox | virtualbox | vsphere |
+| Operation | kubevirt | qemu | incus | libvirt | proxmox | virtualbox | vsphere | xen |
 |---|---|---|---|---|---|---|---|
-| List / inventory | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Create | ✅ | ✅ | ✅ | ✅ | ✅ | 🔨 | 🔨 |
-| Start | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Stop | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Restart | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Pause / resume | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Delete | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| SSH | ✅ | ✅ | ✅ | 🔨 | ✅ | 🔨 | 🔨 |
-| Serial / shell console | ✅ | 🔨 | ✅ | 🔨 | 🔨 | 🔨 | 🔨 |
-| Graphical console (VNC) | ✅ | ✅ | 🔨 | ✅ | 🔨 | 🔨 | 🔨 |
-| RDP | ✅ | 🔨 | 🔨 | 🔨 | 🔨 | 🔨 | 🔨 |
-| Live CPU / memory | ✅ | ✅ | ✅ | ✅ | ✅ | 🔨 | 🔨 |
-| Snapshot / restore | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Migrate | ✅ | — | 🔨 | 🔨 | ✅ | — | ✅ |
-| Clone | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | ✅ |
-| Template mark | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | ✅ |
-| CPU / memory edit | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | ✅ |
-| Add / remove disks | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | 🔨 |
-| Expand disk | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | 🔨 |
-| GPU passthrough | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | 🔨 |
-| Export / backup disk | ✅ | ✅ | ✅ | ✅ | ✅ | 🔨 | 🔨 |
-| Events | ✅ | ✅ | — | — | ✅ | — | 🔨 |
-| Tags | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | 🔨 |
-| Published ports | ✅ | ✅ | 🔨 | — | — | 🔨 | — |
-| Containers (CT) | ✅ | — | ✅ | — | 🔨 | — | — |
+| List / inventory | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Create | ✅ | ✅ | ✅ | ✅ | ✅ | 🔨 | 🔨 | 🔨 |
+| Start | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Stop | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Restart | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Pause / resume | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Delete | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| SSH | ✅ | ✅ | ✅ | 🔨 | ✅ | 🔨 | 🔨 | 🔨 |
+| Serial / shell console | ✅ | 🔨 | ✅ | 🔨 | 🔨 | 🔨 | 🔨 | 🔨 |
+| Graphical console (VNC) | ✅ | ✅ | 🔨 | ✅ | 🔨 | 🔨 | 🔨 | 🔨 |
+| RDP | ✅ | 🔨 | 🔨 | 🔨 | 🔨 | 🔨 | 🔨 | 🔨 |
+| Live CPU / memory | ✅ | ✅ | ✅ | ✅ | ✅ | 🔨 | 🔨 | 🔨 |
+| Snapshot / restore | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Migrate | ✅ | — | 🔨 | 🔨 | ✅ | — | ✅ | ✅ |
+| Clone | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | ✅ | ✅ |
+| Template mark | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | ✅ | 🔨 |
+| CPU / memory edit | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | ✅ | 🔨 |
+| Add / remove disks | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | 🔨 | 🔨 |
+| Expand disk | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | 🔨 | 🔨 |
+| GPU passthrough | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | 🔨 | 🔨 |
+| Export / backup disk | ✅ | ✅ | ✅ | ✅ | ✅ | 🔨 | 🔨 | 🔨 |
+| Events | ✅ | ✅ | — | — | ✅ | — | 🔨 | 🔨 |
+| Tags | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | 🔨 | 🔨 |
+| Published ports | ✅ | ✅ | 🔨 | — | — | 🔨 | — | — |
+| Containers (CT) | ✅ | — | ✅ | — | 🔨 | — | — | — |
 
 ## What the audit found
 
@@ -226,6 +226,23 @@ websocket bridge is not. So the capability flags say no, and the matrix says why
 - **export** — ExportVm serves an OVF/NFC lease natively; pkg/export has no vSphere adapter yet
 - **events** — The event manager keeps per-VM history. Corral wires no reader for it yet.
 - **tags** — vSphere has native tags. Nothing drives them yet.
+
+### xen — 14 gaps
+
+- **create** — VM.create works natively. Corral has no creator for it yet.
+- **ssh** — Corral has no address discovery yet. Use the guest-metrics address, then plain ssh.
+- **tty** — vt100 console objects serve the guest console natively. Corral wires no bridge to them.
+- **vnc** — rfb console objects hand out display locations. Corral wires no viewer to them.
+- **rdp** — same probe and bridge via the guest address
+- **metrics** — VM_metrics and host_metrics carry live counters. Corral has no sampler for them yet.
+- **template** — VM.set_is_a_template marks natively. Corral has no templater wiring it yet.
+- **scale** — VCPU and memory set calls exist natively. Nothing drives them yet.
+- **volumes** — VBD plug and VDI create exist natively. Nothing drives them yet.
+- **expand** — VDI.resize grows a disk natively. Nothing drives it yet.
+- **gpu** — PCI device assignment exists natively. It stays experimental and host-limited.
+- **export** — GET /export serves XVA natively. pkg/export has no Xen adapter yet.
+- **events** — the event class records pool activity. Corral wires no reader for it yet.
+- **tags** — the VM record carries tags natively. Corral has no tagger writing them yet.
 
 ## Testing parity
 

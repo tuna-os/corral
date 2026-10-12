@@ -61,6 +61,12 @@ type ContextConfig struct {
 	// environment, so a config file that lands in a dotfiles repo does not
 	// carry estate credentials with it.
 	Vsphere *VsphereContextConfig `yaml:"vsphere,omitempty" json:"vsphere,omitempty"`
+	// Xen carries what a XenServer/XCP-ng pool endpoint needs beyond its
+	// host, and is only read when Backend is "xen". The password is a
+	// secret and is never stored here: it comes from
+	// CORRAL_XEN_PASSWORD[_<CTX>] in the environment, so a config file
+	// that lands in a dotfiles repo does not carry pool credentials with it.
+	Xen *XenContextConfig `yaml:"xen,omitempty" json:"xen,omitempty"`
 }
 
 // ProxmoxContextConfig is one PVE cluster's access details (ADR-0009).
@@ -85,6 +91,19 @@ type VsphereContextConfig struct {
 	Username string `yaml:"username,omitempty" json:"username,omitempty"`
 	// Fingerprint pins the server certificate (SHA-256 hex). Self-signed
 	// certs are common on vCenter, and pinning trusts one specifically
+	// rather than trusting anything presented.
+	Fingerprint string `yaml:"fingerprint,omitempty" json:"fingerprint,omitempty"`
+	// Insecure skips verification entirely — explicit, per-context, never a
+	// default.
+	Insecure bool `yaml:"insecure,omitempty" json:"insecure,omitempty"`
+}
+
+// XenContextConfig is one XenServer/XCP-ng pool's access details (RFC-0003).
+type XenContextConfig struct {
+	// Username is the XenAPI user, usually "root".
+	Username string `yaml:"username,omitempty" json:"username,omitempty"`
+	// Fingerprint pins the server certificate (SHA-256 hex). Self-signed
+	// certs are the norm on XenServer, and pinning trusts one specifically
 	// rather than trusting anything presented.
 	Fingerprint string `yaml:"fingerprint,omitempty" json:"fingerprint,omitempty"`
 	// Insecure skips verification entirely — explicit, per-context, never a
@@ -175,7 +194,9 @@ func AddContext(c ContextConfig) error {
 	// secret block — remote management via vboxwebsrv is out of scope.
 	// vsphere is remote-only: Context is the vCenter host, and the secret
 	// (password) lives in the environment, never in this block.
-	case "qemu", "kubevirt", "incus", "libvirt", "virtualbox", "vsphere":
+	// xen is remote-only: Context is the pool master host, and the secret
+	// (password) lives in the environment, never in this block.
+	case "qemu", "kubevirt", "incus", "libvirt", "virtualbox", "vsphere", "xen":
 	default:
 		return fmt.Errorf("unsupported backend %q", c.Backend)
 	}
@@ -277,9 +298,9 @@ func DefaultBackend() string {
 
 func SetDefaultBackend(backend string) error {
 	switch backend {
-	case "qemu", "kubevirt", "incus", "libvirt", "virtualbox", "vsphere":
+	case "qemu", "kubevirt", "incus", "libvirt", "virtualbox", "vsphere", "xen":
 	default:
-		return fmt.Errorf("unsupported backend %q (want qemu, kubevirt, incus, libvirt, virtualbox, or vsphere)", backend)
+		return fmt.Errorf("unsupported backend %q (want qemu, kubevirt, incus, libvirt, virtualbox, vsphere, or xen)", backend)
 	}
 	cfg, err := Load("")
 	if err != nil {

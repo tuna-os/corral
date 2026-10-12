@@ -1,14 +1,9 @@
-// Context configuration (client-only slice: types and environment only).
+// Context configuration.
 //
 // A Xen context is a pool endpoint plus the credentials to reach it. The
-// password is a secret, so it comes from the environment first and is never
-// read from the config file: a homelab config file is often in a dotfiles
-// repo, and a password that ends up committed is a pool somebody else can
-// drive.
-//
-// Binding this to pkg/config contexts (a `xen:` block beside
-// `proxmox:`) arrives with the wiring turn, after the vSphere backend
-// merges — this file deliberately does not import pkg/config.
+// password is a secret, so it is read from the environment first: a homelab
+// config file is often in a dotfiles repo, and a password that ends up
+// committed is a pool somebody else can drive.
 
 package xen
 
@@ -16,47 +11,89 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
+
+	"github.com/tuna-os/corral/pkg/config"
 )
 
 // PasswordEnv holds the XenAPI password for every Xen context, and
-// overrides anything else. CORRAL_XEN_PASSWORD_<CONTEXT> (uppercased,
-// non-alphanumerics as underscores) overrides it per context, for an
-// operator with two pools.
+// overrides the config file — which carries no password by construction.
+// CORRAL_XEN_PASSWORD_<CONTEXT> (uppercased, non-alphanumerics as
+// underscores) overrides it per context, for an operator with two pools.
 const PasswordEnv = "CORRAL_XEN_PASSWORD"
 
-// Stored is the file half of a Xen context: everything but the secret. It
-// exists so the shape of the future config-file binding is settled now —
-// host, user, and trust — while the password stays out of the file by
-// construction (there is no field for it).
-type Stored struct {
-	Host        string
-	Username    string
-	Fingerprint string
-	Insecure    bool
+var (
+	clientsMu sync.Mutex
+	clients   = map[string]*Client{}
+)
+
+// ClientForContext resolves the client for a configured context. Clients are
+// cached because building one parses TLS trust, and a fleet listing resolves
+// the same context once per operation otherwise. The client is unauthenticated:
+// the session starts on first use, so merely resolving a context never dials.
+func ClientForContext(context string) (*Client, error) {
+	clientsMu.Lock()
+	defer clientsMu.Unlock()
+	if client, ok := clients[context]; ok {
+		return client, nil
+	}
+	cfg, err := ConfigForContext(context)
+	if err != nil {
+		return nil, err
+	}
+	client, err := New(cfg)
+	if err != nil {
+		return nil, err
+	}
+	clients[context] = client
+	return client, nil
 }
 
-// Resolve combines the stored endpoint with the password from the
-// environment into a client Config, failing fast when either half is
-// missing.
-func (s Stored) Resolve(contextName string) (Config, error) {
-	cfg := Config{
-		Host:        s.Host,
-		Username:    s.Username,
-		Fingerprint: s.Fingerprint,
-		Insecure:    s.Insecure,
-		Password:    PasswordFromEnv(contextName),
+// SetClientForContext installs a client for a context, bypassing configuration.
+// Tests use it to point a context at an httptest server.
+func SetClientForContext(context string, client *Client) {
+	clientsMu.Lock()
+	defer clientsMu.Unlock()
+	clients[context] = client
+}
+
+// ResetClients drops the cache, so a configuration change takes effect without a
+// restart (and so tests do not leak a client into one another).
+func ResetClients() {
+	clientsMu.Lock()
+	defer clientsMu.Unlock()
+	clients = map[string]*Client{}
+}
+
+// ConfigForContext builds a Config from the named context. The context's own
+// Context field is the host, matching how every other backend uses it — a
+// kubeconfig context, an Incus remote, a libvirt URI, a PVE endpoint, a
+// vCenter endpoint, a pool master.
+func ConfigForContext(context string) (Config, error) {
+	for _, target := range config.Contexts() {
+		if target.Backend != "xen" {
+			continue
+		}
+		if target.Context != context && target.Name != context {
+			continue
+		}
+		cfg := Config{Host: target.Context}
+		if target.Xen != nil {
+			cfg.Username = target.Xen.Username
+			cfg.Fingerprint = target.Xen.Fingerprint
+			cfg.Insecure = target.Xen.Insecure
+		}
+		if cfg.Username == "" {
+			cfg.Username = "root"
+		}
+		cfg.Password = PasswordFromEnv(target.Name)
+		if cfg.Password == "" {
+			return Config{}, fmt.Errorf("xen: context %q has no password; set %s or %s_%s",
+				target.Name, PasswordEnv, PasswordEnv, envSuffix(target.Name))
+		}
+		return cfg, nil
 	}
-	if strings.TrimSpace(cfg.Host) == "" {
-		return Config{}, fmt.Errorf("xen: context %q has no host", contextName)
-	}
-	if strings.TrimSpace(cfg.Username) == "" {
-		cfg.Username = "root"
-	}
-	if cfg.Password == "" {
-		return Config{}, fmt.Errorf("xen: context %q has no password; set %s or %s_%s",
-			contextName, PasswordEnv, PasswordEnv, envSuffix(contextName))
-	}
-	return cfg, nil
+	return Config{}, fmt.Errorf("xen: no configured context matches %q", context)
 }
 
 // PasswordFromEnv returns the password for a context: the per-context

@@ -17,6 +17,7 @@ import (
 	"github.com/tuna-os/corral/pkg/types"
 	"github.com/tuna-os/corral/pkg/virtualbox"
 	"github.com/tuna-os/corral/pkg/vsphere"
+	"github.com/tuna-os/corral/pkg/xen"
 )
 
 type Result struct {
@@ -68,6 +69,14 @@ func List(ctx context.Context) Result {
 				// fails one context, not the whole aggregation.
 				var client *vsphere.Client
 				if client, err = vsphere.ClientForContext(target.Context); err == nil {
+					vms, err = client.List()
+				}
+			case "xen":
+				// The 20s XML-RPC timeout inside the client bounds this the
+				// way proxmoxbe.Timeout bounds the PVE path — a wedged pool
+				// master fails one context, not the whole aggregation.
+				var client *xen.Client
+				if client, err = xen.ClientForContext(target.Context); err == nil {
 					vms, err = client.List()
 				}
 			default:

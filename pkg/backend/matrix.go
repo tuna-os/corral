@@ -37,7 +37,7 @@ const (
 )
 
 // Backends are the compute backends, in the order tables should show them.
-var Backends = []string{"kubevirt", "qemu", "incus", "libvirt", "proxmox", "virtualbox", "vsphere"}
+var Backends = []string{"kubevirt", "qemu", "incus", "libvirt", "proxmox", "virtualbox", "vsphere", "xen"}
 
 // Operation is one capability-bearing thing Corral does to an instance.
 type Operation struct {
@@ -102,6 +102,7 @@ var Matrix = map[string]map[string]Entry{
 		"proxmox":    {Shipped, "GET /cluster/resources, pkg/proxmoxbe.List — one call for the whole cluster"},
 		"virtualbox": {Shipped, "VBoxManage list vms plus showvminfo --machinereadable per VM, pkg/virtualbox"},
 		"vsphere":    {Shipped, "container view over VirtualMachine, pkg/vsphere.List — one call for the whole estate"},
+		"xen":        {Shipped, "VM.get_all plus VM.get_record per VM, pkg/xen.List — host names and disk sizes joined in"},
 	},
 	"create": {
 		"kubevirt":   {Shipped, "pkg/web/create_*.go, cmd/create.go"},
@@ -111,6 +112,7 @@ var Matrix = map[string]map[string]Entry{
 		"proxmox":    {Shipped, "POST /nodes/{node}/qemu or /lxc, pkg/proxmoxbe.Create"},
 		"virtualbox": {Possible, "createvm plus storagectl/storageattach/modifyvm exist natively; Corral has no creator wiring them yet"},
 		"vsphere":    {Possible, "CloneVM and OVF deploy exist natively; Corral has no creator wiring them yet"},
+		"xen":        {Possible, "VM.create exists natively; Corral has no creator wiring it yet"},
 	},
 	"start": {
 		"kubevirt":   {Shipped, "virtctl start"},
@@ -120,6 +122,7 @@ var Matrix = map[string]map[string]Entry{
 		"proxmox":    {Shipped, "POST …/status/start"},
 		"virtualbox": {Shipped, "startvm --type headless"},
 		"vsphere":    {Shipped, "PowerOnVM"},
+		"xen":        {Shipped, "VM.start with paused and force clear — a plain boot, never a forced one"},
 	},
 	"stop": {
 		"kubevirt":   {Shipped, "virtctl stop"},
@@ -129,6 +132,7 @@ var Matrix = map[string]map[string]Entry{
 		"proxmox":    {Shipped, "POST …/status/shutdown; the forced power cut is Kill, chosen by name"},
 		"virtualbox": {Shipped, "controlvm acpipowerbutton, falling back to controlvm poweroff when the guest ignores ACPI"},
 		"vsphere":    {Shipped, "ShutdownGuest, falling back to PowerOff when the guest ignores the request"},
+		"xen":        {Shipped, "VM.clean_shutdown, falling back to VM.hard_shutdown when the guest ignores the request"},
 	},
 	"restart": {
 		"kubevirt":   {Shipped, "virtctl restart"},
@@ -138,6 +142,7 @@ var Matrix = map[string]map[string]Entry{
 		"proxmox":    {Shipped, "POST …/status/reboot — a real reboot, not stop-then-start"},
 		"virtualbox": {Shipped, "controlvm reset — the backend's own reset, not stop-then-start"},
 		"vsphere":    {Shipped, "ResetVM — the backend's own reset, not stop-then-start"},
+		"xen":        {Shipped, "VM.clean_reboot with VM.hard_reboot fallback — a real reboot, not stop-then-start"},
 	},
 	"pause": {
 		"kubevirt":   {Shipped, "virtctl pause / unpause"},
@@ -147,6 +152,7 @@ var Matrix = map[string]map[string]Entry{
 		"proxmox":    {Shipped, "POST …/status/suspend and /resume"},
 		"virtualbox": {Shipped, "controlvm pause / resume, the guest frozen to memory"},
 		"vsphere":    {Shipped, "SuspendVM with PowerOn resume, the guest frozen to memory"},
+		"xen":        {Shipped, "VM.suspend with VM.resume, the guest frozen to memory"},
 	},
 	"delete": {
 		"kubevirt":   {Shipped, "kubectl delete vm"},
@@ -156,6 +162,7 @@ var Matrix = map[string]map[string]Entry{
 		"proxmox":    {Shipped, "DELETE …?purge=1, so backup jobs do not outlive the guest"},
 		"virtualbox": {Shipped, "unregistervm --delete, which removes the registration and deletes the disk images"},
 		"vsphere":    {Shipped, "Destroy, powering off first because vCenter refuses a running guest"},
+		"xen":        {Shipped, "VM.destroy of the halted guest plus VDI.destroy per attached disk"},
 	},
 	"ssh": {
 		"kubevirt":   {Shipped, "virtctl ssh"},
@@ -165,6 +172,7 @@ var Matrix = map[string]map[string]Entry{
 		"proxmox":    {Shipped, "the guest agent (VM) or interface list (CT) for the address, then plain ssh"},
 		"virtualbox": {Possible, "the guest address via Guest Additions guestproperty or a NAT port-forward, then plain ssh — no address discovery is wired yet"},
 		"vsphere":    {Possible, "the guest address via VMware Tools, then plain ssh — no address discovery is wired yet"},
+		"xen":        {Possible, "the guest address via guest metrics, then plain ssh — no address discovery is wired yet"},
 	},
 	"tty": {
 		"kubevirt":   {Shipped, "virtctl console, web ttyBridge"},
@@ -174,6 +182,7 @@ var Matrix = map[string]map[string]Entry{
 		"proxmox":    {Possible, "termproxy tickets are implemented (pkg/proxmoxbe.TermTicket); the web websocket bridge is not wired yet"},
 		"virtualbox": {Possible, "the UART is redirectable to a host pipe via modifyvm --uartmode1; Corral has no console bridge for it"},
 		"vsphere":    {Possible, "the serial port is redirectable to host or network; Corral has no console bridge for it"},
+		"xen":        {Possible, "vt100 console objects serve the guest console natively; Corral wires no bridge to them"},
 	},
 	"vnc": {
 		"kubevirt":   {Shipped, "virtctl vnc --proxy-only, noVNC in the browser"},
@@ -183,6 +192,7 @@ var Matrix = map[string]map[string]Entry{
 		"proxmox":    {Possible, "vncproxy tickets are implemented (pkg/proxmoxbe.VNCTicket); the web websocket bridge is not wired yet"},
 		"virtualbox": {Possible, "VRDE serves the guest display natively; Corral wires no viewer or bridge to it"},
 		"vsphere":    {Possible, "MKS/webmks tickets exist (AcquireTicket); Corral wires no viewer or bridge to them"},
+		"xen":        {Possible, "rfb console objects hand out display locations; Corral wires no viewer or bridge to them"},
 	},
 	"rdp": {
 		"kubevirt":   {Shipped, "port-forward + IronRDP, ADR-0002"},
@@ -192,6 +202,7 @@ var Matrix = map[string]map[string]Entry{
 		"proxmox":    {Possible, "same, via the guest address"},
 		"virtualbox": {Possible, "VRDE is an RDP server already; Corral has no probe or bridge for it"},
 		"vsphere":    {Possible, "same probe and bridge via the guest address"},
+		"xen":        {Possible, "same probe and bridge via the guest address"},
 	},
 	"metrics": {
 		"kubevirt":   {Shipped, "kubectl top pod, metrics-server"},
@@ -201,6 +212,7 @@ var Matrix = map[string]map[string]Entry{
 		"proxmox":    {Shipped, "GET …/status/current for live usage, /rrddata for the sparkline's real history"},
 		"virtualbox": {Possible, "VBoxManage metrics query exposes host-side CPU and memory counters; no sampler is wired yet"},
 		"vsphere":    {Possible, "performance manager counters; no sampler is wired yet"},
+		"xen":        {Possible, "VM_metrics and host_metrics counters; no sampler is wired yet"},
 	},
 	"snapshots": {
 		"kubevirt":   {Shipped, "VirtualMachineSnapshot, pkg/snapshot.KubeVirt"},
@@ -210,6 +222,7 @@ var Matrix = map[string]map[string]Entry{
 		"proxmox":    {Shipped, "pkg/snapshot.Proxmox; vmstate=1 captures RAM, so a running guest is honestly consistent"},
 		"virtualbox": {Shipped, "snapshot take/delete/restore, pkg/snapshot.VirtualBox — a running capture carries RAM but nothing quiesced, so it reports crash consistency; restore refuses a running guest"},
 		"vsphere":    {Shipped, "Create/Remove/RevertSnapshot, pkg/snapshot.Vsphere — a running capture carries RAM but nothing quiesced, so it reports crash consistency unless the tools quiesced it"},
+		"xen":        {Shipped, "VM.snapshot/revert/destroy, pkg/snapshot.Xen — XenAPI snapshots without quiesce, so a running capture reports crash consistency and a halted one offline"},
 	},
 	"migrate": {
 		"kubevirt":   {Shipped, "VirtualMachineInstanceMigration"},
@@ -219,6 +232,7 @@ var Matrix = map[string]map[string]Entry{
 		"proxmox":    {Shipped, "POST …/migrate with online=1 (restart=1 for LXC), and GET …/migrate as a real precondition check"},
 		"virtualbox": {Unsupported, "one host; there is nowhere to migrate to"},
 		"vsphere":    {Shipped, "RelocateVM/vMotion, and CanMigrate as a real precondition check"},
+		"xen":        {Shipped, "VM.pool_migrate, and CanMigrate as a real precondition check"},
 	},
 	"clone": {
 		"kubevirt":   {Shipped, "VirtualMachineClone"},
@@ -228,6 +242,7 @@ var Matrix = map[string]map[string]Entry{
 		"proxmox":    {Shipped, "POST …/clone, full by default so a clone does not depend on its parent forever"},
 		"virtualbox": {Possible, "clonevm"},
 		"vsphere":    {Shipped, "CloneVM, full by default so a clone does not depend on its parent"},
+		"xen":        {Shipped, "VM.clone, full by default so a clone does not depend on its parent"},
 	},
 	"template": {
 		"kubevirt":   {Shipped, "corral.dev/template label"},
@@ -237,6 +252,7 @@ var Matrix = map[string]map[string]Entry{
 		"proxmox":    {Shipped, "POST …/template — native, and one-way: unmarking is refused with the reason"},
 		"virtualbox": {Possible, "no native mark; the local registry mark, the same mechanism qemu would use"},
 		"vsphere":    {Shipped, "MarkAsTemplate — native, and one-way: unmarking is refused with the reason"},
+		"xen":        {Possible, "VM.set_is_a_template marks natively; Corral has no templater wiring it yet"},
 	},
 	"scale": {
 		"kubevirt":   {Shipped, "patch domain cpu/memory, hotplug where migratable"},
@@ -246,6 +262,7 @@ var Matrix = map[string]map[string]Entry{
 		"proxmox":    {Shipped, "PUT …/config cores/memory; the config's hotplug field says whether it applies live"},
 		"virtualbox": {Possible, "modifyvm --cpus/--memory while stopped"},
 		"vsphere":    {Shipped, "ReconfigVM cores/memory; the config's hot-add flags say whether it applies live"},
+		"xen":        {Possible, "VCPUs and memory set calls exist natively; nothing drives them yet"},
 	},
 	"volumes": {
 		"kubevirt":   {Shipped, "addvolume / removevolume, DataVolumes"},
@@ -255,6 +272,7 @@ var Matrix = map[string]map[string]Entry{
 		"proxmox":    {Shipped, "PUT …/config scsiN to attach, delete= to remove"},
 		"virtualbox": {Possible, "storageattach/storagectl plus closemedium; nothing drives them yet"},
 		"vsphere":    {Possible, "reconfig device attach and detach; nothing drives them yet"},
+		"xen":        {Possible, "VBD plug/unplug and VDI create exist natively; nothing drives them yet"},
 	},
 	"expand": {
 		"kubevirt":   {Shipped, "PVC resize where the storage class allows"},
@@ -264,6 +282,7 @@ var Matrix = map[string]map[string]Entry{
 		"proxmox":    {Shipped, "PUT …/resize; PVE refuses to shrink, which is what Corral wants"},
 		"virtualbox": {Possible, "modifymedium --resize while stopped"},
 		"vsphere":    {Possible, "virtual disk extend via reconfig; nothing drives it yet"},
+		"xen":        {Possible, "VDI.resize grows a disk natively; nothing drives it yet"},
 	},
 	"gpu": {
 		"kubevirt":   {Shipped, "GPU device plugin, pkg/web/gpu.go"},
@@ -273,6 +292,7 @@ var Matrix = map[string]map[string]Entry{
 		"proxmox":    {Shipped, "PUT …/config hostpciN"},
 		"virtualbox": {Possible, "PCI passthrough via modifyvm --pciattach on Linux hosts; experimental and host-limited"},
 		"vsphere":    {Possible, "PCI passthrough via reconfig device attach; experimental and host-limited"},
+		"xen":        {Possible, "PCI device assignment exists natively; experimental and host-limited"},
 	},
 	"export": {
 		"kubevirt":   {Shipped, "virtctl vmexport, qcow2 or raw.gz — pkg/export.KubeVirt"},
@@ -282,6 +302,7 @@ var Matrix = map[string]map[string]Entry{
 		"proxmox":    {Shipped, "vzdump in snapshot mode; the export adapter downloads the backup over the PVE API, extracts the disk via vma, and converts to qcow2 — pkg/proxmoxbe.Export"},
 		"virtualbox": {Possible, "export to OVA natively; pkg/export has no VirtualBox adapter yet"},
 		"vsphere":    {Possible, "ExportVm serves an OVF/NFC lease natively; pkg/export has no vSphere adapter yet"},
+		"xen":        {Possible, "GET /export serves XVA natively; pkg/export has no Xen adapter yet"},
 	},
 	"events": {
 		"kubevirt":   {Shipped, "kubectl get events for the VM and its launcher pod"},
@@ -291,6 +312,7 @@ var Matrix = map[string]map[string]Entry{
 		"proxmox":    {Shipped, "GET /nodes/{node}/tasks filtered by vmid — PVE's task history is its event record"},
 		"virtualbox": {Unsupported, "VBox keeps no queryable per-VM event history; like libvirt and Incus this would need Corral to run a collector and store the history itself"},
 		"vsphere":    {Possible, "the event manager keeps per-VM history; no reader is wired yet"},
+		"xen":        {Possible, "the event class records pool activity; Corral wires no reader for it yet"},
 	},
 	"tags": {
 		"kubevirt":   {Shipped, "corral.dev/tag.<name> labels"},
@@ -300,6 +322,7 @@ var Matrix = map[string]map[string]Entry{
 		"proxmox":    {Shipped, "the config's own tags field, read-modify-write so a second tag does not erase the first"},
 		"virtualbox": {Possible, "setextradata keys or the registry mark; nothing reads them back yet"},
 		"vsphere":    {Possible, "vSphere tags exist natively; nothing drives them yet"},
+		"xen":        {Possible, "the VM record carries tags natively; Corral has no tagger writing them yet"},
 	},
 	"ports": {
 		"kubevirt":   {Shipped, "port-proxy Service on the tailnet, ApplyProxy"},
@@ -309,6 +332,7 @@ var Matrix = map[string]map[string]Entry{
 		"proxmox":    {Unsupported, "the guest is bridged; PVE has no per-VM port mapping to drive"},
 		"virtualbox": {Possible, "NAT port-forwarding rules via modifyvm --natpf1; Corral does not manage them yet"},
 		"vsphere":    {Unsupported, "the guest is bridged; vSphere has no per-VM port mapping to drive"},
+		"xen":        {Unsupported, "the guest is bridged; Xen has no per-VM port mapping to drive"},
 	},
 	"containers": {
 		"kubevirt":   {Shipped, "pet-pod CTs, ADR-0005, pkg/ct"},
@@ -318,6 +342,7 @@ var Matrix = map[string]map[string]Entry{
 		"proxmox":    {Possible, "pkg/proxmoxbe.Containers lists them and Create makes them; pkg/ct does not yet surface a non-Kubernetes CT"},
 		"virtualbox": {Unsupported, "a hypervisor, not a container runtime"},
 		"vsphere":    {Unsupported, "a hypervisor, not a container runtime"},
+		"xen":        {Unsupported, "a hypervisor, not a container runtime"},
 	},
 }
 

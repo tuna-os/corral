@@ -24,6 +24,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 )
 
 // Start boots a halted VM (VM.start with paused=false, force=false — a plain
@@ -203,4 +204,109 @@ func (c *Client) Export(name string) (io.ReadCloser, error) {
 		return nil, fmt.Errorf("xen: export %q: unexpected HTTP status %s", name, resp.Status)
 	}
 	return resp.Body, nil
+}
+
+// Destroy removes the VM and its disks. VM.destroy takes only the halted
+// guest's record — attached VDIs survive it — so each VDI behind the VM's
+// VBDs is destroyed afterwards, mirroring libvirt's undefine
+// --remove-all-storage and VirtualBox's unregistervm --delete.
+func (c *Client) Destroy(name string) error {
+	ref, err := c.VMRef(name)
+	if err != nil {
+		return err
+	}
+	rec, err := c.VMRecord(ref)
+	if err != nil {
+		return err
+	}
+	var vdis []string
+	for _, vbd := range rec.VBDs {
+		v, err := c.call("VBD.get_record", vbd)
+		if err != nil {
+			return err
+		}
+		vdi, _ := v.(map[string]any)["VDI"].(string)
+		if vdi == "" || vdi == "OpaqueRef:NULL" {
+			continue
+		}
+		vdis = append(vdis, vdi)
+	}
+	if _, err := c.call("VM.destroy", ref); err != nil {
+		return err
+	}
+	for _, vdi := range vdis {
+		if _, err := c.call("VDI.destroy", vdi); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// CanMigrate is the pre-flight for Migrate: the guest must be running (Xen
+// live-migrates running guests; a halted guest moves by other means) and
+// the pool must hold another host to receive it.
+func (c *Client) CanMigrate(name string) (bool, string) {
+	ref, err := c.VMRef(name)
+	if err != nil {
+		return false, err.Error()
+	}
+	rec, err := c.VMRecord(ref)
+	if err != nil {
+		return false, err.Error()
+	}
+	if !strings.EqualFold(rec.PowerState, "Running") {
+		return false, fmt.Sprintf("VM %q is %s; live migration needs a running guest", name, rec.PowerState)
+	}
+	hosts, err := c.Hosts()
+	if err != nil {
+		return false, err.Error()
+	}
+	if len(hosts) < 2 {
+		return false, fmt.Sprintf("pool holds %d host(s); migration needs a second host", len(hosts))
+	}
+	return true, ""
+}
+
+// SnapshotInfo is one VM snapshot: its display name and its reference.
+type SnapshotInfo struct {
+	Name string
+	Ref  string
+}
+
+// Snapshots lists the VM's snapshots via VM.get_snapshots, oldest first as
+// the pool returns them.
+func (c *Client) Snapshots(name string) ([]SnapshotInfo, error) {
+	ref, err := c.VMRef(name)
+	if err != nil {
+		return nil, err
+	}
+	v, err := c.call("VM.get_snapshots", ref)
+	if err != nil {
+		return nil, err
+	}
+	var out []SnapshotInfo
+	for _, snapRef := range asStrings(v) {
+		rec, err := c.VMRecord(snapRef)
+		if err != nil {
+			continue
+		}
+		out = append(out, SnapshotInfo{Name: rec.Name, Ref: snapRef})
+	}
+	return out, nil
+}
+
+// DestroySnapshot removes one snapshot by name. A snapshot that is already
+// gone is not an error — retention races with a human clearing up.
+func (c *Client) DestroySnapshot(vmName, name string) error {
+	snaps, err := c.Snapshots(vmName)
+	if err != nil {
+		return err
+	}
+	for _, s := range snaps {
+		if s.Name == name {
+			_, err := c.call("VM.destroy", s.Ref)
+			return err
+		}
+	}
+	return nil
 }

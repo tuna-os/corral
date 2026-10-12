@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/tuna-os/corral/pkg/config"
 )
 
 const testSession = "OpaqueRef:session-test"
@@ -525,17 +527,144 @@ func TestPasswordEnv(t *testing.T) {
 	if got := PasswordFromEnv("pool2"); got != "specific" {
 		t.Fatalf("per-context = %q", got)
 	}
-	s := Stored{Host: "xen.example.com"}
-	cfg, err := s.Resolve("pool1")
+}
+
+func TestConfigForContext(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	cfg, err := config.Load("")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Username != "root" || cfg.Password != "shared" {
-		t.Fatalf("resolved = %+v", cfg)
+	cfg.Contexts = []config.ContextConfig{{
+		Name:    "pool1",
+		Backend: "xen",
+		Context: "xen.example.com",
+		Xen:     &config.XenContextConfig{Username: "admin"},
+	}}
+	if err := config.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CORRAL_XEN_PASSWORD", "secret")
+	resolved, err := ConfigForContext("pool1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Host != "xen.example.com" || resolved.Username != "admin" || resolved.Password != "secret" {
+		t.Fatalf("resolved = %+v", resolved)
 	}
 	t.Setenv("CORRAL_XEN_PASSWORD", "")
-	t.Setenv("CORRAL_XEN_PASSWORD_POOL3", "")
-	if _, err := (Stored{Host: "xen.example.com"}).Resolve("pool3"); err == nil {
+	if _, err := ConfigForContext("pool1"); err == nil {
 		t.Fatal("missing password accepted")
+	}
+	if _, err := ConfigForContext("no-such-pool"); err == nil {
+		t.Fatal("unknown context accepted")
+	}
+}
+
+func TestDestroyRemovesVMAndDisks(t *testing.T) {
+	f := newFakePool(t)
+	f.handlers["session.login_with_password"] = loginHandler(testSession)
+	resolveHandlers(f, "OpaqueRef:vm-halted")
+	f.handlers["VM.get_record"] = func(string) string {
+		return success(`<struct>` +
+			`<member><name>uuid</name><value><string>uuid-halted</string></value></member>` +
+			`<member><name>name_label</name><value><string>db-1</string></value></member>` +
+			`<member><name>power_state</name><value><string>Halted</string></value></member>` +
+			`<member><name>is_a_template</name><value><boolean>0</boolean></value></member>` +
+			`<member><name>is_control_domain</name><value><boolean>0</boolean></value></member>` +
+			`<member><name>is_a_snapshot</name><value><boolean>0</boolean></value></member>` +
+			`<member><name>VBDs</name><value><array><data>` +
+			`<value><string>OpaqueRef:vbd-1</string></value>` +
+			`</data></array></value></member>` +
+			`</struct>`)
+	}
+	f.handlers["VBD.get_record"] = func(string) string {
+		return success(`<struct>` +
+			`<member><name>VM</name><value><string>OpaqueRef:vm-halted</string></value></member>` +
+			`<member><name>VDI</name><value><string>OpaqueRef:vdi-1</string></value></member>` +
+			`</struct>`)
+	}
+	f.handlers["VM.destroy"] = func(string) string { return success(`<string></string>`) }
+	f.handlers["VDI.destroy"] = func(string) string { return success(`<string></string>`) }
+	c := testClient(t, f)
+	if err := c.Destroy("db-1"); err != nil {
+		t.Fatal(err)
+	}
+	if f.served("VM.destroy") != 1 || f.served("VDI.destroy") != 1 {
+		t.Fatalf("destroy calls: VM=%d VDI=%d, want 1 each",
+			f.served("VM.destroy"), f.served("VDI.destroy"))
+	}
+}
+
+func TestCanMigrate(t *testing.T) {
+	f := newFakePool(t)
+	f.handlers["session.login_with_password"] = loginHandler(testSession)
+	resolveHandlers(f, "OpaqueRef:vm-running")
+	f.handlers["VM.get_record"] = func(string) string {
+		return success(`<struct>` +
+			`<member><name>power_state</name><value><string>Running</string></value></member>` +
+			`</struct>`)
+	}
+	f.handlers["host.get_all_records"] = func(string) string {
+		return success(`<struct>` +
+			`<member><name>OpaqueRef:host-1</name><value><struct>` +
+			`<member><name>name_label</name><value><string>xen-1</string></value></member>` +
+			`</struct></value></member>` +
+			`<member><name>OpaqueRef:host-2</name><value><struct>` +
+			`<member><name>name_label</name><value><string>xen-2</string></value></member>` +
+			`</struct></value></member>` +
+			`</struct>`)
+	}
+	c := testClient(t, f)
+	if ok, reason := c.CanMigrate("web-1"); !ok {
+		t.Fatalf("running VM in 2-host pool refused: %s", reason)
+	}
+}
+
+func TestCanMigrateRefusesHalted(t *testing.T) {
+	f := newFakePool(t)
+	f.handlers["session.login_with_password"] = loginHandler(testSession)
+	resolveHandlers(f, "OpaqueRef:vm-halted")
+	f.handlers["VM.get_record"] = func(string) string {
+		return success(`<struct>` +
+			`<member><name>power_state</name><value><string>Halted</string></value></member>` +
+			`</struct>`)
+	}
+	c := testClient(t, f)
+	if ok, _ := c.CanMigrate("db-1"); ok {
+		t.Fatal("halted VM accepted for live migration")
+	}
+}
+
+func TestSnapshotsListAndDelete(t *testing.T) {
+	f := newFakePool(t)
+	f.handlers["session.login_with_password"] = loginHandler(testSession)
+	resolveHandlers(f, "OpaqueRef:vm-running")
+	f.handlers["VM.get_snapshots"] = func(string) string {
+		return success(arr(val(str("OpaqueRef:snap-1"))))
+	}
+	f.handlers["VM.get_record"] = func(string) string {
+		return success(`<struct>` +
+			`<member><name>name_label</name><value><string>web-1-snap</string></value></member>` +
+			`<member><name>power_state</name><value><string>Halted</string></value></member>` +
+			`</struct>`)
+	}
+	f.handlers["VM.destroy"] = func(string) string { return success(`<string></string>`) }
+	c := testClient(t, f)
+	snaps, err := c.Snapshots("web-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snaps) != 1 || snaps[0].Name != "web-1-snap" {
+		t.Fatalf("snapshots = %+v", snaps)
+	}
+	if err := c.DestroySnapshot("web-1", "web-1-snap"); err != nil {
+		t.Fatal(err)
+	}
+	if f.served("VM.destroy") != 1 {
+		t.Fatal("destroy was not issued for the snapshot")
+	}
+	if err := c.DestroySnapshot("web-1", "already-gone"); err != nil {
+		t.Fatalf("deleting a missing snapshot should be a no-op: %v", err)
 	}
 }

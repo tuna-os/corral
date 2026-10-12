@@ -19,7 +19,7 @@ import (
 // VMRecord is the XenAPI VM.record subset Corral reads. Field names follow
 // the XenAPI VM class: name_label, name_description, power_state, uuid,
 // is_a_template, is_control_domain, is_a_snapshot, VCPUs_max,
-// memory_static_max, resident_on, tags.
+// memory_static_max, resident_on, VBDs, tags.
 type VMRecord struct {
 	Ref             string
 	UUID            string
@@ -32,6 +32,7 @@ type VMRecord struct {
 	VCPUs           int64
 	MemoryBytes     int64
 	ResidentOn      string
+	VBDs            []string
 	Tags            []string
 }
 
@@ -97,6 +98,7 @@ func parseVMRecord(ref string, rec map[string]any) VMRecord {
 		VCPUs:           asInt(rec["VCPUs_max"]),
 		MemoryBytes:     asInt(rec["memory_static_max"]),
 		ResidentOn:      asString(rec["resident_on"]),
+		VBDs:            asStrings(rec["VBDs"]),
 		Tags:            asStrings(rec["tags"]),
 	}
 }
@@ -179,24 +181,17 @@ func (c *Client) toVM(rec VMRecord, hosts map[string]HostRecord, disks map[strin
 		// Namespace stays empty: a pool has no namespace, and repurposing
 		// the field (for the pool, or a tag) would make identity mean two
 		// things — the same call pkg/proxmoxbe makes.
-		Context: c.cfg.Host,
-		Status:  status,
-		Ready:   running,
-		Running: running,
-		CPU:     int(rec.VCPUs),
-		Mem:     humanBytes(rec.MemoryBytes),
-		Disk:    humanBytes(disks[rec.Ref]),
-		Node:    node,
-		Tags:    rec.Tags,
-		// Set explicitly rather than via CapabilitiesForBackend: the "xen"
-		// row in that matrix arrives with the wiring turn (pkg/types is
-		// frozen until the vSphere backend merges). The set mirrors proxmox
-		// — power, snapshots, migrate, volumes — minus consoles, which Xen
-		// serves over its own endpoint nothing bridges yet.
-		Capabilities: types.InstanceCapabilities{
-			Start: true, Stop: true, Delete: true, SSH: true,
-			Metrics: true, Snapshots: true, Migrate: true, Volumes: true,
-		},
+		Context:        c.cfg.Host,
+		Status:         status,
+		Ready:          running,
+		Running:        running,
+		CPU:            int(rec.VCPUs),
+		Mem:            humanBytes(rec.MemoryBytes),
+		Disk:           humanBytes(disks[rec.Ref]),
+		Node:           node,
+		IsTemplate:     rec.IsTemplate,
+		Tags:           rec.Tags,
+		Capabilities:   types.CapabilitiesForBackend("xen"),
 		LiveMigratable: running,
 	}
 	vm.SetIdentity()
