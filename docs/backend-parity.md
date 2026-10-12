@@ -256,7 +256,7 @@ websocket bridge is not. So the capability flags say no, and the matrix says why
 - **expand** — Disk update exists in vmm. Nothing drives it yet.
 - **export** — Points for VM recovery exist in vmm. Corral has no downloader for them yet.
 - **events** — The task list logs the activity of the pool. Corral wires no per-VM reader yet.
-- **tags** — Actions for category association exist natively. No reference proves value lookup, so Corral has no tagger yet.
+- **tags** — Corral associates no categories yet: no reference shows the value lookup.
 
 ## Testing parity
 
