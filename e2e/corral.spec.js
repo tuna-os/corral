@@ -538,10 +538,12 @@ test.describe('Corral web UI', () => {
 
   // ── 10. Settings: snapshots tab ────────────────────────────────────
 
-  // Runs in CI kind too: without a VolumeSnapshotClass it skips on the next line, so the tag buys nothing.
-  test('Snapshots tab: take and delete a snapshot', async ({ page }) => {
+  // @live-only: needs a VolumeSnapshotClass plus a bootable import (kind TCG, #77); the guard below keeps CI green.
+  test('Snapshots tab: take and delete a snapshot @live-only', async ({ page }) => {
     test.setTimeout(420_000);
     const { body: caps } = await api('/api/capabilities');
+    test.skip(!caps.canSnapshot, 'cluster has no VolumeSnapshotClass');
+
     const vm = trackVM('e2e-snp-' + uid());
     // Snapshots need a PVC-backed disk — use the catalog ubuntu (containerdisk
     // has no PVC), so import cirros instead.
@@ -583,6 +585,7 @@ test.describe('Corral web UI', () => {
   test('VNC and serial TTY consoles connect to a running VM @live-only', async ({ page }) => {
     test.setTimeout(600_000);
     const vm = trackVM('e2e-con-' + uid());
+
     await createVM(page, { name: vm, sourceType: 'containerDisk',
       source: 'quay.io/containerdisks/fedora:42', cpu: 1, mem: '2G' });
     expect(await waitFor(() => vmExists(vm), 30_000, 2000, `vm ${vm}`)).toBe(true);
@@ -666,6 +669,7 @@ test.describe('Corral web UI', () => {
   test('RDP probe: closed for a Linux VM, Summary row renders @live-only', async ({ page }) => {
     test.setTimeout(420_000);
     const vm = trackVM('e2e-rdp-' + uid());
+
     await createVM(page, { name: vm, sourceType: 'containerDisk',
       source: 'quay.io/containerdisks/fedora:42', cpu: 1, mem: '2G' });
     expect(await waitFor(() => vmExists(vm), 30_000, 2000, `vm ${vm}`)).toBe(true);
@@ -688,9 +692,11 @@ test.describe('Corral web UI', () => {
   // Runs when the cluster has a NetworkAttachmentDefinition (Multus
   // installed — see deploy/multus/); skips cleanly otherwise.
 
-  test('Add NIC: attach a Multus network and the guest gets the interface', async ({ page }) => {
+  // @live-only: needs real Multus NADs — the skip guard above is load-bearing (without it CI crashed on nads[0]).
+  test('Add NIC: attach a Multus network and the guest gets the interface @live-only', async ({ page }) => {
     test.setTimeout(420_000);
     const { body: nads } = await api('/api/nads');
+    test.skip(!nads || !nads.length, 'no NetworkAttachmentDefinitions (Multus not installed)');
     const nad = nads[0].split('/').pop();
 
     const vm = trackVM('e2e-nic-' + uid());
