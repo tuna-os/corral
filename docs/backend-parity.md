@@ -214,18 +214,18 @@ websocket bridge is not. So the capability flags say no, and the matrix says why
 
 ### vsphere — 12 gaps
 
-- **create** — CloneVM and OVF deploy exist natively; Corral has no creator wiring them yet
-- **ssh** — the guest address via VMware Tools, then plain ssh — no address discovery is wired yet
+- **create** — CloneVM works natively, and OVF deploy works too. Corral has no creator for them yet.
+- **ssh** — Corral has no address discovery yet. Use the Tools-reported guest address, then plain ssh.
 - **tty** — the serial port is redirectable to host or network; Corral has no console bridge for it
 - **vnc** — MKS/webmks tickets exist (AcquireTicket); Corral wires no viewer or bridge to them
 - **rdp** — same probe and bridge via the guest address
-- **metrics** — performance manager counters; no sampler is wired yet
+- **metrics** — vCenter reports CPU and memory counters through performance manager. Corral has no sampler for them yet.
 - **volumes** — reconfig device attach and detach; nothing drives them yet
 - **expand** — virtual disk extend via reconfig; nothing drives it yet
 - **gpu** — PCI passthrough via reconfig device attach; experimental and host-limited
 - **export** — ExportVm serves an OVF/NFC lease natively; pkg/export has no vSphere adapter yet
-- **events** — the event manager keeps per-VM history; no reader is wired yet
-- **tags** — vSphere tags exist natively; nothing drives them yet
+- **events** — The event manager keeps per-VM history. Corral wires no reader for it yet.
+- **tags** — vSphere has native tags. Nothing drives them yet.
 
 ## Testing parity
 
