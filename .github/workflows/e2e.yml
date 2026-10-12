@@ -4,8 +4,10 @@ name: E2E
 # useEmulation (no KVM on GitHub runners) + CDI. Runs every Playwright test
 # not tagged @live-only — wizard flows, catalog content, every create source
 # type, scale, and one full boot lifecycle (cirros under TCG).
-# The @live-only tier (consoles, SSH, RDP probe, snapshots, bootc, boot-from-
-# import) needs the production cluster: see e2e/README in corral.spec.js.
+# The @live-only tier (consoles, SSH, RDP probe, bootc, boot-from-import)
+# needs the production cluster: see e2e/README in corral.spec.js. Snapshots
+# and secondary-NIC run in this job too but skip cleanly here — kind has no
+# VolumeSnapshotClass or Multus.
 
 on:
   push:
