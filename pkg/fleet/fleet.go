@@ -12,6 +12,7 @@ import (
 	"github.com/tuna-os/corral/pkg/incus"
 	"github.com/tuna-os/corral/pkg/kubevirt"
 	"github.com/tuna-os/corral/pkg/libvirt"
+	"github.com/tuna-os/corral/pkg/nutanix"
 	"github.com/tuna-os/corral/pkg/proxmoxbe"
 	"github.com/tuna-os/corral/pkg/qemu"
 	"github.com/tuna-os/corral/pkg/types"
@@ -77,6 +78,14 @@ func List(ctx context.Context) Result {
 				// master fails one context, not the whole aggregation.
 				var client *xen.Client
 				if client, err = xen.ClientForContext(target.Context); err == nil {
+					vms, err = client.List()
+				}
+			case "nutanix":
+				// The 20s REST timeout inside the client bounds this the
+				// way proxmoxbe.Timeout bounds the PVE path — a wedged
+				// Prism Central fails one context, not the whole aggregation.
+				var client *nutanix.Client
+				if client, err = nutanix.ClientForContext(target.Context); err == nil {
 					vms, err = client.List()
 				}
 			default:

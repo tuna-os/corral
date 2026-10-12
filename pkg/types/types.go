@@ -190,6 +190,14 @@ func CapabilitiesForBackend(backend string) InstanceCapabilities {
 		// agreement with the matrix.
 		return InstanceCapabilities{Start: true, Stop: true, Delete: true,
 			Snapshots: true, Migrate: true}
+	case "nutanix":
+		// Power, reboot, migrate, clone, and snapshots are wired through
+		// the backend contracts; consoles stay off because Corral wires no
+		// viewer to the token endpoint, and everything else stays off
+		// until an adapter implements it — the parity conformance tests
+		// enforce this agreement with the matrix.
+		return InstanceCapabilities{Start: true, Stop: true, Delete: true,
+			Snapshots: true, Migrate: true}
 	default:
 		return InstanceCapabilities{}
 	}

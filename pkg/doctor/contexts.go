@@ -59,6 +59,10 @@ func RunContexts(contexts []config.ContextConfig) []Check {
 			// No runner: this backend speaks XML-RPC, so the probe is a
 			// session login rather than a command.
 			checks = xenChecks(target.Name)
+		case "nutanix":
+			// No runner: this backend speaks REST with per-request auth,
+			// so the probe is one cheap list page rather than a login.
+			checks = nutanixChecks(target.Name)
 		default:
 			checks = []Check{{Name: "Backend supported", Detail: fmt.Sprintf("unknown backend %q", target.Backend), Severity: "required"}}
 		}

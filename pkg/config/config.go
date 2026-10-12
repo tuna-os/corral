@@ -67,6 +67,12 @@ type ContextConfig struct {
 	// CORRAL_XEN_PASSWORD[_<CTX>] in the environment, so a config file
 	// that lands in a dotfiles repo does not carry pool credentials with it.
 	Xen *XenContextConfig `yaml:"xen,omitempty" json:"xen,omitempty"`
+	// Nutanix carries what a Prism Central endpoint needs beyond its VIP,
+	// and is only read when Backend is "nutanix". The secret is never
+	// stored here: it comes from CORRAL_NUTANIX_PASSWORD[_<CTX>] in the
+	// environment, so a config file that lands in a dotfiles repo does not
+	// carry cluster credentials with it.
+	Nutanix *NutanixContextConfig `yaml:"nutanix,omitempty" json:"nutanix,omitempty"`
 }
 
 // ProxmoxContextConfig is one PVE cluster's access details (ADR-0009).
@@ -109,6 +115,22 @@ type XenContextConfig struct {
 	// Insecure skips verification entirely — explicit, per-context, never a
 	// default.
 	Insecure bool `yaml:"insecure,omitempty" json:"insecure,omitempty"`
+}
+
+// NutanixContextConfig is one Prism Central endpoint's access details (RFC-0003).
+type NutanixContextConfig struct {
+	// Username is the Prism Central user, usually "admin".
+	Username string `yaml:"username,omitempty" json:"username,omitempty"`
+	// Fingerprint pins the server certificate (SHA-256 hex). Self-signed
+	// certs are the norm on Prism Central, and pinning trusts one
+	// specifically rather than trusting anything presented.
+	Fingerprint string `yaml:"fingerprint,omitempty" json:"fingerprint,omitempty"`
+	// Insecure skips verification entirely — explicit, per-context, never a
+	// default.
+	Insecure bool `yaml:"insecure,omitempty" json:"insecure,omitempty"`
+	// APIVersion selects the v4 version string (default "v4.0").
+	// Availability varies by PC build, so this stays configurable.
+	APIVersion string `yaml:"apiVersion,omitempty" json:"apiVersion,omitempty"`
 }
 
 func (c ContextConfig) IsEnabled() bool { return c.Enabled == nil || *c.Enabled }
@@ -196,7 +218,9 @@ func AddContext(c ContextConfig) error {
 	// (password) lives in the environment, never in this block.
 	// xen is remote-only: Context is the pool master host, and the secret
 	// (password) lives in the environment, never in this block.
-	case "qemu", "kubevirt", "incus", "libvirt", "virtualbox", "vsphere", "xen":
+	// nutanix is remote-only: Context is the Prism Central VIP, and the
+	// secret (password or API key) lives in the environment, never here.
+	case "qemu", "kubevirt", "incus", "libvirt", "virtualbox", "vsphere", "xen", "nutanix":
 	default:
 		return fmt.Errorf("unsupported backend %q", c.Backend)
 	}
@@ -298,9 +322,9 @@ func DefaultBackend() string {
 
 func SetDefaultBackend(backend string) error {
 	switch backend {
-	case "qemu", "kubevirt", "incus", "libvirt", "virtualbox", "vsphere", "xen":
+	case "qemu", "kubevirt", "incus", "libvirt", "virtualbox", "vsphere", "xen", "nutanix":
 	default:
-		return fmt.Errorf("unsupported backend %q (want qemu, kubevirt, incus, libvirt, virtualbox, vsphere, or xen)", backend)
+		return fmt.Errorf("unsupported backend %q (want qemu, kubevirt, incus, libvirt, virtualbox, vsphere, xen, or nutanix)", backend)
 	}
 	cfg, err := Load("")
 	if err != nil {

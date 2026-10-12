@@ -15,7 +15,7 @@ var (
 var contextCmd = &cobra.Command{
 	Use:     "context",
 	Aliases: []string{"ctx"},
-	Short:   "Manage the local, Kubernetes, Incus, libvirt, Proxmox, VirtualBox, vSphere, and Xen contexts aggregated by Corral",
+	Short:   "Manage the local, Kubernetes, Incus, libvirt, Proxmox, VirtualBox, vSphere, Xen, and Nutanix contexts aggregated by Corral",
 }
 
 var contextGetCmd = &cobra.Command{Use: "get", Args: cobra.NoArgs, Run: func(*cobra.Command, []string) {
@@ -63,8 +63,8 @@ var contextListCmd = &cobra.Command{Use: "list", Args: cobra.NoArgs, Run: func(*
 }}
 
 func init() {
-	contextAddCmd.Flags().StringVarP(&contextBackend, "backend", "b", "", "Backend: qemu, kubevirt, incus, libvirt, proxmox, virtualbox, vsphere, or xen")
-	contextAddCmd.Flags().StringVar(&contextValue, "context", "", "kubeconfig context, Incus remote, libvirt URI, VirtualBox context label, vCenter host, or Xen pool master")
+	contextAddCmd.Flags().StringVarP(&contextBackend, "backend", "b", "", "Backend: qemu, kubevirt, incus, libvirt, proxmox, virtualbox, vsphere, xen, or nutanix")
+	contextAddCmd.Flags().StringVar(&contextValue, "context", "", "kubeconfig context, Incus remote, libvirt URI, VirtualBox context label, vCenter host, Xen pool master, or Prism Central VIP")
 	_ = contextAddCmd.MarkFlagRequired("backend")
 	contextCmd.AddCommand(contextGetCmd, contextUseCmd, contextAddCmd, contextRemoveCmd, contextListCmd)
 	rootCmd.AddCommand(contextCmd)
