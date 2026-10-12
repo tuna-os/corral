@@ -188,6 +188,21 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
+  web-image-smoke:
+    # Container image build + probe smoke for docs/deployment-modes.md mode 2.
+    # scripts/smoke-web-image.sh builds the image from the Containerfile,
+    # boots it, and curls /healthz + /readyz. No VPN or live cluster needed.
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+
+      - name: Build image and smoke-test probes
+        run: ./scripts/smoke-web-image.sh
+
   release-binaries:
     # Publishes static binaries to a rolling "binaries" release so consumers
     # (e.g. the dotfiles ansible role) can fetch a stable URL:
