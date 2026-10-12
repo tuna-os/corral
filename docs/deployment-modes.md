@@ -18,10 +18,10 @@ Never bind `corral web` to a public address. It accepts each request that reache
 ### Shape
 
 ```text
-browser -> TLS -> login gateway -> http://127.0.0.1:8006 -> corral web
+browser -> TLS -> edge proxy -> 127.0.0.1:8443 -> corral-auth -> 127.0.0.1:8006 -> corral web
 ```
 
-The gateway faces the net. `corral web` hears loopback traffic only. The gateway proves who calls. It strips fake headers from clients.
+The edge proxy faces the net. `corral web` hears loopback traffic only. The gateway proves who calls. It strips fake headers from clients.
 
 ### Commands
 
@@ -35,7 +35,8 @@ export CORRAL_AUTH_COOKIE_SECRET="$(openssl rand -base64 32)"
 corral web --addr 127.0.0.1:8006 &
 
 # Basic auth example. Swap in OIDC flags for SSO.
-corral-auth --addr :8443 \
+# Loopback only. A TLS proxy faces the net (see below).
+corral-auth --addr 127.0.0.1:8443 \
   --upstream http://127.0.0.1:8006 \
   --basic-htpasswd /etc/corral/users.htpasswd
 ```
@@ -56,11 +57,31 @@ CORRAL_ADMINS="alice@github,bob@github" corral web --addr 127.0.0.1:8006
 
 Check the result at `GET /api/whoami`. It shows login, name, admin state, and whether the allowlist applies.
 
+### TLS edge
+
+`corral-auth` speaks plain HTTP. It must sit behind a TLS proxy on a public box. Basic-auth must never ride plaintext.
+
+Caddy ends TLS and passes traffic to the loopback gateway. Caddy fetches and renews the certificate. The gateway still drops client headers behind the proxy.
+
+```caddy
+# /etc/caddy/Caddyfile
+corral.example.com {
+	reverse_proxy 127.0.0.1:8443
+}
+```
+
+```bash
+caddy fmt --overwrite /etc/caddy/Caddyfile
+caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+systemctl reload caddy
+```
+
 ### Risks
 
 | Threat | Guard |
 |---|---|
 | Direct hits on port 8006 skip the login | Bind `--addr` to loopback and filter the port |
+| Basic-auth over plain HTTP leaks passwords | End TLS at the edge proxy first |
 | Fake `Tailscale-User-Login` headers | The gateway drops client headers and sets its own |
 | Stolen session cookie | 32+ byte secret, HTTPS at the edge, 8h sessions |
 | Open mutations for each visitor | Set `CORRAL_ADMINS` so guests stay read-only |
