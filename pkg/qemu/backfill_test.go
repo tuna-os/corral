@@ -154,7 +154,7 @@ func serveQMPOnce(t *testing.T, sockPath, reply string, writeFile func(filename 
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		greeting := map[string]any{"QMP": map[string]any{"version": map[string]any{}, "capabilities": []string{}}}
 		gb, _ := json.Marshal(greeting)
 		_, _ = conn.Write(append(gb, '\n'))
