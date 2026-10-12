@@ -218,9 +218,11 @@ func AddContext(c ContextConfig) error {
 	// (password) lives in the environment, never in this block.
 	// xen is remote-only: Context is the pool master host, and the secret
 	// (password) lives in the environment, never in this block.
+	// proxmox is remote-only: Context is the PVE host, and the secret (API
+	// token) lives in the environment, never in this block.
 	// nutanix is remote-only: Context is the Prism Central VIP, and the
 	// secret (password or API key) lives in the environment, never here.
-	case "qemu", "kubevirt", "incus", "libvirt", "virtualbox", "vsphere", "xen", "nutanix":
+	case "qemu", "kubevirt", "incus", "libvirt", "proxmox", "virtualbox", "vsphere", "xen", "nutanix":
 	default:
 		return fmt.Errorf("unsupported backend %q", c.Backend)
 	}
