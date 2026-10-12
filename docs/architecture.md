@@ -56,9 +56,18 @@ pkg/              Library code (importable)
     │                     doctor, plugins, NADs, NICs, images, instancetypes, datavolumes, boot options, ISO upload
     └── static/
         ├── index.html    dark SPA shell, create dialog (6 source types), CT create dialog, build dialog
-        ├── app.js        API client, tree (Server/Namespace/Pool views, VMs+CTs merged), VM/CT detail panels
-        │                 (Summary/Hardware/Options/Snapshots/Events/Console/Terminal), create wizards,
-        │                 image library + import, bootc build streaming, mobile drawer
+        ├── app.js        entry module: poll loop, content router, boot, mobile drawer
+        ├── state.js      shared state store and event bus (select, inventory, tasks)
+        ├── api.js        fetch wrapper, VM/CT API URLs and selection keys
+        ├── tree.js       sidebar tree (Server/Namespace/Pool views, VMs+CTs merged), filter, multi-select
+        ├── menus.js      context menu items per inventory object
+        ├── tags.js       VM tag chips
+        ├── console.js    noVNC, serial terminal and IronRDP consoles, console tabs
+        ├── create.js     create VM/CT dialogs, OS wizard, bootc build streaming
+        ├── dock.js       task panel (Alpine.js island)
+        ├── content/      one module per screen: datacenter, node, namespace, vm, vm-table, ct,
+        │                 multiview, hostpower, doctor, extensions, settings
+        ├── ui/           primitives: dom.js (query, toast, escape), menu.js (context menu)
         ├── icons.js      inline Heroicon SVGs
         └── style.css     dark theme, responsive, dialog/modals, cards, tables
 
@@ -104,10 +113,16 @@ immediately `corral ssh`-able and vice versa.
 
 ### Embedded SPA — no JS build step
 
-The web UI is vanilla JavaScript and CSS embedded via `//go:embed`. There is
-no Node, no bundler, no build step. The page loads xterm.js and noVNC from a
-CDN at runtime. Only the console pages need them, and they are too large to
-embed. Heroicons are inline SVGs.
+The web UI is native ES modules and CSS embedded via `//go:embed`. There is
+no Node, no bundler, no build step. Corral vendors the console libraries
+(xterm.js, noVNC, iron-remote-desktop, gridstack and uPlot) under
+`pkg/web/static/vendor` with their provenance. Corral does not fetch them from
+a CDN. Therefore a host with no outbound network still serves a console that
+works. Heroicons are inline SVGs.
+
+For a new screen, dock panel, widget, tree view or resizable edge, see
+[the extension points for the web UI](web-ui-extension-points.md). That page also gives
+the rules for DOM that holds a live connection.
 
 ### Backend transparency
 

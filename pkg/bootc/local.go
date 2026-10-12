@@ -1,9 +1,13 @@
 package bootc
 
 import (
+	"archive/tar"
+	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -230,8 +234,8 @@ func firstLineOf(msg string) string {
 }
 
 // Backend is the bootc storage backend an image needs. It is a property of
-// the image, not a choice: composefs images ship a btrfs-only initramfs and
-// no bootupd, ostree images ship bootupd and want xfs.
+// the image, not a choice: GRUB update payloads identify OSTree; systemd-boot
+// without those payloads needs composefs and a filesystem with fs-verity.
 type Backend struct {
 	Kind       string // "ostree" or "composefs"
 	Filesystem string
@@ -247,8 +251,8 @@ var (
 // what pkg/kubevirt's cluster builder does — the rule was worked out there
 // (f63917e) and getting it wrong produces a disk that does not boot.
 //
-// Per the bootc docs the composefs-rs backend requires systemd-boot and no
-// bootupd; traditional ostree images ship bootupd.
+// GRUB update payloads identify traditional OSTree images. A bootupd
+// executable alone does not: Marlin also ships it with systemd-boot.
 //
 // The probe inspects the image *filesystem* with `podman cp` and never
 // executes anything in it. Universal Blue desktop images ship Rust uutils,
@@ -272,17 +276,48 @@ func (b LocalBuilder) DetectBackend(image string) (Backend, error) {
 		_, err := runner.Run(cp, cpArgs...)
 		return err == nil
 	}
-	switch {
-	case has("/usr/sbin/bootupctl"), has("/usr/bin/bootupctl"):
-		return ostreeBackend, nil
-	case has("/usr/lib/systemd/boot/efi/systemd-bootx64.efi"),
-		has("/usr/lib/systemd/boot/efi/systemd-bootaa64.efi"):
-		return composefsBackend, nil
-	default:
-		// Neither marker: treat as ostree, which is what the cluster builder
-		// does and the safer guess — xfs and a removable bootloader path.
-		return ostreeBackend, nil
+	// bootupctl alone is not a payload: Marlin ships the binary alongside
+	// systemd-boot, without GRUB update metadata. Inspect both bootupd layouts.
+	containsEFI := func(dir, prefix string) bool {
+		cp, args := b.podman("cp", container+":"+dir, "-")
+		data, err := runner.Run(cp, args...)
+		if err != nil {
+			return false
+		}
+		tr := tar.NewReader(bytes.NewReader(data))
+		for {
+			h, err := tr.Next()
+			if err == io.EOF {
+				return false
+			}
+			if err != nil {
+				return false
+			}
+			name := path.Base(h.Name)
+			if h.Typeflag == tar.TypeReg && strings.HasPrefix(name, prefix) && strings.HasSuffix(name, ".efi") {
+				return true
+			}
+		}
 	}
+	payload := containsEFI("/usr/lib/bootupd/updates/EFI", "grub") ||
+		(has("/usr/lib/bootupd/updates/EFI.json") && containsEFI("/usr/lib/efi/grub2", "grub") && containsEFI("/usr/lib/efi/shim", "shim"))
+	backend := ostreeBackend
+	if !payload {
+		if has("/usr/lib/systemd/boot/efi/systemd-bootx64.efi") || has("/usr/lib/systemd/boot/efi/systemd-bootaa64.efi") {
+			backend = composefsBackend
+		} else if !has("/usr/sbin/bootupctl") && !has("/usr/bin/bootupctl") {
+			return Backend{}, fmt.Errorf("image has no supported bootloader payload")
+		}
+	}
+	// Ext4 provides fs-verity for sealed roots; keep the existing btrfs
+	// default when the image only supplies that formatter.
+	if backend.Kind == "composefs" && (has("/usr/sbin/mkfs.ext4") || has("/usr/bin/mkfs.ext4")) {
+		backend.Filesystem = "ext4"
+	}
+	if backend.Kind == "ostree" && !has("/usr/sbin/mkfs.xfs") && !has("/usr/bin/mkfs.xfs") && (has("/usr/sbin/mkfs.btrfs") || has("/usr/bin/mkfs.btrfs")) {
+		backend.Filesystem = "btrfs"
+	}
+	return backend, nil
 }
 
 // installArgs builds the podman invocation. Split out so a test can assert the

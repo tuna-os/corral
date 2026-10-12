@@ -115,7 +115,17 @@ func (c Client) DialVNC(name string) (io.ReadWriteCloser, error) {
 	addr := net.JoinHostPort(host, port)
 	libvirtURI, _ := url.Parse(c.URI)
 	if strings.Contains(libvirtURI.Scheme, "+ssh") && (host == "127.0.0.1" || host == "localhost" || host == "::1") {
-		return dialSSHStream(libvirtURI.User, libvirtURI.Hostname(), addr)
+		return dialDisplay(libvirtURI, addr)
+	}
+	return dialDisplay(nil, addr)
+}
+
+// dialDisplay opens the byte stream to a VNC display: directly, or through
+// ssh -W when the display lives on a remote hypervisor. A variable so tests
+// can assert DialVNC's address computation without sockets or an sshd.
+var dialDisplay = func(ssh *url.URL, addr string) (io.ReadWriteCloser, error) {
+	if ssh != nil {
+		return dialSSHStream(ssh.User, ssh.Hostname(), addr)
 	}
 	return net.Dial("tcp", addr)
 }

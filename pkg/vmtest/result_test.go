@@ -49,6 +49,26 @@ func TestResultWrite(t *testing.T) {
 	}
 }
 
+func TestResultWrite_PrivateEvenWhenReplacingPermissiveFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ResultFile)
+	if err := os.WriteFile(path, []byte("old report\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	result := &Result{Name: "gate", SSH: SSHAccess{Password: "guest-password"}}
+	if _, err := result.Write(dir); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Errorf("result mode = %04o, want 0600", got)
+	}
+}
+
 func TestResultWrite_AVerdictlessRunIsAFailure(t *testing.T) {
 	// A run that returned without setting a verdict crashed somewhere. Reporting
 	// it as blank would let a pipeline read it as success.

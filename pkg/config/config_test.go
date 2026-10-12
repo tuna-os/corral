@@ -8,6 +8,12 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+func TestMain(m *testing.M) {
+	// Clear XDG_CONFIG_HOME so tests that configure HOME find their configs under HOME/.config
+	_ = os.Unsetenv("XDG_CONFIG_HOME")
+	os.Exit(m.Run())
+}
+
 func TestAuthKey_FromEnv(t *testing.T) {
 	t.Setenv("TS_AUTHKEY", "tskey-auth-abc123")
 	// Ensure no config file interferes
@@ -135,12 +141,35 @@ func TestLoad_InvalidYAML(t *testing.T) {
 }
 
 func TestDefaultPath(t *testing.T) {
-	t.Setenv("HOME", "/home/testuser")
-	path := DefaultPath()
-	expected := "/home/testuser/.config/corral/config.yaml"
-	if path != expected {
-		t.Errorf("DefaultPath() = %q, expected %q", path, expected)
-	}
+	t.Run("default under HOME", func(t *testing.T) {
+		t.Setenv("XDG_CONFIG_HOME", "")
+		t.Setenv("HOME", "/home/testuser")
+		path := DefaultPath()
+		expected := "/home/testuser/.config/corral/config.yaml"
+		if path != expected {
+			t.Errorf("DefaultPath() = %q, expected %q", path, expected)
+		}
+		dir := ConfigDir()
+		expectedDir := "/home/testuser/.config/corral"
+		if dir != expectedDir {
+			t.Errorf("ConfigDir() = %q, expected %q", dir, expectedDir)
+		}
+	})
+
+	t.Run("honours XDG_CONFIG_HOME", func(t *testing.T) {
+		t.Setenv("XDG_CONFIG_HOME", "/custom/xdg/config")
+		t.Setenv("HOME", "/home/testuser")
+		path := DefaultPath()
+		expected := "/custom/xdg/config/corral/config.yaml"
+		if path != expected {
+			t.Errorf("DefaultPath() = %q, expected %q", path, expected)
+		}
+		dir := ConfigDir()
+		expectedDir := "/custom/xdg/config/corral"
+		if dir != expectedDir {
+			t.Errorf("ConfigDir() = %q, expected %q", dir, expectedDir)
+		}
+	})
 }
 
 func TestLoad_DirectoryNotFile(t *testing.T) {

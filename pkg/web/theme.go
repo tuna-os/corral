@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/tuna-os/corral/pkg/config"
-	"gopkg.in/yaml.v3"
 )
 
 // ThemeConfig is the assembled theme — CLI flags override config.yaml, which
@@ -173,12 +172,42 @@ func handleGetTheme(w http.ResponseWriter, r *http.Request) {
 	jsonResp(w, http.StatusOK, activeTheme)
 }
 
+// applyThemeUpdate modifies activeTheme with non-zero fields in req.
+func applyThemeUpdate(req ThemeConfig) {
+	if req.Accent != "" {
+		activeTheme.Accent = req.Accent
+		activeTheme.Accent2 = darkenHex(req.Accent)
+	}
+	if req.Accent2 != "" {
+		activeTheme.Accent2 = req.Accent2
+	}
+	if req.BrandTitle != "" {
+		activeTheme.BrandTitle = req.BrandTitle
+	}
+	if req.BrandEmoji != "" {
+		activeTheme.BrandEmoji = req.BrandEmoji
+	}
+	if req.BrandSubtitle != "" {
+		activeTheme.BrandSubtitle = req.BrandSubtitle
+	}
+	if req.CustomCSS != "" {
+		activeTheme.CustomCSS = req.CustomCSS
+	}
+}
+
 // handlePutTheme accepts a partial theme JSON, merges non-zero values into
-// config.yaml, and writes it back. The active theme is updated immediately.
+// config.yaml, and writes it back (or keeps changes in memory only in demo mode).
+// The active theme is updated immediately.
 func handlePutTheme(w http.ResponseWriter, r *http.Request) {
 	var req ThemeConfig
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		errResp(w, http.StatusBadRequest, err)
+		return
+	}
+
+	if demoMode {
+		applyThemeUpdate(req)
+		jsonResp(w, http.StatusOK, activeTheme)
 		return
 	}
 
@@ -209,21 +238,13 @@ func handlePutTheme(w http.ResponseWriter, r *http.Request) {
 		cfg.Web.CustomCSS = req.CustomCSS
 	}
 
-	data, err := yaml.Marshal(cfg)
-	if err != nil {
-		errResp(w, http.StatusInternalServerError, fmt.Errorf("marshalling config: %w", err))
-		return
-	}
-	if err := os.MkdirAll(config.ConfigDir(), 0o700); err != nil {
-		errResp(w, http.StatusInternalServerError, fmt.Errorf("creating config dir: %w", err))
-		return
-	}
-	if err := os.WriteFile(cfgPath, data, 0o600); err != nil {
-		errResp(w, http.StatusInternalServerError, fmt.Errorf("writing config: %w", err))
+	if err := config.Save(cfg); err != nil {
+		errResp(w, http.StatusInternalServerError, fmt.Errorf("saving config: %w", err))
 		return
 	}
 
 	// Update the active theme so the change takes effect on next page load.
 	loadThemeFromConfig(cfg)
+	applyCLITheme()
 	jsonResp(w, http.StatusOK, activeTheme)
 }

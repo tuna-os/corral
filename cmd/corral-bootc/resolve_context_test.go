@@ -30,6 +30,7 @@ func TestResolveContext_NamedContext(t *testing.T) {
 	// A named context must round-trip through FindContext.
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
 
 	// Write a config with one explicit context at the default path.
 	cfgDir := home + "/.config/corral"

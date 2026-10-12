@@ -25,7 +25,15 @@ import (
 //
 // Nothing here is interactive. Progress goes to out, evidence goes to the
 // artifact directory, and the decision goes to the result.
+//
+// Run is the production composition: it wires the QEMU, bootc and registry
+// adapters into a Runner. The sequencing itself lives on Runner.Run.
 func Run(spec *Spec, out io.Writer) (*Result, error) {
+	return NewRunner().Run(spec, out)
+}
+
+// Run executes spec with r's collaborators. See the package-level Run.
+func (r *Runner) Run(spec *Spec, out io.Writer) (*Result, error) {
 	if out == nil {
 		out = io.Discard
 	}
@@ -33,7 +41,7 @@ func Run(spec *Spec, out io.Writer) (*Result, error) {
 
 	spec.WithDefaults()
 	if err := spec.Validate(); err != nil {
-		result := &Result{Name: spec.Name, Started: time.Now()}
+		result := &Result{Name: spec.Name, Started: r.Clock.Now()}
 		return result, result.fail(ExitSpec, err)
 	}
 
@@ -49,7 +57,7 @@ func Run(spec *Spec, out io.Writer) (*Result, error) {
 		Name:      spec.Name,
 		Image:     spec.Bootc,
 		Backend:   "qemu",
-		Started:   time.Now(),
+		Started:   r.Clock.Now(),
 		Artifacts: artifacts,
 	}
 	// The artifacts are the point of the run, so they are written whatever
@@ -62,7 +70,7 @@ func Run(spec *Spec, out io.Writer) (*Result, error) {
 		}
 	}()
 
-	notes, err := Preflight(spec)
+	notes, err := r.Image.Preflight(spec)
 	if err != nil {
 		return result, result.fail(ExitHost, err)
 	}
@@ -71,60 +79,59 @@ func Run(spec *Spec, out io.Writer) (*Result, error) {
 		progress(note)
 	}
 
-	keys, err := EnsureKeypair(filepath.Join(artifacts, "ssh"), operatorKey())
+	keys, err := r.Image.Keypair(filepath.Join(artifacts, "ssh"))
 	if err != nil {
 		return result, result.fail(ExitHost, err)
 	}
 	result.SSH.IdentityFile = keys.PrivatePath
 
-	layered, err := BuildLayer(spec, keys.AuthorizedKeys(), filepath.Join(artifacts, "layer"), progress)
+	layered, err := r.Image.Layer(spec, keys.AuthorizedKeys(), filepath.Join(artifacts, "layer"), progress)
 	result.Layer = layered
 	if err != nil {
 		return result, result.fail(ExitLayer, err)
 	}
 
-	if err := buildAndImport(spec, layered, keys, progress); err != nil {
+	if err := r.Image.BuildAndImport(spec, layered, keys, progress); err != nil {
 		code := ExitBuild
 		if strings.Contains(err.Error(), "creating the VM") {
 			code = ExitStart
 		}
 		return result, result.fail(code, err)
 	}
-	recordInRegistry(spec, out)
+	r.Registry.Record(spec, out)
 
 	// Capture starts before the VM does, so the first frames show the firmware
 	// and a disk that never boots is not a run with no screenshots.
-	frames := newFrameRecorder(spec, artifacts)
-	frames.start()
+	frames := r.Evidence.StartFrames(spec, artifacts)
 	defer func() {
 		frames.stop()
 		result.Frames = frames.frames()
 	}()
 
-	bootStarted := time.Now()
+	bootStarted := r.Clock.Now()
 	progress("starting " + spec.Name)
-	if err := qemu.Start(spec.Name); err != nil {
+	if err := r.VM.Start(spec.Name); err != nil {
 		return result, result.fail(ExitStart, fmt.Errorf("starting the VM: %w", err))
 	}
 
-	readyErr := waitReady(spec, keys, result, progress)
+	readyErr := r.VM.WaitReady(spec, keys, result, progress)
 	// The console log is evidence in both directions, so it is copied before
 	// the first chance to return.
-	if path, err := copySerialLog(spec.Name, artifacts); err == nil {
+	if path, err := r.Evidence.CopySerialLog(spec.Name, artifacts); err == nil {
 		result.SerialLog = path
 	} else {
 		result.Note("no console log: %v", err)
 	}
 	if readyErr != nil {
 		frames.stop()
-		result.FinalFrame = captureFinal(spec, artifacts, "failure", result)
+		result.FinalFrame = r.Evidence.CaptureFinal(spec, artifacts, "failure", result)
 		return result, result.fail(ExitNotReady, readyErr)
 	}
 	result.Ready = true
-	result.BootSeconds = time.Since(bootStarted).Seconds()
+	result.BootSeconds = r.Clock.Now().Sub(bootStarted).Seconds()
 	progress(fmt.Sprintf("%s is ready after %.0fs (%s)", spec.Name, result.BootSeconds, result.ReadyBy))
 
-	if endpoint, err := qemu.SSHEndpoint(spec.Name); err == nil {
+	if endpoint, err := r.VM.SSHEndpoint(spec.Name); err == nil {
 		result.SSH.User, result.SSH.Host, result.SSH.Port = spec.SSHUser, endpoint.Host, endpoint.Port
 		result.SSH.Password = spec.passwordFor(spec.SSHUser)
 		result.SSH.Command = fmt.Sprintf("ssh -i %s -p %d %s@%s", keys.PrivatePath, endpoint.Port, spec.SSHUser, endpoint.Host)
@@ -134,15 +141,15 @@ func Run(spec *Spec, out io.Writer) (*Result, error) {
 	// is not worth the disk.
 	frames.stop()
 	result.Frames = frames.frames()
-	result.FinalFrame = captureFinal(spec, artifacts, "ready", result)
-	if video, err := assembleVideo(spec, artifacts); err != nil {
+	result.FinalFrame = r.Evidence.CaptureFinal(spec, artifacts, "ready", result)
+	if video, err := r.Evidence.AssembleVideo(spec, artifacts); err != nil {
 		result.Note("no timelapse: %v", err)
 	} else if video != "" {
 		result.Video = video
 		progress("timelapse: " + video)
 	}
 
-	if path, err := copySerialLog(spec.Name, artifacts); err == nil {
+	if path, err := r.Evidence.CopySerialLog(spec.Name, artifacts); err == nil {
 		result.SerialLog = path
 	}
 
@@ -151,7 +158,7 @@ func Run(spec *Spec, out io.Writer) (*Result, error) {
 		// The marker gate does not prove SSH works. Try it anyway, because
 		// everything below needs it and "ready but unreachable" is worth
 		// reporting as itself.
-		if err := qemu.WaitSSHKey(spec.Name, spec.SSHUser, keys.PrivatePath, 60*time.Second); err == nil {
+		if err := r.VM.WaitSSH(spec.Name, spec.SSHUser, keys.PrivatePath, 60*time.Second); err == nil {
 			sshReachable = true
 		} else {
 			result.Note("the guest reported ready on its console but SSH did not answer: %v", err)
@@ -159,11 +166,11 @@ func Run(spec *Spec, out io.Writer) (*Result, error) {
 	}
 
 	if layered.Derived {
-		result.Hook = hookOutcome(spec, keys, sshReachable, progress)
+		result.Hook = r.Probes.Hook(spec, keys, sshReachable, progress)
 	}
 	if sshReachable {
-		collectDiagnostics(spec, keys, artifacts)
-		result.Checks = runChecks(spec, keys, progress)
+		r.Probes.Diagnostics(spec, keys, artifacts)
+		result.Checks = r.Probes.Checks(spec, keys, progress)
 	} else if len(spec.Checks) > 0 {
 		result.Note("skipped %d checks: SSH never answered", len(spec.Checks))
 	}
@@ -171,7 +178,7 @@ func Run(spec *Spec, out io.Writer) (*Result, error) {
 	result.Kept = spec.Keep
 	if !spec.Keep {
 		progress("deleting " + spec.Name)
-		if err := qemu.Delete(spec.Name); err != nil {
+		if err := r.VM.Delete(spec.Name); err != nil {
 			result.Note("could not delete the VM: %v", err)
 		}
 	}
