@@ -22,6 +22,7 @@ import (
 	"github.com/tuna-os/corral/pkg/incus"
 	"github.com/tuna-os/corral/pkg/kubevirt"
 	"github.com/tuna-os/corral/pkg/libvirt"
+	"github.com/tuna-os/corral/pkg/nutanix"
 	"github.com/tuna-os/corral/pkg/proxmoxbe"
 	"github.com/tuna-os/corral/pkg/qemu"
 	"github.com/tuna-os/corral/pkg/types"
@@ -67,6 +68,13 @@ func init() {
 		// probe() must not fail for a pool that is merely unconfigured —
 		// the families a backend implements are a property of its type.
 		return xenAdapter{context: ref.Context}, nil
+	})
+	Register("nutanix", func(ref types.InstanceRef) (Adapter, error) {
+		// Deferred: the client needs configuration, and probe() must not
+		// fail for a Prism Central that is merely unconfigured — v4
+		// authenticates per request, so resolving alone never dials, and
+		// the families a backend implements are a property of its type.
+		return nutanixAdapter{context: ref.Context}, nil
 	})
 }
 
@@ -705,6 +713,87 @@ func (a xenAdapter) Clone(source, target string) error {
 	}
 	_, err = client.Clone(source, target)
 	return err
+}
+
+// ── Nutanix Prism Central (AHV) ─────────────────────────────────────
+//
+// Power, the backend's own reboot and suspend, migration, clones, and
+// category tags. v4 mutations are async tasks, so — unlike the XenAPI
+// adapter — every call here waits its task to completion: a surface that
+// fired and forgot would report success for a migration that failed thirty
+// seconds later. No Addresser: the NIC address sits in inventory but no
+// address discovery is wired. No consoles: the v4 reference proves no
+// per-VM console endpoint, and advertising one nothing can open is the
+// exact failure the parity conformance tests exist to catch.
+
+type nutanixAdapter struct{ context string }
+
+func (nutanixAdapter) Backend() string { return "nutanix" }
+
+func (a nutanixAdapter) client() (*nutanix.Client, error) {
+	return nutanix.ClientForContext(a.context)
+}
+
+// complete waits a task-returning client op to completion.
+func (a nutanixAdapter) complete(op func(*nutanix.Client) (nutanix.Task, error)) error {
+	client, err := a.client()
+	if err != nil {
+		return err
+	}
+	task, err := op(client)
+	if err != nil {
+		return err
+	}
+	return client.WaitTask(task, nutanix.DefaultTimeout)
+}
+
+func (a nutanixAdapter) Start(name string) error {
+	return a.complete(func(c *nutanix.Client) (nutanix.Task, error) { return c.Start(name) })
+}
+
+func (a nutanixAdapter) Stop(name string) error {
+	return a.complete(func(c *nutanix.Client) (nutanix.Task, error) { return c.Stop(name) })
+}
+
+func (a nutanixAdapter) Delete(name string) error {
+	return a.complete(func(c *nutanix.Client) (nutanix.Task, error) { return c.Destroy(name) })
+}
+
+func (a nutanixAdapter) Restart(name string) error {
+	return a.complete(func(c *nutanix.Client) (nutanix.Task, error) { return c.Restart(name) })
+}
+
+func (a nutanixAdapter) Pause(name string) error {
+	return a.complete(func(c *nutanix.Client) (nutanix.Task, error) { return c.Pause(name) })
+}
+
+func (a nutanixAdapter) Resume(name string) error {
+	return a.complete(func(c *nutanix.Client) (nutanix.Task, error) { return c.Resume(name) })
+}
+
+func (a nutanixAdapter) Migrate(name, target string) error {
+	return a.complete(func(c *nutanix.Client) (nutanix.Task, error) { return c.Migrate(name, target) })
+}
+
+// CanMigrate asks the guest record rather than guessing: the power-state
+// approximation lives in the client, and an unconfigured context refuses
+// with its reason instead of failing open.
+func (a nutanixAdapter) CanMigrate(name string) (bool, string) {
+	client, err := a.client()
+	if err != nil {
+		return false, err.Error()
+	}
+	return client.CanMigrate(name)
+}
+
+func (a nutanixAdapter) Clone(source, target string) error {
+	return a.complete(func(c *nutanix.Client) (nutanix.Task, error) { return c.Clone(source, target) })
+}
+
+// SetTag rides the single corral-tag category key; governed PCs may refuse
+// the write with their own reason. See nutanix.TagCategoryKey.
+func (a nutanixAdapter) SetTag(name, tag string, on bool) error {
+	return a.complete(func(c *nutanix.Client) (nutanix.Task, error) { return c.SetTag(name, tag, on) })
 }
 
 // firstImageStorage picks a storage that accepts disk images, so AddDisk works

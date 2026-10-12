@@ -16,6 +16,7 @@ package nutanix
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -129,6 +130,70 @@ func (c *Client) Pause(name string) (Task, error) {
 // Resume unpauses a suspended guest.
 func (c *Client) Resume(name string) (Task, error) {
 	return c.action(name, "resume")
+}
+
+// Destroy deletes the VM. A running (or paused) guest is powered off first
+// — hard, not graceful: Destroy is already destructive, and a graceful
+// shutdown would only delay the inevitable while pretending otherwise (the
+// vsphere Delete shape). The DELETE carries the ETag read just before it,
+// so a concurrent change fails the write instead of deleting blind.
+func (c *Client) Destroy(name string) (Task, error) {
+	vm, err := c.Resolve(name)
+	if err != nil {
+		return Task{}, err
+	}
+	if !strings.EqualFold(vm.PowerState, "OFF") {
+		off, err := c.action(name, "power-off")
+		if err != nil {
+			return Task{}, err
+		}
+		if err := c.WaitTask(off, DefaultTimeout); err != nil {
+			return Task{}, fmt.Errorf("nutanix: destroy %q: powering off: %w", name, err)
+		}
+	}
+	etag, err := c.getETag(c.vmmPath("/" + vm.ExtID))
+	if err != nil {
+		return Task{}, err
+	}
+	return c.deleteTask(c.vmmPath("/"+vm.ExtID), etag)
+}
+
+// CanMigrate reports whether a migration has anywhere to go. It is an
+// approximation, not a promise: the guest's own record says whether it is
+// running (live migration needs that), but host listing lives in the
+// clustermgmt namespace and lands with wiring — until then there is no
+// second-host check, and Migrate refuses an empty target rather than
+// guessing. KubeVirt's pre-flight approximates too; this one says so.
+func (c *Client) CanMigrate(name string) (bool, string) {
+	vm, err := c.Resolve(name)
+	if err != nil {
+		return false, err.Error()
+	}
+	if !strings.EqualFold(vm.PowerState, "ON") {
+		return false, "VM is not running; live migration needs a running guest"
+	}
+	return true, ""
+}
+
+// TagCategoryKey is the single v4 category key Corral tags ride on.
+// v4 categories are key/value pairs under governance (allowed values may
+// refuse); Corral tags are free-form strings. The mapping is therefore
+// lossy by construction: tag "web" becomes category corral-tag=web, and a
+// PC that governs the key refuses the write with its own reason rather
+// than Corral inventing a second mapping. See the matrix tags cell.
+const TagCategoryKey = "corral-tag"
+
+// SetTag attaches or detaches one Corral tag via category assignment —
+// the $actions/associate-categories endpoint the portal documents, with
+// the provisional body shape pinned by fixtures like every other verb here.
+func (c *Client) SetTag(name, tag string, on bool) (Task, error) {
+	verb := "associate-categories"
+	if !on {
+		verb = "disassociate-categories"
+	}
+	return c.actionWithBody(name, verb, map[string]any{
+		"categories": []map[string]any{{"key": TagCategoryKey, "value": tag}},
+	})
 }
 
 // ── movement ────────────────────────────────────────────────────────

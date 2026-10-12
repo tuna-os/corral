@@ -115,14 +115,12 @@ func (c *Client) resolveSnapshot(vmName, snap string) (SnapshotInfo, error) {
 		return SnapshotInfo{}, fmt.Errorf("nutanix: %d snapshots named %q on %q; use the extId", len(found), snap, vmName)
 	}
 }
-
-// DeleteSnapshot deletes a recovery point, leaving the VM untouched.
 func (c *Client) DeleteSnapshot(vmName, snap string) (Task, error) {
 	p, err := c.resolveSnapshot(vmName, snap)
 	if err != nil {
 		return Task{}, err
 	}
-	return c.deleteTask(c.dpPath("/recovery-points/" + p.ExtID))
+	return c.deleteTask(c.dpPath("/recovery-points/"+p.ExtID), "")
 }
 
 // RevertSnapshot rolls the VM back to a recovery point in place — the vmm
@@ -147,11 +145,17 @@ func (c *Client) RevertSnapshot(vmName, snap string) (Task, error) {
 	return Task{ExtID: resp.Data.ExtID}, nil
 }
 
-// deleteTask issues a DELETE and decodes the 202 task envelope. The
+// deleteTask issues a DELETE and decodes the 202 task envelope. etag is the
+// If-Match value; empty means no precondition (recovery-point deletes read
+// the point just before deleting it, so the lookup is the guard). The
 // idempotency header still goes out on a bodyless DELETE (see client.do).
-func (c *Client) deleteTask(path string) (Task, error) {
+func (c *Client) deleteTask(path, etag string) (Task, error) {
+	var extra map[string]string
+	if etag != "" {
+		extra = map[string]string{"If-Match": etag}
+	}
 	var resp actionResponse
-	if err := c.do("DELETE", path, nil, &resp); err != nil {
+	if err := c.doWithHeaders("DELETE", path, nil, &resp, extra); err != nil {
 		return Task{}, err
 	}
 	if resp.Data.ExtID == "" {

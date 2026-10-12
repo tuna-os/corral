@@ -20,7 +20,19 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/tuna-os/corral/pkg/config"
 )
+
+// Fixture provenance (RFC-0003 fixture standard): every shape below is tied
+// to the nutanix.dev v4 reference (developers.nutanix.com, vmm namespace)
+// and the live-verified v4 call record in backbuu/Nutanix-API-Test. Fields
+// the reference proves — extId, name, powerState ON/OFF/PAUSED, numSockets,
+// numCoresPerSocket, memorySizeBytes, NIC ipv4, cluster/host refs, the
+// {data, metadata.totalAvailableResults} envelope — are recorded verbatim.
+// Anything the reference does not pin ($actions verb slugs, dataprotection
+// paths/bodies, category bodies) is marked PROVISIONAL at the assertion and
+// verified against a live PC at wiring time.
 
 // listFixture is a recorded v4 GET /ahv/config/vms shape: three AHV VMs —
 // running, stopped, paused — with the config fields the inventory maps.
@@ -83,6 +95,7 @@ type recordedRequest struct {
 	Query     url.Values
 	AuthUser  string
 	RequestID string
+	IfMatch   string
 	Body      string
 }
 
@@ -107,6 +120,7 @@ func (f *fakePC) serve(w http.ResponseWriter, r *http.Request) {
 		Query:     r.URL.Query(),
 		AuthUser:  user,
 		RequestID: r.Header.Get("Ntnx-Request-Id"),
+		IfMatch:   r.Header.Get("If-Match"),
 		Body:      string(rawBody),
 	})
 	f.mu.Unlock()
@@ -118,6 +132,8 @@ func (f *fakePC) serve(w http.ResponseWriter, r *http.Request) {
 		f.serveList(w, r)
 	case r.Method == http.MethodGet && strings.Contains(path, "/ahv/config/vms/"):
 		f.serveGet(w, path)
+	case r.Method == http.MethodDelete && strings.Contains(path, "/ahv/config/vms/"):
+		f.serveAction(w, path+"/delete")
 	case r.Method == http.MethodPost && strings.Contains(path, "/$actions/"):
 		f.serveAction(w, path)
 	case r.Method == http.MethodGet && strings.HasSuffix(path, "/recovery-points"):
@@ -135,8 +151,13 @@ func (f *fakePC) serve(w http.ResponseWriter, r *http.Request) {
 }
 
 // serveAction mints one task per verb invocation and answers the 202
-// envelope. Tests pre-seed f.taskOutcomes[verb] to script that task's
-// status sequence (e.g. shutdown → FAILED for the fallback test).
+// envelope. Provenance: v4 mutations return 202 Accepted with a task extId
+// polled at /api/prism/{ver}/config/tasks/{id} (prism namespace, terminal
+// SUCCEEDED/FAILED/CANCELLED) per the v4 reference and the live call
+// record. The $actions verb slugs themselves are PROVISIONAL (portal action
+// index, not per-verb reference pages) — pinned here, verified live later.
+// Tests pre-seed f.taskOutcomes[verb] to script that task's status sequence
+// (e.g. shutdown → FAILED for the fallback test).
 func (f *fakePC) serveAction(w http.ResponseWriter, path string) {
 	verb := path
 	if i := strings.LastIndex(path, "/$actions/"); i >= 0 {
@@ -209,6 +230,9 @@ func (f *fakePC) serveGet(w http.ResponseWriter, path string) {
 	extID := path[strings.LastIndex(path, "/")+1:]
 	for _, vm := range resp.Data {
 		if vm.ExtID == extID {
+			// v4 guards writes with If-Match: every GET carries the
+			// current ETag, and Destroy sends it back on DELETE.
+			w.Header().Set("Etag", "etag-"+extID)
 			_ = json.NewEncoder(w).Encode(getResponse{Data: vm})
 			return
 		}
@@ -217,8 +241,10 @@ func (f *fakePC) serveGet(w http.ResponseWriter, path string) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"message": "vm not found"})
 }
 
-// recoveryPointsFixture is a recorded v4 dataprotection list shape: two
-// crash-consistent points on web-prod, one on db-prod. The consistency
+// recoveryPointsFixture is a PROVISIONAL v4 dataprotection list shape: the
+// namespace and the recovery-point concept are reference-confirmed, but the
+// path and body keys are not pinned to per-endpoint reference pages — live
+// verification at wiring will correct them in one place. The consistency
 // value is the fixture's — the client overwrites it with CrashConsistent
 // regardless, because the server must not be trusted on this field.
 const recoveryPointsFixture = `{
@@ -703,7 +729,7 @@ func TestUnauthorized(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
-		fmt.Fprint(w, `{"message":"authentication failed"}`)
+		_, _ = fmt.Fprint(w, `{"message":"authentication failed"}`)
 	}))
 	t.Cleanup(srv.Close)
 	c, _ := New(Config{Host: "pc.example.com", Username: "u", Secret: "bad"})
@@ -722,14 +748,155 @@ func TestUnauthorized(t *testing.T) {
 func TestPasswordFromEnv(t *testing.T) {
 	t.Setenv(PasswordEnv, "base")
 	t.Setenv(PasswordEnv+"_LAB", "lab-secret")
-	if got := passwordFromEnv("lab"); got != "lab-secret" {
+	if got := PasswordFromEnv("lab"); got != "lab-secret" {
 		t.Errorf("per-context override = %q", got)
 	}
-	if got := passwordFromEnv("other"); got != "base" {
+	if got := PasswordFromEnv("other"); got != "base" {
 		t.Errorf("base = %q", got)
 	}
 	t.Setenv(PasswordEnv+"_MY_PC", "dash")
-	if got := passwordFromEnv("my-pc"); got != "dash" {
+	if got := PasswordFromEnv("my-pc"); got != "dash" {
 		t.Errorf("suffix normalisation = %q", got)
+	}
+}
+
+func TestDestroy(t *testing.T) {
+	// A running guest is powered off first, then deleted with the ETag
+	// read just before the DELETE.
+	f := newFakePC(t)
+	c := testClient(t, f)
+	task, err := c.Destroy("web-prod")
+	if err != nil {
+		t.Fatalf("Destroy: %v", err)
+	}
+	if !strings.HasPrefix(task.ExtID, "task-delete-") {
+		t.Fatalf("task = %q, want the delete task", task.ExtID)
+	}
+	if _, ok := findRequest(f, "/$actions/power-off"); !ok {
+		t.Error("running guest was not powered off before delete")
+	}
+	del, ok := findRequest(f, "/ahv/config/vms/11111111-1111-1111-1111-111111111111")
+	if !ok || del.Method != http.MethodDelete {
+		t.Fatalf("no DELETE recorded (ok=%v req=%+v)", ok, del)
+	}
+	if del.IfMatch != "etag-11111111-1111-1111-1111-111111111111" {
+		t.Errorf("If-Match = %q, want the ETag from the pre-delete GET", del.IfMatch)
+	}
+	if del.RequestID == "" {
+		t.Error("DELETE missing Ntnx-Request-Id idempotency header")
+	}
+
+	// A stopped guest goes straight to DELETE with no power-off.
+	f2 := newFakePC(t)
+	c2 := testClient(t, f2)
+	if _, err := c2.Destroy("db-prod"); err != nil {
+		t.Fatalf("Destroy stopped: %v", err)
+	}
+	if _, ok := findRequest(f2, "/$actions/power-off"); ok {
+		t.Error("stopped guest must not be powered off before delete")
+	}
+
+	if _, err := c2.Destroy("nope"); err == nil {
+		t.Error("expected an error for an unknown name")
+	}
+}
+
+func TestCanMigrate(t *testing.T) {
+	f := newFakePC(t)
+	c := testClient(t, f)
+	ok, reason := c.CanMigrate("web-prod")
+	if !ok {
+		t.Errorf("running guest should migrate, got %q", reason)
+	}
+	ok, reason = c.CanMigrate("db-prod")
+	if ok {
+		t.Error("stopped guest must not claim live-migratable")
+	} else if reason == "" {
+		t.Error("refusal must carry the reason")
+	}
+	if ok, _ := c.CanMigrate("nope"); ok {
+		t.Error("unknown guest must not claim migratable")
+	}
+}
+
+func TestSetTag(t *testing.T) {
+	f := newFakePC(t)
+	c := testClient(t, f)
+	task, err := c.SetTag("web-prod", "web", true)
+	if err != nil {
+		t.Fatalf("SetTag: %v", err)
+	}
+	if !task.Valid() {
+		t.Fatal("no task returned")
+	}
+	// PROVISIONAL body shape (portal-confirmed endpoint, unconfirmed keys):
+	// the test pins exactly what the client sends.
+	req, ok := findRequest(f, "/$actions/associate-categories")
+	if !ok {
+		t.Fatal("no associate-categories action recorded")
+	}
+	var body map[string]any
+	if err := json.Unmarshal([]byte(req.Body), &body); err != nil {
+		t.Fatalf("body is not JSON: %v", err)
+	}
+	cats, _ := body["categories"].([]any)
+	if len(cats) != 1 {
+		t.Fatalf("body = %s, want one category", req.Body)
+	}
+	cat, _ := cats[0].(map[string]any)
+	if cat["key"] != TagCategoryKey || cat["value"] != "web" {
+		t.Errorf("body = %s, want corral-tag=web", req.Body)
+	}
+
+	if _, err := c.SetTag("web-prod", "web", false); err != nil {
+		t.Fatalf("SetTag off: %v", err)
+	}
+	if _, ok := findRequest(f, "/$actions/disassociate-categories"); !ok {
+		t.Error("no disassociate-categories action recorded")
+	}
+}
+
+func TestProbe(t *testing.T) {
+	f := newFakePC(t)
+	c := testClient(t, f)
+	if err := c.Probe(); err != nil {
+		t.Fatalf("Probe: %v", err)
+	}
+	req := f.lastRequest()
+	if v := req.Query.Get("$limit"); v != "1" {
+		t.Errorf("$limit = %q, want a single cheap page", v)
+	}
+}
+
+func TestConfigForContext(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Contexts = []config.ContextConfig{{
+		Name:    "pc",
+		Backend: "nutanix",
+		Context: "pc.example.com",
+		Nutanix: &config.NutanixContextConfig{Username: "admin"},
+	}}
+	if err := config.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(PasswordEnv, "s3cret")
+
+	got, err := ConfigForContext("pc")
+	if err != nil {
+		t.Fatalf("ConfigForContext: %v", err)
+	}
+	if got.Host != "pc.example.com" || got.Username != "admin" || got.Secret != "s3cret" {
+		t.Errorf("config = %+v", got)
+	}
+	if got.APIVersion != "" {
+		t.Errorf("version should stay empty for New to default, got %q", got.APIVersion)
+	}
+
+	if _, err := ConfigForContext("nope"); err == nil {
+		t.Error("expected an error for an unconfigured context")
 	}
 }

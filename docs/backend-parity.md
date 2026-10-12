@@ -27,33 +27,33 @@ to the matrix.
 Legend: ✅ shipped · 🔨 the backend can do this and Corral does not yet · — the
 backend cannot, or it is meaningless there.
 
-| Operation | kubevirt | qemu | incus | libvirt | proxmox | virtualbox | vsphere | xen |
-|---|---|---|---|---|---|---|---|
-| List / inventory | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Create | ✅ | ✅ | ✅ | ✅ | ✅ | 🔨 | 🔨 | 🔨 |
-| Start | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Stop | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Restart | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Pause / resume | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Delete | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| SSH | ✅ | ✅ | ✅ | 🔨 | ✅ | 🔨 | 🔨 | 🔨 |
-| Serial / shell console | ✅ | 🔨 | ✅ | 🔨 | 🔨 | 🔨 | 🔨 | 🔨 |
-| Graphical console (VNC) | ✅ | ✅ | 🔨 | ✅ | 🔨 | 🔨 | 🔨 | 🔨 |
-| RDP | ✅ | 🔨 | 🔨 | 🔨 | 🔨 | 🔨 | 🔨 | 🔨 |
-| Live CPU / memory | ✅ | ✅ | ✅ | ✅ | ✅ | 🔨 | 🔨 | 🔨 |
-| Snapshot / restore | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Migrate | ✅ | — | 🔨 | 🔨 | ✅ | — | ✅ | ✅ |
-| Clone | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | ✅ | ✅ |
-| Template mark | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | ✅ | 🔨 |
-| CPU / memory edit | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | ✅ | 🔨 |
-| Add / remove disks | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | 🔨 | 🔨 |
-| Expand disk | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | 🔨 | 🔨 |
-| GPU passthrough | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | 🔨 | 🔨 |
-| Export / backup disk | ✅ | ✅ | ✅ | ✅ | ✅ | 🔨 | 🔨 | 🔨 |
-| Events | ✅ | ✅ | — | — | ✅ | — | 🔨 | 🔨 |
-| Tags | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | 🔨 | 🔨 |
-| Published ports | ✅ | ✅ | 🔨 | — | — | 🔨 | — | — |
-| Containers (CT) | ✅ | — | ✅ | — | 🔨 | — | — | — |
+| Operation | kubevirt | qemu | incus | libvirt | proxmox | virtualbox | vsphere | xen | nutanix |
+|---|---|---|---|---|---|---|---|---|---|
+| List / inventory | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Create | ✅ | ✅ | ✅ | ✅ | ✅ | 🔨 | 🔨 | 🔨 | 🔨 |
+| Start | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Stop | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Restart | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Pause / resume | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Delete | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| SSH | ✅ | ✅ | ✅ | 🔨 | ✅ | 🔨 | 🔨 | 🔨 | 🔨 |
+| Serial / shell console | ✅ | 🔨 | ✅ | 🔨 | 🔨 | 🔨 | 🔨 | 🔨 | — |
+| Graphical console (VNC) | ✅ | ✅ | 🔨 | ✅ | 🔨 | 🔨 | 🔨 | 🔨 | — |
+| RDP | ✅ | 🔨 | 🔨 | 🔨 | 🔨 | 🔨 | 🔨 | 🔨 | — |
+| Live CPU / memory | ✅ | ✅ | ✅ | ✅ | ✅ | 🔨 | 🔨 | 🔨 | 🔨 |
+| Snapshot / restore | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Migrate | ✅ | — | 🔨 | 🔨 | ✅ | — | ✅ | ✅ | ✅ |
+| Clone | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | ✅ | ✅ | ✅ |
+| Template mark | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | ✅ | 🔨 | — |
+| CPU / memory edit | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | ✅ | 🔨 | 🔨 |
+| Add / remove disks | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | 🔨 | 🔨 | 🔨 |
+| Expand disk | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | 🔨 | 🔨 | 🔨 |
+| GPU passthrough | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | 🔨 | 🔨 | — |
+| Export / backup disk | ✅ | ✅ | ✅ | ✅ | ✅ | 🔨 | 🔨 | 🔨 | 🔨 |
+| Events | ✅ | ✅ | — | — | ✅ | — | 🔨 | 🔨 | 🔨 |
+| Tags | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | 🔨 | 🔨 | ✅ |
+| Published ports | ✅ | ✅ | 🔨 | — | — | 🔨 | — | — | — |
+| Containers (CT) | ✅ | — | ✅ | — | 🔨 | — | — | — | — |
 
 ## What the audit found
 
@@ -243,6 +243,17 @@ websocket bridge is not. So the capability flags say no, and the matrix says why
 - **export** — The pool serves XVA on /export. pkg/export has no Xen adapter yet.
 - **events** — The pool logs its own activity. Corral wires no reader for that log yet.
 - **tags** — The VM record carries tags natively. Corral has no tagger to set them yet.
+
+### nutanix — 8 gaps
+
+- **create** — VM create exists natively. Corral has no creator for it yet.
+- **ssh** — Corral has no address discovery yet. Use the NIC address, then plain ssh.
+- **metrics** — v4 stats and v1 counters carry live data. Corral has no sampler for them yet.
+- **scale** — PUT updates cores and memory natively. Nothing drives it yet.
+- **volumes** — Disk endpoints exist in vmm. Nothing drives them yet.
+- **expand** — Disk update exists in vmm. Nothing drives it yet.
+- **export** — Recovery points exist in dataprotection. Corral has no downloader for them yet.
+- **events** — The task list logs pool activity. Corral wires no per-VM reader yet.
 
 ## Testing parity
 

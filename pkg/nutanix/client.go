@@ -183,6 +183,10 @@ func (c *Client) get(path string, out any) error {
 	return c.do(http.MethodGet, path, nil, out)
 }
 
+// Host reports the configured Prism Central endpoint, for doctor output and
+// error messages that should name where the client points.
+func (c *Client) Host() string { return c.cfg.Host }
+
 // post sends a JSON body. Mutations carry an idempotency id because v4
 // requires Ntnx-Request-Id on POST/PUT/DELETE; a retried request with the
 // same id must not power-cycle a VM twice.
@@ -190,18 +194,21 @@ func (c *Client) post(path string, body any, out any) error {
 	return c.do(http.MethodPost, path, body, out)
 }
 
-func (c *Client) do(method, path string, body any, out any) error {
+// newRequest builds an authenticated v4 request. extra carries per-call
+// headers such as If-Match; the idempotency header goes out on every
+// mutation here rather than at each call site, so no write path forgets it.
+func (c *Client) newRequest(method, path string, body any, extra map[string]string) (*http.Request, error) {
 	var rdr io.Reader
 	if body != nil {
 		raw, err := json.Marshal(body)
 		if err != nil {
-			return fmt.Errorf("nutanix: %s %s: encoding request: %w", method, path, err)
+			return nil, fmt.Errorf("nutanix: %s %s: encoding request: %w", method, path, err)
 		}
 		rdr = bytes.NewReader(raw)
 	}
 	req, err := http.NewRequest(method, c.base+path, rdr)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.SetBasicAuth(c.cfg.Username, c.cfg.Secret)
 	req.Header.Set("Accept", "application/json")
@@ -211,12 +218,27 @@ func (c *Client) do(method, path string, body any, out any) error {
 	if method == http.MethodPost || method == http.MethodPut || method == http.MethodDelete {
 		req.Header.Set("Ntnx-Request-Id", newRequestID())
 	}
+	for k, v := range extra {
+		req.Header.Set(k, v)
+	}
+	return req, nil
+}
+func (c *Client) do(method, path string, body any, out any) error {
+	return c.doWithHeaders(method, path, body, out, nil)
+}
 
+// doWithHeaders is do with per-call headers. Writes that need If-Match
+// (DELETE a VM) come through here; everything else passes nil.
+func (c *Client) doWithHeaders(method, path string, body any, out any, extra map[string]string) error {
+	req, err := c.newRequest(method, path, body, extra)
+	if err != nil {
+		return err
+	}
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return fmt.Errorf("nutanix: %s %s: %w", method, path, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	payload, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if err != nil {
@@ -269,4 +291,34 @@ func newRequestID() string {
 		return fmt.Sprintf("%d", time.Now().UnixNano())
 	}
 	return hex.EncodeToString(b[:])
+}
+
+// getETag issues a GET and returns the response ETag. v4 guards concurrent
+// writes with If-Match, so Destroy reads the tag before deleting rather
+// than racing another operator's change.
+func (c *Client) getETag(path string) (string, error) {
+	req, err := c.newRequest(http.MethodGet, path, nil, nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("nutanix: GET %s: %w", path, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 8<<20))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", &APIError{Status: resp.StatusCode, Method: http.MethodGet, Path: path}
+	}
+	return resp.Header.Get("Etag"), nil
+}
+
+// Probe asks for a single VM in a single cheap call: authentication,
+// reachability, and version-string validity together, for the doctor. It
+// proves nothing about any particular guest.
+func (c *Client) Probe() error {
+	q := url.Values{}
+	q.Set("$limit", "1")
+	var resp listResponse
+	return c.get(c.vmmPath("?"+q.Encode()), &resp)
 }
