@@ -27,7 +27,7 @@ func pollFor200(t *testing.T, url, wantBody string, deadline time.Duration) {
 		resp, err := http.Get(url)
 		if err == nil {
 			body, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			if resp.StatusCode == http.StatusOK && string(body) == wantBody {
 				return
 			}
@@ -58,7 +58,7 @@ func TestSupervisorProbeContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /readyz: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("GET /readyz = %d, want 200", resp.StatusCode)
 	}
@@ -79,7 +79,7 @@ func TestSupervisorProbeContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /readyz (nil store): %v", err)
 	}
-	defer resp2.Body.Close()
+	defer func() { _ = resp2.Body.Close() }()
 	if resp2.StatusCode != http.StatusServiceUnavailable {
 		t.Errorf("GET /readyz (nil store) = %d, want 503", resp2.StatusCode)
 	}

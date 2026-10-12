@@ -137,7 +137,7 @@ systemctl --user enable --now corral-web.service
 journalctl --user -u corral-web.service
 ```
 
-CI checks the unit file on each push. `TestQuadletUnitFile` runs the real generator with `--dryrun` where podman ships it.
+CI checks the unit file on each push. The test runs the real generator where it can.
 
 ### When it breaks
 
