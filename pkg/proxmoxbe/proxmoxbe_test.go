@@ -1328,3 +1328,25 @@ func TestCreate_BIOSByDefaultHasNoEFIDisk(t *testing.T) {
 			form.Get("bios"), form.Get("efidisk0"))
 	}
 }
+
+// findLatestBackup matches the file name inside storage-prefixed volume ids.
+// The content API reports "backup-nfs:backup/vzdump-qemu-100-....vma.zst",
+// never a bare name — matching the whole id finds nothing on a real cluster.
+func TestFindLatestBackup_MatchesStoragePrefixedVolumeIDs(t *testing.T) {
+	f := newFakePVE(t)
+	f.on("GET /storage/backup-nfs/content", []map[string]any{
+		{"volid": "backup-nfs:iso/debian-12.iso", "content": "iso"},
+		{"volid": "backup-nfs:backup/vzdump-qemu-101-2026_10_11-00_00_00.vma.zst", "content": "backup"},
+		{"volid": "backup-nfs:backup/vzdump-qemu-100-2026_10_11-00_00_00.vma.zst", "content": "backup"},
+		{"volid": "backup-nfs:backup/vzdump-qemu-100-2026_10_12-00_00_00.vma.zst", "content": "backup"},
+	})
+
+	got, err := f.client().findLatestBackup("backup-nfs", 100)
+	if err != nil {
+		t.Fatalf("findLatestBackup: %v", err)
+	}
+	want := "backup-nfs:backup/vzdump-qemu-100-2026_10_12-00_00_00.vma.zst"
+	if got != want {
+		t.Errorf("latest = %q, want %q (the full id the download needs)", got, want)
+	}
+}
