@@ -22,7 +22,7 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic(err)
 	}
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 	bin := filepath.Join(dir, "corral-incus")
 	if err := exec.Command("go", "build", "-o", bin, ".").Run(); err != nil {
 		panic("building corral-incus for tests: " + err.Error())

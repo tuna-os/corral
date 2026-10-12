@@ -56,7 +56,7 @@ func (f *fakeTarget) Import(ref types.InstanceRef, disk string, opts bootc.Creat
 
 // runBuildAndImport swaps in the fakes, captures stderr (buildAndImport
 // reports prerequisites and progress there), and runs the flow.
-func runBuildAndImport(t *testing.T, fb *fakeBuilder, ft *fakeTarget, useRealTarget bool, target config.ContextConfig, image, sshKey, disk string, useSudo bool) (error, string) {
+func runBuildAndImport(t *testing.T, fb *fakeBuilder, ft *fakeTarget, useRealTarget bool, target config.ContextConfig, image, sshKey, disk string, useSudo bool) (string, error) {
 	t.Helper()
 	oldBuilder, oldTarget := newBuilder, targetFor
 	newBuilder = func(sudo bool) bootc.Builder {
@@ -78,7 +78,7 @@ func runBuildAndImport(t *testing.T, fb *fakeBuilder, ft *fakeTarget, useRealTar
 	_ = w.Close()
 	os.Stderr = oldErr
 	out, _ := io.ReadAll(r)
-	return runErr, string(out)
+	return string(out), runErr
 }
 
 func TestBuildAndImport(t *testing.T) {
@@ -87,7 +87,7 @@ func TestBuildAndImport(t *testing.T) {
 
 	t.Run("missing image", func(t *testing.T) {
 		fb, ft := &fakeBuilder{}, &fakeTarget{}
-		err, _ := runBuildAndImport(t, fb, ft, false, qemuTarget, "", "ssh-ed25519 AAAAtest", "20G", false)
+		_, err := runBuildAndImport(t, fb, ft, false, qemuTarget, "", "ssh-ed25519 AAAAtest", "20G", false)
 		if err == nil || !strings.Contains(err.Error(), "--image is required") {
 			t.Fatalf("err = %v, want missing --image error", err)
 		}
@@ -96,7 +96,7 @@ func TestBuildAndImport(t *testing.T) {
 	t.Run("unsupported backend", func(t *testing.T) {
 		fb := &fakeBuilder{}
 		// Real TargetFor: incus is a documented rejection (see TargetFor).
-		err, _ := runBuildAndImport(t, fb, nil, true,
+		_, err := runBuildAndImport(t, fb, nil, true,
 			config.ContextConfig{Name: "x", Backend: "incus"}, "quay.io/fedora/fedora-bootc:41", "ssh-ed25519 AAAAtest", "20G", false)
 		if err == nil || !strings.Contains(err.Error(), "incus") {
 			t.Fatalf("err = %v, want incus unsupported error", err)
@@ -106,7 +106,7 @@ func TestBuildAndImport(t *testing.T) {
 	t.Run("unavailable builder reports target requirements", func(t *testing.T) {
 		fb := &fakeBuilder{availErr: errors.New("podman not found")}
 		ft := &fakeTarget{requires: []string{"qemu-img", "libvirt daemon"}}
-		err, stderr := runBuildAndImport(t, fb, ft, false, qemuTarget, "quay.io/fedora/fedora-bootc:41", "ssh-ed25519 AAAAtest", "20G", true)
+		stderr, err := runBuildAndImport(t, fb, ft, false, qemuTarget, "quay.io/fedora/fedora-bootc:41", "ssh-ed25519 AAAAtest", "20G", true)
 		if err == nil || !strings.Contains(err.Error(), "podman not found") {
 			t.Fatalf("err = %v, want podman error", err)
 		}
@@ -126,7 +126,7 @@ func TestBuildAndImport(t *testing.T) {
 	t.Run("build failure", func(t *testing.T) {
 		fb := &fakeBuilder{buildErr: errors.New("bootc install failed")}
 		ft := &fakeTarget{}
-		err, _ := runBuildAndImport(t, fb, ft, false, qemuTarget, "quay.io/fedora/fedora-bootc:41", "", "20G", false)
+		_, err := runBuildAndImport(t, fb, ft, false, qemuTarget, "quay.io/fedora/fedora-bootc:41", "", "20G", false)
 		if err == nil || !strings.Contains(err.Error(), "bootc install failed") {
 			t.Fatalf("err = %v, want build error", err)
 		}
@@ -145,7 +145,7 @@ func TestBuildAndImport(t *testing.T) {
 		}
 		fb := &fakeBuilder{result: bootc.BuildResult{Path: built}}
 		ft := &fakeTarget{importErr: errors.New("virsh define failed")}
-		err, _ := runBuildAndImport(t, fb, ft, false, qemuTarget, "quay.io/fedora/fedora-bootc:41", "ssh-ed25519 AAAAtest", "20G", false)
+		_, err := runBuildAndImport(t, fb, ft, false, qemuTarget, "quay.io/fedora/fedora-bootc:41", "ssh-ed25519 AAAAtest", "20G", false)
 		if err == nil || !strings.Contains(err.Error(), "virsh define failed") {
 			t.Fatalf("err = %v, want import error", err)
 		}
@@ -162,7 +162,7 @@ func TestBuildAndImport(t *testing.T) {
 		fb := &fakeBuilder{result: bootc.BuildResult{Path: built, Format: "raw"}}
 		ft := &fakeTarget{requires: []string{"qemu-img"}}
 		// Empty disk exercises the 20G default.
-		err, stderr := runBuildAndImport(t, fb, ft, false,
+		stderr, err := runBuildAndImport(t, fb, ft, false,
 			config.ContextConfig{Name: "local", Backend: "qemu", Context: "myctx"},
 			"quay.io/fedora/fedora-bootc:41", "ssh-ed25519 AAAAtest", "", false)
 		if err != nil {

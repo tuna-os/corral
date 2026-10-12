@@ -44,7 +44,7 @@ func TestPasskeyEnrollBegin_RequiresToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("no-token status = %d, want 401", resp.StatusCode)
 	}
@@ -56,7 +56,7 @@ func TestPasskeyEnrollBegin_RequiresToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("wrong-token status = %d, want 401", resp.StatusCode)
 	}
@@ -68,7 +68,7 @@ func TestPasskeyEnrollBegin_RequiresToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("token status = %d, want 200", resp.StatusCode)
 	}
@@ -121,7 +121,7 @@ func TestPasskeyEnrollFinish_ConsumesCeremony(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&begin); err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	// A real authenticator response is unavailable, so finish fails — but it
 	// must still consume the ceremony, and the retry must report the
@@ -131,7 +131,7 @@ func TestPasskeyEnrollFinish_ConsumesCeremony(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first.Body.Close()
+	_ = first.Body.Close()
 	if first.StatusCode != http.StatusBadRequest {
 		t.Fatalf("first finish status = %d, want 400", first.StatusCode)
 	}
@@ -139,7 +139,7 @@ func TestPasskeyEnrollFinish_ConsumesCeremony(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer second.Body.Close()
+	defer func() { _ = second.Body.Close() }()
 	if second.StatusCode != http.StatusBadRequest {
 		t.Fatalf("second finish status = %d, want 400", second.StatusCode)
 	}
