@@ -88,7 +88,7 @@ reach the journal code in `pkg/qemu`. The QMP code now has a fake monitor
 
 `scripts/coverage-report.sh` reads the same `cover.out` as the gate. It prints
 a Markdown table, one row per package, sorted worst first. It bolds the five
-weakest packages. It always exits 0. It never fails the build. The gate stays
+weakest packages. It always exits 0, so it never fails the build. The gate stays
 the only enforcer. CI appends the table to the step summary, so the weakest
 package is visible on every run.
 
@@ -98,15 +98,17 @@ Two suites sit between unit tests and the live cluster. Both drive the real
 dashboard. Neither needs production.
 
 - **UI smoke** (`scripts/ui-smoke.mjs`, in `.github/workflows/ui-smoke.yml`).
-  It serves `corral web --demo` and checks the fleet table, the tree, the tag
-  filter bar, the Incus container-versus-VM split, grid column order and sort,
-  the summary SSH hint, the console pop-out, and the context menu.
+  It serves `corral web --demo`. It checks the fleet table, the tree, and the
+  tag filter bar. It checks the Incus split between containers and VMs. It
+  checks column order and sort in the grid. It checks the summary SSH hint.
+  It checks the console pop-out and the context menu.
 - **Mid-tier Playwright** (`e2e/corral.spec.js` without `@live-only`, in
   `.github/workflows/e2e.yml`). It runs kind + emulated KubeVirt on every
-  push. It covers the wizard for every source type, the catalog, CDI import to
-  Succeeded, scale on a stopped VM, one cirros boot lifecycle, the bulk-action
-  bar, the export picker, tag chips and filters, `/api/whoami`, the read-only
-  gate, and the CT create-console-delete flow.
+  push. It covers the wizard for every source type and the catalog. It covers
+  CDI import to Succeeded and scale on a stopped VM. It covers one cirros boot
+  lifecycle and the bulk-action bar. It covers the export picker, tag chips and
+  filters, and `/api/whoami`. It covers the read-only gate and the CT
+  create-console-delete flow.
 
 ## Fuzz targets
 
@@ -128,8 +130,8 @@ crasher under `testdata/fuzz/`.
 proxmox, virtualbox, vsphere, xen, nutanix. It records what each backend does
 about every operation Corral ships. `pkg/backend/matrix_test.go` checks that
 table against the declared capabilities, the snapshot adapter registry, and
-`docs/backend-parity.md`. The docs table cannot drift from the code. No
-backend can advertise a capability that nothing implements.
+`docs/backend-parity.md`. The table in the docs cannot drift from the code. No
+backend can advertise a capability that nothing makes.
 
 ---
 
@@ -176,7 +178,7 @@ with realistic JSON output from kubectl.
 
 1. `Runner` + `Real` + `Fake` in `pkg/shell/` — done.
 2. `Runner` threaded through `kubevirt.Client`, `qemu`, and `web.Server` — done.
-3. `Fake` with exact, prefix, and regex matching plus call recording — done.
+3. `Fake` with exact, prefix, and regex matching plus a call record — done.
 4. Handler tests for the 5 highest-value handlers — done.
 5. Backfill for the remaining handlers — done.
 
@@ -299,7 +301,7 @@ cluster. No suite needs production.
    `web` server setup, `qemu` manager code. Production defaults to `Real`,
    so existing code paths did not change.
 3. **Scriptable `Fake`** — exact-match, prefix-match, and regex
-   command matching. Call recording for assertion. Realistic
+   command matching. Tests assert on the call record. Realistic
    JSON output from kubectl as fixtures.
 
 ### Phase 2 — Handler unit tests (2-3 sessions) — done
@@ -327,7 +329,7 @@ happy-path and one error-path case.
 
 1. The integration test harness (namespace lifecycle, cleanup, skip
    logic for missing capabilities).
-2. `client_test.go` manifest-generation tests plus real apply + verify.
+2. `client_test.go` manifest tests plus a real apply and verify.
 3. Catalog create → SSH → delete smoke test.
 4. Snapshot + restore test.
 5. QEMU create → SSH → delete test (local, needs KVM).
