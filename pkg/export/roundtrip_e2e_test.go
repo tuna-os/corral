@@ -37,8 +37,13 @@ func TestE2E_QemuToLibvirtRoundTrip(t *testing.T) {
 	SetRunner(shell.Real{})
 	t.Cleanup(func() { SetRunner(shell.Real{}) })
 
+	// System first: the session daemon answers connects but is capability-
+	// poor on CI runners — no KVM virt type for the kvm domain below and a
+	// firmware-descriptor cache that resolves no compatible 'efi' firmware
+	// (e2e-incus #482). Every other libvirt e2e suite probes system first
+	// for the same reason.
 	uri := ""
-	for _, candidate := range []string{"qemu:///session", "qemu:///system"} {
+	for _, candidate := range []string{"qemu:///system", "qemu:///session"} {
 		if exec.Command("virsh", "-c", candidate, "connect").Run() == nil {
 			uri = candidate
 			break
