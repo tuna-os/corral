@@ -364,7 +364,7 @@ func TestLibvirtTarget_DomainIsUEFI(t *testing.T) {
 	// No firmware on the host: ask libvirt to auto-select an EFI firmware.
 	t.Setenv("CORRAL_OVMF_CODE", "/nonexistent/OVMF_CODE.fd")
 	t.Setenv("CORRAL_OVMF_VARS", "/nonexistent/OVMF_VARS.fd")
-	doc := (LibvirtTarget{}).DomainXML("dev", "/disks/dev.qcow2", CreateOpts{CPU: 2, Memory: "4Gi"})
+	doc := (LibvirtTarget{}).DomainXML("qemu:///system", "dev", "/disks/dev.qcow2", CreateOpts{CPU: 2, Memory: "4Gi"})
 	if !strings.Contains(doc, "firmware='efi'") {
 		t.Errorf("without host firmware the domain should request auto-selected EFI, got:\n%s", doc)
 	}
@@ -384,19 +384,49 @@ func TestLibvirtTarget_DomainIsUEFI(t *testing.T) {
 	}
 	t.Setenv("CORRAL_OVMF_CODE", code)
 	t.Setenv("CORRAL_OVMF_VARS", vars)
-	doc = (LibvirtTarget{}).DomainXML("dev", "/disks/dev.qcow2", CreateOpts{CPU: 2, Memory: "4Gi"})
-	for what, want := range map[string]string{
-		"explicit pflash loader": "<loader readonly='yes' type='pflash'>" + code + "</loader>",
-		"vars template":          "<nvram template='" + vars + "'/>",
-	} {
-		if !strings.Contains(doc, want) {
-			t.Errorf("domain is missing the %s (%q):\n%s", what, want, doc)
+	for _, uri := range []string{"qemu:///system", "qemu:///session", ""} {
+		doc = (LibvirtTarget{}).DomainXML(uri, "dev", "/disks/dev.qcow2", CreateOpts{CPU: 2, Memory: "4Gi"})
+		for what, want := range map[string]string{
+			"explicit pflash loader": "<loader readonly='yes' type='pflash'>" + code + "</loader>",
+			"vars template":          "<nvram template='" + vars + "'/>",
+		} {
+			if !strings.Contains(doc, want) {
+				t.Errorf("uri %q: domain is missing the %s (%q):\n%s", uri, what, want, doc)
+			}
+		}
+		if strings.Contains(doc, "firmware='efi'") {
+			t.Errorf("uri %q: explicit loader and auto-selection must not be mixed:\n%s", uri, doc)
+		}
+		assertDomainShape(t, doc)
+	}
+}
+
+// A remote hypervisor (qemu+ssh, qemu+tcp, …) has its own filesystem: the
+// manager's local OVMF paths may not exist there, so they must never leak
+// into the domain — the target daemon auto-selects from its own descriptors.
+func TestLibvirtTarget_RemoteTargetKeepsAutoSelectedFirmware(t *testing.T) {
+	dir := t.TempDir()
+	code := filepath.Join(dir, "OVMF_CODE.fd")
+	vars := filepath.Join(dir, "OVMF_VARS.fd")
+	for _, p := range []string{code, vars} {
+		if err := os.WriteFile(p, []byte("firmware"), 0o644); err != nil {
+			t.Fatal(err)
 		}
 	}
-	if strings.Contains(doc, "firmware='efi'") {
-		t.Errorf("explicit loader and auto-selection must not be mixed:\n%s", doc)
+	t.Setenv("CORRAL_OVMF_CODE", code)
+	t.Setenv("CORRAL_OVMF_VARS", vars)
+	for _, uri := range []string{"qemu+ssh://hypervisor/system", "qemu+tcp://hypervisor:16509/system"} {
+		doc := (LibvirtTarget{}).DomainXML(uri, "dev", "/disks/dev.qcow2", CreateOpts{CPU: 2, Memory: "4Gi"})
+		if !strings.Contains(doc, "firmware='efi'") {
+			t.Errorf("uri %q: remote domain should request auto-selected EFI, got:\n%s", uri, doc)
+		}
+		for _, leaked := range []string{dir, "/usr/share/", "<loader", "<nvram"} {
+			if strings.Contains(doc, leaked) {
+				t.Errorf("uri %q: local firmware path %q leaked into remote XML:\n%s", uri, leaked, doc)
+			}
+		}
+		assertDomainShape(t, doc)
 	}
-	assertDomainShape(t, doc)
 }
 
 func assertDomainShape(t *testing.T, doc string) {
@@ -433,7 +463,7 @@ func TestLibvirtTarget_DomainXMLIsWellFormed(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Setenv("CORRAL_OVMF_CODE", env[0])
 			t.Setenv("CORRAL_OVMF_VARS", env[1])
-			doc := (LibvirtTarget{}).DomainXML("dev", "/disks/dev.qcow2", CreateOpts{})
+			doc := (LibvirtTarget{}).DomainXML("qemu:///system", "dev", "/disks/dev.qcow2", CreateOpts{})
 			if err := wellFormed(doc); err != nil {
 				t.Fatalf("generated domain XML is not well-formed: %v\n%s", err, doc)
 			}
