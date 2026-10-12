@@ -59,7 +59,9 @@ func TestE2E_QemuToLibvirtRoundTrip(t *testing.T) {
 	if out, err := exec.Command("qemu-img", "create", "-f", "qcow2", src, "16M").CombinedOutput(); err != nil {
 		t.Fatalf("qemu-img create: %s: %v", out, err)
 	}
-	os.WriteFile(filepath.Join(dir, "metadata.json"), []byte(`{"name":"`+name+`","cpu":1,"memory":"512M"}`), 0o644)
+	if err := os.WriteFile(filepath.Join(dir, "metadata.json"), []byte(`{"name":"`+name+`","cpu":1,"memory":"512M"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	qemu.SetStateDirs(home, units)
 	qemu.SetSystemctl(func(...string) ([]byte, error) { return []byte("inactive\n"), nil })
 	t.Cleanup(func() { qemu.SetStateDirs("", ""); qemu.SetSystemctl(nil) })

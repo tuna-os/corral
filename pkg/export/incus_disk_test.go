@@ -32,7 +32,7 @@ func writeTarOrdered(t *testing.T, path string, members []tarMember) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	w := tar.NewWriter(f)
 	for _, m := range members {
 		flag := byte(tar.TypeReg)

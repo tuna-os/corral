@@ -293,7 +293,9 @@ func TestPVEExtract_ZstdVsPlainArchive(t *testing.T) {
 	dir := t.TempDir()
 
 	zst := filepath.Join(dir, "backup.vma.zst")
-	os.WriteFile(zst, []byte("ZST-BYTES"), 0o644)
+	if err := os.WriteFile(zst, []byte("ZST-BYTES"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := extractVMADisk(zst, filepath.Join(dir, "z.img")); err != nil {
 		t.Fatalf("zst extract: %v", err)
 	}
@@ -302,7 +304,9 @@ func TestPVEExtract_ZstdVsPlainArchive(t *testing.T) {
 	}
 
 	plain := filepath.Join(dir, "backup.vma")
-	os.WriteFile(plain, []byte("VMA-BYTES"), 0o644)
+	if err := os.WriteFile(plain, []byte("VMA-BYTES"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := extractVMADisk(plain, filepath.Join(dir, "p.img")); err != nil {
 		t.Fatalf("plain extract: %v", err)
 	}
@@ -340,7 +344,9 @@ func TestPVEExtract_VmaAbsenceRefusedWithRemedy(t *testing.T) {
 	t.Cleanup(func() { vmaBinaryFn = old })
 
 	archive := filepath.Join(t.TempDir(), "backup.vma")
-	os.WriteFile(archive, []byte("VMA-BYTES"), 0o644)
+	if err := os.WriteFile(archive, []byte("VMA-BYTES"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	err := extractVMADisk(archive, filepath.Join(t.TempDir(), "disk.img"))
 	var u *Unsupported
 	if !errors.As(err, &u) {
@@ -362,7 +368,9 @@ func TestPVEExtract_NoDiskImageIsAnError(t *testing.T) {
 	t.Setenv("FAKE_VMA_EMPTY", "1")
 
 	archive := filepath.Join(t.TempDir(), "backup.vma")
-	os.WriteFile(archive, []byte("VMA-BYTES"), 0o644)
+	if err := os.WriteFile(archive, []byte("VMA-BYTES"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	err := extractVMADisk(archive, filepath.Join(t.TempDir(), "disk.img"))
 	if err == nil {
 		t.Fatal("an archive with no disk image must fail, not produce an empty disk")
@@ -410,12 +418,12 @@ func TestPVEExport_RawGzPipeline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer fh.Close()
+	defer func() { _ = fh.Close() }()
 	zr, err := gzip.NewReader(fh)
 	if err != nil {
 		t.Fatalf("artifact is not gzip: %v", err)
 	}
-	defer zr.Close()
+	defer func() { _ = zr.Close() }()
 	raw, err := io.ReadAll(zr)
 	if err != nil {
 		t.Fatal(err)
