@@ -231,18 +231,18 @@ websocket bridge is not. So the capability flags say no, and the matrix says why
 
 - **create** — VM.create works natively. Corral has no creator for it yet.
 - **ssh** — Corral has no address discovery yet. Use the guest-metrics address, then plain ssh.
-- **tty** — vt100 console objects serve the guest console natively. Corral wires no bridge to them.
-- **vnc** — rfb console objects hand out display locations. Corral wires no viewer to them.
+- **tty** — Guests expose a vt100 console. Corral wires no bridge to it.
+- **vnc** — Guests expose an RFB display. Corral wires no viewer to it.
 - **rdp** — same probe and bridge via the guest address
 - **metrics** — VM_metrics and host_metrics carry live counters. Corral has no sampler for them yet.
 - **template** — VM.set_is_a_template marks natively. Corral has no templater wiring it yet.
 - **scale** — VCPU and memory set calls exist natively. Nothing drives them yet.
 - **volumes** — VBD plug and VDI create exist natively. Nothing drives them yet.
 - **expand** — VDI.resize grows a disk natively. Nothing drives it yet.
-- **gpu** — PCI device assignment exists natively. It stays experimental and host-limited.
-- **export** — GET /export serves XVA natively. pkg/export has no Xen adapter yet.
-- **events** — the event class records pool activity. Corral wires no reader for it yet.
-- **tags** — the VM record carries tags natively. Corral has no tagger writing them yet.
+- **gpu** — Hosts can assign PCI devices to guests. That path stays experimental and host-limited.
+- **export** — The pool serves XVA on /export. pkg/export has no Xen adapter yet.
+- **events** — The pool logs its own activity. Corral wires no reader for that log yet.
+- **tags** — The VM record carries tags natively. Corral has no tagger to set them yet.
 
 ## Testing parity
 

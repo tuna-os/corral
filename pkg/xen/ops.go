@@ -200,7 +200,7 @@ func (c *Client) Export(name string) (io.ReadCloser, error) {
 		return nil, fmt.Errorf("xen: export %q: %w", name, err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		return nil, fmt.Errorf("xen: export %q: unexpected HTTP status %s", name, resp.Status)
 	}
 	return resp.Body, nil

@@ -253,7 +253,7 @@ func (c *Client) call(method string, params ...any) (any, error) {
 func (c *Client) rpc(method string, params ...any) (any, error) {
 	var sb strings.Builder
 	sb.WriteString(`<?xml version="1.0"?>` + "\n<methodCall><methodName>")
-	xml.EscapeText(&sb, []byte(method))
+	_ = xml.EscapeText(&sb, []byte(method)) // strings.Builder never fails
 	sb.WriteString("</methodName>")
 	if len(params) > 0 {
 		sb.WriteString("<params>")
@@ -276,7 +276,7 @@ func (c *Client) rpc(method string, params ...any) (any, error) {
 	if err != nil {
 		return nil, fmt.Errorf("xen: %s: %w", method, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
 	if err != nil {
 		return nil, fmt.Errorf("xen: %s: %w", method, err)
@@ -356,7 +356,7 @@ func encodeValue(sb *strings.Builder, p any) {
 		sb.WriteString("<nil/>")
 	case string:
 		sb.WriteString("<string>")
-		xml.EscapeText(sb, []byte(t))
+		_ = xml.EscapeText(sb, []byte(t)) // strings.Builder never fails
 		sb.WriteString("</string>")
 	case bool:
 		if t {
@@ -392,7 +392,7 @@ func encodeValue(sb *strings.Builder, p any) {
 		sb.WriteString("<struct>")
 		for _, k := range sortedKeys(t) {
 			sb.WriteString("<member><name>")
-			xml.EscapeText(sb, []byte(k))
+			_ = xml.EscapeText(sb, []byte(k)) // strings.Builder never fails
 			sb.WriteString("</name><value>")
 			encodeValue(sb, t[k])
 			sb.WriteString("</value></member>")
@@ -402,7 +402,7 @@ func encodeValue(sb *strings.Builder, p any) {
 		sb.WriteString("<struct>")
 		for _, k := range sortedAnyKeys(t) {
 			sb.WriteString("<member><name>")
-			xml.EscapeText(sb, []byte(k))
+			_ = xml.EscapeText(sb, []byte(k)) // strings.Builder never fails
 			sb.WriteString("</name><value>")
 			encodeValue(sb, t[k])
 			sb.WriteString("</value></member>")
@@ -410,7 +410,7 @@ func encodeValue(sb *strings.Builder, p any) {
 		sb.WriteString("</struct>")
 	default:
 		sb.WriteString("<string>")
-		xml.EscapeText(sb, []byte(fmt.Sprintf("%v", t)))
+		_ = xml.EscapeText(sb, []byte(fmt.Sprintf("%v", t))) // strings.Builder never fails
 		sb.WriteString("</string>")
 	}
 }
@@ -481,7 +481,7 @@ func (v rpcValue) goValue() any {
 		return s == "1" || strings.EqualFold(s, "true")
 	case v.Double != nil:
 		var f float64
-		fmt.Sscanf(strings.TrimSpace(*v.Double), "%g", &f)
+		_, _ = fmt.Sscanf(strings.TrimSpace(*v.Double), "%g", &f) // 0 on a bad value, as documented
 		return f
 	case v.Nil != nil:
 		return nil
@@ -492,7 +492,7 @@ func (v rpcValue) goValue() any {
 
 func parseInt(s string) int64 {
 	var n int64
-	fmt.Sscanf(strings.TrimSpace(s), "%d", &n)
+	_, _ = fmt.Sscanf(strings.TrimSpace(s), "%d", &n) // 0 on a bad value, as documented
 	return n
 }
 
@@ -524,7 +524,7 @@ func asInt(v any) int64 {
 		return int64(t)
 	case string:
 		var n int64
-		fmt.Sscanf(strings.TrimSpace(t), "%d", &n)
+		_, _ = fmt.Sscanf(strings.TrimSpace(t), "%d", &n) // 0 on a bad value, as documented
 		return n
 	default:
 		return 0
