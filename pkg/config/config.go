@@ -55,6 +55,12 @@ type ContextConfig struct {
 	// a config file that lands in a dotfiles repo does not carry cluster
 	// credentials with it.
 	Proxmox *ProxmoxContextConfig `yaml:"proxmox,omitempty" json:"proxmox,omitempty"`
+	// Vsphere carries what a vCenter endpoint needs beyond its host, and is
+	// only read when Backend is "vsphere". The password is a secret and is
+	// never stored here: it comes from CORRAL_VSPHERE_PASSWORD[_<CTX>] in the
+	// environment, so a config file that lands in a dotfiles repo does not
+	// carry estate credentials with it.
+	Vsphere *VsphereContextConfig `yaml:"vsphere,omitempty" json:"vsphere,omitempty"`
 }
 
 // ProxmoxContextConfig is one PVE cluster's access details (ADR-0009).
@@ -71,6 +77,19 @@ type ProxmoxContextConfig struct {
 	// Node is the default node for operations that need one before the
 	// inventory has resolved (creates, mostly).
 	Node string `yaml:"node,omitempty" json:"node,omitempty"`
+}
+
+// VsphereContextConfig is one vCenter estate's access details (RFC-0003).
+type VsphereContextConfig struct {
+	// Username is the vSphere user, e.g. "administrator@vsphere.local".
+	Username string `yaml:"username,omitempty" json:"username,omitempty"`
+	// Fingerprint pins the server certificate (SHA-256 hex). Self-signed
+	// certs are common on vCenter, and pinning trusts one specifically
+	// rather than trusting anything presented.
+	Fingerprint string `yaml:"fingerprint,omitempty" json:"fingerprint,omitempty"`
+	// Insecure skips verification entirely — explicit, per-context, never a
+	// default.
+	Insecure bool `yaml:"insecure,omitempty" json:"insecure,omitempty"`
 }
 
 func (c ContextConfig) IsEnabled() bool { return c.Enabled == nil || *c.Enabled }
@@ -154,7 +173,9 @@ func AddContext(c ContextConfig) error {
 	switch c.Backend {
 	// virtualbox is local-only: Context is just a label, and there is no
 	// secret block — remote management via vboxwebsrv is out of scope.
-	case "qemu", "kubevirt", "incus", "libvirt", "virtualbox":
+	// vsphere is remote-only: Context is the vCenter host, and the secret
+	// (password) lives in the environment, never in this block.
+	case "qemu", "kubevirt", "incus", "libvirt", "virtualbox", "vsphere":
 	default:
 		return fmt.Errorf("unsupported backend %q", c.Backend)
 	}
@@ -256,9 +277,9 @@ func DefaultBackend() string {
 
 func SetDefaultBackend(backend string) error {
 	switch backend {
-	case "qemu", "kubevirt", "incus", "libvirt", "virtualbox":
+	case "qemu", "kubevirt", "incus", "libvirt", "virtualbox", "vsphere":
 	default:
-		return fmt.Errorf("unsupported backend %q (want qemu, kubevirt, incus, libvirt, or virtualbox)", backend)
+		return fmt.Errorf("unsupported backend %q (want qemu, kubevirt, incus, libvirt, virtualbox, or vsphere)", backend)
 	}
 	cfg, err := Load("")
 	if err != nil {

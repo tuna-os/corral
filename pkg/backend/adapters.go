@@ -14,6 +14,7 @@ package backend
 // in a constructor may dial anything.
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -25,6 +26,7 @@ import (
 	"github.com/tuna-os/corral/pkg/qemu"
 	"github.com/tuna-os/corral/pkg/types"
 	"github.com/tuna-os/corral/pkg/virtualbox"
+	"github.com/tuna-os/corral/pkg/vsphere"
 )
 
 func init() {
@@ -52,6 +54,12 @@ func init() {
 		// No dial: NewClient only records the local context label, so
 		// probe() stays offline like every other factory here.
 		return virtualboxAdapter{client: virtualbox.NewClient(ref.Context)}, nil
+	})
+	Register("vsphere", func(ref types.InstanceRef) (Adapter, error) {
+		// Deferred: the client needs configuration and a session, and
+		// probe() must not fail for an estate that is merely unconfigured —
+		// the families a backend implements are a property of its type.
+		return vsphereAdapter{context: ref.Context}, nil
 	})
 }
 
@@ -450,6 +458,155 @@ func (a proxmoxAdapter) Address(name string) (string, error) {
 		return "", err
 	}
 	return client.Address(name)
+}
+
+// ── vSphere ─────────────────────────────────────────────────────────
+//
+// Power, the backend's own reset and suspend, live-or-offline scale,
+// vMotion, full clones, and one-way template marks. The govmomi tasks wait
+// inside the client methods, so — like the Proxmox adapter — every call here
+// means completion, not acceptance. No Addresser: a guest address needs
+// VMware Tools reads nothing else uses yet. No consoles: MKS/webmks tickets
+// exist, but Corral wires no viewer or bridge to them.
+
+type vsphereAdapter struct{ context string }
+
+func (vsphereAdapter) Backend() string { return "vsphere" }
+
+func (a vsphereAdapter) client() (*vsphere.Client, error) {
+	return vsphere.ClientForContext(a.context)
+}
+
+// ctx bounds one operation. The client waits its govmomi tasks against this
+// deadline the way the Proxmox adapter waits UPIDs against DefaultTimeout.
+func (a vsphereAdapter) ctx() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), vsphere.DefaultTimeout)
+}
+
+func (a vsphereAdapter) Start(name string) error {
+	client, err := a.client()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := a.ctx()
+	defer cancel()
+	return client.Start(ctx, name)
+}
+
+func (a vsphereAdapter) Stop(name string) error {
+	client, err := a.client()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := a.ctx()
+	defer cancel()
+	return client.Stop(ctx, name)
+}
+
+func (a vsphereAdapter) Delete(name string) error {
+	client, err := a.client()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := a.ctx()
+	defer cancel()
+	return client.Delete(ctx, name)
+}
+
+func (a vsphereAdapter) Restart(name string) error {
+	client, err := a.client()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := a.ctx()
+	defer cancel()
+	return client.Restart(ctx, name)
+}
+
+func (a vsphereAdapter) Pause(name string) error {
+	client, err := a.client()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := a.ctx()
+	defer cancel()
+	return client.Suspend(ctx, name)
+}
+
+func (a vsphereAdapter) Resume(name string) error {
+	client, err := a.client()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := a.ctx()
+	defer cancel()
+	return client.Resume(ctx, name)
+}
+
+func (a vsphereAdapter) Scale(name string, cores int, mem string) error {
+	client, err := a.client()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := a.ctx()
+	defer cancel()
+	return client.Scale(ctx, name, cores, mem)
+}
+
+// HotplugsLive asks vCenter rather than guessing: the guest's own config
+// says whether CPU and memory apply live.
+func (a vsphereAdapter) HotplugsLive(name string) bool {
+	client, err := a.client()
+	if err != nil {
+		return false
+	}
+	ctx, cancel := a.ctx()
+	defer cancel()
+	live, err := client.HotplugsLive(ctx, name)
+	if err != nil {
+		return false
+	}
+	return live
+}
+
+func (a vsphereAdapter) Migrate(name, target string) error {
+	client, err := a.client()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := a.ctx()
+	defer cancel()
+	return client.Migrate(ctx, name, target)
+}
+
+func (a vsphereAdapter) CanMigrate(name string) (bool, string) {
+	client, err := a.client()
+	if err != nil {
+		return false, err.Error()
+	}
+	ctx, cancel := a.ctx()
+	defer cancel()
+	return client.CanMigrate(ctx, name)
+}
+
+func (a vsphereAdapter) Clone(source, target string) error {
+	client, err := a.client()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := a.ctx()
+	defer cancel()
+	return client.Clone(ctx, source, target)
+}
+
+func (a vsphereAdapter) MarkTemplate(name string, on bool) error {
+	client, err := a.client()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := a.ctx()
+	defer cancel()
+	return client.MarkTemplate(ctx, name, on)
 }
 
 // firstImageStorage picks a storage that accepts disk images, so AddDisk works
