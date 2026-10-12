@@ -248,15 +248,15 @@ websocket bridge is not. So the capability flags say no, and the matrix says why
 
 - **create** — VM create exists natively. Corral has no creator for it yet.
 - **ssh** — Corral has no address discovery yet. Use the NIC address, then plain ssh.
-- **tty** — Console tokens exist natively. Corral wires no bridge for them yet.
-- **vnc** — Console tokens exist natively. Corral wires no viewer for them yet.
+- **tty** — Tokens for consoles exist natively. Corral wires no bridge for them yet.
+- **vnc** — Tokens for consoles exist natively. Corral wires no viewer for them yet.
 - **metrics** — v4 stats and v1 counters carry live data. Corral has no sampler for them yet.
 - **scale** — PUT updates cores and memory natively. Nothing drives it yet.
 - **volumes** — Disk endpoints exist in vmm. Nothing drives them yet.
 - **expand** — Disk update exists in vmm. Nothing drives it yet.
-- **export** — VM recovery points exist in vmm. Corral has no downloader for them yet.
+- **export** — Points for VM recovery exist in vmm. Corral has no downloader for them yet.
 - **events** — The task list logs the activity of the pool. Corral wires no per-VM reader yet.
-- **tags** — Category associate actions exist natively. Value lookup is unproven, so Corral has no tagger yet.
+- **tags** — Actions for category association exist natively. No reference proves value lookup, so Corral has no tagger yet.
 
 ## Testing parity
 
