@@ -81,6 +81,11 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # Per-package report (RFC-0004 slice 4): informational only, exits 0,
+      # so it never fails the build. Consumes the same cover.out.
+      - name: coverage by package
+        run: scripts/coverage-report.sh cover.out
+
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: coverage
