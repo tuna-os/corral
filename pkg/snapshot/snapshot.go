@@ -101,6 +101,8 @@ func For(ref types.InstanceRef) (Adapter, error) {
 		return QEMU{}, nil
 	case "proxmox":
 		return Proxmox{}, nil
+	case "virtualbox":
+		return VirtualBox{}, nil
 	case "":
 		return nil, fmt.Errorf("instance reference has no backend; snapshots need a fully-scoped instance")
 	default:
@@ -113,7 +115,7 @@ func For(ref types.InstanceRef) (Adapter, error) {
 // capability reporting and UI gating don't shell out.
 func Supported(backend string) bool {
 	switch backend {
-	case "kubevirt", "libvirt", "incus", "qemu", "proxmox":
+	case "kubevirt", "libvirt", "incus", "qemu", "proxmox", "virtualbox":
 		return true
 	}
 	return false

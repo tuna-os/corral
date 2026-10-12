@@ -44,6 +44,9 @@ func RunContexts(contexts []config.ContextConfig) []Check {
 		case "libvirt":
 			runner = base
 			checks = libvirtChecks(target.Context)
+		case "virtualbox":
+			runner = base
+			checks = virtualboxChecks()
 		case "proxmox":
 			// No runner: this backend speaks HTTP, so the probe is an API call
 			// rather than a command.

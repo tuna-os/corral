@@ -24,6 +24,7 @@ import (
 	"github.com/tuna-os/corral/pkg/proxmoxbe"
 	"github.com/tuna-os/corral/pkg/qemu"
 	"github.com/tuna-os/corral/pkg/types"
+	"github.com/tuna-os/corral/pkg/virtualbox"
 )
 
 func init() {
@@ -46,6 +47,11 @@ func init() {
 		// for a backend that is merely unconfigured — the families a backend
 		// implements are a property of its type.
 		return proxmoxAdapter{context: ref.Context}, nil
+	})
+	Register("virtualbox", func(ref types.InstanceRef) (Adapter, error) {
+		// No dial: NewClient only records the local context label, so
+		// probe() stays offline like every other factory here.
+		return virtualboxAdapter{client: virtualbox.NewClient(ref.Context)}, nil
 	})
 }
 
@@ -232,6 +238,25 @@ func (a libvirtAdapter) Metrics(name string) (map[string]string, error) {
 	return a.client.Metrics(name)
 }
 func (a libvirtAdapter) Resume(name string) error { return a.client.Resume(name) }
+
+// ── VirtualBox ────────────────────────────────────────────────────
+//
+// Local VBoxManage only: Power plus the backend's own reset and pause. No
+// Addresser — a NAT guest has no stable address of its own, and a bridged
+// one's would need Guest Additions guestproperty reads nothing else uses yet.
+
+type virtualboxAdapter struct{ client virtualbox.Client }
+
+func (virtualboxAdapter) Backend() string { return "virtualbox" }
+
+func (a virtualboxAdapter) Start(name string) error  { return a.client.Start(name) }
+func (a virtualboxAdapter) Stop(name string) error   { return a.client.Stop(name) }
+func (a virtualboxAdapter) Delete(name string) error { return a.client.Delete(name) }
+
+func (a virtualboxAdapter) Restart(name string) error { return a.client.Reset(name) }
+
+func (a virtualboxAdapter) Pause(name string) error  { return a.client.Pause(name) }
+func (a virtualboxAdapter) Resume(name string) error { return a.client.Resume(name) }
 
 // ── Proxmox ───────────────────────────────────────────────────────
 //

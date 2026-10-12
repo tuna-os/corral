@@ -29,7 +29,7 @@ func incusRef(name string) types.InstanceRef {
 // ── contract ──────────────────────────────────────────────────────
 
 func TestFor_EveryImplementedBackend(t *testing.T) {
-	for _, backend := range []string{"kubevirt", "libvirt", "incus", "qemu"} {
+	for _, backend := range []string{"kubevirt", "libvirt", "incus", "qemu", "virtualbox"} {
 		if _, err := For(types.InstanceRef{Backend: backend, Name: "vm"}); err != nil {
 			t.Errorf("no adapter for %q: %v", backend, err)
 		}
@@ -364,4 +364,144 @@ func qemuVMDir(t *testing.T, home, name string) {
 	writeFile(t, dir+"/disk.qcow2", "not-a-real-image")
 	writeFile(t, dir+"/metadata.json", fmt.Sprintf(`{"name":%q,"cpu":2,"memory":"4G"}`, name))
 	setQemuHome(t, home)
+}
+
+// ── VirtualBox ────────────────────────────────────────────────────
+
+func virtualboxRef(name string) types.InstanceRef {
+	return types.InstanceRef{Backend: "virtualbox", Name: name}
+}
+
+func TestVirtualBox_CreateReportsConsistencyFromVMState(t *testing.T) {
+	for _, tc := range []struct {
+		state string
+		want  Consistency
+	}{
+		{"running", Crash},
+		{"poweroff", Offline},
+	} {
+		t.Run(tc.state, func(t *testing.T) {
+			fake := withFake(t)
+			fake.AddResponse("VBoxManage showvminfo web --machinereadable", "VMState=\""+tc.state+"\"\n", nil)
+			fake.AddResponse("VBoxManage snapshot web take s1", "", nil)
+
+			snap, err := (VirtualBox{}).Create(virtualboxRef("web"), "s1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if snap.Consistency != tc.want {
+				t.Errorf("consistency = %q, want %q for a %s VM", snap.Consistency, tc.want, tc.state)
+			}
+		})
+	}
+}
+
+func TestVirtualBox_ListCollectsHierarchicalNames(t *testing.T) {
+	fake := withFake(t)
+	// Real shape: children carry recursive numeric suffixes
+	// (SnapshotName-1, SnapshotName-1-1); CurrentSnapshotName points into
+	// that list and is not an entry of its own.
+	fake.AddResponse("VBoxManage snapshot web list --machinereadable",
+		"SnapshotName=\"base\"\nSnapshotUUID=\"11111111-2222-3333-4444-555555555555\"\n"+
+			"SnapshotName-1=\"child\"\nSnapshotUUID-1=\"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee\"\n"+
+			"SnapshotName-1-1=\"grandchild\"\nSnapshotUUID-1-1=\"cccccccc-dddd-eeee-ffff-000000000000\"\n"+
+			"CurrentSnapshotName=\"grandchild\"\nCurrentSnapshotUUID=\"cccccccc-dddd-eeee-ffff-000000000000\"\n", nil)
+
+	snaps, err := (VirtualBox{}).List(virtualboxRef("web"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snaps) != 3 {
+		t.Fatalf("snaps = %+v, want exactly base, child, and grandchild", snaps)
+	}
+	seen := map[string]int{}
+	for _, s := range snaps {
+		seen[s.Name]++
+		if s.Source != "web" || !s.Ready || s.Consistency != Crash {
+			t.Fatalf("bad snapshot: %+v", s)
+		}
+	}
+	for _, want := range []string{"base", "child", "grandchild"} {
+		if seen[want] != 1 {
+			t.Fatalf("snapshot %q listed %d times, want exactly once: %+v", want, seen[want], snaps)
+		}
+	}
+}
+
+func TestSnapshotNameKey(t *testing.T) {
+	for _, tc := range []struct {
+		key  string
+		want bool
+	}{
+		{"SnapshotName", true},
+		{"snapshotname", true},
+		{"SnapshotName-1", true},
+		{"SnapshotName-1-1", true},
+		{"SnapshotName-12-3", true},
+		{"CurrentSnapshotName", false},
+		{"CurrentSnapshotUUID", false},
+		{"SnapshotUUID", false},
+		{"SnapshotName-", false},
+		{"SnapshotName-1-", false},
+		{"SnapshotName-x", false},
+		{"SnapshotName-1-x", false},
+		{"", false},
+	} {
+		if got := snapshotNameKey(tc.key); got != tc.want {
+			t.Errorf("snapshotNameKey(%q) = %v, want %v", tc.key, got, tc.want)
+		}
+	}
+}
+
+// VBox cannot revert a running guest, and stopping it as a side effect would
+// silently destroy the running state — so the adapter refuses with the fix
+// instead of running anything.
+func TestVirtualBox_RestoreRefusesWhileRunning(t *testing.T) {
+	fake := withFake(t)
+	fake.AddResponse("VBoxManage showvminfo web --machinereadable", "VMState=\"running\"\n", nil)
+
+	err := (VirtualBox{}).Restore(virtualboxRef("web"), "s1")
+	if err == nil {
+		t.Fatal("restore of a running VM must be refused, not executed")
+	}
+	if unsup, ok := err.(*Unsupported); !ok {
+		t.Fatalf("refusal must be *Unsupported, got %T: %v", err, err)
+	} else if !strings.Contains(unsup.Remedy, "stop") {
+		t.Fatalf("refusal carries no remedy: %+v", unsup)
+	}
+	if len(fake.Calls()) != 1 {
+		t.Fatalf("refused restore must not reach for the snapshot verb: %v", fake.Calls())
+	}
+}
+
+func TestVirtualBox_RestoreWhenStopped(t *testing.T) {
+	fake := withFake(t)
+	fake.AddResponse("VBoxManage showvminfo web --machinereadable", "VMState=\"poweroff\"\n", nil)
+	fake.AddResponse("VBoxManage snapshot web restore s1", "", nil)
+
+	if err := (VirtualBox{}).Restore(virtualboxRef("web"), "s1"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestVirtualBox_DeleteOfAMissingSnapshotIsNotAnError(t *testing.T) {
+	fake := withFake(t)
+	fake.AddResponse("VBoxManage snapshot web delete gone",
+		"VBoxManage: error: Could not find a snapshot named 'gone'", errors.New("exit 1"))
+
+	if err := (VirtualBox{}).Delete(virtualboxRef("web"), "gone"); err != nil {
+		t.Errorf("deleting an already-gone snapshot failed: %v", err)
+	}
+}
+
+func TestVirtualBox_SurfacesToolMessage(t *testing.T) {
+	fake := withFake(t)
+	fake.AddResponse("VBoxManage showvminfo web --machinereadable", "VMState=\"poweroff\"\n", nil)
+	fake.AddResponse("VBoxManage snapshot web take s1",
+		"VBoxManage: error: Failed to take snapshot", errors.New("exit 1"))
+
+	_, err := (VirtualBox{}).Create(virtualboxRef("web"), "s1")
+	if err == nil || !strings.Contains(err.Error(), "Failed to take snapshot") {
+		t.Errorf("the tool's own explanation was dropped: %v", err)
+	}
 }

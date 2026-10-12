@@ -447,6 +447,142 @@ func (q QEMU) Delete(ref types.InstanceRef, name string) error {
 	return nil
 }
 
+// ── VirtualBox ────────────────────────────────────────────────────
+//
+// `VBoxManage snapshot take/delete/restore` against the VM. A snapshot taken
+// while the VM runs includes its state file (RAM), but nothing is quiesced —
+// the guest filesystem is exactly as consistent as after a power cut. So a
+// running capture reports Crash and a stopped one Offline, the same split the
+// libvirt adapter uses.
+//
+// Restore is refused while the VM runs: VBox cannot revert a running guest,
+// and stopping it here would silently destroy the running state the operator
+// did not ask to lose.
+
+type VirtualBox struct{}
+
+func (VirtualBox) vbm(args ...string) ([]byte, error) {
+	return runner.Run("VBoxManage", args...)
+}
+
+func (v VirtualBox) running(ref types.InstanceRef) bool {
+	out, err := v.vbm("showvminfo", ref.Name, "--machinereadable")
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		key, value, found := strings.Cut(line, "=")
+		if !found || !strings.EqualFold(strings.TrimSpace(key), "VMState") {
+			continue
+		}
+		// Scoped to the VMState line on purpose: a VM literally named
+		// "running-web" would trip a whole-output substring match.
+		if strings.Contains(strings.ToLower(strings.Trim(strings.TrimSpace(value), `"`)), "running") {
+			return true
+		}
+	}
+	return false
+}
+
+func (v VirtualBox) Create(ref types.InstanceRef, name string) (Snapshot, error) {
+	if name == "" {
+		name = AutoName(ref.Name, time.Now().Unix())
+	}
+	consistency := Offline
+	if v.running(ref) {
+		consistency = Crash
+	}
+	out, err := v.vbm("snapshot", ref.Name, "take", name)
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("VBoxManage snapshot take: %s", commandError(out, err))
+	}
+	return Snapshot{
+		Name: name, Source: ref.Name, Ready: true,
+		Created:     time.Now().UTC().Format(time.RFC3339),
+		Consistency: consistency,
+	}, nil
+}
+
+func (v VirtualBox) List(ref types.InstanceRef) ([]Snapshot, error) {
+	// --machinereadable prints one SnapshotName="..." line per snapshot,
+	// which is stable across versions in a way the indented tree format is
+	// not. Children carry hierarchical numeric suffixes built recursively
+	// (SnapshotName-1, SnapshotName-1-1, ...). CurrentSnapshotName is a
+	// pointer into that same list, not a snapshot of its own, so it stays
+	// excluded — see snapshotNameKey.
+	out, err := v.vbm("snapshot", ref.Name, "list", "--machinereadable")
+	if err != nil {
+		return nil, fmt.Errorf("VBoxManage snapshot list: %s", commandError(out, err))
+	}
+	var snaps []Snapshot
+	for _, line := range strings.Split(string(out), "\n") {
+		key, value, found := strings.Cut(line, "=")
+		if !found || !snapshotNameKey(strings.TrimSpace(key)) {
+			continue
+		}
+		name := strings.Trim(strings.TrimSpace(value), `"`)
+		if name == "" {
+			continue
+		}
+		// The listing carries no timestamps, so Prune orders by name —
+		// exact for auto names, which embed the capture time.
+		snaps = append(snaps, Snapshot{
+			Name: name, Source: ref.Name, Ready: true, Consistency: Crash,
+		})
+	}
+	sortNewestFirst(snaps)
+	return snaps, nil
+}
+
+// snapshotNameKey reports whether a --machinereadable key names a snapshot
+// entry: the root SnapshotName plus hierarchical numeric suffixes for
+// children (SnapshotName-1, SnapshotName-1-1, ...). Anything else —
+// notably CurrentSnapshotName, and non-numeric suffixes — is not an entry.
+func snapshotNameKey(key string) bool {
+	if strings.EqualFold(key, "SnapshotName") {
+		return true
+	}
+	const prefix = "SnapshotName-"
+	if len(key) <= len(prefix) || !strings.EqualFold(key[:len(prefix)], prefix) {
+		return false
+	}
+	for _, part := range strings.Split(key[len(prefix):], "-") {
+		if part == "" {
+			return false
+		}
+		for _, r := range part {
+			if r < '0' || r > '9' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func (v VirtualBox) Restore(ref types.InstanceRef, name string) error {
+	if v.running(ref) {
+		return unsupported("virtualbox",
+			"restore needs the VM powered off; VirtualBox cannot revert a running guest",
+			"stop the VM, then restore the snapshot")
+	}
+	out, err := v.vbm("snapshot", ref.Name, "restore", name)
+	if err != nil {
+		return fmt.Errorf("VBoxManage snapshot restore: %s", commandError(out, err))
+	}
+	return nil
+}
+
+func (v VirtualBox) Delete(ref types.InstanceRef, name string) error {
+	out, err := v.vbm("snapshot", ref.Name, "delete", name)
+	if err != nil {
+		if isMissing(out, "does not exist", "could not find") {
+			return nil
+		}
+		return fmt.Errorf("VBoxManage snapshot delete: %s", commandError(out, err))
+	}
+	return nil
+}
+
 // ── shared helpers ────────────────────────────────────────────────
 
 // commandError prefers the tool's own message: "Domain not found" beats
