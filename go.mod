@@ -23,6 +23,10 @@ require (
 	gopkg.in/yaml.v3 v3.0.1
 )
 
+// vSphere backend (RFC-0003): github.com/vmware/govmomi v0.56.0 (Apache-2.0, latest stable;
+// VMware's supported SDK for https://<vc>/sdk/vim25). Fixtures run against govmomi/simulator.
+require github.com/vmware/govmomi v0.56.0
+
 require (
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/charmbracelet/colorprofile v0.4.3 // indirect

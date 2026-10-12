@@ -27,33 +27,33 @@ to the matrix.
 Legend: ✅ shipped · 🔨 the backend can do this and Corral does not yet · — the
 backend cannot, or it is meaningless there.
 
-| Operation | kubevirt | qemu | incus | libvirt | proxmox | virtualbox |
-|---|---|---|---|---|---|---|
-| List / inventory | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Create | ✅ | ✅ | ✅ | ✅ | ✅ | 🔨 |
-| Start | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Stop | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Restart | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Pause / resume | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Delete | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| SSH | ✅ | ✅ | ✅ | 🔨 | ✅ | 🔨 |
-| Serial / shell console | ✅ | 🔨 | ✅ | 🔨 | 🔨 | 🔨 |
-| Graphical console (VNC) | ✅ | ✅ | 🔨 | ✅ | 🔨 | 🔨 |
-| RDP | ✅ | 🔨 | 🔨 | 🔨 | 🔨 | 🔨 |
-| Live CPU / memory | ✅ | ✅ | ✅ | ✅ | ✅ | 🔨 |
-| Snapshot / restore | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Migrate | ✅ | — | 🔨 | 🔨 | ✅ | — |
-| Clone | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 |
-| Template mark | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 |
-| CPU / memory edit | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 |
-| Add / remove disks | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 |
-| Expand disk | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 |
-| GPU passthrough | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 |
-| Export / backup disk | ✅ | ✅ | ✅ | ✅ | ✅ | 🔨 |
-| Events | ✅ | ✅ | — | — | ✅ | — |
-| Tags | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 |
-| Published ports | ✅ | ✅ | 🔨 | — | — | 🔨 |
-| Containers (CT) | ✅ | — | ✅ | — | 🔨 | — |
+| Operation | kubevirt | qemu | incus | libvirt | proxmox | virtualbox | vsphere |
+|---|---|---|---|---|---|---|---|
+| List / inventory | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Create | ✅ | ✅ | ✅ | ✅ | ✅ | 🔨 | 🔨 |
+| Start | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Stop | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Restart | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Pause / resume | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Delete | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| SSH | ✅ | ✅ | ✅ | 🔨 | ✅ | 🔨 | 🔨 |
+| Serial / shell console | ✅ | 🔨 | ✅ | 🔨 | 🔨 | 🔨 | 🔨 |
+| Graphical console (VNC) | ✅ | ✅ | 🔨 | ✅ | 🔨 | 🔨 | 🔨 |
+| RDP | ✅ | 🔨 | 🔨 | 🔨 | 🔨 | 🔨 | 🔨 |
+| Live CPU / memory | ✅ | ✅ | ✅ | ✅ | ✅ | 🔨 | 🔨 |
+| Snapshot / restore | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Migrate | ✅ | — | 🔨 | 🔨 | ✅ | — | ✅ |
+| Clone | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | ✅ |
+| Template mark | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | ✅ |
+| CPU / memory edit | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | ✅ |
+| Add / remove disks | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | 🔨 |
+| Expand disk | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | 🔨 |
+| GPU passthrough | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | 🔨 |
+| Export / backup disk | ✅ | ✅ | ✅ | ✅ | ✅ | 🔨 | 🔨 |
+| Events | ✅ | ✅ | — | — | ✅ | — | 🔨 |
+| Tags | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | 🔨 |
+| Published ports | ✅ | ✅ | 🔨 | — | — | 🔨 | — |
+| Containers (CT) | ✅ | — | ✅ | — | 🔨 | — | — |
 
 ## What the audit found
 
@@ -211,6 +211,21 @@ websocket bridge is not. So the capability flags say no, and the matrix says why
 - **export** — export to OVA natively; pkg/export has no VirtualBox adapter yet
 - **tags** — setextradata keys or the registry mark; nothing reads them back yet
 - **ports** — NAT port-forward rules via modifyvm --natpf1. Corral does not manage them yet.
+
+### vsphere — 12 gaps
+
+- **create** — CloneVM works natively, and OVF deploy works too. Corral has no creator for them yet.
+- **ssh** — Corral has no address discovery yet. Use the Tools-reported guest address, then plain ssh.
+- **tty** — the serial port is redirectable to host or network; Corral has no console bridge for it
+- **vnc** — MKS/webmks tickets exist (AcquireTicket); Corral wires no viewer or bridge to them
+- **rdp** — same probe and bridge via the guest address
+- **metrics** — vCenter reports CPU and memory counters through performance manager. Corral has no sampler for them yet.
+- **volumes** — reconfig device attach and detach; nothing drives them yet
+- **expand** — virtual disk extend via reconfig; nothing drives it yet
+- **gpu** — PCI passthrough via reconfig device attach; experimental and host-limited
+- **export** — ExportVm serves an OVF/NFC lease natively; pkg/export has no vSphere adapter yet
+- **events** — The event manager keeps per-VM history. Corral wires no reader for it yet.
+- **tags** — vSphere has native tags. Nothing drives them yet.
 
 ## Testing parity
 

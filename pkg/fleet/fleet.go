@@ -16,6 +16,7 @@ import (
 	"github.com/tuna-os/corral/pkg/qemu"
 	"github.com/tuna-os/corral/pkg/types"
 	"github.com/tuna-os/corral/pkg/virtualbox"
+	"github.com/tuna-os/corral/pkg/vsphere"
 )
 
 type Result struct {
@@ -59,6 +60,14 @@ func List(ctx context.Context) Result {
 			case "proxmox":
 				var client *proxmoxbe.Client
 				if client, err = proxmoxbe.ClientForContext(target.Context); err == nil {
+					vms, err = client.List()
+				}
+			case "vsphere":
+				// The 20s SOAP timeout inside the client bounds this the way
+				// proxmoxbe.Timeout bounds the PVE path — a wedged vCenter
+				// fails one context, not the whole aggregation.
+				var client *vsphere.Client
+				if client, err = vsphere.ClientForContext(target.Context); err == nil {
 					vms, err = client.List()
 				}
 			default:
