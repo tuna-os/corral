@@ -253,7 +253,7 @@ websocket bridge is not. So the capability flags say no, and the matrix says why
 - **volumes** — Disk endpoints exist in vmm. Nothing drives them yet.
 - **expand** — Disk update exists in vmm. Nothing drives it yet.
 - **export** — Recovery points exist in dataprotection. Corral has no downloader for them yet.
-- **events** — The task list logs pool activity. Corral wires no per-VM reader yet.
+- **events** — The task list logs the activity of the pool. Corral wires no per-VM reader yet.
 
 ## Testing parity
 
