@@ -197,11 +197,11 @@ websocket bridge is not. So the capability flags say no, and the matrix says why
 ### virtualbox — 15 gaps
 
 - **create** — createvm plus storagectl/storageattach/modifyvm exist natively; Corral has no creator wiring them yet
-- **ssh** — the guest address via Guest Additions guestproperty or a NAT port-forward, then plain ssh — no address discovery is wired yet
+- **ssh** — Corral has no address discovery yet. Use the Guest Additions guestproperty or a NAT port-forward for the guest address, then plain ssh.
 - **tty** — the UART is redirectable to a host pipe via modifyvm --uartmode1; Corral has no console bridge for it
 - **vnc** — VRDE serves the guest display natively; Corral wires no viewer or bridge to it
 - **rdp** — VRDE is an RDP server already; Corral has no probe or bridge for it
-- **metrics** — VBoxManage metrics query exposes host-side CPU and memory counters; no sampler is wired yet
+- **metrics** — VBoxManage reports host CPU and memory counters through its metrics query. Corral has no sampler for them yet.
 - **clone** — clonevm
 - **template** — no native mark; the local registry mark, the same mechanism qemu would use
 - **scale** — modifyvm --cpus/--memory while stopped
@@ -210,7 +210,7 @@ websocket bridge is not. So the capability flags say no, and the matrix says why
 - **gpu** — PCI passthrough via modifyvm --pciattach on Linux hosts; experimental and host-limited
 - **export** — export to OVA natively; pkg/export has no VirtualBox adapter yet
 - **tags** — setextradata keys or the registry mark; nothing reads them back yet
-- **ports** — NAT port-forwarding rules via modifyvm --natpf1; Corral does not manage them yet
+- **ports** — NAT port-forward rules via modifyvm --natpf1. Corral does not manage them yet.
 
 ## Testing parity
 
