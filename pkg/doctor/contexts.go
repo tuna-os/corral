@@ -55,6 +55,10 @@ func RunContexts(contexts []config.ContextConfig) []Check {
 			// No runner: this backend speaks SOAP, so the probe is a session
 			// login rather than a command.
 			checks = vsphereChecks(target.Name)
+		case "xen":
+			// No runner: this backend speaks XML-RPC, so the probe is a
+			// session login rather than a command.
+			checks = xenChecks(target.Name)
 		default:
 			checks = []Check{{Name: "Backend supported", Detail: fmt.Sprintf("unknown backend %q", target.Backend), Severity: "required"}}
 		}

@@ -27,6 +27,7 @@ import (
 	"github.com/tuna-os/corral/pkg/types"
 	"github.com/tuna-os/corral/pkg/virtualbox"
 	"github.com/tuna-os/corral/pkg/vsphere"
+	"github.com/tuna-os/corral/pkg/xen"
 )
 
 func init() {
@@ -60,6 +61,12 @@ func init() {
 		// probe() must not fail for an estate that is merely unconfigured —
 		// the families a backend implements are a property of its type.
 		return vsphereAdapter{context: ref.Context}, nil
+	})
+	Register("xen", func(ref types.InstanceRef) (Adapter, error) {
+		// Deferred: the client needs configuration and a session, and
+		// probe() must not fail for a pool that is merely unconfigured —
+		// the families a backend implements are a property of its type.
+		return xenAdapter{context: ref.Context}, nil
 	})
 }
 
@@ -607,6 +614,97 @@ func (a vsphereAdapter) MarkTemplate(name string, on bool) error {
 	ctx, cancel := a.ctx()
 	defer cancel()
 	return client.MarkTemplate(ctx, name, on)
+}
+
+// ── XenServer / XCP-ng ──────────────────────────────────────────────
+//
+// Power, the backend's own reboot and suspend, pool migration, and clones.
+// XenAPI calls are synchronous, so — like the Proxmox adapter — every call
+// here means completion, not acceptance. No Addresser: a guest address needs
+// guest-metrics reads nothing else uses yet. No consoles: console objects
+// hand out VNC locations, but Corral wires no viewer or bridge to them.
+
+type xenAdapter struct{ context string }
+
+func (xenAdapter) Backend() string { return "xen" }
+
+func (a xenAdapter) client() (*xen.Client, error) {
+	return xen.ClientForContext(a.context)
+}
+
+func (a xenAdapter) Start(name string) error {
+	client, err := a.client()
+	if err != nil {
+		return err
+	}
+	return client.Start(name)
+}
+
+func (a xenAdapter) Stop(name string) error {
+	client, err := a.client()
+	if err != nil {
+		return err
+	}
+	return client.Stop(name)
+}
+
+func (a xenAdapter) Delete(name string) error {
+	client, err := a.client()
+	if err != nil {
+		return err
+	}
+	return client.Destroy(name)
+}
+
+func (a xenAdapter) Restart(name string) error {
+	client, err := a.client()
+	if err != nil {
+		return err
+	}
+	return client.Reboot(name)
+}
+
+func (a xenAdapter) Pause(name string) error {
+	client, err := a.client()
+	if err != nil {
+		return err
+	}
+	return client.Suspend(name)
+}
+
+func (a xenAdapter) Resume(name string) error {
+	client, err := a.client()
+	if err != nil {
+		return err
+	}
+	return client.Resume(name)
+}
+
+func (a xenAdapter) Migrate(name, target string) error {
+	client, err := a.client()
+	if err != nil {
+		return err
+	}
+	return client.Migrate(name, target)
+}
+
+// CanMigrate asks the pool rather than guessing: the guest's own record says
+// whether it is running, and the host list says whether a second host exists.
+func (a xenAdapter) CanMigrate(name string) (bool, string) {
+	client, err := a.client()
+	if err != nil {
+		return false, err.Error()
+	}
+	return client.CanMigrate(name)
+}
+
+func (a xenAdapter) Clone(source, target string) error {
+	client, err := a.client()
+	if err != nil {
+		return err
+	}
+	_, err = client.Clone(source, target)
+	return err
 }
 
 // firstImageStorage picks a storage that accepts disk images, so AddDisk works

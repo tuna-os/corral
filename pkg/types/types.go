@@ -183,6 +183,13 @@ func CapabilitiesForBackend(backend string) InstanceCapabilities {
 		// tests enforce this agreement with the matrix.
 		return InstanceCapabilities{Start: true, Stop: true, Delete: true,
 			Snapshots: true, Migrate: true}
+	case "xen":
+		// Power, reboot, suspend, migrate, clone, and snapshots are wired
+		// through the backend contracts; everything else stays off until an
+		// adapter implements it — the parity conformance tests enforce this
+		// agreement with the matrix.
+		return InstanceCapabilities{Start: true, Stop: true, Delete: true,
+			Snapshots: true, Migrate: true}
 	default:
 		return InstanceCapabilities{}
 	}
