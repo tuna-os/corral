@@ -136,12 +136,19 @@ HTTP client; the API-generation choice is the load-bearing decision.
 
 XenAPI client; name the package after the API, not the vendor.
 
-- **Interface:** XenAPI (XML-RPC over HTTPS) via the Go bindings in the
+- **Interface:** XenAPI (XML-RPC over HTTPS) via a thin hand-rolled client
+  in the `pkg/proxmoxbe` shape — no SDK dependency. The
   [XenServer SDK](https://docs.xenserver.com/en-us/xenserver/developer/sdk-guide.html)
-  (`session.login_with_password`, then `VM.*`/`VDI.*`/`VBD.*` calls).
-  The `xe` CLI (documented for XCP-ng local management) is the fallback
-  shape for single-host XCP-ng, but the SDK is the primary path because
-  it reaches pool masters, not just localhost.
+  lists Go among its languages, but
+  [xen-api-sdk](https://github.com/xapi-project/xen-api-sdk) ships only
+  C/C#/Java/PowerShell/Python, and the community Go forks (terra-farm,
+  sarah-soo) are too small to depend on. XenAPI is plain XML-RPC
+  (`session.login_with_password`, then `VM.*`/`VDI.*`/`VBD.*` calls) and
+  the Power/snapshot surface Corral needs is small enough to own — the
+  same reasoning that hand-rolled PVE's REST API instead of shelling to
+  `pvesh`. The `xe` CLI (documented for XCP-ng local management) is the
+  fallback shape for single-host XCP-ng, but the hand-rolled client is
+  the primary path because it reaches pool masters, not just localhost.
 - **Auth/context:** pool-master host + username + password
   (`CORRAL_XEN_PASSWORD[_<CTX>]`), same context-block shape.
 - **Ops mapping:** Power/Restarter via `VM.start/shutdown/reboot`;
@@ -152,9 +159,11 @@ XenAPI client; name the package after the API, not the vendor.
 - **Note:** Call it XenServer/XCP-ng everywhere user-visible. "Citrix" is
   the vendor; the pool speaks XenAPI either way, and XCP-ng is what
   homelabs run.
-- **Risk:** SDK binding maintenance lags the platform; fixture-test
-  against recorded XML-RPC payloads (`httptest`, Proxmox precedent) so a
-  binding upgrade shows up as a test failure, not a field report.
+- **Risk:** owning the XML-RPC surface means tracking XenAPI changes
+  ourselves — but the calls Corral needs (`session.*`, `VM.*`, `VDI.*`,
+  `VBD.*`) have been stable for a decade, and fixture-testing against
+  recorded XML-RPC payloads (`httptest`, Proxmox precedent) turns a
+  platform change into a test failure, not a field report.
 
 ## Shared work per backend (checklist, not optional)
 
@@ -180,7 +189,7 @@ XenAPI client; name the package after the API, not the vendor.
 | VirtualBox | S | CLI runner, no new deps, proves 6th-backend mechanics (register → matrix → conformance → doctor) |
 | vSphere | M–L | Biggest demand; govmomi + simulator fixtures are a known quantity |
 | Nutanix | M–L | API-generation spike first; categories-vs-tags needs a matrix decision |
-| XenServer/XCP-ng | M | Smallest estate of the four; binding maintenance is the long-tail cost |
+| XenServer/XCP-ng | M | Smallest estate of the four; hand-rolled XML-RPC keeps it dependency-free |
 
 One backend per PR. Each PR extends the matrix by one column and closes
 its own gaps; no PR widens `types.Backend` or reintroduces
@@ -195,7 +204,9 @@ its own gaps; no PR widens `types.Backend` or reintroduces
   concept; vSphere/Nutanix/Xen/VirtualBox get VMs only.
 - No `move` source/destination parity day one. Proxmox export (#163) and
   Incus publishing (#164) set the pattern; new backends join it later.
-- No vendored SDK without provenance. govmomi / prism clients / XenAPI
-  bindings get the iron-remote-desktop treatment (source, version, gate).
+- No vendored SDK without provenance. govmomi — and a prism client, if the
+  Nutanix spike picks one over hand-rolling — get the iron-remote-desktop
+  treatment (source, version, gate). XenAPI is hand-rolled precisely to
+  avoid needing one.
 - Not a VDI broker play. RFC-0001 stays backend-agnostic; these backends
   are inventory targets a VDI pool could later draw from, nothing more.
