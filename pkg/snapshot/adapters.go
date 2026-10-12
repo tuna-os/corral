@@ -31,12 +31,26 @@ func SetRunner(r shell.Runner) { runner = r }
 
 type KubeVirt struct{}
 
+// kubevirtSnapshooter is the slice of *kubevirt.Client the adapter uses.
+// kubevirtClientFor is a variable so tests can substitute a stub without a
+// cluster; production always returns the real client.
+type kubevirtSnapshooter interface {
+	Snapshot(vm, snap string) (string, error)
+	ListSnapshots(vm string) ([]kubevirt.SnapshotInfo, error)
+	RestoreSnapshot(vm, snap string) error
+	DeleteSnapshot(snap string) error
+}
+
+var kubevirtClientFor = func(ref types.InstanceRef) kubevirtSnapshooter {
+	return KubeVirt{}.client(ref)
+}
+
 func (KubeVirt) client(ref types.InstanceRef) *kubevirt.Client {
 	return kubevirt.NewClientForContext(ref.Namespace, ref.Context)
 }
 
 func (k KubeVirt) Create(ref types.InstanceRef, name string) (Snapshot, error) {
-	created, err := k.client(ref).Snapshot(ref.Name, name)
+	created, err := kubevirtClientFor(ref).Snapshot(ref.Name, name)
 	if err != nil {
 		return Snapshot{}, err
 	}
@@ -47,7 +61,7 @@ func (k KubeVirt) Create(ref types.InstanceRef, name string) (Snapshot, error) {
 }
 
 func (k KubeVirt) List(ref types.InstanceRef) ([]Snapshot, error) {
-	infos, err := k.client(ref).ListSnapshots(ref.Name)
+	infos, err := kubevirtClientFor(ref).ListSnapshots(ref.Name)
 	if err != nil {
 		return nil, err
 	}
@@ -63,11 +77,11 @@ func (k KubeVirt) List(ref types.InstanceRef) ([]Snapshot, error) {
 }
 
 func (k KubeVirt) Restore(ref types.InstanceRef, name string) error {
-	return k.client(ref).RestoreSnapshot(ref.Name, name)
+	return kubevirtClientFor(ref).RestoreSnapshot(ref.Name, name)
 }
 
 func (k KubeVirt) Delete(ref types.InstanceRef, name string) error {
-	return k.client(ref).DeleteSnapshot(name)
+	return kubevirtClientFor(ref).DeleteSnapshot(name)
 }
 
 // ── libvirt ───────────────────────────────────────────────────────
