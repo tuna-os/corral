@@ -46,6 +46,10 @@ jobs:
           }
           fuzz ./pkg/web/ FuzzParseQuantity
           fuzz ./pkg/proxmoxbe/ FuzzMemoryMiB
+          fuzz ./pkg/types/ FuzzInstanceRef
+          fuzz ./pkg/catalog/ FuzzFind
+          fuzz ./pkg/catalog/ FuzzResolveBootc
+          fuzz ./pkg/config/ FuzzLoad
           exit $fail
 
       # A crasher is written to testdata/fuzz/<target>/ next to the test. It is
