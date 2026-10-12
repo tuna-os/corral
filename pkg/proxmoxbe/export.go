@@ -124,11 +124,10 @@ func (c *Client) findLatestBackup(storage string, vmid int) (string, error) {
 			continue
 		}
 		// Volume ids carry the storage prefix
-		// ("backup-nfs:backup/vzdump-qemu-100-....vma.zst"), so the vzdump
-		// name match runs on the file name, not the whole id. The full id
-		// is still what is compared and returned: the download endpoint
-		// wants it complete, and same-named files on two storages must not
-		// collapse into one candidate.
+		// ("backup-nfs:backup/vzdump-qemu-100-....vma.zst"), so the
+		// vzdump name match runs on the file name, not the whole id.
+		// The full id is still what is returned: the download endpoint
+		// wants it complete.
 		name := entry.VolID
 		if i := strings.LastIndex(name, "/"); i >= 0 {
 			name = name[i+1:]
