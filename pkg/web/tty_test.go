@@ -56,7 +56,7 @@ func TestTTYBridge_ProxiesVirtctlConsole(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
-	defer ws.Close()
+	defer func() { _ = ws.Close() }()
 
 	// The bridge must reach `virtctl console`, not kubectl exec: only the
 	// virtio-serial console works over plain pipes.
@@ -64,7 +64,7 @@ func TestTTYBridge_ProxiesVirtctlConsole(t *testing.T) {
 		t.Fatalf("ws.Write: %v", err)
 	}
 	buf := make([]byte, 64)
-	ws.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_ = ws.SetReadDeadline(time.Now().Add(5 * time.Second))
 	n, err := ws.Read(buf)
 	if err != nil {
 		t.Fatalf("ws.Read: %v", err)
@@ -86,7 +86,7 @@ func TestTTYBridge_ProxiesIncusExec(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
-	defer ws.Close()
+	defer func() { _ = ws.Close() }()
 
 	// The pty echoes our own bytes before any process spawns, so the argv
 	// log is polled: its appearance proves `incus exec` started, and only
@@ -105,7 +105,7 @@ func TestTTYBridge_ProxiesIncusExec(t *testing.T) {
 		t.Fatalf("ws.Write: %v", err)
 	}
 	buf := make([]byte, 256)
-	ws.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_ = ws.SetReadDeadline(time.Now().Add(5 * time.Second))
 	n, err := ws.Read(buf)
 	if err != nil {
 		t.Fatalf("ws.Read: %v", err)
