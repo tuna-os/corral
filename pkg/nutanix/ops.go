@@ -39,16 +39,26 @@ type actionResponse struct {
 	} `json:"data"`
 }
 
-// action posts one $actions verb against the resolved VM and returns its
-// task. The idempotency header goes out on every call (see client.do), so a
-// retried power op does not execute twice.
+// action posts one $actions verb with an empty body against the resolved VM
+// and returns its task. The idempotency header goes out on every call (see
+// client.do), so a retried power op does not execute twice.
 func (c *Client) action(name, verb string) (Task, error) {
+	return c.actionWithBody(name, verb, map[string]any{})
+}
+
+// actionWithBody posts one $actions verb with a JSON body against the
+// resolved VM and returns its task. Bodies for verbs beyond power (migrate,
+// clone, revert) follow the v4 reference shape provisionally: the verb slugs
+// are confirmed in the portal action index but exact body keys are verified
+// against a live PC at wiring time, and the httptest seam pins exactly what
+// this client sends so corrections land in one place.
+func (c *Client) actionWithBody(name, verb string, body any) (Task, error) {
 	vm, err := c.Resolve(name)
 	if err != nil {
 		return Task{}, err
 	}
 	var resp actionResponse
-	if err := c.post(c.vmmPath("/"+vm.ExtID+"/$actions/"+verb), map[string]any{}, &resp); err != nil {
+	if err := c.post(c.vmmPath("/"+vm.ExtID+"/$actions/"+verb), body, &resp); err != nil {
 		return Task{}, err
 	}
 	if resp.Data.ExtID == "" {
@@ -62,23 +72,45 @@ func (c *Client) Start(name string) (Task, error) {
 	return c.action(name, "power-on")
 }
 
-// Stop asks the guest to shut down cleanly (guest tools / ACPI). The hard
-// power cut is Kill, so the destructive one has to be chosen by name —
-// Corral's Stop never escalates to it quietly.
+// Stop shuts a VM down gracefully via the guest first and falls back to a
+// hard power-off when the guest does not accept the request (no tools, or an
+// already-stopped guest) — the vsphere Stop shape. Graceful first gives the
+// guest its shutdown ordering; hard only when graceful fails. The graceful
+// attempt is waited on (bounded by DefaultTimeout) because only its terminal
+// task state tells whether the guest cooperated; the returned task is the
+// graceful one when it succeeded, the hard fallback's when it did not.
 func (c *Client) Stop(name string) (Task, error) {
-	return c.action(name, "shutdown")
+	return c.gracefulOrHard(name, "shutdown", "power-off")
 }
 
-// Kill cuts the power. An unclean shutdown of somebody's database is not a
+// gracefulOrHard issues the graceful verb, waits for its task, and issues
+// the hard verb when the guest refused. A graceful request that PC itself
+// rejects (unknown VM already resolved, auth, transport) returns before any
+// fallback: failing closed beats powering off a guest PC never heard.
+func (c *Client) gracefulOrHard(name, graceful, hard string) (Task, error) {
+	task, err := c.action(name, graceful)
+	if err != nil {
+		return Task{}, err
+	}
+	if err := c.WaitTask(task, DefaultTimeout); err == nil {
+		return task, nil
+	}
+	return c.action(name, hard)
+}
+
+// Kill cuts the power directly, with no graceful attempt first. It is the
+// explicit hard path: Stop may escalate to this on guest refusal, but
+// nothing else does — an unclean shutdown of somebody's database is not a
 // fallback to apply quietly.
 func (c *Client) Kill(name string) (Task, error) {
 	return c.action(name, "power-off")
 }
 
-// Restart reboots through the guest rather than stop-then-start. The dance
-// loses the guest's own shutdown ordering and races with autostart.
+// Restart reboots through the guest rather than stop-then-start — the dance
+// loses the guest's own shutdown ordering and races with autostart — and
+// falls back to a hard power cycle when the guest refuses, mirroring Stop.
 func (c *Client) Restart(name string) (Task, error) {
-	return c.action(name, "reboot")
+	return c.gracefulOrHard(name, "reboot", "power-cycle")
 }
 
 // Reset is the hard power cycle (the reset button): the guest reboots
@@ -98,6 +130,42 @@ func (c *Client) Pause(name string) (Task, error) {
 func (c *Client) Resume(name string) (Task, error) {
 	return c.action(name, "resume")
 }
+
+// ── movement ────────────────────────────────────────────────────────
+
+// Migrate live-migrates a running VM to another AHV host. AHV migration is
+// natively live for a running guest — no shared-storage precondition to
+// check the way PVE demands — so there is no precondition call here, just
+// the action. target is a host extId; an empty target is refused rather
+// than guessed, because picking a host needs the clustermgmt host listing
+// that lands with wiring, and migrating to a node Corral chose blind is how
+// a guest lands on a host with no capacity.
+func (c *Client) Migrate(name, target string) (Task, error) {
+	if target == "" {
+		return Task{}, fmt.Errorf("nutanix: migrate %q: a destination host extId is required (host listing lands with wiring)", name)
+	}
+	return c.actionWithBody(name, "migrate", map[string]any{
+		"destinationHost": map[string]any{"extId": target},
+	})
+}
+
+// Clone makes a full clone of the source under the target name. Full, not
+// linked: a linked clone depends on its parent forever, and deleting the
+// parent of a linked clone is a footgun Corral should not hand over by
+// default — the proxmoxbe rationale, and the v4 clone action exists for
+// exactly this.
+func (c *Client) Clone(source, target string) (Task, error) {
+	return c.actionWithBody(source, "clone", map[string]any{"name": target})
+}
+
+// ── export ──────────────────────────────────────────────────────────
+//
+// There is deliberately no Export method. The v4 spike proved no
+// Corral-shaped export: no documented "download this VM as an image"
+// endpoint in vmm, and the dataprotection export flows are unproven against
+// fixtures. Like vsphere's ExportVm (no simulator handler, stays a Possible
+// cell), export stays out until a fixture-backed slice lands it — a method
+// that half-downloads a disk image is worse than no method.
 
 // ── tasks ─────────────────────────────────────────────────────────
 
