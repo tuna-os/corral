@@ -152,7 +152,9 @@ func AddContext(c ContextConfig) error {
 		return fmt.Errorf("qemu is local and does not take a context")
 	}
 	switch c.Backend {
-	case "qemu", "kubevirt", "incus", "libvirt":
+	// virtualbox is local-only: Context is just a label, and there is no
+	// secret block — remote management via vboxwebsrv is out of scope.
+	case "qemu", "kubevirt", "incus", "libvirt", "virtualbox":
 	default:
 		return fmt.Errorf("unsupported backend %q", c.Backend)
 	}
@@ -254,9 +256,9 @@ func DefaultBackend() string {
 
 func SetDefaultBackend(backend string) error {
 	switch backend {
-	case "qemu", "kubevirt", "incus", "libvirt":
+	case "qemu", "kubevirt", "incus", "libvirt", "virtualbox":
 	default:
-		return fmt.Errorf("unsupported backend %q (want qemu, kubevirt, incus, or libvirt)", backend)
+		return fmt.Errorf("unsupported backend %q (want qemu, kubevirt, incus, libvirt, or virtualbox)", backend)
 	}
 	cfg, err := Load("")
 	if err != nil {

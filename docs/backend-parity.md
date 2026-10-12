@@ -27,33 +27,33 @@ to the matrix.
 Legend: ✅ shipped · 🔨 the backend can do this and Corral does not yet · — the
 backend cannot, or it is meaningless there.
 
-| Operation | kubevirt | qemu | incus | libvirt | proxmox |
-|---|---|---|---|---|---|
-| List / inventory | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Create | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Start | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Stop | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Restart | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Pause / resume | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Delete | ✅ | ✅ | ✅ | ✅ | ✅ |
-| SSH | ✅ | ✅ | ✅ | 🔨 | ✅ |
-| Serial / shell console | ✅ | 🔨 | ✅ | 🔨 | 🔨 |
-| Graphical console (VNC) | ✅ | ✅ | 🔨 | ✅ | 🔨 |
-| RDP | ✅ | 🔨 | 🔨 | 🔨 | 🔨 |
-| Live CPU / memory | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Snapshot / restore | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Migrate | ✅ | — | 🔨 | 🔨 | ✅ |
-| Clone | ✅ | 🔨 | 🔨 | 🔨 | ✅ |
-| Template mark | ✅ | 🔨 | 🔨 | 🔨 | ✅ |
-| CPU / memory edit | ✅ | 🔨 | 🔨 | 🔨 | ✅ |
-| Add / remove disks | ✅ | 🔨 | 🔨 | 🔨 | ✅ |
-| Expand disk | ✅ | 🔨 | 🔨 | 🔨 | ✅ |
-| GPU passthrough | ✅ | 🔨 | 🔨 | 🔨 | ✅ |
-| Export / backup disk | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Events | ✅ | ✅ | — | — | ✅ |
-| Tags | ✅ | 🔨 | 🔨 | 🔨 | ✅ |
-| Published ports | ✅ | ✅ | 🔨 | — | — |
-| Containers (CT) | ✅ | — | ✅ | — | 🔨 |
+| Operation | kubevirt | qemu | incus | libvirt | proxmox | virtualbox |
+|---|---|---|---|---|---|---|
+| List / inventory | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Create | ✅ | ✅ | ✅ | ✅ | ✅ | 🔨 |
+| Start | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Stop | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Restart | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Pause / resume | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Delete | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| SSH | ✅ | ✅ | ✅ | 🔨 | ✅ | 🔨 |
+| Serial / shell console | ✅ | 🔨 | ✅ | 🔨 | 🔨 | 🔨 |
+| Graphical console (VNC) | ✅ | ✅ | 🔨 | ✅ | 🔨 | 🔨 |
+| RDP | ✅ | 🔨 | 🔨 | 🔨 | 🔨 | 🔨 |
+| Live CPU / memory | ✅ | ✅ | ✅ | ✅ | ✅ | 🔨 |
+| Snapshot / restore | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Migrate | ✅ | — | 🔨 | 🔨 | ✅ | — |
+| Clone | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 |
+| Template mark | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 |
+| CPU / memory edit | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 |
+| Add / remove disks | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 |
+| Expand disk | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 |
+| GPU passthrough | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 |
+| Export / backup disk | ✅ | ✅ | ✅ | ✅ | ✅ | 🔨 |
+| Events | ✅ | ✅ | — | — | ✅ | — |
+| Tags | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 |
+| Published ports | ✅ | ✅ | 🔨 | — | — | 🔨 |
+| Containers (CT) | ✅ | — | ✅ | — | 🔨 | — |
 
 ## What the audit found
 
@@ -193,6 +193,24 @@ websocket bridge is not. So the capability flags say no, and the matrix says why
 - **vnc** — vncproxy tickets work (pkg/proxmoxbe.VNCTicket); the web UI has no websocket bridge for them yet
 - **rdp** — same, via the guest address
 - **containers** — pkg/proxmoxbe.Containers lists them and Create makes them; pkg/ct does not yet surface a non-Kubernetes CT
+
+### virtualbox — 15 gaps
+
+- **create** — createvm plus storagectl/storageattach/modifyvm exist natively; Corral has no creator wiring them yet
+- **ssh** — the guest address via Guest Additions guestproperty or a NAT port-forward, then plain ssh — no address discovery is wired yet
+- **tty** — the UART is redirectable to a host pipe via modifyvm --uartmode1; Corral has no console bridge for it
+- **vnc** — VRDE serves the guest display natively; Corral wires no viewer or bridge to it
+- **rdp** — VRDE is an RDP server already; Corral has no probe or bridge for it
+- **metrics** — VBoxManage metrics query exposes host-side CPU and memory counters; no sampler is wired yet
+- **clone** — clonevm
+- **template** — no native mark; the local registry mark, the same mechanism qemu would use
+- **scale** — modifyvm --cpus/--memory while stopped
+- **volumes** — storageattach/storagectl plus closemedium; nothing drives them yet
+- **expand** — modifymedium --resize while stopped
+- **gpu** — PCI passthrough via modifyvm --pciattach on Linux hosts; experimental and host-limited
+- **export** — export to OVA natively; pkg/export has no VirtualBox adapter yet
+- **tags** — setextradata keys or the registry mark; nothing reads them back yet
+- **ports** — NAT port-forwarding rules via modifyvm --natpf1; Corral does not manage them yet
 
 ## Testing parity
 

@@ -15,6 +15,7 @@ import (
 	"github.com/tuna-os/corral/pkg/proxmoxbe"
 	"github.com/tuna-os/corral/pkg/qemu"
 	"github.com/tuna-os/corral/pkg/types"
+	"github.com/tuna-os/corral/pkg/virtualbox"
 )
 
 type Result struct {
@@ -53,6 +54,8 @@ func List(ctx context.Context) Result {
 				vms, err = incus.NewClient(target.Context).List()
 			case "libvirt":
 				vms, err = libvirt.NewClient(target.Context).List()
+			case "virtualbox":
+				vms, err = virtualbox.NewClient(target.Context).List()
 			case "proxmox":
 				var client *proxmoxbe.Client
 				if client, err = proxmoxbe.ClientForContext(target.Context); err == nil {
