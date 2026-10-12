@@ -189,8 +189,10 @@ func (c Client) Create(opts types.CreateOpts) error {
 	} else {
 		return fmt.Errorf("libvirt create needs --iso or --qcow")
 	}
-	cmd := exec.Command("virt-install", args...)
-	out, err := cmd.CombinedOutput()
+	// Routed through the package runner (not os/exec directly) so tests can
+	// assert the virt-install argv with shell.Fake; Real.Run is
+	// exec.Command(...).CombinedOutput(), so production behavior is unchanged.
+	out, err := runner.Run("virt-install", args...)
 	if err != nil {
 		return fmt.Errorf("virt-install: %s: %w", strings.TrimSpace(string(out)), err)
 	}

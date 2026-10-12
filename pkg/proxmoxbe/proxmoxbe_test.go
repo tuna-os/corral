@@ -34,6 +34,29 @@ type fakePVE struct {
 	handlers map[string]func(r *http.Request) (any, int)
 	requests []recordedRequest
 	server   *httptest.Server
+	// raw serves byte bodies for routes that return files, not JSON (the
+	// storage download endpoint), optionally with a status and Location
+	// for the redirect leg.
+	raw map[string]rawResponse
+}
+
+type rawResponse struct {
+	status   int
+	location string
+	body     []byte
+}
+
+func (f *fakePVE) onRaw(route string, body []byte) {
+	f.onRawStatus(route, http.StatusOK, "", body)
+}
+
+func (f *fakePVE) onRawStatus(route string, status int, location string, body []byte) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.raw == nil {
+		f.raw = map[string]rawResponse{}
+	}
+	f.raw[route] = rawResponse{status: status, location: location, body: body}
 }
 
 type recordedRequest struct {
@@ -105,8 +128,18 @@ func (f *fakePVE) serve(w http.ResponseWriter, r *http.Request) {
 		Method: r.Method, Path: path, Query: r.URL.Query(),
 		Form: r.PostForm, Auth: r.Header.Get("Authorization"),
 	})
+	raw, isRaw := f.raw[r.Method+" "+path]
 	handler, ok := f.handlers[r.Method+" "+path]
 	f.mu.Unlock()
+
+	if isRaw {
+		if raw.location != "" {
+			w.Header().Set("Location", raw.location)
+		}
+		w.WriteHeader(raw.status)
+		_, _ = w.Write(raw.body)
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if !ok {
