@@ -181,6 +181,17 @@ XenAPI client; name the package after the API, not the vendor.
    with timeout.
 7. Manual-pass runbook (Proxmox precedent: CI cannot host vSphere,
    Prism, or XenServer; VirtualBox can run headless in CI like QEMU).
+8. Fixture test in the per-family pattern — no matrix column without a
+   fixture test: govmomi/simulator for vSphere-family (PR #472),
+   recorded XenAPI XML-RPC payloads via httptest for Xen (PR #473),
+   recorded Prism v4 JSON via httptest for Nutanix (PR #474),
+   shell.Runner fake asserting exact VBoxManage argv for VirtualBox
+   (pkg/virtualbox).
+
+Conformance = consistency (matrix column, capabilities agreement, docs
+table); fixtures = behavior (the adapter makes the right calls against a
+fake platform). One proves the backend claims the same shape, the other
+proves it acts correctly — each backend PR needs both.
 
 ## Order and effort
 
