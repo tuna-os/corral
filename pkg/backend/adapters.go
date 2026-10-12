@@ -717,14 +717,14 @@ func (a xenAdapter) Clone(source, target string) error {
 
 // ── Nutanix Prism Central (AHV) ─────────────────────────────────────
 //
-// Power, the backend's own reboot and suspend, migration, clones, and
-// category tags. v4 mutations are async tasks, so — unlike the XenAPI
-// adapter — every call here waits its task to completion: a surface that
-// fired and forgot would report success for a migration that failed thirty
-// seconds later. No Addresser: the NIC address sits in inventory but no
-// address discovery is wired. No consoles: the v4 reference proves no
-// per-VM console endpoint, and advertising one nothing can open is the
-// exact failure the parity conformance tests exist to catch.
+// Power, the backend's own reboot, same-cluster migration, and clones. v4
+// mutations are async tasks, so — unlike the XenAPI adapter — every call
+// here waits its task to completion: a surface that fired and forgot would
+// report success for a migration that failed thirty seconds later. No
+// Suspender: vmm has no suspend action, so pause stays Unsupported. No
+// Tagger: category values need an extId resolution no reference proves. No
+// Addresser: the NIC address sits in inventory but no address discovery is
+// wired. No consoles: a token endpoint exists but Corral wires no viewer.
 
 type nutanixAdapter struct{ context string }
 
@@ -763,14 +763,6 @@ func (a nutanixAdapter) Restart(name string) error {
 	return a.complete(func(c *nutanix.Client) (nutanix.Task, error) { return c.Restart(name) })
 }
 
-func (a nutanixAdapter) Pause(name string) error {
-	return a.complete(func(c *nutanix.Client) (nutanix.Task, error) { return c.Pause(name) })
-}
-
-func (a nutanixAdapter) Resume(name string) error {
-	return a.complete(func(c *nutanix.Client) (nutanix.Task, error) { return c.Resume(name) })
-}
-
 func (a nutanixAdapter) Migrate(name, target string) error {
 	return a.complete(func(c *nutanix.Client) (nutanix.Task, error) { return c.Migrate(name, target) })
 }
@@ -788,12 +780,6 @@ func (a nutanixAdapter) CanMigrate(name string) (bool, string) {
 
 func (a nutanixAdapter) Clone(source, target string) error {
 	return a.complete(func(c *nutanix.Client) (nutanix.Task, error) { return c.Clone(source, target) })
-}
-
-// SetTag rides the single corral-tag category key; governed PCs may refuse
-// the write with their own reason. See nutanix.TagCategoryKey.
-func (a nutanixAdapter) SetTag(name, tag string, on bool) error {
-	return a.complete(func(c *nutanix.Client) (nutanix.Task, error) { return c.SetTag(name, tag, on) })
 }
 
 // firstImageStorage picks a storage that accepts disk images, so AddDisk works

@@ -8,11 +8,10 @@ package nutanix
 // or ignore it — the choice belongs to the caller, not to the backend.
 //
 // Action verbs are the v4 $actions sub-resource slugs
-// (POST /vmm/{ver}/ahv/config/vms/{extId}/$actions/<verb>), the same shape
-// the portal documents for e.g. $actions/associate-categories, with the
-// power verbs confirmed in the v4 vmm action index. They will be verified
-// against a live PC during wiring; the httptest seam below pins exactly what
-// this client sends so any correction lands in one place.
+// (POST /vmm/{ver}/ahv/config/vms/{extId}/$actions/<verb>), verified
+// against the official SDK request models
+// (ntnx-api-golang-clients vmm-go-client/api/vm_api.go). The httptest seam
+// pins exactly what this client sends so any drift lands in one place.
 
 import (
 	"fmt"
@@ -48,11 +47,12 @@ func (c *Client) action(name, verb string) (Task, error) {
 }
 
 // actionWithBody posts one $actions verb with a JSON body against the
-// resolved VM and returns its task. Bodies for verbs beyond power (migrate,
-// clone, revert) follow the v4 reference shape provisionally: the verb slugs
-// are confirmed in the portal action index but exact body keys are verified
-// against a live PC at wiring time, and the httptest seam pins exactly what
-// this client sends so corrections land in one place.
+// resolved VM and returns its task. Slugs and bodies are SDK-verified
+// (ntnx-api-golang-clients vmm-go-client/api/vm_api.go: power-on/off/cycle,
+// shutdown/reboot ACPI collaborative, migrate-to-host {host: {extId}},
+// clone {name}, revert {vmRecoveryPointExtId}); the 202 task envelope
+// decodes data.extId per the TaskReference model. The httptest seam pins
+// exactly what this client sends so any drift lands in one place.
 func (c *Client) actionWithBody(name, verb string, body any) (Task, error) {
 	vm, err := c.Resolve(name)
 	if err != nil {
@@ -121,16 +121,12 @@ func (c *Client) Reset(name string) (Task, error) {
 	return c.action(name, "power-cycle")
 }
 
-// Pause suspends a running guest to memory; its state stays allocated.
-// Resume continues from that exact point.
-func (c *Client) Pause(name string) (Task, error) {
-	return c.action(name, "suspend")
-}
-
-// Resume unpauses a suspended guest.
-func (c *Client) Resume(name string) (Task, error) {
-	return c.action(name, "resume")
-}
+// There is deliberately no Pause/Resume. The vmm reference (verified in the
+// SDK: vmm-go-client/api/vm_api.go lists every $actions verb) has no
+// suspend or resume action — PAUSED is a system-set power state, not an
+// API-driven one. A Suspend method posting to an endpoint that does not
+// exist would fail 404 on every PC; the matrix records pause as Unsupported
+// instead.
 
 // Destroy deletes the VM. A running (or paused) guest is powered off first
 // — hard, not graceful: Destroy is already destructive, and a graceful
@@ -175,42 +171,29 @@ func (c *Client) CanMigrate(name string) (bool, string) {
 	return true, ""
 }
 
-// TagCategoryKey is the single v4 category key Corral tags ride on.
-// v4 categories are key/value pairs under governance (allowed values may
-// refuse); Corral tags are free-form strings. The mapping is therefore
-// lossy by construction: tag "web" becomes category corral-tag=web, and a
-// PC that governs the key refuses the write with its own reason rather
-// than Corral inventing a second mapping. See the matrix tags cell.
-const TagCategoryKey = "corral-tag"
-
-// SetTag attaches or detaches one Corral tag via category assignment —
-// the $actions/associate-categories endpoint the portal documents, with
-// the provisional body shape pinned by fixtures like every other verb here.
-func (c *Client) SetTag(name, tag string, on bool) (Task, error) {
-	verb := "associate-categories"
-	if !on {
-		verb = "disassociate-categories"
-	}
-	return c.actionWithBody(name, verb, map[string]any{
-		"categories": []map[string]any{{"key": TagCategoryKey, "value": tag}},
-	})
-}
+// There is deliberately no SetTag yet. The associate/disassociate-category
+// actions exist with SDK-verified bodies ({categories: [{extId}]}), but a
+// free-form Corral tag still needs a value-to-extId resolution no reference
+// proves — associating the wrong entity (or 422ing) is worse than no
+// tagger. The matrix records tags as Possible until that lookup is proven.
 
 // ── movement ────────────────────────────────────────────────────────
 
-// Migrate live-migrates a running VM to another AHV host. AHV migration is
-// natively live for a running guest — no shared-storage precondition to
-// check the way PVE demands — so there is no precondition call here, just
-// the action. target is a host extId; an empty target is refused rather
-// than guessed, because picking a host needs the clustermgmt host listing
-// that lands with wiring, and migrating to a node Corral chose blind is how
-// a guest lands on a host with no capacity.
+// Migrate live-migrates a running VM to another AHV host in the same
+// cluster: $actions/migrate-to-host with {host: {extId}} per the SDK
+// (MigrateVmToHost). $actions/migrate is the CROSS-cluster variant
+// (VmCrossClusterMigrateParams needs a target cluster/availability zone),
+// not this operation — posting a host extId there would be a type error
+// the server might not catch. target is a host extId; an empty target is
+// refused rather than guessed, because picking a host needs the
+// clustermgmt host listing that lands with wiring, and migrating to a node
+// Corral chose blind is how a guest lands on a host with no capacity.
 func (c *Client) Migrate(name, target string) (Task, error) {
 	if target == "" {
 		return Task{}, fmt.Errorf("nutanix: migrate %q: a destination host extId is required (host listing lands with wiring)", name)
 	}
-	return c.actionWithBody(name, "migrate", map[string]any{
-		"destinationHost": map[string]any{"extId": target},
+	return c.actionWithBody(name, "migrate-to-host", map[string]any{
+		"host": map[string]any{"extId": target},
 	})
 }
 
@@ -223,14 +206,12 @@ func (c *Client) Clone(source, target string) (Task, error) {
 	return c.actionWithBody(source, "clone", map[string]any{"name": target})
 }
 
-// ── export ──────────────────────────────────────────────────────────
-//
-// There is deliberately no Export method. The v4 spike proved no
-// Corral-shaped export: no documented "download this VM as an image"
-// endpoint in vmm, and the dataprotection export flows are unproven against
-// fixtures. Like vsphere's ExportVm (no simulator handler, stays a Possible
-// cell), export stays out until a fixture-backed slice lands it — a method
-// that half-downloads a disk image is worse than no method.
+// There is deliberately no Export method. The SDK proves no Corral-shaped
+// export: no documented "download this VM as an image" endpoint in vmm,
+// and no download path off the recovery-point APIs. Like vsphere's
+// ExportVm (no simulator handler, stays a Possible cell), export stays out
+// until a fixture-backed slice lands it — a method that half-downloads a
+// disk image is worse than no method.
 
 // ── tasks ─────────────────────────────────────────────────────────
 
@@ -239,10 +220,13 @@ type TaskStatus struct {
 	Status string `json:"status"`
 }
 
-// Done reports whether the task reached a terminal state.
+// Done reports whether the task reached a terminal state. The states come
+// from the prism TaskStatus enum (TASKSTATUS_*): QUEUED/RUNNING/CANCELING
+// still move, everything else does not — including SUSPENDED, which waits
+// on nothing that will resume it.
 func (s TaskStatus) Done() bool {
 	switch s.Status {
-	case "SUCCEEDED", "FAILED", "CANCELLED", "CANCELED":
+	case "SUCCEEDED", "FAILED", "CANCELLED", "CANCELED", "SUSPENDED":
 		return true
 	}
 	return false

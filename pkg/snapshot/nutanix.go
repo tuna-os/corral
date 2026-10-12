@@ -28,7 +28,7 @@ var NutanixClientFor = func(ref types.InstanceRef) (*nutanix.Client, error) {
 	return client, nil
 }
 
-// Nutanix implements Adapter over dataprotection recovery points.
+// Nutanix implements Adapter over vmm VM recovery points.
 type Nutanix struct{}
 
 func (n Nutanix) client(ref types.InstanceRef) (*nutanix.Client, error) {

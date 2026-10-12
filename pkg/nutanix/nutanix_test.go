@@ -25,14 +25,18 @@ import (
 )
 
 // Fixture provenance (RFC-0003 fixture standard): every shape below is tied
-// to the nutanix.dev v4 reference (developers.nutanix.com, vmm namespace)
-// and the live-verified v4 call record in backbuu/Nutanix-API-Test. Fields
-// the reference proves — extId, name, powerState ON/OFF/PAUSED, numSockets,
-// numCoresPerSocket, memorySizeBytes, NIC ipv4, cluster/host refs, the
-// {data, metadata.totalAvailableResults} envelope — are recorded verbatim.
-// Anything the reference does not pin ($actions verb slugs, dataprotection
-// paths/bodies, category bodies) is marked PROVISIONAL at the assertion and
-// verified against a live PC at wiring time.
+// to an authoritative source, not to itself. VM inventory and $actions
+// verbs/bodies come from the official SDK request models
+// (ntnx-api-golang-clients vmm-go-client/api/vm_api.go and
+// models/vmm/v4/ahv/config/config_model.go): power-on/off/cycle, ACPI
+// shutdown/reboot, migrate-to-host {host: {extId}}, clone {name}, revert
+// {vmRecoveryPointExtId}, vm-recovery-points {name, vmExtId}, the task
+// envelope data.extId (TaskReference), and prism task statuses. Cross-
+// checked against the nutanix.dev v4 reference and the live-verified call
+// record in backbuu/Nutanix-API-Test. What NO reference pins stays
+// PROVISIONAL and marked at the assertion: the v4 version string per PC
+// build (APIVersion stays configurable) and server acceptance of the
+// vmExtId list filter (the client re-filters regardless).
 
 // listFixture is a recorded v4 GET /ahv/config/vms shape: three AHV VMs —
 // running, stopped, paused — with the config fields the inventory maps.
@@ -76,7 +80,7 @@ const listFixture = `{
 // shape honouring $filter=name eq '…'; the actions handler mints one task
 // per verb and answers 202 envelopes; the task handler answers the scripted
 // status sequence for that task (taskOutcomes[verb], default SUCCEEDED); the
-// recovery-points handler answers the snapshot fixture. Raw bodies are
+// vm-recovery-points handler answers the snapshot fixture. Raw bodies are
 // recorded for exact-request assertions.
 type fakePC struct {
 	t            *testing.T
@@ -136,11 +140,11 @@ func (f *fakePC) serve(w http.ResponseWriter, r *http.Request) {
 		f.serveAction(w, path+"/delete")
 	case r.Method == http.MethodPost && strings.Contains(path, "/$actions/"):
 		f.serveAction(w, path)
-	case r.Method == http.MethodGet && strings.HasSuffix(path, "/recovery-points"):
-		f.serveRecoveryPoints(w, r)
-	case r.Method == http.MethodPost && strings.HasSuffix(path, "/recovery-points"):
+	case r.Method == http.MethodGet && strings.HasSuffix(path, "/ahv/config/vm-recovery-points"):
+		f.serveVMRecoveryPoints(w, r)
+	case r.Method == http.MethodPost && strings.HasSuffix(path, "/ahv/config/vm-recovery-points"):
 		f.serveAction(w, path+"/create")
-	case r.Method == http.MethodDelete && strings.Contains(path, "/recovery-points/"):
+	case r.Method == http.MethodDelete && strings.Contains(path, "/ahv/config/vm-recovery-points/"):
 		f.serveAction(w, path+"/delete")
 	case r.Method == http.MethodGet && strings.Contains(path, "/config/tasks/"):
 		f.serveTask(w, path)
@@ -241,42 +245,39 @@ func (f *fakePC) serveGet(w http.ResponseWriter, path string) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"message": "vm not found"})
 }
 
-// recoveryPointsFixture is a PROVISIONAL v4 dataprotection list shape: the
-// namespace and the recovery-point concept are reference-confirmed, but the
-// path and body keys are not pinned to per-endpoint reference pages — live
-// verification at wiring will correct them in one place. The consistency
-// value is the fixture's — the client overwrites it with CrashConsistent
-// regardless, because the server must not be trusted on this field.
-const recoveryPointsFixture = `{
+// vmRecoveryPointsFixture is the SDK-verified vmm GET
+// .../ahv/config/vm-recovery-points shape
+// (ntnx-api-golang-clients vmm-go-client/models/vmm/v4/ahv/config/config_model.go
+// VmRecoveryPoint: extId/name/creationTime/vmExtId). The vmm model carries
+// NO consistency field at all — the client labels every point
+// CrashConsistent unconditionally, which the shape itself enforces.
+const vmRecoveryPointsFixture = `{
   "data": [
     {
       "extId": "rp-uuid-1",
       "name": "snap1",
       "creationTime": "2026-10-01T00:00:00Z",
-      "consistency": "CRASH",
       "vmExtId": "11111111-1111-1111-1111-111111111111"
     },
     {
       "extId": "rp-uuid-2",
       "name": "snap1",
       "creationTime": "2026-10-02T00:00:00Z",
-      "consistency": "CRASH",
       "vmExtId": "22222222-2222-2222-2222-222222222222"
     },
     {
       "extId": "rp-uuid-3",
       "name": "nightly",
       "creationTime": "2026-10-03T00:00:00Z",
-      "consistency": "CRASH",
       "vmExtId": "11111111-1111-1111-1111-111111111111"
     }
   ],
   "metadata": {"totalAvailableResults": 3}
 }`
 
-func (f *fakePC) serveRecoveryPoints(w http.ResponseWriter, r *http.Request) {
-	var resp recoveryPointsResponse
-	if err := json.Unmarshal([]byte(recoveryPointsFixture), &resp); err != nil {
+func (f *fakePC) serveVMRecoveryPoints(w http.ResponseWriter, r *http.Request) {
+	var resp vmRecoveryPointsResponse
+	if err := json.Unmarshal([]byte(vmRecoveryPointsFixture), &resp); err != nil {
 		f.t.Fatalf("bad snapshot fixture: %v", err)
 	}
 	if filter := r.URL.Query().Get("$filter"); filter != "" {
@@ -460,9 +461,10 @@ func TestPowerOps(t *testing.T) {
 		{"Kill", "power-off", (*Client).Kill},
 		{"Restart", "reboot", (*Client).Restart},
 		{"Reset", "power-cycle", (*Client).Reset},
-		{"Pause", "suspend", (*Client).Pause},
-		{"Resume", "resume", (*Client).Resume},
 	}
+	// No Pause/Resume: vmm has no suspend action (verified across the whole
+	// vm_api.go $actions list), so there is nothing to table-test — pause
+	// is Unsupported by proof of absence.
 	for _, op := range ops {
 		t.Run(op.name, func(t *testing.T) {
 			f := newFakePC(t)
@@ -557,14 +559,17 @@ func TestMigrate(t *testing.T) {
 	if !task.Valid() {
 		t.Fatal("no task returned")
 	}
-	req, ok := findRequest(f, "/$actions/migrate")
+	// SDK-verified: same-cluster migration is $actions/migrate-to-host with
+	// {host: {extId}} (MigrateVmToHost); $actions/migrate is the
+	// cross-cluster variant and must not receive a host extId.
+	req, ok := findRequest(f, "/$actions/migrate-to-host")
 	if !ok {
-		t.Fatal("no migrate action recorded")
+		t.Fatal("no migrate-to-host action recorded")
 	}
 	if req.Method != http.MethodPost {
 		t.Errorf("method = %s, want POST", req.Method)
 	}
-	wantPath := "/api/vmm/v4.0/ahv/config/vms/11111111-1111-1111-1111-111111111111/$actions/migrate"
+	wantPath := "/api/vmm/v4.0/ahv/config/vms/11111111-1111-1111-1111-111111111111/$actions/migrate-to-host"
 	if req.Path != wantPath {
 		t.Errorf("path = %q, want %q", req.Path, wantPath)
 	}
@@ -572,9 +577,9 @@ func TestMigrate(t *testing.T) {
 	if err := json.Unmarshal([]byte(req.Body), &body); err != nil {
 		t.Fatalf("body is not JSON: %v", err)
 	}
-	host, _ := body["destinationHost"].(map[string]any)
+	host, _ := body["host"].(map[string]any)
 	if host["extId"] != "host-ext-9" {
-		t.Errorf("body = %s, want destinationHost host-ext-9", req.Body)
+		t.Errorf("body = %s, want host host-ext-9", req.Body)
 	}
 	if req.RequestID == "" {
 		t.Error("missing Ntnx-Request-Id idempotency header")
@@ -617,7 +622,7 @@ func TestSnapshots(t *testing.T) {
 	c := testClient(t, f)
 
 	if c.SupportsQuiesce() {
-		t.Error("quiesce must report unsupported: the spike proved no v4 quiesce flag")
+		t.Error("quiesce must report unsupported: app-consistency in v4 is VSS guest state, never a create flag")
 	}
 
 	points, err := c.ListSnapshots("web-prod")
@@ -632,12 +637,14 @@ func TestSnapshots(t *testing.T) {
 			t.Errorf("%s: consistency = %q, want crash only", p.Name, p.Consistency)
 		}
 	}
-	req, ok := findRequest(f, "/recovery-points")
+	// SDK-verified collection: GET .../ahv/config/vm-recovery-points
+	// (vmm vm_recovery_points_api.go ListVmRecoveryPoints).
+	req, ok := findRequest(f, "/ahv/config/vm-recovery-points")
 	if !ok {
-		t.Fatal("no recovery-points request recorded")
+		t.Fatal("no vm-recovery-points request recorded")
 	}
-	if !strings.HasPrefix(req.Path, "/api/dataprotection/v4.0/recovery-points") {
-		t.Errorf("path = %q, want dataprotection namespace", req.Path)
+	if !strings.HasPrefix(req.Path, "/api/vmm/v4.0/ahv/config/vm-recovery-points") {
+		t.Errorf("path = %q, want the vmm collection", req.Path)
 	}
 	if filter := req.Query.Get("$filter"); !strings.Contains(filter, "11111111-1111-1111-1111-111111111111") {
 		t.Errorf("$filter = %q, want server-side VM match", filter)
@@ -650,16 +657,20 @@ func TestSnapshots(t *testing.T) {
 	if !task.Valid() {
 		t.Fatal("no task returned")
 	}
-	postReq, ok := findRequest(f, "/recovery-points")
+	postReq, ok := findRequest(f, "/ahv/config/vm-recovery-points")
 	if !ok || postReq.Method != http.MethodPost {
-		t.Fatal("no POST recovery-points recorded")
+		t.Fatal("no POST vm-recovery-points recorded")
 	}
 	var cbody map[string]any
 	if err := json.Unmarshal([]byte(postReq.Body), &cbody); err != nil {
 		t.Fatalf("create body is not JSON: %v", err)
 	}
+	// SDK-verified VmRecoveryPoint create fields: name + vmExtId.
 	if cbody["name"] != "pre-upgrade" {
 		t.Errorf("create body = %s", postReq.Body)
+	}
+	if cbody["vmExtId"] != "11111111-1111-1111-1111-111111111111" {
+		t.Errorf("create body = %s, want the VM extId", postReq.Body)
 	}
 	if _, hasQuiesce := cbody["quiesce"]; hasQuiesce {
 		t.Errorf("create body = %s: must never carry a quiesce flag", postReq.Body)
@@ -672,7 +683,7 @@ func TestSnapshots(t *testing.T) {
 	if !dtask.Valid() {
 		t.Fatal("no task returned")
 	}
-	dreq, ok := findRequest(f, "/recovery-points/rp-uuid-3")
+	dreq, ok := findRequest(f, "/ahv/config/vm-recovery-points/rp-uuid-3")
 	if !ok || dreq.Method != http.MethodDelete {
 		t.Fatalf("no DELETE of rp-uuid-3 recorded (ok=%v req=%+v)", ok, dreq)
 	}
@@ -684,16 +695,22 @@ func TestSnapshots(t *testing.T) {
 	if !rtask.Valid() {
 		t.Fatal("no task returned")
 	}
+	// SDK-verified RevertVm: POST .../vms/{extId}/$actions/revert with the
+	// required {vmRecoveryPointExtId}.
 	rreq, ok := findRequest(f, "/$actions/revert")
 	if !ok {
 		t.Fatal("no revert action recorded")
+	}
+	wantRevert := "/api/vmm/v4.0/ahv/config/vms/11111111-1111-1111-1111-111111111111/$actions/revert"
+	if rreq.Path != wantRevert {
+		t.Errorf("revert path = %q, want %q", rreq.Path, wantRevert)
 	}
 	var rbody map[string]any
 	if err := json.Unmarshal([]byte(rreq.Body), &rbody); err != nil {
 		t.Fatalf("revert body is not JSON: %v", err)
 	}
-	if rbody["recoveryPointExtId"] != "rp-uuid-3" {
-		t.Errorf("revert body = %s, want recoveryPointExtId rp-uuid-3", rreq.Body)
+	if rbody["vmRecoveryPointExtId"] != "rp-uuid-3" {
+		t.Errorf("revert body = %s, want vmRecoveryPointExtId rp-uuid-3", rreq.Body)
 	}
 
 	if _, err := c.DeleteSnapshot("web-prod", "nope"); err == nil {
@@ -819,42 +836,9 @@ func TestCanMigrate(t *testing.T) {
 	}
 }
 
-func TestSetTag(t *testing.T) {
-	f := newFakePC(t)
-	c := testClient(t, f)
-	task, err := c.SetTag("web-prod", "web", true)
-	if err != nil {
-		t.Fatalf("SetTag: %v", err)
-	}
-	if !task.Valid() {
-		t.Fatal("no task returned")
-	}
-	// PROVISIONAL body shape (portal-confirmed endpoint, unconfirmed keys):
-	// the test pins exactly what the client sends.
-	req, ok := findRequest(f, "/$actions/associate-categories")
-	if !ok {
-		t.Fatal("no associate-categories action recorded")
-	}
-	var body map[string]any
-	if err := json.Unmarshal([]byte(req.Body), &body); err != nil {
-		t.Fatalf("body is not JSON: %v", err)
-	}
-	cats, _ := body["categories"].([]any)
-	if len(cats) != 1 {
-		t.Fatalf("body = %s, want one category", req.Body)
-	}
-	cat, _ := cats[0].(map[string]any)
-	if cat["key"] != TagCategoryKey || cat["value"] != "web" {
-		t.Errorf("body = %s, want corral-tag=web", req.Body)
-	}
-
-	if _, err := c.SetTag("web-prod", "web", false); err != nil {
-		t.Fatalf("SetTag off: %v", err)
-	}
-	if _, ok := findRequest(f, "/$actions/disassociate-categories"); !ok {
-		t.Error("no disassociate-categories action recorded")
-	}
-}
+// No TestSetTag: the client has no SetTag (associate needs a category
+// value extId no reference resolves), so tags stay Possible and untested
+// at the client level by design, not by omission.
 
 func TestProbe(t *testing.T) {
 	f := newFakePC(t)

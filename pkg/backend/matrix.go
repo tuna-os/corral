@@ -158,7 +158,7 @@ var Matrix = map[string]map[string]Entry{
 		"virtualbox": {Shipped, "controlvm pause / resume, the guest frozen to memory"},
 		"vsphere":    {Shipped, "SuspendVM with PowerOn resume, the guest frozen to memory"},
 		"xen":        {Shipped, "VM.suspend with VM.resume, the guest frozen to memory"},
-		"nutanix":    {Shipped, "POST $actions/suspend with $actions/resume, the guest frozen to memory"},
+		"nutanix":    {Unsupported, "no suspend endpoint in the vmm reference; PAUSED is system-set, not API-driven"},
 	},
 	"delete": {
 		"kubevirt":   {Shipped, "kubectl delete vm"},
@@ -191,7 +191,7 @@ var Matrix = map[string]map[string]Entry{
 		"virtualbox": {Possible, "the UART is redirectable to a host pipe via modifyvm --uartmode1; Corral has no console bridge for it"},
 		"vsphere":    {Possible, "the serial port is redirectable to host or network; Corral has no console bridge for it"},
 		"xen":        {Possible, "vt100 console objects serve the guest console natively; Corral wires no bridge to them"},
-		"nutanix":    {Unsupported, "the v4 reference proves no per-VM console endpoint; nothing to bridge"},
+		"nutanix":    {Possible, "console tokens exist ($actions/generate-console-token); Corral wires no viewer or bridge"},
 	},
 	"vnc": {
 		"kubevirt":   {Shipped, "virtctl vnc --proxy-only, noVNC in the browser"},
@@ -202,7 +202,7 @@ var Matrix = map[string]map[string]Entry{
 		"virtualbox": {Possible, "VRDE serves the guest display natively; Corral wires no viewer or bridge to it"},
 		"vsphere":    {Possible, "MKS/webmks tickets exist (AcquireTicket); Corral wires no viewer or bridge to them"},
 		"xen":        {Possible, "rfb console objects hand out display locations; Corral wires no viewer or bridge to them"},
-		"nutanix":    {Unsupported, "the v4 reference proves no per-VM display endpoint; nothing to view"},
+		"nutanix":    {Possible, "console tokens exist ($actions/generate-console-token); Corral wires no viewer or bridge"},
 	},
 	"rdp": {
 		"kubevirt":   {Shipped, "port-forward + IronRDP, ADR-0002"},
@@ -235,7 +235,7 @@ var Matrix = map[string]map[string]Entry{
 		"virtualbox": {Shipped, "snapshot take/delete/restore, pkg/snapshot.VirtualBox — a running capture carries RAM but nothing quiesced, so it reports crash consistency; restore refuses a running guest"},
 		"vsphere":    {Shipped, "Create/Remove/RevertSnapshot, pkg/snapshot.Vsphere — a running capture carries RAM but nothing quiesced, so it reports crash consistency unless the tools quiesced it"},
 		"xen":        {Shipped, "VM.snapshot/revert/destroy, pkg/snapshot.Xen — XenAPI snapshots without quiesce, so a running capture reports crash consistency and a halted one offline"},
-		"nutanix":    {Shipped, "recovery-point create/delete/revert, pkg/snapshot.Nutanix — crash-consistent only, never filesystem"},
+		"nutanix":    {Shipped, "vmm vm-recovery-point create/delete plus $actions/revert, pkg/snapshot.Nutanix — crash-consistent only, never filesystem"},
 	},
 	"migrate": {
 		"kubevirt":   {Shipped, "VirtualMachineInstanceMigration"},
@@ -246,7 +246,7 @@ var Matrix = map[string]map[string]Entry{
 		"virtualbox": {Unsupported, "one host; there is nowhere to migrate to"},
 		"vsphere":    {Shipped, "RelocateVM/vMotion, and CanMigrate as a real precondition check"},
 		"xen":        {Shipped, "VM.pool_migrate, and CanMigrate as a real precondition check"},
-		"nutanix":    {Shipped, "POST $actions/migrate to a host extId; CanMigrate approximates from power state until host listing lands"},
+		"nutanix":    {Shipped, "POST $actions/migrate-to-host with a host extId ($actions/migrate is cross-cluster); CanMigrate approximates from power state"},
 	},
 	"clone": {
 		"kubevirt":   {Shipped, "VirtualMachineClone"},
@@ -323,7 +323,7 @@ var Matrix = map[string]map[string]Entry{
 		"virtualbox": {Possible, "export to OVA natively; pkg/export has no VirtualBox adapter yet"},
 		"vsphere":    {Possible, "ExportVm serves an OVF/NFC lease natively; pkg/export has no vSphere adapter yet"},
 		"xen":        {Possible, "GET /export serves XVA natively; pkg/export has no Xen adapter yet"},
-		"nutanix":    {Possible, "recovery points exist in dataprotection but no download path is proven; pkg/export has no Nutanix adapter yet"},
+		"nutanix":    {Possible, "vmm recovery points exist but no download path is proven; pkg/export has no Nutanix adapter yet"},
 	},
 	"events": {
 		"kubevirt":   {Shipped, "kubectl get events for the VM and its launcher pod"},
@@ -345,7 +345,7 @@ var Matrix = map[string]map[string]Entry{
 		"virtualbox": {Possible, "setextradata keys or the registry mark; nothing reads them back yet"},
 		"vsphere":    {Possible, "vSphere tags exist natively; nothing drives them yet"},
 		"xen":        {Possible, "the VM record carries tags natively; Corral has no tagger writing them yet"},
-		"nutanix":    {Shipped, "$actions/associate-categories; Corral tags ride one category key, so governed values may refuse"},
+		"nutanix":    {Possible, "categories with associate/disassociate actions exist natively; value-to-extId resolution is unproven, so no tagger writes them yet"},
 	},
 	"ports": {
 		"kubevirt":   {Shipped, "port-proxy Service on the tailnet, ApplyProxy"},

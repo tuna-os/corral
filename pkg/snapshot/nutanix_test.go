@@ -12,9 +12,10 @@ import (
 )
 
 // fakeNutanixPC answers the v4 calls the Nutanix snapshot adapter makes: one
-// running VM, one crash-consistent recovery point, tasks that succeed. The
-// shapes mirror pkg/nutanix's own fixtures; this fake only proves the
-// adapter drives them, so it stays minimal on purpose.
+// running VM, one crash-consistent VM recovery point, tasks that succeed.
+// Shapes follow the SDK (vmm vm_recovery_points_api.go, VmRecoveryPoint
+// model); this fake only proves the adapter drives them, so it stays
+// minimal on purpose.
 func fakeNutanixPC(t *testing.T) *nutanix.Client {
 	t.Helper()
 	const vmID = "11111111-1111-1111-1111-111111111111"
@@ -35,18 +36,17 @@ func fakeNutanixPC(t *testing.T) *nutanix.Client {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"data": map[string]any{"extId": vmID, "name": "web-1", "powerState": "ON"},
 			})
-		case r.Method == http.MethodGet && strings.HasSuffix(path, "/recovery-points"):
+		case r.Method == http.MethodGet && strings.HasSuffix(path, "/ahv/config/vm-recovery-points"):
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"data": []any{map[string]any{
 					"extId": "rp-1", "name": "nightly",
-					"creationTime": "2026-10-03T00:00:00Z",
-					"consistency":  "CRASH", "vmExtId": vmID,
+					"creationTime": "2026-10-03T00:00:00Z", "vmExtId": vmID,
 				}},
 				"metadata": map[string]any{"totalAvailableResults": 1},
 			})
-		case r.Method == http.MethodPost && strings.HasSuffix(path, "/recovery-points"):
+		case r.Method == http.MethodPost && strings.HasSuffix(path, "/ahv/config/vm-recovery-points"):
 			_ = json.NewEncoder(w).Encode(task)
-		case r.Method == http.MethodDelete && strings.Contains(path, "/recovery-points/"):
+		case r.Method == http.MethodDelete && strings.Contains(path, "/ahv/config/vm-recovery-points/"):
 			_ = json.NewEncoder(w).Encode(task)
 		case r.Method == http.MethodPost && strings.Contains(path, "/$actions/"):
 			_ = json.NewEncoder(w).Encode(task)
