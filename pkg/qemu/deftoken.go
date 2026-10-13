@@ -67,15 +67,28 @@ type DefinitionToken struct {
 // never re-read. A nil bind refuses: validity without a manifest binding
 // is not an admission.
 func AdmitDefinition(name string, bind func(metadata []byte) error) (DefinitionToken, error) {
+	return AdmitDefinitionCtx(context.Background(), name, bind)
+}
+
+// AdmitDefinitionCtx is AdmitDefinition with caller-bounded lifecycle-lock
+// admission. Existing callers retain the historical bounded wait through
+// AdmitDefinition.
+func AdmitDefinitionCtx(ctx context.Context, name string, bind func(metadata []byte) error) (DefinitionToken, error) {
 	var tok DefinitionToken
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if bind == nil {
 		return tok, fmt.Errorf("VM %q not admitted: no manifest binding was supplied", name)
 	}
-	unlock, err := lockLifecycle(name)
+	unlock, err := lockLifecycleCtx(ctx, name)
 	if err != nil {
 		return tok, err
 	}
 	defer unlock()
+	if err := ctx.Err(); err != nil {
+		return tok, fmt.Errorf("VM %q admission canceled: %w", name, err)
+	}
 	metaBytes, err := os.ReadFile(filepath.Join(VMHome(), name, "metadata.json"))
 	if err != nil {
 		return tok, fmt.Errorf("VM %q not admitted: its metadata cannot be read: %w", name, err)
@@ -156,15 +169,28 @@ func (t DefinitionToken) Verify(name string) error {
 // not start reports started=false with an invalid token, exactly like the
 // plain entry.
 func StartOwnedTokenAdmitted(name string, admitted DefinitionToken) (StartToken, bool, error) {
+	return StartOwnedTokenAdmittedCtx(context.Background(), name, admitted)
+}
+
+// StartOwnedTokenAdmittedCtx is StartOwnedTokenAdmitted with caller-bounded
+// lifecycle-lock admission. A canceled wait returns without validating or
+// starting a VM.
+func StartOwnedTokenAdmittedCtx(ctx context.Context, name string, admitted DefinitionToken) (StartToken, bool, error) {
 	var tok StartToken
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if err := ValidateVMName(name); err != nil {
 		return tok, false, err
 	}
-	unlock, err := lockLifecycle(name)
+	unlock, err := lockLifecycleCtx(ctx, name)
 	if err != nil {
 		return tok, false, err
 	}
 	defer unlock()
+	if err := ctx.Err(); err != nil {
+		return tok, false, fmt.Errorf("VM %q lifecycle admission canceled: %w", name, err)
+	}
 	if err := admitted.Verify(name); err != nil {
 		return tok, false, err
 	}

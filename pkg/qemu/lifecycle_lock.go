@@ -99,8 +99,14 @@ func lifecycleLockPath(name string) string {
 // uncertainty about the filesystem must fail loudly, never degrade to a
 // process-local lock.
 func lockLifecycleCtx(ctx context.Context, name string) (func(), error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if err := ValidateVMName(name); err != nil {
 		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("VM %q lifecycle is busy: %w", name, err)
 	}
 	releaseProc, err := takeLifecycleProc(ctx, name)
 	if err != nil {
@@ -132,6 +138,12 @@ func lockLifecycleCtx(ctx context.Context, name string) (func(), error) {
 // ctx bounds the wait. A genuinely contended lock retries; any other error
 // fails immediately.
 func lockFlockCtx(ctx context.Context, f *os.File, what string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("%s: %w", what, err)
+	}
 	if err := tryLockFile(f); err == nil {
 		return nil
 	} else if !lockContended(err) {

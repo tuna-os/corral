@@ -356,7 +356,7 @@ func EnsureVMAdmitted(opts LaunchOpts, imagePath string, im ManifestImage) (bool
 	if err != nil {
 		return false, tok, err
 	}
-	tok, err = qemu.AdmitDefinition(opts.Name, func(meta []byte) error {
+	tok, err = qemu.AdmitDefinitionCtx(launchCtx(opts), opts.Name, func(meta []byte) error {
 		return checkManifestBytes(meta, opts.Name, im, opts)
 	})
 	if err != nil {
@@ -403,7 +403,7 @@ func StartAndWaitCtx(ctx context.Context, name string, timeout time.Duration) (b
 // started/token outcome discipline matches StartAndWaitCtx exactly —
 // reported on error, never zeroed.
 func StartAndWaitAdmitted(ctx context.Context, name string, admitted qemu.DefinitionToken, timeout time.Duration) (bool, qemu.StartToken, error) {
-	tok, started, err := qemu.StartOwnedTokenAdmitted(name, admitted)
+	tok, started, err := qemu.StartOwnedTokenAdmittedCtx(ctx, name, admitted)
 	if err != nil {
 		return started, tok, err
 	}

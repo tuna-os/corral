@@ -2,6 +2,9 @@ package launcher
 
 import (
 	"context"
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -65,5 +68,26 @@ func TestEnsureVMAdmitted_BindsManifestAtAdmission(t *testing.T) {
 	}
 	if tok != (qemu.DefinitionToken{}) {
 		t.Errorf("failed admission must return no token, got %+v", tok)
+	}
+}
+
+func TestStartAndWaitAdmitted_CanceledContextDoesNotStartVM(t *testing.T) {
+	home, units := reuseEnv(t)
+	im, _ := validReuseVM(t, home, units, "tuna-v1")
+	_, admitted, err := EnsureVMAdmitted(LaunchOpts{Name: "tuna-v1"}, "/img", im)
+	if err != nil {
+		t.Fatalf("admit fixture VM: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	started, _, err := StartAndWaitAdmitted(ctx, "tuna-v1", admitted, time.Second)
+	if started {
+		t.Error("canceled admitted launch must not report started")
+	}
+	if err == nil || !errors.Is(err, context.Canceled) {
+		t.Errorf("canceled admitted launch must return context cancellation, got %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(home, "tuna-v1", "qemu.pid")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Errorf("canceled admitted launch must not start QEMU or write a pid record; stat error = %v", statErr)
 	}
 }

@@ -3,6 +3,8 @@ package qemu
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -38,7 +40,10 @@ func TestDeleteCtx_CancelledLockWaitFailsFast(t *testing.T) {
 }
 
 func TestStartOwnedTokenCtx_CancelledLockWaitFailsFast(t *testing.T) {
-	directVM(t, "gate")
+	dir := directVM(t, "gate")
+	if err := writeLaunchCommand(dir, sleepBin(t), []string{"120"}); err != nil {
+		t.Fatalf("writing a launchable VM command: %v", err)
+	}
 	unlock, err := lockLifecycle("gate")
 	if err != nil {
 		t.Fatalf("holding the lifecycle lock: %v", err)
@@ -56,6 +61,35 @@ func TestStartOwnedTokenCtx_CancelledLockWaitFailsFast(t *testing.T) {
 	}
 	if err == nil || !strings.Contains(err.Error(), "lifecycle is busy") || !errors.Is(err, context.Canceled) {
 		t.Errorf("cancelled start must fail naming the busy lifecycle lock and the cancellation, got %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, pidFile)); !errors.Is(statErr, os.ErrNotExist) {
+		t.Errorf("cancelled start must not launch a VM or write its pid record; stat error = %v", statErr)
+	}
+}
+
+func TestStartOwnedTokenAdmittedCtx_CancelledLockWaitFailsFast(t *testing.T) {
+	f := newVFix(t)
+	admitted := admitGate(t)
+	unlock, err := lockLifecycle("gate")
+	if err != nil {
+		t.Fatalf("holding the lifecycle lock: %v", err)
+	}
+	defer unlock()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	start := time.Now()
+	_, started, err := StartOwnedTokenAdmittedCtx(ctx, "gate", admitted)
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("cancelled admitted start waited %s for the lifecycle lock", elapsed)
+	}
+	if started {
+		t.Error("cancelled admitted start must not report started")
+	}
+	if err == nil || !strings.Contains(err.Error(), "lifecycle is busy") || !errors.Is(err, context.Canceled) {
+		t.Errorf("cancelled admitted start must fail naming the busy lifecycle lock and cancellation, got %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(f.dir, pidFile)); !errors.Is(statErr, os.ErrNotExist) {
+		t.Errorf("cancelled admitted start must not launch a VM or write its pid record; stat error = %v", statErr)
 	}
 }
 
