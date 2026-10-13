@@ -1,6 +1,7 @@
 package demo
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -445,27 +446,28 @@ func TestBackfill_IncusAndPatchAndGeneric(t *testing.T) {
 
 func TestBackfill_LocalSystemctl(t *testing.T) {
 	d := newDemoCluster()
+	ctx := context.Background()
 
-	out, err := d.localSystemctl()
+	out, err := d.localSystemctl(ctx)
 	if err != nil || len(out) != 0 {
 		t.Errorf("empty args should succeed quietly: %q %v", out, err)
 	}
-	if _, err := d.localSystemctl("is-active", "corral-laptop-dev"); err == nil {
+	if _, err := d.localSystemctl(ctx, "is-active", "corral-laptop-dev"); err == nil {
 		t.Error("unknown unit should read inactive")
 	}
-	if _, err := d.localSystemctl("start", "corral-laptop-dev"); err != nil {
+	if _, err := d.localSystemctl(ctx, "start", "corral-laptop-dev"); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := d.localSystemctl("is-active", "corral-laptop-dev"); err != nil || string(out) != "active\n" {
+	if out, err := d.localSystemctl(ctx, "is-active", "corral-laptop-dev"); err != nil || string(out) != "active\n" {
 		t.Errorf("started unit should read active: %q %v", out, err)
 	}
-	if _, err := d.localSystemctl("stop", "corral-laptop-dev"); err != nil {
+	if _, err := d.localSystemctl(ctx, "stop", "corral-laptop-dev"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.localSystemctl("is-active", "corral-laptop-dev"); err == nil {
+	if _, err := d.localSystemctl(ctx, "is-active", "corral-laptop-dev"); err == nil {
 		t.Error("stopped unit should read inactive again")
 	}
-	if _, err := d.localSystemctl("daemon-reload"); err != nil {
+	if _, err := d.localSystemctl(ctx, "daemon-reload"); err != nil {
 		t.Errorf("other verbs succeed quietly: %v", err)
 	}
 }
