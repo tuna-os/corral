@@ -7,6 +7,7 @@ import (
 
 var (
 	webAddr          string
+	webAllowedHosts  []string
 	webAccent        string
 	webBrandTitle    string
 	webBrandEmoji    string
@@ -29,6 +30,10 @@ so all three can be used in tandem.
 By default it binds to 127.0.0.1:8006 (Proxmox's port). To reach it from
 other tailnet devices, bind your Tailscale IP.
 
+Loopback listeners accept only their literal host and bound port by default,
+which prevents DNS rebinding. Use --allowed-host to pin additional exact Host
+values; this is useful when a trusted reverse proxy has a different public host.
+
 There is no authentication — never bind a public interface.
 
 --demo serves a built-in fake cluster (VMs, CTs, nodes, live metrics) so
@@ -43,13 +48,15 @@ you can explore the dashboard — or develop on it — with no cluster at all.`,
 		}
 		// CLI flags override config file; the theme is assembled inside web.Serve.
 		web.SetCLITheme(webAccent, webBrandTitle, webBrandEmoji, webBrandSubtitle, webCustomCSS)
-		return web.Serve(webAddr)
+		return web.Serve(webAddr, webAllowedHosts...)
 	},
 }
 
 func init() {
 	rootCmd.AddCommand(webCmd)
 	webCmd.Flags().StringVar(&webAddr, "addr", "127.0.0.1:8006", "Listen address")
+	webCmd.Flags().StringSliceVar(&webAllowedHosts, "allowed-host", nil,
+		"exact HTTP Host value allowed by the server (repeat for trusted aliases; loopback binds are pinned automatically)")
 	webCmd.Flags().BoolVar(&web.MetricsEnabled, "metrics", false,
 		"Serve Prometheus metrics on /metrics (starts a background fleet collector)")
 	webCmd.Flags().StringVar(&webAccent, "accent", "", "Accent colour (CSS hex, e.g. #3b82f6)")
