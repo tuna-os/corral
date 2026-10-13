@@ -30,9 +30,10 @@ so all three can be used in tandem.
 By default it binds to 127.0.0.1:8006 (Proxmox's port). To reach it from
 other tailnet devices, bind your Tailscale IP.
 
-Loopback listeners accept only their literal host and bound port by default,
-which prevents DNS rebinding. Use --allowed-host to pin additional exact Host
-values; this is useful when a trusted reverse proxy has a different public host.
+Loopback listeners accept only their literal host, localhost alias, and bound
+port by default, which prevents DNS rebinding. Use --allowed-host to pin
+additional exact Host values; this is useful when a trusted reverse proxy has
+a different public host.
 
 There is no authentication — never bind a public interface.
 

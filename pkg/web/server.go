@@ -98,7 +98,7 @@ func loopbackAllowedHosts(bindAddr string, listenerAddr net.Addr) []string {
 	if ip := net.ParseIP(strings.Trim(bindHost, "[]")); ip != nil && ip.IsLoopback() {
 		_, port, err := net.SplitHostPort(listenerAddr.String())
 		if err == nil {
-			return []string{net.JoinHostPort(bindHost, port)}
+			return []string{net.JoinHostPort(bindHost, port), net.JoinHostPort("localhost", port)}
 		}
 	}
 	if strings.EqualFold(bindHost, "localhost") {

@@ -50,7 +50,7 @@ func TestAllowedHostPolicyAcceptsPinnedLoopbackHost(t *testing.T) {
 func TestLoopbackAllowedHostsUsesBoundPort(t *testing.T) {
 	listener := &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 43127}
 	got := loopbackAllowedHosts("127.0.0.1:0", listener)
-	if len(got) != 1 || got[0] != "127.0.0.1:43127" {
-		t.Fatalf("loopbackAllowedHosts = %#v, want [127.0.0.1:43127]", got)
+	if len(got) != 2 || got[0] != "127.0.0.1:43127" || got[1] != "localhost:43127" {
+		t.Fatalf("loopbackAllowedHosts = %#v, want [127.0.0.1:43127 localhost:43127]", got)
 	}
 }
