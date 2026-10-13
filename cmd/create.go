@@ -601,6 +601,13 @@ func runKubevirtBootcCreate(name string) error {
 }
 
 func runLocalBootcCreate(name string) error {
+	// Before any state path is joined: this path MkdirAlls and
+	// RemoveAlls the VM dir directly (see the failure cleanup below),
+	// so an invalid or reserved name (notably "locks", the
+	// home-level lock namespace) must refuse here, not scatter.
+	if err := qemu.ValidateVMName(name); err != nil {
+		return err
+	}
 	vmDir := filepath.Join(qemu.VMHome(), name)
 	if qemu.Exists(name) && !createForce {
 		return fmt.Errorf("VM %q already exists. Use --force to overwrite", name)

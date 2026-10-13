@@ -73,6 +73,23 @@ func Serve(addr string) error {
 	return http.ListenAndServe(addr, mux)
 }
 
+// NewHandler builds the web UI router without binding or blocking, for
+// owners that manage their own http.Server lifecycle (the one-line
+// launcher's owned loopback server). Theme assembly mirrors Serve; metrics
+// collection stays opt-in via MetricsEnabled and is the caller's choice.
+func NewHandler() (http.Handler, error) {
+	if s, err := registry.NewStore(); err == nil {
+		store = s
+	}
+	kubevirt.ProxyTags = config.TailnetTags()
+	if cfg, err := config.Load(""); err == nil {
+		loadThemeFromConfig(cfg)
+	}
+	applyCLITheme()
+	startMetricSampler()
+	return newMux()
+}
+
 // newMux builds the HTTP router (wrapped in the admin gate). Split out from
 // Serve so tests can exercise the full route table with httptest.
 func newMux() (http.Handler, error) {
@@ -1075,9 +1092,24 @@ func handleNodes(w http.ResponseWriter, r *http.Request) {
 // through — swapped for a fake in tests.
 var consoleDialer kubevirt.ConsoleDialer = kubevirt.RealConsoleDialer{}
 
+// bridgeCopies runs two copy directions until BOTH retire. The first
+// completion wakes the other side via wake (closing ends, killing the
+// process), and only the second completion returns: joining one copy and
+// returning would abandon the other goroutine — and whatever it holds — to
+// an unobserved fate. Deferred closes elsewhere still run; closing twice is
+// a harmless error on every closer used here.
+func bridgeCopies(first, second func(), wake func()) {
+	done := make(chan struct{}, 2)
+	go func() { first(); done <- struct{}{} }()
+	go func() { second(); done <- struct{}{} }()
+	<-done
+	wake()
+	<-done
+}
+
 // vncBridge proxies a binary websocket (noVNC) to the VM's VNC console.
 func vncBridge(ws *websocket.Conn) {
-	defer ws.Close()
+	defer func() { _ = ws.Close() }()
 	ns, name := ws.Request().PathValue("ns"), ws.Request().PathValue("name")
 	if ns == "" || name == "" {
 		return
@@ -1102,13 +1134,20 @@ func vncBridge(ws *websocket.Conn) {
 	if err != nil {
 		return
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	ws.PayloadType = websocket.BinaryFrame
-	done := make(chan struct{}, 2)
-	go func() { io.Copy(conn, ws); done <- struct{}{} }()
-	go func() { io.Copy(ws, conn); done <- struct{}{} }()
-	<-done
+	// Both copy directions are joined: the first completion closes both
+	// ends to wake the second, and the handler returns only once the
+	// second's retirement is observed.
+	bridgeCopies(
+		func() { _, _ = io.Copy(conn, ws) },
+		func() { _, _ = io.Copy(ws, conn) },
+		func() {
+			_ = ws.Close()
+			_ = conn.Close()
+		},
+	)
 }
 
 // ttyBridge proxies a binary websocket (xterm.js) to a terminal — `virtctl
@@ -1173,12 +1212,23 @@ func bridgeConsolePipes(ws *websocket.Conn, cmd *exec.Cmd) {
 		return
 	}
 	defer func() {
-		cmd.Process.Kill()
-		cmd.Wait()
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
 	}()
 
-	done := make(chan struct{}, 2)
-	go func() { io.Copy(stdin, ws); done <- struct{}{} }()
-	go func() { io.Copy(ws, stdout); done <- struct{}{} }()
-	<-done
+	// Both copy directions are joined (see bridgeCopies): the first
+	// completion wakes the second by closing the websocket and the stdin
+	// pipe and killing the process, and the deferred Kill/Wait above reaps
+	// it. Kill on an already-dead process is a harmless error.
+	bridgeCopies(
+		func() { _, _ = io.Copy(stdin, ws) },
+		func() { _, _ = io.Copy(ws, stdout) },
+		func() {
+			_ = ws.Close()
+			_ = stdin.Close()
+			if cmd.Process != nil {
+				_ = cmd.Process.Kill()
+			}
+		},
+	)
 }

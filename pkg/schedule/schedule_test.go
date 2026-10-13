@@ -1,6 +1,7 @@
 package schedule
 
 import (
+	"context"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -356,7 +357,7 @@ func wireAllBackends(t *testing.T) *shell.Fake {
 	home, units := t.TempDir(), t.TempDir()
 	mkLocalVM(t, home, units, "laptop")
 	qemu.SetStateDirs(home, units)
-	qemu.SetSystemctl(func(...string) ([]byte, error) { return []byte("inactive\n"), nil })
+	qemu.SetSystemctl(func(context.Context, ...string) ([]byte, error) { return []byte("inactive\n"), nil })
 
 	t.Cleanup(func() {
 		kubevirt.SetDefaultRunner(shell.Real{})

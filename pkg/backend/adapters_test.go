@@ -12,6 +12,7 @@ package backend
 // and asserts the command that reached the seam. Nothing here dials anything.
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -448,7 +449,7 @@ func qemuSeam(t *testing.T) *[]string {
 	}
 
 	var calls []string
-	qemu.SetSystemctl(func(args ...string) ([]byte, error) {
+	qemu.SetSystemctl(func(ctx context.Context, args ...string) ([]byte, error) {
 		calls = append(calls, "systemctl "+strings.Join(args, " "))
 		return nil, nil
 	})

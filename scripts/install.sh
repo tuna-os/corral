@@ -48,8 +48,8 @@ verify_checksum() {
   elif command -v shasum >/dev/null 2>&1; then
     set -- shasum -a 256          # macOS ships shasum, not sha256sum
   else
-    echo "note: no sha256sum or shasum — skipping checksum verification" >&2
-    return 0
+    echo "refusing to install without checksum verification: neither sha256sum nor shasum found" >&2
+    return 1
   fi
   curl -fsSL -o "$sums" "${base}/SHA256SUMS" || {
     echo "could not download SHA256SUMS from ${base}" >&2

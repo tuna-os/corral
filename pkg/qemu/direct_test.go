@@ -1,6 +1,7 @@
 package qemu
 
 import (
+	"context"
 	"errors"
 	"os"
 	"os/exec"
@@ -15,11 +16,10 @@ func directVM(t *testing.T, name string) string {
 	t.Helper()
 	home := t.TempDir()
 	SetStateDirs(home, t.TempDir())
-	original := userSystemd
 	SetUserSystemd(func() bool { return false })
 	t.Cleanup(func() {
 		SetStateDirs("", "")
-		SetUserSystemd(original)
+		SetUserSystemd(nil)
 	})
 	dir := filepath.Join(home, name)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -43,8 +43,7 @@ func TestUserSystemd_ReadsTheSessionsAnswer(t *testing.T) {
 		{name: "no systemctl", out: "", err: errors.New(`exec: "systemctl": executable file not found in $PATH`)},
 		{name: "offline", out: "offline\n", err: errors.New("exit status 1")},
 	} {
-		original := userSystemd
-		SetSystemctl(func(args ...string) ([]byte, error) {
+		SetSystemctl(func(ctx context.Context, args ...string) ([]byte, error) {
 			// The error text is what a caller sees when the binary is missing,
 			// so it has to reach the probe.
 			if tc.out == "" && tc.err != nil {
@@ -54,7 +53,6 @@ func TestUserSystemd_ReadsTheSessionsAnswer(t *testing.T) {
 		})
 		got := userSystemd()
 		SetSystemctl(nil)
-		userSystemd = original
 		if got != tc.wantOK {
 			t.Errorf("%s: userSystemd() = %v, want %v", tc.name, got, tc.wantOK)
 		}
@@ -122,7 +120,14 @@ func TestStartDirect_RunsAndStops(t *testing.T) {
 		t.Errorf("a second Start replaced pid %d with %d", pid, again)
 	}
 
-	if err := Stop("gate"); err != nil {
+	// Where stops cannot bind (no pidfd), the live stop refuses by
+	// design; the child is retired by hand and the stopped-state
+	// assertions below are bound-platform-only.
+	if err := Stop("gate"); !DirectStopBound() {
+		requireUnboundStopRefusal(t, err, "stop of a live direct VM")
+		killRecordedChild(t, "gate")
+		return
+	} else if err != nil {
 		t.Fatalf("Stop: %v", err)
 	}
 	if _, alive := directPID("gate"); alive {
@@ -155,11 +160,10 @@ func TestStartDirect_ReportsAProcessThatDiesAtOnce(t *testing.T) {
 func TestStart_DirectPathNeedsTheVM(t *testing.T) {
 	home := t.TempDir()
 	SetStateDirs(home, t.TempDir())
-	original := userSystemd
 	SetUserSystemd(func() bool { return false })
 	t.Cleanup(func() {
 		SetStateDirs("", "")
-		SetUserSystemd(original)
+		SetUserSystemd(nil)
 	})
 	if err := Start("missing"); err == nil || !strings.Contains(err.Error(), "does not exist") {
 		t.Errorf("expected a does-not-exist error, got %v", err)

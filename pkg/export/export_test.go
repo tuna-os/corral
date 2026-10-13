@@ -39,7 +39,7 @@ func localVM(t *testing.T, name string) types.InstanceRef {
 		t.Fatal(err)
 	}
 	qemu.SetStateDirs(home, units)
-	qemu.SetSystemctl(func(...string) ([]byte, error) { return []byte("inactive\n"), nil })
+	qemu.SetSystemctl(func(context.Context, ...string) ([]byte, error) { return []byte("inactive\n"), nil })
 	t.Cleanup(func() {
 		qemu.SetStateDirs("", "")
 		qemu.SetSystemctl(nil)
@@ -100,7 +100,7 @@ func TestPickFormat_EmptyMeansNative(t *testing.T) {
 func TestQEMU_RefusesWhileRunning(t *testing.T) {
 	fake := withFake(t)
 	ref := localVM(t, "dev")
-	qemu.SetSystemctl(func(args ...string) ([]byte, error) {
+	qemu.SetSystemctl(func(ctx context.Context, args ...string) ([]byte, error) {
 		if len(args) > 0 && args[0] == "is-active" {
 			return []byte("active\n"), nil
 		}

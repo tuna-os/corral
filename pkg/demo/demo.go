@@ -9,6 +9,7 @@ package demo
 // Enabled by --demo on `corral web` (dashboard) and `corral` (TUI/CLI).
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -81,8 +82,9 @@ func (d *demoCluster) enableLocalBackend() {
 }
 
 // localSystemctl is the demo's in-memory systemd --user: is-active reads,
-// start/stop flip, everything else succeeds quietly.
-func (d *demoCluster) localSystemctl(args ...string) ([]byte, error) {
+// start/stop flip, everything else succeeds quietly. It is immediate, so
+// the caller's context needs no honoring.
+func (d *demoCluster) localSystemctl(ctx context.Context, args ...string) ([]byte, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if len(args) < 1 {

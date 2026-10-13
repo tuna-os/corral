@@ -1,6 +1,7 @@
 package snapshot
 
 import (
+	"context"
 	"os"
 	"testing"
 
@@ -33,7 +34,7 @@ func setQemuHome(t *testing.T, home string) {
 // adapter's safety check consults.
 func runningVM(t *testing.T, name string) {
 	t.Helper()
-	qemu.SetSystemctl(func(args ...string) ([]byte, error) {
+	qemu.SetSystemctl(func(ctx context.Context, args ...string) ([]byte, error) {
 		if len(args) >= 2 && args[0] == "is-active" && args[len(args)-1] == "corral-"+name {
 			return []byte("active\n"), nil
 		}
@@ -44,6 +45,6 @@ func runningVM(t *testing.T, name string) {
 
 func stoppedVM(t *testing.T) {
 	t.Helper()
-	qemu.SetSystemctl(func(...string) ([]byte, error) { return []byte("inactive\n"), nil })
+	qemu.SetSystemctl(func(context.Context, ...string) ([]byte, error) { return []byte("inactive\n"), nil })
 	t.Cleanup(func() { qemu.SetSystemctl(nil) })
 }

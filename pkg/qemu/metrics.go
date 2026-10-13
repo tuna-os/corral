@@ -11,6 +11,7 @@ package qemu
 // and the returned keys say host.
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -63,7 +64,7 @@ func Metrics(name string) (map[string]string, error) {
 // zero — zero would claim the VM is using no memory when the truth is that
 // nobody is counting.
 func unitProperty(unit, property string) (int64, bool) {
-	out, err := systemctlRun("show", unit, "-p", property, "--value")
+	out, err := systemctlRun(context.Background(), "show", unit, "-p", property, "--value")
 	if err != nil {
 		return 0, false
 	}

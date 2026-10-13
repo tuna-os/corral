@@ -44,7 +44,7 @@ func TestE2E_QEMUExport(t *testing.T) {
 	os.WriteFile(filepath.Join(units, "corral-expvm.service"), []byte("# unit\n"), 0o644)
 
 	qemu.SetStateDirs(home, units)
-	stopped := func(...string) ([]byte, error) { return []byte("inactive\n"), nil }
+	stopped := func(context.Context, ...string) ([]byte, error) { return []byte("inactive\n"), nil }
 	qemu.SetSystemctl(stopped)
 	t.Cleanup(func() { qemu.SetStateDirs("", ""); qemu.SetSystemctl(nil) })
 
@@ -79,7 +79,7 @@ func TestE2E_QEMUExport(t *testing.T) {
 	}
 
 	// The safety refusal against the same real disk.
-	qemu.SetSystemctl(func(args ...string) ([]byte, error) {
+	qemu.SetSystemctl(func(ctx context.Context, args ...string) ([]byte, error) {
 		if len(args) > 0 && args[0] == "is-active" {
 			return []byte("active\n"), nil
 		}

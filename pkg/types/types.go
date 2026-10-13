@@ -1,6 +1,7 @@
 package types
 
 import (
+	"context"
 	"fmt"
 	"net/url"
 	"strings"
@@ -243,6 +244,37 @@ type CreateOpts struct {
 	// per-VM swtpm socket; the swtpm daemon is managed alongside the VM
 	// lifecycle.
 	TPM bool
+	// GuestArch is an explicit guest CPU architecture ("amd64" or "arm64").
+	// Empty preserves the legacy x86-only path. When set, the emulator,
+	// machine, accelerator, CPU model and firmware are all bound to it —
+	// there is no mixed-arch guest.
+	GuestArch string
+	// Loopback binds the VNC server and SSH hostfwd to 127.0.0.1 instead of
+	// the Tailscale IP. The one-line launcher always sets it; the regular
+	// path keeps Tailscale binding.
+	Loopback bool
+	// AllowEmulation permits a same-arch TCG fallback when the native
+	// hypervisor (KVM/HVF) is unavailable. The VM is marked emulated and
+	// must never be reported as native.
+	AllowEmulation bool
+	// AllowCrossArch permits a guest arch that differs from the host arch.
+	// Cross-arch guests always run under TCG emulation.
+	AllowCrossArch bool
+	// SourceURL/SourceSHA256/SourceSize/SourceFormat record the immutable
+	// creation-source provenance of a digest-bound VM (the one-line
+	// launcher path): the exact template bytes the guest disk was
+	// converted from. Empty SourceSHA256 preserves the regular path,
+	// which records no provenance and gets no digest-bound checks.
+	// Reuse requires an exact provenance match — the guest disk may
+	// legitimately change after creation, but the source it came from
+	// must be the source the manifest names.
+	SourceURL    string
+	SourceSHA256 string
+	SourceSize   int64
+	SourceFormat string
+	// Ctx cancels long creation steps (image conversion). Nil uses
+	// context.Background (uncancellable, the historical behavior).
+	Ctx context.Context
 }
 
 // PortMap maps protocol names to port numbers.

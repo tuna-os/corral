@@ -1,6 +1,7 @@
 package qemu
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -13,7 +14,7 @@ func scriptedSystemctl(t *testing.T, values map[string][]string) {
 	t.Helper()
 	previous := systemctlRun
 	calls := map[string]int{}
-	systemctlRun = func(args ...string) ([]byte, error) {
+	systemctlRun = func(ctx context.Context, args ...string) ([]byte, error) {
 		if len(args) < 4 || args[0] != "show" {
 			return nil, fmt.Errorf("unexpected systemctl call: %v", args)
 		}
@@ -102,7 +103,7 @@ func TestMetricsTreatsUnsetAsUnknownNotZero(t *testing.T) {
 func TestMetricsOnAStoppedUnitIsEmptyNotAnError(t *testing.T) {
 	fastSampling(t)
 	previous := systemctlRun
-	systemctlRun = func(...string) ([]byte, error) { return nil, fmt.Errorf("Unit not loaded.") }
+	systemctlRun = func(context.Context, ...string) ([]byte, error) { return nil, fmt.Errorf("Unit not loaded.") }
 	t.Cleanup(func() { systemctlRun = previous })
 
 	got, err := Metrics("gone")

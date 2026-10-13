@@ -112,7 +112,14 @@ func createLocalVM(w http.ResponseWriter, req createRequest) {
 				err = qemu.Create(opts)
 			}
 			if err != nil {
-				_ = os.RemoveAll(filepath.Join(qemu.VMHome(), req.Name))
+				// Failure cleanup only ever removes a directory the
+				// failed create could have owned: an invalid or
+				// reserved name (notably "locks", the home-level
+				// lock namespace — Create refuses it, so nothing
+				// was created) must not reach RemoveAll.
+				if qemu.ValidateVMName(req.Name) == nil {
+					_ = os.RemoveAll(filepath.Join(qemu.VMHome(), req.Name))
+				}
 			}
 			done(err)
 		}()
@@ -125,7 +132,11 @@ func createLocalVM(w http.ResponseWriter, req createRequest) {
 	done := taskBegin("create local", localNS+"/"+req.Name)
 	err := qemu.Create(opts)
 	if err != nil {
-		_ = os.RemoveAll(filepath.Join(qemu.VMHome(), req.Name))
+		// See the async cleanup above: never remove what the failed
+		// create could not have owned.
+		if qemu.ValidateVMName(req.Name) == nil {
+			_ = os.RemoveAll(filepath.Join(qemu.VMHome(), req.Name))
+		}
 	}
 	done(err)
 	if err != nil {
