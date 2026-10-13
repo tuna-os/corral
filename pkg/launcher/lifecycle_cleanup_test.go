@@ -82,7 +82,7 @@ func stuckServer(t *testing.T) (*OwnedServer, chan struct{}) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = c.Close() })
-	if _, err := fmt.Fprintf(c, "GET /stuck HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\n\r\n"); err != nil {
+	if _, err := fmt.Fprintf(c, "GET /stuck HTTP/1.1\r\nHost: %s\r\nConnection: Upgrade\r\n\r\n", srv.Addr); err != nil {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(5 * time.Second)

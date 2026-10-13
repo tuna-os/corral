@@ -62,7 +62,7 @@ func TestOwnedServer_RacingHijackRefused(t *testing.T) {
 		t.Fatalf("dial: %v", err)
 	}
 	defer conn.Close()
-	fmt.Fprintf(conn, "GET /console HTTP/1.1\r\nHost: x\r\nConnection: keep-alive\r\n\r\n")
+	fmt.Fprintf(conn, "GET /console HTTP/1.1\r\nHost: %s\r\nConnection: keep-alive\r\n\r\n", srv.Addr)
 	select {
 	case <-entered:
 	case <-time.After(5 * time.Second):
@@ -134,7 +134,7 @@ func TestOwnedServer_PanickingHijackedHandlerRetires(t *testing.T) {
 		t.Fatalf("dial: %v", err)
 	}
 	defer conn.Close()
-	fmt.Fprintf(conn, "GET /console HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+	fmt.Fprintf(conn, "GET /console HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n", srv.Addr)
 	select {
 	case <-ran:
 	case <-time.After(5 * time.Second):

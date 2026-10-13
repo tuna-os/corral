@@ -45,6 +45,23 @@ func TestServeOwned_LoopbackOnly(t *testing.T) {
 	if err := srv.WaitReady(5 * time.Second); err != nil {
 		t.Fatalf("WaitReady: %v", err)
 	}
+	_, port, err := net.SplitHostPort(srv.Addr)
+	if err != nil {
+		t.Fatalf("SplitHostPort(%q): %v", srv.Addr, err)
+	}
+	req, err := http.NewRequest(http.MethodGet, "http://"+srv.Addr+"/healthz", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Host = net.JoinHostPort("attacker.example", port)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request with unapproved Host: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusMisdirectedRequest {
+		t.Fatalf("unapproved Host status = %d, want %d", resp.StatusCode, http.StatusMisdirectedRequest)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(ctx); err != nil {
@@ -84,7 +101,7 @@ func TestOwnedServer_ShutdownRetiresHijacked(t *testing.T) {
 		t.Fatalf("dial: %v", err)
 	}
 	defer func() { _ = c.Close() }()
-	if _, err := fmt.Fprintf(c, "GET /console HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\n\r\n"); err != nil {
+	if _, err := fmt.Fprintf(c, "GET /console HTTP/1.1\r\nHost: %s\r\nConnection: Upgrade\r\n\r\n", srv.Addr); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	waitFor := func(want int) {
@@ -146,7 +163,7 @@ func TestOwnedServer_ShutdownReportsUnretired(t *testing.T) {
 		t.Fatalf("dial: %v", err)
 	}
 	defer func() { _ = c.Close() }()
-	if _, err := fmt.Fprintf(c, "GET /stuck HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\n\r\n"); err != nil {
+	if _, err := fmt.Fprintf(c, "GET /stuck HTTP/1.1\r\nHost: %s\r\nConnection: Upgrade\r\n\r\n", srv.Addr); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	deadline := time.Now().Add(5 * time.Second)
@@ -193,7 +210,7 @@ func TestOwnedServer_EarlyCloseStillTracked(t *testing.T) {
 		t.Fatalf("dial: %v", err)
 	}
 	defer func() { _ = c.Close() }()
-	if _, err := fmt.Fprintf(c, "GET /early HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\n\r\n"); err != nil {
+	if _, err := fmt.Fprintf(c, "GET /early HTTP/1.1\r\nHost: %s\r\nConnection: Upgrade\r\n\r\n", srv.Addr); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	deadline := time.Now().Add(5 * time.Second)

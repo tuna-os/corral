@@ -131,6 +131,18 @@ func enforceAllowedHosts(next http.Handler, hosts []string) (http.Handler, error
 	}), nil
 }
 
+// EnforceLoopbackHostPolicy wraps a handler with the default Host policy for
+// an owned 127.0.0.1 listener. The actual listener address is required because
+// port 0 is resolved only after bind; both the literal address and localhost
+// alias are pinned to that exact port.
+func EnforceLoopbackHostPolicy(next http.Handler, listener net.Addr) (http.Handler, error) {
+	hosts := loopbackAllowedHosts("127.0.0.1:0", listener)
+	if len(hosts) == 0 {
+		return nil, fmt.Errorf("cannot derive loopback Host policy from listener %v", listener)
+	}
+	return enforceAllowedHosts(next, hosts)
+}
+
 // NewHandler builds the web UI router without binding or blocking, for
 // owners that manage their own http.Server lifecycle (the one-line
 // launcher's owned loopback server). Theme assembly mirrors Serve; metrics

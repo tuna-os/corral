@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"sync"
 	"time"
+
+	"github.com/tuna-os/corral/pkg/web"
 )
 
 // ConsoleURL builds the concrete noVNC console URL for a local VM:
@@ -242,6 +244,11 @@ func ServeOwned(handler http.Handler, port int) (*OwnedServer, error) {
 	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 	if err != nil {
 		return nil, fmt.Errorf("binding loopback web server: %w", err)
+	}
+	handler, err = web.EnforceLoopbackHostPolicy(handler, ln.Addr())
+	if err != nil {
+		_ = ln.Close()
+		return nil, fmt.Errorf("applying owned loopback Host policy: %w", err)
 	}
 	reg := newConnRegistry()
 	srv := &http.Server{
