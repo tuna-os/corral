@@ -52,7 +52,7 @@ func TestTTYBridge_ProxiesVirtctlConsole(t *testing.T) {
 		[]string{"get", "vm", "testvm", "-n", "tailvm", "-o", "name"},
 		"vm.kubevirt.io/testvm", nil)
 
-	ws, err := websocket.Dial(wsURL(fx.Server.URL)+"/api/tty/tailvm/testvm", "", "http://localhost")
+	ws, err := websocket.Dial(wsURL(fx.Server.URL)+"/api/tty/tailvm/testvm", "", fx.Server.URL)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestTTYBridge_ProxiesIncusExec(t *testing.T) {
 	defer fx.Close()
 	log := stubConsole(t, "incus")
 
-	ws, err := websocket.Dial(wsURL(fx.Server.URL)+"/api/tty/incus/db1", "", "http://localhost")
+	ws, err := websocket.Dial(wsURL(fx.Server.URL)+"/api/tty/incus/db1", "", fx.Server.URL)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}

@@ -13,7 +13,6 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -204,21 +203,7 @@ func newMux() (http.Handler, error) {
 		return websocket.Server{
 			Handler: h,
 			Handshake: func(cfg *websocket.Config, r *http.Request) error {
-				if !authenticationRequired() {
-					return nil
-				}
-				if r.Header.Get("Corral-Service-Identity") != "" {
-					return nil
-				}
-				origin := r.Header.Get("Origin")
-				if origin == "" {
-					return fmt.Errorf("websocket origin is required")
-				}
-				u, err := url.Parse(origin)
-				if err != nil || !strings.EqualFold(u.Host, r.Host) {
-					return fmt.Errorf("websocket origin %q does not match host", origin)
-				}
-				return nil
+				return validateWebSocketOrigin(r)
 			},
 		}
 	}
