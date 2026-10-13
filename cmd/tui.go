@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -1045,6 +1046,9 @@ func (m tuiModel) render() string {
 		notice = fmt.Sprintf("⚠ %d context(s) unavailable — press d for details", len(m.errors))
 		noticeStyle = m.th.warn
 	}
+	if notice == "" && !hasWorkingBackend() {
+		notice, noticeStyle = "No working backend — run `corral setup` to configure one", m.th.warn
+	}
 
 	return lipgloss.JoinVertical(lipgloss.Left,
 		top,
@@ -1615,4 +1619,20 @@ func (m hwEditModel) View() tea.View { return tea.NewView(m.render()) }
 // plus every configured peer, matching the fleet the list view aggregates.
 func fleetDiagnosis() []doctor.Check {
 	return append(doctor.RunContexts(config.Contexts()), doctor.RunPeers(config.Peers())...)
+}
+
+// hasWorkingBackend is the first-run gate: anything beyond the implicit
+// local context, or any sign this host can reach a backend (qemu/incus
+// binaries, a kubeconfig), counts as working. No probing, no dialing —
+// just presence, enough to decide whether the setup nudge earns its line.
+func hasWorkingBackend() bool {
+	if len(config.Contexts()) > 1 {
+		return true
+	}
+	for _, bin := range []string{"qemu-system-x86_64", "incus", "virsh"} {
+		if _, err := exec.LookPath(bin); err == nil {
+			return true
+		}
+	}
+	return config.KubeconfigPresent()
 }
