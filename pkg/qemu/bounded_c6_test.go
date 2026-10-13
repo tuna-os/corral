@@ -55,7 +55,7 @@ func killPidFile(path string) {
 // guard: old code hangs forever on descendant-held pipes, so the guard
 // retires the strays (releasing the hung wait) and fails instead of
 // wedging the package.
-func runBoundedGuarded(t *testing.T, bound time.Duration, limit int64, strays []string, name string, args ...string) (out []byte, runErr error, elapsed time.Duration) {
+func runBoundedGuarded(t *testing.T, bound time.Duration, limit int64, strays []string, name string, args ...string) (out []byte, elapsed time.Duration, runErr error) {
 	t.Helper()
 	done := make(chan struct{})
 	go func() {
@@ -66,7 +66,7 @@ func runBoundedGuarded(t *testing.T, bound time.Duration, limit int64, strays []
 	}()
 	select {
 	case <-done:
-		return out, runErr, elapsed
+		return out, elapsed, runErr
 	case <-time.After(20 * time.Second):
 		for _, stray := range strays {
 			killPidFile(stray)
@@ -77,7 +77,7 @@ func runBoundedGuarded(t *testing.T, bound time.Duration, limit int64, strays []
 		case <-time.After(10 * time.Second):
 			t.Fatalf("bounded run hung and its strays resisted cleanup")
 		}
-		return nil, nil, 0
+		return nil, 0, nil
 	}
 }
 
@@ -100,7 +100,7 @@ func TestRunBoundedCmd_RetiresDescendantHeldStdout(t *testing.T) {
 	// publishes both pids, then stalls past the bound with the pipes
 	// held at both ends.
 	script := "echo $$ > " + leaderPid + "; " + sleep + " 30 & echo $! > " + childPid + "; exec " + sleep + " 30"
-	out, runErr, elapsed := runBoundedGuarded(t, 500*time.Millisecond, 1<<20,
+	out, elapsed, runErr := runBoundedGuarded(t, 500*time.Millisecond, 1<<20,
 		[]string{leaderPid, childPid}, sh, "-c", script)
 	if runErr == nil || !strings.Contains(runErr.Error(), "timed out") {
 		t.Errorf("stalled group must fail naming the timeout, got out=%q err=%v", out, runErr)
@@ -132,7 +132,7 @@ func TestRunBoundedCmd_CapKillsDescendants(t *testing.T) {
 	// the cap: the cap kill must retire the sleeper too, or Wait wedges
 	// on its held descriptors.
 	script := "echo $$ > " + leaderPid + "; " + sleep + " 30 & echo $! > " + childPid + "; while true; do echo xxxxxxxxxx; done"
-	out, runErr, elapsed := runBoundedGuarded(t, 10*time.Second, 1024,
+	out, elapsed, runErr := runBoundedGuarded(t, 10*time.Second, 1024,
 		[]string{leaderPid, childPid}, sh, "-c", script)
 	if runErr == nil || !strings.Contains(runErr.Error(), "exceeded") {
 		t.Errorf("over-limit group must fail naming the cap, got out=%d bytes err=%v", len(out), runErr)
@@ -175,7 +175,7 @@ func TestRunBoundedCmd_EscapedDescendantCannotHangWait(t *testing.T) {
 		killPidFile(escapePid)
 		killPidFile(leaderPid)
 	})
-	out, runErr, elapsed := runBoundedGuarded(t, 500*time.Millisecond, 1<<20,
+	out, elapsed, runErr := runBoundedGuarded(t, 500*time.Millisecond, 1<<20,
 		[]string{leaderPid, escapePid}, sh, "-c", script)
 	if runErr == nil || !strings.Contains(runErr.Error(), "timed out") {
 		t.Errorf("stalled group with an escapee must fail naming the timeout, got out=%q err=%v", out, runErr)
@@ -216,7 +216,7 @@ func TestRunBoundedCmd_LeaderExitGrandchildHeldPipes(t *testing.T) {
 	dir := t.TempDir()
 	childPid := filepath.Join(dir, "child.pid")
 	script := sleep + " 30 & echo $! > " + childPid + "; exit 0"
-	out, runErr, elapsed := runBoundedGuarded(t, 500*time.Millisecond, 1<<20,
+	out, elapsed, runErr := runBoundedGuarded(t, 500*time.Millisecond, 1<<20,
 		[]string{childPid}, sh, "-c", script)
 	if runErr == nil || !strings.Contains(runErr.Error(), "timed out") {
 		t.Errorf("leader-exit with held pipes must fail naming the timeout, got out=%q err=%v", out, runErr)

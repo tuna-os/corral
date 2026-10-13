@@ -10,8 +10,8 @@ import (
 	"strings"
 )
 
-// Admission/start definition token (finding 3): the identity that binds what
-// was validated to what is started.
+// DefinitionToken is the admission/start identity that binds what was
+// validated to what is started.
 //
 // EnsureVM/checkExistingVM admit a definition outside the lifecycle lock, and
 // StartAndWaitCtx starts later under it. Neither start path revalidated the
