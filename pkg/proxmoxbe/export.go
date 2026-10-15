@@ -123,9 +123,18 @@ func (c *Client) findLatestBackup(storage string, vmid int) (string, error) {
 		if entry.Content != "backup" {
 			continue
 		}
+		// Volume ids carry the storage prefix
+		// ("backup-nfs:backup/vzdump-qemu-100-....vma.zst"), so the
+		// vzdump name match runs on the file name, not the whole id.
+		// The full id is still what is returned: the download endpoint
+		// wants it complete.
+		name := entry.VolID
+		if i := strings.LastIndex(name, "/"); i >= 0 {
+			name = name[i+1:]
+		}
 		// Backup volume names have the form "vzdump-qemu-{vmid}-..."
-		if !strings.HasPrefix(entry.VolID, fmt.Sprintf("vzdump-qemu-%d-", vmid)) &&
-			!strings.HasPrefix(entry.VolID, fmt.Sprintf("vzdump-lxc-%d-", vmid)) {
+		if !strings.HasPrefix(name, fmt.Sprintf("vzdump-qemu-%d-", vmid)) &&
+			!strings.HasPrefix(name, fmt.Sprintf("vzdump-lxc-%d-", vmid)) {
 			continue
 		}
 		// The most recent backup sorts last by name (ISO-8601 timestamp).

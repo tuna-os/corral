@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/tuna-os/corral/pkg/qemu"
 	"github.com/tuna-os/corral/pkg/types"
 )
 
@@ -485,8 +486,30 @@ func (LibvirtTarget) Requires() []string {
 }
 
 // DomainXML is exported so the definition can be inspected and tested without
-// defining anything.
-func (LibvirtTarget) DomainXML(name, diskPath string, opts CreateOpts) string {
+// defining anything. The uri scopes firmware resolution: it is the same
+// connection Import will define the domain on.
+//
+// For a local target (qemu:///system, qemu:///session, or empty for the
+// default), when OVMF firmware resolves to concrete host files (the distro
+// candidate table in pkg/qemu, overridable with CORRAL_OVMF_CODE/VARS), the
+// domain names the loader explicitly instead of asking libvirt to
+// auto-select with <os firmware='efi'>. Auto-selection depends on the
+// daemon's firmware-descriptor cache, which is not uniformly populated: on
+// the same host a qemu:///session daemon can resolve nothing while
+// qemu:///system defines fine, failing the define with "Unable to find 'efi'
+// firmware" (e2e-incus #482). An explicit pflash loader defines on either
+// local URI; the <nvram> carries only the vars template and libvirt
+// allocates the per-domain NVRAM file itself, which keeps this working for
+// both the system daemon (root-owned nvram dir) and the session daemon
+// (user-owned one).
+//
+// For a remote target (e.g. qemu+ssh://host/system) the manager's local
+// files mean nothing — the firmware must exist on the hypervisor — so the
+// domain always keeps firmware='efi' auto-selection and lets the target
+// daemon resolve against its own descriptors. Local hosts without
+// discoverable firmware fall back the same way, so descriptor-only hosts
+// keep working.
+func (LibvirtTarget) DomainXML(uri, name, diskPath string, opts CreateOpts) string {
 	memory := opts.Memory
 	if memory == "" {
 		memory = "4Gi"
@@ -495,14 +518,28 @@ func (LibvirtTarget) DomainXML(name, diskPath string, opts CreateOpts) string {
 	if cpu <= 0 {
 		cpu = 2
 	}
+	osXML := `  <os firmware='efi'>
+    <type arch='x86_64' machine='q35'>hvm</type>
+    <boot dev='hd'/>
+  </os>`
+	if localLibvirtURI(uri) {
+		if code, vars, err := qemu.FindUEFIFirmware(); err == nil {
+			var b strings.Builder
+			b.WriteString("  <os>\n    <type arch='x86_64' machine='q35'>hvm</type>\n")
+			fmt.Fprintf(&b, "    <loader readonly='yes' type='pflash'>%s</loader>\n", xmlEscape(code))
+			if vars != "" {
+				fmt.Fprintf(&b, "    <nvram template='%s'/>\n", xmlEscape(vars))
+			}
+			b.WriteString("    <boot dev='hd'/>\n  </os>")
+			osXML = b.String()
+		}
+	}
+
 	return fmt.Sprintf(`<domain type='kvm'>
   <name>%s</name>
   <memory unit='MiB'>%s</memory>
   <vcpu>%d</vcpu>
-  <os firmware='efi'>
-    <type arch='x86_64' machine='q35'>hvm</type>
-    <boot dev='hd'/>
-  </os>
+%s
   <features><acpi/><apic/></features>
   <cpu mode='host-passthrough'/>
   <devices>
@@ -520,7 +557,19 @@ func (LibvirtTarget) DomainXML(name, diskPath string, opts CreateOpts) string {
     <console type='pty'/>
   </devices>
 </domain>
-`, xmlEscape(name), memoryMiB(memory), cpu, xmlEscape(diskPath))
+`, xmlEscape(name), memoryMiB(memory), cpu, osXML, xmlEscape(diskPath))
+}
+
+// localLibvirtURI reports whether uri names a libvirt daemon on this host,
+// where files this manager can stat are files the daemon can use. Anything
+// else (qemu+ssh, qemu+tcp, …) defines on a remote hypervisor whose
+// filesystem we cannot see, so firmware must auto-select there.
+func localLibvirtURI(uri string) bool {
+	switch uri {
+	case "", "qemu:///system", "qemu:///session":
+		return true
+	}
+	return false
 }
 
 func (l LibvirtTarget) Import(ref types.InstanceRef, disk string, opts CreateOpts) error {
@@ -531,16 +580,16 @@ func (l LibvirtTarget) Import(ref types.InstanceRef, disk string, opts CreateOpt
 	if out, err := runner.Run(qemuImg(), "convert", "-O", "qcow2", disk, target); err != nil {
 		return fmt.Errorf("qemu-img convert: %s", commandError(out, err))
 	}
-	doc := l.DomainXML(ref.Name, target, opts)
+	uri := ref.Context
+	if uri == "" {
+		uri = "qemu:///system"
+	}
+	doc := l.DomainXML(uri, ref.Name, target, opts)
 	path, cleanup, err := writeTemp(doc)
 	if err != nil {
 		return err
 	}
 	defer cleanup()
-	uri := ref.Context
-	if uri == "" {
-		uri = "qemu:///system"
-	}
 	if out, err := runner.Run("virsh", "-c", uri, "define", path); err != nil {
 		return fmt.Errorf("virsh define: %s", commandError(out, err))
 	}

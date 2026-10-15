@@ -64,7 +64,7 @@ flowchart TD
 
 ### Web Dashboard
 
-Access the Proxmox-style Web UI at `http://localhost:8006` or via `corral web`.
+Access the Proxmox-style Web UI at `http://localhost:8006` or via `corral web`. For public, local, homelab, and always-on setups see [deployment modes](deployment-modes.md).
 
 ![Automated unified fleet capture](screenshots/generated/web-fleet.png)
 
