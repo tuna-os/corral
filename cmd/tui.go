@@ -16,13 +16,13 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"charm.land/lipgloss/v2/table"
+	"github.com/tuna-os/corral/pkg/backend"
 	"github.com/tuna-os/corral/pkg/config"
 	"github.com/tuna-os/corral/pkg/ct"
 	"github.com/tuna-os/corral/pkg/doctor"
 	"github.com/tuna-os/corral/pkg/fleet"
 	"github.com/tuna-os/corral/pkg/incus"
 	"github.com/tuna-os/corral/pkg/kubevirt"
-	"github.com/tuna-os/corral/pkg/libvirt"
 	"github.com/tuna-os/corral/pkg/plugin"
 	"github.com/tuna-os/corral/pkg/qemu"
 	"github.com/tuna-os/corral/pkg/types"
@@ -765,12 +765,8 @@ func (m *tuiModel) performAction(action string) {
 			}
 		}
 	case "viewer":
-		if backend == "kubevirt" {
-			kubevirt.NewClientForContext(ns, contextName).Viewer(name)
-		} else if backend == "libvirt" {
-			libvirt.NewClient(contextName).Viewer(name)
-		} else {
-			qemu.Viewer(name)
+		if err := viewSelected(m.selected.Ref()); err != nil {
+			fmt.Fprintln(os.Stderr, "viewer failed:", err)
 		}
 	case "ssh":
 		user, password := "", ""
@@ -793,6 +789,20 @@ func (m *tuiModel) performAction(action string) {
 			qemu.SSH(name, user, "", "", 22, password, nil)
 		}
 	}
+}
+
+// viewSelected opens the graphical console of the instance through its
+// backend's Viewer, the same path `corral viewer` takes.
+func viewSelected(ref types.InstanceRef) error {
+	adapter, err := backend.For(ref)
+	if err != nil {
+		return err
+	}
+	viewer, ok := adapter.(backend.Viewer)
+	if !ok {
+		return unsupported(adapter, "viewer")
+	}
+	return viewer.View(ref.Name)
 }
 
 // performCTAction is performAction's CT counterpart — a much smaller

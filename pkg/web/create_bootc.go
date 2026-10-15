@@ -41,7 +41,7 @@ func createBootcInContext(req createRequest, ns, context string) (id string, tas
 	id = fmt.Sprintf("bootc-%s-%d", req.Name, time.Now().UnixNano())
 	task = newBuildTask()
 	tasks.Store(id, task)
-	done := taskBegin("bootc build", ns+"/"+req.Name)
+	done := taskBegin(req.user, "bootc build", ns+"/"+req.Name)
 
 	go func() {
 		err := kubevirt.WithContext(context, func() error {
@@ -69,7 +69,7 @@ func createBootcInContext(req createRequest, ns, context string) (id string, tas
 		// successful build as failed — the VM is already up and reachable
 		// via virtctl port-forward.
 		if err == nil {
-			dp := taskBegin("tailnet expose", ns+"/"+req.Name)
+			dp := taskBegin(req.user, "tailnet expose", ns+"/"+req.Name)
 			dp(kubevirt.WithContext(context, func() error { return kubevirt.ApplyProxy(req.Name, ns, kubevirt.ConsolePorts) }))
 		}
 	}()

@@ -9,6 +9,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"github.com/spf13/cobra"
+	"github.com/tuna-os/corral/pkg/backend"
 	"github.com/tuna-os/corral/pkg/fleet"
 	"github.com/tuna-os/corral/pkg/types"
 )
@@ -173,6 +174,39 @@ func requireBackend(name string) (string, error) {
 	}
 	activateVMContext(vm)
 	return vm.Backend, nil
+}
+
+// instanceAdapter resolves the VM a command names to its pkg/backend adapter,
+// bound to that VM's own context. Commands then assert the family they need
+// and refuse by backend name when it is absent — the alternative, a
+// `backend == "kubevirt"` branch with local QEMU as the else, sent every other
+// backend's VMs to QEMU code that had never heard of them (#489).
+func instanceAdapter(name string) (backend.Adapter, error) {
+	ref, err := instanceRef(name)
+	if err != nil {
+		return nil, err
+	}
+	return backend.For(ref)
+}
+
+func instanceRef(name string) (types.InstanceRef, error) {
+	if selectedVM != nil && selectedVM.Name == name {
+		activateVMContext(*selectedVM)
+		return selectedVM.Ref(), nil
+	}
+	vm, err := resolveVM(name)
+	if err != nil {
+		if registryStore != nil {
+			if entry, ok := registryStore.Get(name); ok {
+				vm = types.VM{Name: name, Backend: entry.Backend, Context: entry.Context, Namespace: entry.Namespace}
+				activateVMContext(vm)
+				return vm.Ref(), nil
+			}
+		}
+		return types.InstanceRef{}, err
+	}
+	activateVMContext(vm)
+	return vm.Ref(), nil
 }
 
 func resolveVM(selector string) (types.VM, error) {

@@ -281,7 +281,7 @@ func newMux() (http.Handler, error) {
 
 	// The admin gate lets safe (GET) requests through and rejects mutating
 	// requests from non-admins when CORRAL_ADMINS is set.
-	return peerServiceAuth(adminGate(peerGate(mux))), nil
+	return peerServiceAuth(adminGate(activityTracker(peerGate(mux)))), nil
 }
 
 // serveIndex reads the embedded index.html, injects the active theme, and
@@ -492,6 +492,9 @@ type createRequest struct {
 	Target        string `json:"target"`       // named Corral context; legacy "cluster" and "local" remain accepted
 	Firmware      string `json:"firmware"`     // "uefi" or "bios"
 	UEFI          bool   `json:"uefi"`         // UEFI boot
+	// user is the caller's login, for the task log. It is set by the handler
+	// and never read from the request body.
+	user string
 }
 
 // buildTask tracks a long-running bootc build kicked off from the UI.
@@ -564,6 +567,7 @@ func handleCreateVM(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Name = strings.TrimSpace(req.Name)
+	req.user = requestUser(r)
 	if req.Name == "" {
 		errResp(w, http.StatusBadRequest, fmt.Errorf("name is required"))
 		return
@@ -719,13 +723,13 @@ func handleVMAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if ns == localNS {
-		localVMAction(w, name, action)
+		localVMAction(w, requestUser(r), name, action)
 		return
 	}
 
 	c := kubeClient(r, ns)
 	var err error
-	done := taskBegin(action, ns+"/"+name)
+	done := taskBegin(requestUser(r), action, ns+"/"+name)
 	switch action {
 	case "start":
 		err = c.StartVM(name)
@@ -776,7 +780,7 @@ func handleMigrate(w http.ResponseWriter, r *http.Request) {
 	id := fmt.Sprintf("migrate-%s-%d", name, time.Now().UnixNano())
 	task := newBuildTask()
 	tasks.Store(id, task)
-	done := taskBegin("migrate", ns+"/"+name)
+	done := taskBegin(requestUser(r), "migrate", ns+"/"+name)
 	if b.TargetNode != "" {
 		fmt.Fprintf(task, "Live migration of %s requested → %s\n", name, b.TargetNode)
 	} else {
@@ -961,7 +965,7 @@ func handleDeleteVM(w http.ResponseWriter, r *http.Request) {
 		jsonResp(w, 200, map[string]string{"status": "deleted"})
 		return
 	}
-	done := taskBegin("delete", ns+"/"+name)
+	done := taskBegin(requestUser(r), "delete", ns+"/"+name)
 	if ns == localNS {
 		if err := qemu.Delete(name); err != nil {
 			done(err)
@@ -1021,7 +1025,11 @@ func handleVMInfo(w http.ResponseWriter, r *http.Request) {
 		data, err = kubeClient(r, ns).VMInfo(name)
 	}
 	if err != nil {
-		errResp(w, http.StatusNotFound, err)
+		status := http.StatusNotFound
+		if errors.Is(err, qemu.ErrInvalidVMName) {
+			status = http.StatusBadRequest
+		}
+		errResp(w, status, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

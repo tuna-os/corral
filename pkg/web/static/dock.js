@@ -1,7 +1,8 @@
 // Bottom dock: the task panel and the cluster events panel (an Alpine.js
 // island, see ADR-0004).
 
-import { api, findVM } from './api.js';
+import { api, ctKey, findVM, vmKey } from './api.js';
+import { select } from './app.js';
 import { emit, on, state } from './state.js';
 import { onPageVisible, pageHidden } from './ui/visibility.js';
 
@@ -40,6 +41,21 @@ const rememberPanel = (id) => {
   try { localStorage.setItem(DOCK_PANEL_KEY, id); } catch { /* private mode */ }
 };
 
+// What a task's target names, as a selection the page can open. Targets are
+// written by the server as "namespace/name", and a clone or a move joins two
+// with an arrow; the first side that is still in the fleet wins. Null when
+// nothing matches, for example a deleted guest, a plugin or a doctor check.
+function targetSelection(target) {
+  for (const part of String(target || '').split(' → ')) {
+    const ref = part.trim();
+    const vm = state.vms.find((v) => `${v.namespace}/${v.name}` === ref);
+    if (vm) return { type: 'vm', key: vmKey(vm) };
+    const ct = state.cts.find((c) => `${c.namespace}/${c.name}` === ref);
+    if (ct) return { type: 'ct', key: ctKey(ct) };
+  }
+  return null;
+}
+
 // ── Task panel (Proxmox-style activity log) ────────────────────────
 // First Alpine.js island — see docs/adr/0004-web-ui-alpinejs-no-build.md.
 // The poll loop stays a plain setInterval (Alpine is for render, not
@@ -59,6 +75,12 @@ document.addEventListener('alpine:init', () => {
     panel: storedPanel(),
     tasks: [],
     summary: '',
+    running: 0,
+    failed: 0,
+    // Task id → the selection its target opens. Recomputed when the tasks or
+    // the fleet change, so a guest that appears later becomes a link.
+    links: {},
+    detail: null,
     events: [],
     eventsFor: '',
     eventsError: '',
@@ -89,6 +111,7 @@ document.addEventListener('alpine:init', () => {
       // on the shared bus rather than polling the selection keeps this to one
       // fetch per actual change.
       on('select', () => { if (this.panel === 'events') this.loadEvents(); });
+      on('inventory', () => this.relink());
       this.refresh();
       // The dock lives as long as the page, so a plain listener is right here.
       // ui/visibility.js has the reasons for both rules.
@@ -122,11 +145,32 @@ document.addEventListener('alpine:init', () => {
       this._lastFp = fp;
       this.tasks = log;
       emit('tasks', log);
-      const running = log.filter((t) => t.status === 'running').length;
-      const errors = log.filter((t) => t.status === 'error').length;
-      this.summary = log.length
-        ? `${running ? `${running} running · ` : ''}${errors ? `${errors} failed · ` : ''}${log.length} total`
-        : '';
+      this.running = log.filter((t) => t.status === 'running').length;
+      this.failed = log.filter((t) => t.status === 'error').length;
+      this.summary = log.length ? `${log.length} total` : '';
+      this.relink();
+    },
+
+    relink() {
+      const links = {};
+      for (const t of this.tasks) {
+        const sel = targetSelection(t.target);
+        if (sel) links[t.id] = sel;
+      }
+      // The fleet poll runs every few seconds; only a real change re-renders.
+      if (JSON.stringify(links) !== JSON.stringify(this.links)) this.links = links;
+    },
+
+    /** Open the guest a task acted on. */
+    goTo(t) {
+      const sel = this.links[t.id];
+      if (sel) select(sel);
+    },
+
+    /** A failed task's full record: the pill only has room for "error". */
+    showTask(t) {
+      this.detail = t;
+      this.$nextTick(() => this.$refs.taskDetail.showModal());
     },
 
     async loadEvents() {

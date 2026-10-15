@@ -266,7 +266,7 @@ func handleFolderAction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	outcomes := make([]MemberOutcome, 0, len(members))
-	done := taskBegin("folder "+body.Action, body.Path)
+	done := taskBegin(requestUser(r), "folder "+body.Action, body.Path)
 	for _, ref := range members {
 		outcomes = append(outcomes, runFolderAction(ref, body.Action, live))
 	}

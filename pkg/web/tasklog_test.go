@@ -12,11 +12,11 @@ func TestTaskLog_RecordsLifecycle(t *testing.T) {
 	defer fx.Close()
 
 	// A successful action and a failed one.
-	okDone := taskBegin("start", "tailvm/vm1")
+	okDone := taskBegin("", "start", "tailvm/vm1")
 	okDone(nil)
-	errDone := taskBegin("stop", "tailvm/vm2")
+	errDone := taskBegin("", "stop", "tailvm/vm2")
 	errDone(fmt.Errorf("boom"))
-	running := taskBegin("clone", "tailvm/vm3 → vm4")
+	running := taskBegin("", "clone", "tailvm/vm3 → vm4")
 	_ = running // still running
 
 	resp, err := http.Get(fx.Server.URL + "/api/tasklog")
@@ -48,7 +48,13 @@ func TestTaskLog_VMActionsRecorded(t *testing.T) {
 	defer fx.Close()
 
 	fx.Runner.AddPrefixResponse("virtctl start", "started", nil)
-	resp, _ := http.Post(fx.Server.URL+"/api/vms/tailvm/logvm/start", "application/json", nil)
+	// The task log names who asked, so the dock's User column can show it.
+	req, _ := http.NewRequest(http.MethodPost, fx.Server.URL+"/api/vms/tailvm/logvm/start", nil)
+	req.Header.Set("Tailscale-User-Login", "alice@example.com")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
 	resp.Body.Close()
 
 	r2, err := http.Get(fx.Server.URL + "/api/tasklog")
@@ -59,20 +65,23 @@ func TestTaskLog_VMActionsRecorded(t *testing.T) {
 	var entries []TaskEntry
 	json.NewDecoder(r2.Body).Decode(&entries)
 
-	found := false
-	for _, e := range entries {
+	var found *TaskEntry
+	for i, e := range entries {
 		if e.Action == "start" && e.Target == "tailvm/logvm" {
-			found = true
+			found = &entries[i]
 		}
 	}
-	if !found {
-		t.Errorf("start of tailvm/logvm not recorded in task log: %+v", entries)
+	if found == nil {
+		t.Fatalf("start of tailvm/logvm not recorded in task log: %+v", entries)
+	}
+	if found.User != "alice@example.com" {
+		t.Errorf("task user = %q, want the caller's login alice@example.com", found.User)
 	}
 }
 
 func TestTaskLog_RingCap(t *testing.T) {
 	for i := 0; i < taskLogMax+50; i++ {
-		taskBegin("noop", "x")(nil)
+		taskBegin("", "noop", "x")(nil)
 	}
 	activity.mu.Lock()
 	n := len(activity.entries)

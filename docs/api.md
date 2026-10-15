@@ -620,6 +620,12 @@ Without `--metrics` the endpoint still answers 200 with
 `corral_collection_success 0`. A scraper that receives a 503 records nothing,
 and "up but no collection" is the state that deserves an alert.
 
+The endpoint always includes `corral_last_activity_timestamp_seconds`. This
+gauge is the Unix time of the last request from a user or a peer Corral. Use it
+to find an idle host and stop it. Probes, `/healthz`, `/readyz`, `/metrics`, and
+the timed polls of a peer's `--metrics` collector do not count. Requests that the
+auth gate rejects do not count. At process start, the gauge shows the start time.
+
 ---
 
 ## Static assets

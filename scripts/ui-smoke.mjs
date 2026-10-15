@@ -3179,6 +3179,39 @@ await page.click('#content [data-tagfilter=""]');
 await page.waitForTimeout(500);
 check(await page.locator('#content td:has-text("dev-fedora")').count() > 0, 'tag filter: all restores the full table');
 
+// ── snapshots off-cluster (#491) ──────────────────────────────────
+// Incus snapshots go through pkg/snapshot, not a Kubernetes
+// VolumeSnapshotClass. With no snapshot-capable cluster the tab must still
+// list them, consistency included, instead of the KubeVirt-only notice.
+await page.route('**/api/capabilities', async (route) => {
+  const res = await route.fetch();
+  await route.fulfill({ response: res, json: { ...(await res.json()), canSnapshot: false } });
+});
+// Matched on the path: the request carries ?context= for the Incus remote.
+const incusSnapshots = (url) => url.pathname.endsWith('/incus-demo-vm/snapshots');
+await page.route(incusSnapshots, (route) => (route.request().method() === 'GET'
+  ? route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify([{ name: 'before-upgrade', source: 'incus-demo-vm', ready: true, created: '2026-10-01T00:00:00Z', consistency: 'offline' }]),
+  })
+  : route.continue()));
+await page.goto(BASE);
+await page.waitForSelector('#tree .tree-item:has-text("incus-demo-vm")', { timeout: 30000 }).catch(() => {});
+await page.click('#tree .tree-item:has-text("incus-demo-vm")');
+await page.waitForSelector('#content .tab:has-text("Snapshots")', { timeout: 10000 }).catch(() => {});
+await page.click('#content .tab:has-text("Snapshots")');
+await page.waitForSelector('#snap-rows td:has-text("before-upgrade")', { timeout: 10000 }).catch(() => {});
+check(
+  await page.locator('#content', { hasText: 'VolumeSnapshotClass' }).count() === 0,
+  'snapshots: an Incus VM is not gated on a KubeVirt VolumeSnapshotClass',
+);
+check(await page.locator('#snap-rows td:has-text("before-upgrade")').count() === 1, 'snapshots: an Incus VM lists its snapshots off-cluster');
+check(await page.locator('#snap-rows td:has-text("offline")').count() === 1, 'snapshots: the table shows each snapshot\'s consistency');
+await page.screenshot({ path: `${SHOTS}/snapshots-incus.png` }).catch(() => {});
+await page.unroute('**/api/capabilities');
+await page.unroute(incusSnapshots);
+
 // ── read-only gate ────────────────────────────────────────────
 // The e2e identity-gate spec mocks whoami because kind cannot inject a
 // Tailscale identity; the same mock works here and needs no server flag.
@@ -3198,6 +3231,74 @@ await page.goto(BASE);
 await page.waitForSelector('#tree', { timeout: 15000 });
 check(await page.locator('#btn-create').isVisible(), 'read-only gate: admin gets Create back');
 check(await page.locator('body.read-only').count() === 0, 'read-only gate: the suite leaves admin mode behind');
+
+// ── dock-tasks (#342) ─────────────────────────────────────────────
+// Start a VM from its toolbar and follow the task through the dock: it lands
+// in the log with a link to the guest, and completes into history. The demo
+// finishes an action at once, so the running and failed states, and the
+// counts on a collapsed dock, are driven from a canned task log afterwards.
+{
+  const dp = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  const errs = [];
+  dp.on('pageerror', (e) => errs.push(e.message));
+  const VM = 'dev-fedora'; // Stopped in demo; put back to Stopped below
+  const lastID = async () => Math.max(0, ...(await (await fetch(`${BASE}api/tasklog`)).json()).map((t) => t.id));
+  await dp.goto(BASE);
+  await dp.waitForSelector(`#tree >> text=${VM}`, { timeout: 30000 });
+  const before = await lastID();
+  await dp.click(`#tree >> text=${VM}`);
+  const startBtn = dp.locator('#content .toolbar [data-act="start"]');
+  await startBtn.waitFor({ timeout: 10000 }).catch(() => {});
+  await startBtn.click();
+  await dp.keyboard.press('t');
+  const row = dp.locator('#task-rows tr[data-task]', { hasText: VM })
+    .filter({ has: dp.locator('td', { hasText: /^start$/ }) }).first();
+  await dp.waitForFunction((id) => [...document.querySelectorAll('#task-rows tr[data-task]')]
+    .some((tr) => Number(tr.dataset.task) > id), before, { timeout: 15000 }).catch(() => {});
+  check(Number(await row.getAttribute('data-task').catch(() => 0)) > before,
+    'dock-tasks: starting a VM puts its task in the dock');
+  await row.locator('.pill.on').waitFor({ state: 'visible', timeout: 15000 }).catch(() => {});
+  check(await row.locator('.pill.on').isVisible(), 'dock-tasks: the task completes into history as OK');
+
+  // The target is a link back to the guest.
+  await dp.click('#tree >> text=Datacenter');
+  await row.locator('a.task-target').click();
+  await dp.waitForTimeout(500);
+  check(await dp.locator('#tree .tree-item.selected', { hasText: VM }).count() === 1,
+    'dock-tasks: the task target opens the guest it acted on');
+
+  // Leave the VM as the demo ships it, so a re-run sees the same fleet.
+  const vm = (await (await fetch(`${BASE}api/vms`)).json()).find((v) => v.name === VM);
+  if (vm) await fetch(`${BASE}api/vms/${vm.namespace}/${vm.name}/stop`, { method: 'POST' }).catch(() => {});
+
+  // A running task and a failed one, with the dock shut.
+  const now = new Date().toISOString();
+  await dp.route('**/api/tasklog', (route) => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify([
+      { id: 900002, action: 'migrate', target: 'corral-vms/web-prod', status: 'running', user: 'alice@example.com', started: now },
+      { id: 900001, action: 'snapshot', target: 'corral-vms/db-prod', status: 'error', error: 'quota exceeded: 10 snapshots', user: 'bob@example.com', started: now, duration: '1.2s' },
+    ]),
+  }));
+  await dp.keyboard.press('t'); // the same key shuts the dock
+  await dp.locator('#dock-failed').waitFor({ state: 'visible', timeout: 12000 }).catch(() => {});
+  check(await dp.locator('#task-panel.collapsed').count() === 1
+      && (await dp.locator('#dock-running').innerText().catch(() => '')) === '1 running'
+      && (await dp.locator('#dock-failed').innerText().catch(() => '')) === '1 failed',
+    'dock-tasks: a collapsed dock still shows the running and failed counts');
+  await dp.keyboard.press('t');
+  const failedRow = dp.locator('#task-rows tr[data-task="900001"]');
+  check((await failedRow.innerText().catch(() => '')).includes('bob@example.com'), 'dock-tasks: a task names the user who started it');
+  await failedRow.locator('button.task-error').click();
+  await dp.locator('#task-detail[open]').waitFor({ timeout: 5000 }).catch(() => {});
+  check((await dp.locator('#task-detail-error').innerText().catch(() => '')).includes('quota exceeded'),
+    'dock-tasks: a failed task opens its error');
+  await dp.screenshot({ path: `${SHOTS}/dock-tasks.png` });
+  await dp.keyboard.press('Escape');
+  check(await dp.locator('#task-detail[open]').count() === 0, 'dock-tasks: Escape closes the task record');
+  check(errs.length === 0, `dock-tasks: no errors (${errs.join('; ').slice(0, 120)})`);
+  await dp.close();
+}
 
 check(pageErrors.length === 0, `no JS page errors (${pageErrors.join('; ').slice(0, 200)})`);
 

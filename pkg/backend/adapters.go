@@ -168,6 +168,9 @@ func (a kubevirtAdapter) Events(name string) ([]Event, error) {
 	return out, nil
 }
 
+func (a kubevirtAdapter) View(name string) error { return a.client.Viewer(name) }
+func (a kubevirtAdapter) Logs(name string) error { return a.client.Logs(name) }
+
 // ── local QEMU ────────────────────────────────────────────────────
 //
 // Power plus a real restart. Everything else is a gap the matrix names: the unit
@@ -195,6 +198,10 @@ func (qemuAdapter) Pause(name string) error  { return qemu.Pause(name) }
 func (qemuAdapter) Resume(name string) error { return qemu.Resume(name) }
 
 func (qemuAdapter) Metrics(name string) (map[string]string, error) { return qemu.Metrics(name) }
+
+func (qemuAdapter) View(name string) error                 { return qemu.Viewer(name) }
+func (qemuAdapter) Logs(name string) error                 { return qemu.Logs(name) }
+func (qemuAdapter) SerialLogs(name string, tail int) error { return qemu.LogsSerial(name, tail) }
 
 // Events: journald already keeps the local backend's history, keyed by the
 // unit systemd started. This is the only backend outside KubeVirt and PVE
@@ -232,6 +239,9 @@ func (a incusAdapter) Metrics(name string) (map[string]string, error) {
 }
 func (a incusAdapter) Resume(name string) error { return a.client.Resume(name) }
 
+func (a incusAdapter) View(name string) error { return a.client.Viewer(name) }
+func (a incusAdapter) Logs(name string) error { return a.client.ConsoleLog(name) }
+
 func (a incusAdapter) Address(name string) (string, error) {
 	instances, err := a.client.ListInstances()
 	if err != nil {
@@ -261,6 +271,12 @@ func (a libvirtAdapter) Metrics(name string) (map[string]string, error) {
 	return a.client.Metrics(name)
 }
 func (a libvirtAdapter) Resume(name string) error { return a.client.Resume(name) }
+
+// View is virt-viewer against the domain's own URI, so a domain on a remote
+// hypervisor opens there rather than looking for local QEMU metadata. No
+// Logger: libvirt keeps no guest log a client can read back, and `virsh
+// console` is an interactive attach, not a log.
+func (a libvirtAdapter) View(name string) error { return a.client.Viewer(name) }
 
 // ── VirtualBox ────────────────────────────────────────────────────
 //
@@ -405,6 +421,42 @@ func (a proxmoxAdapter) CanMigrate(name string) (bool, string) {
 		return true, ""
 	}
 	return pre.CanLiveMigrate()
+}
+
+// Create makes a VM through POST /nodes/{node}/qemu and waits for the task, so
+// a create that returns nil left a guest behind, not a queued request. PVE
+// boots an installer from its own storage: the ISO must already be a volume id
+// ("local:iso/debian.iso"). A local path or URL would need an upload the
+// create API does not do, so it is refused with that reason rather than
+// handed to PVE to fail on.
+func (a proxmoxAdapter) Create(opts types.CreateOpts) error {
+	if opts.QCOW != "" || opts.ImportURL != "" || opts.ContainerDisk != "" || opts.PVC != "" {
+		return fmt.Errorf("proxmox: create boots an installer ISO from PVE storage; " +
+			"a qcow2, disk import, container disk or PVC has no PVE create equivalent " +
+			"(to bring an existing disk, use `corral move --to proxmox`)")
+	}
+	if opts.ISO != "" && !isPVEVolume(opts.ISO) {
+		return fmt.Errorf("proxmox: the ISO must be a PVE volume id such as local:iso/debian.iso, not %q; "+
+			"upload it to a PVE storage first", opts.ISO)
+	}
+	return a.wait(func(c *proxmoxbe.Client) (proxmoxbe.Task, error) {
+		return c.Create(proxmoxbe.CreateOpts{
+			Name: opts.Name, Node: opts.Node,
+			Cores: opts.CPU, Mem: opts.Mem, Disk: opts.Disk,
+			ISO: opts.ISO, SSHKeys: opts.SSHPublicKey, Password: opts.CloudInitPassword,
+			UEFI: opts.UEFI,
+		})
+	})
+}
+
+// isPVEVolume reports whether s names a volume on PVE storage
+// ("storage:content/file") rather than a local path or a URL.
+func isPVEVolume(s string) bool {
+	if strings.Contains(s, "://") {
+		return false
+	}
+	storage, volume, ok := strings.Cut(s, ":")
+	return ok && storage != "" && volume != "" && !strings.ContainsAny(storage, `/\.`)
 }
 
 func (a proxmoxAdapter) Clone(source, target string) error {

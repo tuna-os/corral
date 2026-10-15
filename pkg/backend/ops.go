@@ -142,6 +142,41 @@ type Addresser interface {
 	Address(name string) (string, error)
 }
 
+// Creator makes a new guest from the backend-neutral create options; the
+// adapter is already bound to its context, so opts.Name is all it needs to
+// place one. Like Addresser it is not a Family: the local QEMU, KubeVirt, Incus
+// and libvirt creators take flags types.CreateOpts does not describe, and the
+// CLI still drives those directly. Every other backend reaches `corral create`
+// through this interface or gets a refusal naming the backend; it never falls
+// through to a different backend's creator (#493).
+type Creator interface {
+	Create(opts types.CreateOpts) error
+}
+
+// Viewer opens the guest's graphical console for the person at this terminal,
+// through the backend's own client: virtctl vnc, virt-viewer against the
+// domain's URI, `incus console --type=vga`. Not a Family, for the same reason
+// as Addresser: it hands the terminal to an external program rather than
+// performing an operation the matrix could gate a row on.
+type Viewer interface {
+	View(name string) error
+}
+
+// Logger shows the guest's log through the backend's own source of one: the
+// virt-launcher pod, the unit's journal, the instance console log. A backend
+// without one has no Logger, and `corral logs` says so instead of reading some
+// other backend's log for a guest that was never there (#489).
+type Logger interface {
+	Logs(name string) error
+}
+
+// SerialLogger shows the guest's serial console as captured to a file, the
+// evidence that survives a boot that never reached SSH. Only local QEMU keeps
+// one; `corral logs --serial` asserts for it.
+type SerialLogger interface {
+	SerialLogs(name string, tail int) error
+}
+
 // ── the registry ──────────────────────────────────────────────────
 
 // Adapter is what For returns: a backend bound to one instance's context, which

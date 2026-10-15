@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tuna-os/corral/pkg/incus"
 	"github.com/tuna-os/corral/pkg/shell"
 	"github.com/tuna-os/corral/pkg/types"
 )
@@ -235,6 +236,50 @@ func TestLibvirt_SurfacesVirshMessage(t *testing.T) {
 	}
 }
 
+// List used to label every libvirt snapshot crash-consistent, also one taken
+// with the domain shut off. snapshot-info records the domain state (#491).
+func TestLibvirt_ListReportsTheRecordedDomainState(t *testing.T) {
+	fake := withFake(t)
+	fake.AddResponse("virsh -c qemu:///system snapshot-list --domain web --name", "cold\nhot\n", nil)
+	fake.AddResponse("virsh -c qemu:///system snapshot-info --domain web --snapshotname cold",
+		"Name:           cold\nDomain:         web\nState:          shutoff\nCreation time:  2026-01-02 10:00:00 +0000\n", nil)
+	fake.AddResponse("virsh -c qemu:///system snapshot-info --domain web --snapshotname hot",
+		"Name:           hot\nDomain:         web\nState:          running\n", nil)
+
+	snaps, err := (Libvirt{}).List(libvirtRef("web"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]Consistency{}
+	for _, s := range snaps {
+		got[s.Name] = s.Consistency
+	}
+	if got["cold"] != Offline {
+		t.Errorf("snapshot of a shut-off domain = %q, want offline", got["cold"])
+	}
+	if got["hot"] != Crash {
+		t.Errorf("snapshot of a running domain = %q, want crash", got["hot"])
+	}
+}
+
+// Restore must not revert a running domain behind the operator's back (#491).
+func TestLibvirt_RestoreRefusesARunningDomain(t *testing.T) {
+	fake := withFake(t)
+	fake.AddResponse("virsh -c qemu:///system domstate web", "running\n", nil)
+	fake.AddResponse("virsh -c qemu:///system snapshot-revert --domain web --snapshotname s1", "", nil)
+
+	err := (Libvirt{}).Restore(libvirtRef("web"), "s1")
+	var unsupported *Unsupported
+	if !errors.As(err, &unsupported) || !strings.Contains(err.Error(), "corral stop web") {
+		t.Fatalf("Restore of a running domain = %v, want *Unsupported naming the fix", err)
+	}
+	for _, c := range fake.Calls() {
+		if len(c.Args) > 2 && c.Args[2] == "snapshot-revert" {
+			t.Fatal("Restore reverted a running domain")
+		}
+	}
+}
+
 // ── Incus ─────────────────────────────────────────────────────────
 
 func TestIncus_ListStripsTheInstanceQualifier(t *testing.T) {
@@ -251,6 +296,47 @@ func TestIncus_ListStripsTheInstanceQualifier(t *testing.T) {
 	}
 	if snaps[0].Created != "2026-01-02T03:04:05Z" {
 		t.Errorf("created = %q, want Incus's own timestamp", snaps[0].Created)
+	}
+}
+
+// Incus keeps the instance's power state in the snapshot's config; a snapshot
+// of a stopped instance is offline, not crash (#491).
+func TestIncus_ListReportsTheRecordedPowerState(t *testing.T) {
+	fake := withFake(t)
+	fake.AddResponse("incus query lab:/1.0/instances/db/snapshots?recursion=1",
+		`[{"name":"db/cold","created_at":"2026-01-02T03:04:05Z","config":{"volatile.last_state.power":"STOPPED"}},
+		  {"name":"db/hot","created_at":"2026-01-03T03:04:05Z","config":{"volatile.last_state.power":"RUNNING"}},
+		  {"name":"db/old","created_at":"2026-01-01T03:04:05Z"}]`, nil)
+
+	snaps, err := (Incus{}).List(incusRef("db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]Consistency{}
+	for _, s := range snaps {
+		got[s.Name] = s.Consistency
+	}
+	if got["cold"] != Offline || got["hot"] != Crash || got["old"] != Crash {
+		t.Errorf("consistency = %v, want cold=offline hot=crash old=crash", got)
+	}
+}
+
+// Restore must not replace a running instance's disk (#491).
+func TestIncus_RestoreRefusesARunningInstance(t *testing.T) {
+	fake := withFake(t)
+	fake.AddResponse("incus snapshot restore lab:web s1", "", nil)
+	instances := shell.NewFake()
+	instances.AddResponse("incus list lab: --format=json", `[{"name":"web","status":"Running","type":"virtual-machine"}]`, nil)
+	incus.SetRunner(instances)
+	t.Cleanup(func() { incus.SetRunner(shell.Real{}) })
+
+	err := (Incus{}).Restore(incusRef("web"), "s1")
+	var unsupported *Unsupported
+	if !errors.As(err, &unsupported) || !strings.Contains(err.Error(), "corral stop web") {
+		t.Fatalf("Restore of a running instance = %v, want *Unsupported naming the fix", err)
+	}
+	if len(fake.Calls()) != 0 {
+		t.Fatalf("Restore ran %v against a running instance", fake.Calls())
 	}
 }
 

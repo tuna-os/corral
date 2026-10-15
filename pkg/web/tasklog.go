@@ -19,6 +19,7 @@ type TaskEntry struct {
 	Target   string `json:"target"` // "corral-ns/myvm", "datavolume ns/iso", …
 	Status   string `json:"status"` // "running", "ok", "error"
 	Error    string `json:"error,omitempty"`
+	User     string `json:"user,omitempty"`     // caller's tailnet login; empty in single-user mode
 	Started  string `json:"started"`            // RFC3339
 	Duration string `json:"duration,omitempty"` // set when finished
 }
@@ -47,14 +48,14 @@ func resetActivity() {
 }
 
 // begin records a running task and returns a finish func to call with the
-// outcome. Usage: done := taskBegin("start", ns+"/"+name); …; done(err)
-func taskBegin(action, target string) func(error) {
+// outcome. Usage: done := taskBegin(requestUser(r), "start", ns+"/"+name); …; done(err)
+func taskBegin(user, action, target string) func(error) {
 	activity.mu.Lock()
 	defer activity.mu.Unlock()
 	activity.nextID++
 	id := activity.nextID
 	e := &TaskEntry{
-		ID: id, Action: action, Target: target,
+		ID: id, Action: action, Target: target, User: user,
 		Status: "running", Started: time.Now().Format(time.RFC3339),
 	}
 	activity.entries = append(activity.entries, e)
@@ -78,6 +79,12 @@ func taskBegin(action, target string) func(error) {
 			e.Status = "ok"
 		}
 	}
+}
+
+// requestUser is the login a task is recorded against.
+func requestUser(r *http.Request) string {
+	login, _ := caller(r)
+	return login
 }
 
 // GET /api/tasklog — recent server-side tasks, newest first.
