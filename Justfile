@@ -27,6 +27,11 @@ test:
     go test -race -shuffle=on -count=1 ./...
     go test -race -shuffle=on -count=1 -tags bootc ./...
 
+# Unit tests for the web client's ES modules (pkg/web/jstest). Plain Node 22+,
+# nothing to npm install: Node imports the shipped files as the browser does.
+test-js:
+    node --test pkg/web/jstest/
+
 # The generated layer, built inside a real bootc image. Needs podman or docker
 # and about a minute — no KVM, no root. Run this before touching the shell
 # pkg/vmtest generates: it is where three CI failures in a row actually lived.

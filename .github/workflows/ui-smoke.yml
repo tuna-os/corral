@@ -31,6 +31,11 @@ jobs:
         with:
           node-version: 24
 
+      # Before the Playwright step: its `npm init` writes a package.json at the
+      # root, and that would make Node load the client's .js files as CommonJS.
+      - name: Web client unit tests
+        run: node --test pkg/web/jstest/
+
       - name: Build corral
         run: go build -o corral .
 

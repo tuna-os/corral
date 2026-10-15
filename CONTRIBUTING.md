@@ -31,6 +31,7 @@ just build   # go build, both tag sets
 just test    # go test -race, both tag sets
 just lint    # golangci-lint (repo-wide except errcheck, errcheck on diff)
 just cover   # go test -coverprofile, fails if below .coverage-budget floor
+just test-js # node --test, the web client's ES module unit tests
 ```
 
 Some tests use real tools (qemu-img, rclone conversions). If you touch that
