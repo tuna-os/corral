@@ -27,7 +27,7 @@ Corral gives the URI to `virsh -c URI` without a change. If
 | Create | yes, from an ISO or a qcow2 disk, through `virt-install` |
 | Console | web VNC (also through SSH), `corral viewer` and the TUI run `virt-viewer` |
 | SSH | no, `corral ssh` refuses libvirt domains. Use `ssh` to the guest address |
-| Snapshots | TUI only today, see [backend support](backend-support.md#incus-and-libvirt-snapshots-migration-and-hotplug) |
+| Snapshots | yes (CLI, TUI, web), see [backend support](backend-support.md#incus-and-libvirt-snapshots-migration-and-hotplug) |
 | Cold move to or from another backend | yes, `corral move`. As a source, only from a local URI |
 | Live migration, CPU/RAM change, disk or NIC hotplug | no, not yet |
 
@@ -217,7 +217,7 @@ command does not support libvirt today.
 | `virt-install: ...` | `virt-install` refused the create. The text after the colon comes from `virt-install`, for example a missing pool or network |
 | `libvirt domain "NAME" has no discovered SSH address` | This is expected. Use `ssh` to the guest address |
 | `domain "NAME" does not advertise a VNC display` | The domain has no VNC graphics device. Add one with `virsh edit` |
-| `snapshot is only supported for KubeVirt VMs` | The `corral snapshot` CLI is KubeVirt-only today. Use the TUI Snapshots view ([#491](https://github.com/tuna-os/corral/issues/491)) |
+| `snapshots are not available for the libvirt backend: NAME is running` | A restore needs a stopped domain. Run `corral stop NAME` first |
 | `corral move` shows `... is a remote hypervisor and its disks are not on this filesystem` | Corral can only export disks from a local URI. Run Corral on the hypervisor, or use shared storage |
 
 For more symptoms, see [problems and fixes](troubleshooting.md).

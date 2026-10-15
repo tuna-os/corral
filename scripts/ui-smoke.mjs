@@ -3187,7 +3187,9 @@ await page.route('**/api/capabilities', async (route) => {
   const res = await route.fetch();
   await route.fulfill({ response: res, json: { ...(await res.json()), canSnapshot: false } });
 });
-await page.route('**/api/vms/*/incus-demo-vm/snapshots', (route) => (route.request().method() === 'GET'
+// Matched on the path: the request carries ?context= for the Incus remote.
+const incusSnapshots = (url) => url.pathname.endsWith('/incus-demo-vm/snapshots');
+await page.route(incusSnapshots, (route) => (route.request().method() === 'GET'
   ? route.fulfill({
     status: 200,
     contentType: 'application/json',
@@ -3208,7 +3210,7 @@ check(await page.locator('#snap-rows td:has-text("before-upgrade")').count() ===
 check(await page.locator('#snap-rows td:has-text("offline")').count() === 1, 'snapshots: the table shows each snapshot\'s consistency');
 await page.screenshot({ path: `${SHOTS}/snapshots-incus.png` }).catch(() => {});
 await page.unroute('**/api/capabilities');
-await page.unroute('**/api/vms/*/incus-demo-vm/snapshots');
+await page.unroute(incusSnapshots);
 
 // ── read-only gate ────────────────────────────────────────────
 // The e2e identity-gate spec mocks whoami because kind cannot inject a
