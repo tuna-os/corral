@@ -1,6 +1,6 @@
 # RFC-0003: Enterprise backends — VMware vSphere, Nutanix, XenServer/XCP-ng, VirtualBox
 
-**Status:** Proposed. Draft; this RFC changes no code.
+**Status:** Proposal. Draft; this RFC changes no code.
 **Date:** 2026-10-11
 **Author:** omp + coding assistant
 
