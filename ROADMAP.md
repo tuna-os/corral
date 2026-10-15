@@ -60,8 +60,7 @@ flowchart TD
   V1 --> V2["#228 session reclaim"]
   V1 --> V3["#229 one-click connect"]
   R3 --> V3
-  V4["#230 CT-backed pools"]
-  V2 & V3 & V4 --> VGA["#69 VDI GA"]
+  V2 & V3 --> VGA["#69 VDI GA"]
   S1["#505 plugin signing + SBOM"]
   BG["#431 tunaOS boot gate"]
   subgraph P3["Phase 3: enterprise readiness"]
@@ -111,8 +110,7 @@ criteria for this phase (#404).
 | VDI self-service broker API | #227 | #503 |
 | VDI session tracking and reclaim | #228 | #227 |
 | VDI one-click connect | #229 | #227, #288 |
-| VDI CT-backed ephemeral pools | #230 | — |
-| VDI GA | #69 | #228, #229, #230 |
+| VDI GA | #69 | #228, #229 |
 | Plugin signing and SBOM verification | #505 | — |
 | Structured logs and request tracing for CLI/TUI | #419 | #503 |
 | Enterprise backends (RFC-0003) | #507 | #214 |
@@ -148,6 +146,8 @@ Show HN brings many first-time clones and installs.
 - Split `pkg/web/server.go` into routes, request middleware, task tracker,
   and create-target files, with characterization tests first: #503
   (#529, #559, #563).
+- VDI pools of ephemeral CT desktops
+  ([docs/vdi-ct-pools.md](docs/vdi-ct-pools.md)): #230.
 
 ---
 

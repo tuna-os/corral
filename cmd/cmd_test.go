@@ -972,8 +972,7 @@ func TestPerformCTAction_DispatchesToCTPackage(t *testing.T) {
 	incus.SetRunner(incusFake)
 	defer incus.SetRunner(shell.Real{})
 
-	m := &tuiModel{isCT: true, selectedCT: ctpkg.CT{Name: "web1", Namespace: "corral-ct"}}
-	m.performCTAction("stop")
+	ctAction(ctpkg.CT{Name: "web1", Namespace: "corral-ct"}, "stop")
 
 	found := false
 	for _, c := range fake.Calls() {
@@ -982,7 +981,7 @@ func TestPerformCTAction_DispatchesToCTPackage(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Error("performCTAction(\"stop\") should have called kubectl delete pod via pkg/ct")
+		t.Error("ctAction(\"stop\") should have called kubectl delete pod via pkg/ct")
 	}
 }
 

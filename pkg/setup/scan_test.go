@@ -306,3 +306,21 @@ func TestRankedSingleDefault(t *testing.T) {
 		t.Fatalf("ranked has %d READY, want exactly one default candidate", ready)
 	}
 }
+
+// The scan, not the wizard, says which backends get a context offer: incus,
+// libvirt, and kubevirt do; local QEMU needs no context, a Proxmox host comes
+// from flags, and the rest are not probed at all (#214).
+func TestScanMarksWhichBackendsAreOffered(t *testing.T) {
+	isolate(t)
+	SetRunner(newTestRunner())
+	r := Scan()
+	want := map[string]bool{
+		"qemu": false, "incus": true, "libvirt": true, "kubevirt": true, "proxmox": false,
+		"virtualbox": false, "vsphere": false, "xen": false, "nutanix": false,
+	}
+	for b, offer := range want {
+		if got := verdict(t, r, b); got.Offerable != offer {
+			t.Errorf("%s Offerable = %v, want %v", b, got.Offerable, offer)
+		}
+	}
+}

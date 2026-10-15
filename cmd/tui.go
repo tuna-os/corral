@@ -291,11 +291,8 @@ func newTUIModel() tuiModel {
 	// Update. lipgloss v2 has no AdaptiveColor to defer this for us.
 	th := newTheme(true)
 
-	items, errs := loadTUIItems(th)
-	cts, _ := ct.ListCTs()
-	for _, c := range cts {
-		items = append(items, ctToItem(c, th))
-	}
+	fleet := loadFleet(th)
+	items, errs := fleet.items, fleet.errors
 
 	l := list.New(items, vmItemDelegate{th: th}, 0, 0)
 	l.SetSize(80, 36)
@@ -383,8 +380,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.list.SetDelegate(vmItemDelegate{th: m.th})
 		m.spin.Style = lipgloss.NewStyle().Foreground(m.th.p.primary)
 		m.actionsList = m.newActionsList()
-		// The item descriptions carry colour, so they have to be rebuilt too.
-		m.refreshList()
+		// The item descriptions carry colour, so they have to be redrawn too.
+		m.restyle()
 		return m, nil
 
 	case spinner.TickMsg:
@@ -408,8 +405,16 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.MouseClickMsg, tea.MouseWheelMsg:
 		// A click or a wheel tick, mapped to a row by cmd/tui_mouse.go. An
-		// event that lands on nothing leaves the model untouched.
-		m.handleMouse(msg)
+		// event that lands on nothing leaves the model untouched, and so does
+		// one that arrives while an operation runs, like a key would.
+		if m.busy {
+			return m, nil
+		}
+		_, cmd := m.handleMouse(msg)
+		return m, cmd
+
+	case fleetMsg, cloneDoneMsg, createDoneMsg, doctorMsg:
+		m.updateOp(msg)
 		return m, nil
 
 	case pluginsLoadedMsg:
@@ -442,6 +447,15 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		if m.showHelp {
 			m.showHelp = false
+			return m, nil
+		}
+		// Keys typed while an operation runs would act on a fleet that is
+		// about to change, so they are dropped; ctrl+c still quits.
+		if m.busy {
+			if msg.String() == "ctrl+c" {
+				next, cmd := m.quit()
+				return next, cmd
+			}
 			return m, nil
 		}
 		next, cmd := screens[m.mode].update(m, msg)
@@ -499,17 +513,12 @@ func (m *tuiModel) runSelectedAction() tea.Cmd {
 		// and the two must not be confusable in a menu (ADR-0010).
 		m.pools = newMoveDestinationState(m.selected)
 		m.mode = ModePools
-	case "template":
-		m.toggleTemplate()
-		m.refreshList()
+	case "template", "start", "stop", "restart", "pause", "unpause", "migrate":
 		m.mode = ModeList
-	case "start", "stop", "restart", "pause", "unpause", "migrate":
-		m.performAction(item.id)
-		m.refreshList()
-		m.mode = ModeList
+		return m.runActionCmd(item.id)
 	case "ssh", "viewer", "export":
-		actionID := item.id
-		postQuitAction = func() { m.performAction(actionID) }
+		actionID, t := item.id, m.target()
+		postQuitAction = func() { t.run(actionID) }
 		m.quitting = true
 		return tea.Quit
 	case "console":
@@ -523,15 +532,18 @@ func (m *tuiModel) runSelectedAction() tea.Cmd {
 	return nil
 }
 
-func (m *tuiModel) performAction(action string) {
-	if m.isCT {
-		m.performCTAction(action)
-		return
+// run performs action on the target and returns the outcome for the status
+// bar. It calls backends directly, so the TUI runs it from a command (see
+// cmd/tui_ops.go) or after the program has quit, never inside Update.
+func (t actionTarget) run(action string) (notice, kind string) {
+	if t.isCT {
+		ctAction(t.ct, action)
+		return "", ""
 	}
-	name := m.selected.Name
-	backend := m.selected.Backend
-	contextName := m.selected.Context
-	ns := m.selected.Namespace
+	name := t.vm.Name
+	backend := t.vm.Backend
+	contextName := t.vm.Context
+	ns := t.vm.Namespace
 	if ns == "" {
 		ns = "default"
 	}
@@ -546,11 +558,15 @@ func (m *tuiModel) performAction(action string) {
 	// perform now reports why, where the ladder silently did nothing.
 	switch action {
 	case "start", "stop", "restart", "delete", "pause", "unpause", "migrate":
-		m.performBackendAction(action)
+		notice, kind = backendAction(t.vm, action)
 		if action == "delete" && registryStore != nil {
-			registryStore.RemoveRef(m.selected.Ref())
+			if err := registryStore.RemoveRef(t.vm.Ref()); err != nil && kind == "ok" {
+				return notice + " (registry entry kept: " + err.Error() + ")", "warn"
+			}
 		}
-		return
+		return notice, kind
+	case "template":
+		return toggleTemplate(t.vm)
 	case "export":
 		if backend == "kubevirt" {
 			out, err := kubevirt.NewClientForContext(ns, contextName).Export(name, "", "")
@@ -561,13 +577,13 @@ func (m *tuiModel) performAction(action string) {
 			}
 		}
 	case "viewer":
-		if err := viewSelected(m.selected.Ref()); err != nil {
+		if err := viewSelected(t.vm.Ref()); err != nil {
 			fmt.Fprintln(os.Stderr, "viewer failed:", err)
 		}
 	case "ssh":
 		user, password := "", ""
 		if registryStore != nil {
-			if entry, ok := registryStore.GetRef(m.selected.Ref()); ok {
+			if entry, ok := registryStore.GetRef(t.vm.Ref()); ok {
 				user, password = entry.Username, entry.Password
 			}
 		}
@@ -585,6 +601,7 @@ func (m *tuiModel) performAction(action string) {
 			qemu.SSH(name, user, "", "", 22, password, nil)
 		}
 	}
+	return "", ""
 }
 
 // viewSelected opens the graphical console of the instance through its
@@ -601,14 +618,13 @@ func viewSelected(ref types.InstanceRef) error {
 	return viewer.View(ref.Name)
 }
 
-// performCTAction is performAction's CT counterpart — a much smaller
-// surface (no backend split, no migrate/snapshot/pause) since a CT is
-// always a plain pod, never a hypervisor guest. "console" isn't handled
-// here — it's a quit-then-exec action (see the actions screen's enter
-// handler), same as ssh/viewer/export, since it needs the real terminal
-// back after Bubble Tea releases it.
-func (m *tuiModel) performCTAction(action string) {
-	name, ns := m.selectedCT.Name, m.selectedCT.Namespace
+// ctAction is run's CT counterpart — a much smaller surface (no backend
+// split, no migrate/snapshot/pause) since a CT is always a plain pod, never a
+// hypervisor guest. "console" isn't handled here — it's a quit-then-exec
+// action (see the actions screen's enter handler), same as ssh/viewer/export,
+// since it needs the real terminal back after Bubble Tea releases it.
+func ctAction(c ct.CT, action string) {
+	name, ns := c.Name, c.Namespace
 
 	switch action {
 	case "start":
@@ -658,16 +674,6 @@ func runClone(src types.VM, dst string) error {
 		}
 	}
 	return nil
-}
-
-func (m *tuiModel) refreshList() {
-	items, errs := loadTUIItems(m.th)
-	cts, _ := ct.ListCTs()
-	for _, c := range cts {
-		items = append(items, ctToItem(c, m.th))
-	}
-	m.allItems, m.errors, m.refreshedAt = items, errs, time.Now()
-	m.applyContextFilter()
 }
 
 func loadTUIItems(th theme) ([]list.Item, map[string]string) {
@@ -860,12 +866,17 @@ func (m tuiModel) doctorView() string {
 	if fixable {
 		hints = append([]keyHint{{"f", "reconcile fixable"}}, hints...)
 	}
+	// The checks run in a command; until they land the table is empty.
+	progress := ""
+	if m.busy {
+		progress = m.spin.View() + " " + m.busyLabel
+	}
 
 	return lipgloss.JoinVertical(lipgloss.Left,
 		m.th.title.Render(" Fleet health "),
 		"",
 		t.String(),
-		m.th.statusBar(m.width, hints, "", m.th.muted),
+		m.th.statusBar(m.width, hints, progress, m.th.muted),
 	)
 }
 

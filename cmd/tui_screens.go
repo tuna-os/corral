@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/tuna-os/corral/pkg/doctor"
 )
 
 // screen is one of the TUI's screens: how it handles a key and how it draws.
@@ -57,34 +56,31 @@ func (m tuiModel) updateList(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 		m.mode = ModePlugins
 		return m, fetchPluginsCmd()
 	case "d":
-		m.doctorRows = fleetDiagnosis()
+		m.doctorRows = nil
 		m.mode = ModeDoctor
-		return m, nil
+		cmd := m.doctorCmd(false)
+		return m, cmd
 	case "?":
 		m.showHelp = true
 		return m, nil
 	case "r":
-		m.refreshList()
-		m.notice = "Fleet refreshed"
-		return m, nil
+		cmd := m.refreshCmd("Fleet refreshed")
+		return m, cmd
 	case "tab", "]":
 		m.cycleContext(1)
 		return m, nil
 	case "shift+tab", "[":
 		m.cycleContext(-1)
 		return m, nil
-	case "s":
-		if item, ok := m.list.SelectedItem().(vmItem); ok && actionApplies("start", item.vm) {
-			m.selected, m.isCT = item.vm, false
-			m.performAction("start")
-			m.refreshList()
+	case "s", "x":
+		action := "start"
+		if msg.String() == "x" {
+			action = "stop"
 		}
-		return m, nil
-	case "x":
-		if item, ok := m.list.SelectedItem().(vmItem); ok && actionApplies("stop", item.vm) {
+		if item, ok := m.list.SelectedItem().(vmItem); ok && actionApplies(action, item.vm) {
 			m.selected, m.isCT = item.vm, false
-			m.performAction("stop")
-			m.refreshList()
+			cmd := m.runActionCmd(action)
+			return m, cmd
 		}
 		return m, nil
 	case "enter":
@@ -126,8 +122,8 @@ func (m tuiModel) updateEdit(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 	m.edit = em.(editModel)
 	if m.edit.done {
 		m.mode = ModeList
-		m.refreshList()
-		return m, nil
+		cmd := m.refreshCmd("")
+		return m, cmd
 	}
 	return m, cmd
 }
@@ -139,8 +135,8 @@ func (m tuiModel) updateHWEdit(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 	m.hwEdit = hm.(hwEditModel)
 	if m.hwEdit.done {
 		m.mode = ModeList
-		m.refreshList()
-		return m, nil
+		cmd := m.refreshCmd("")
+		return m, cmd
 	}
 	return m, cmd
 }
@@ -160,23 +156,19 @@ func (m tuiModel) updateCreate(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 		m.mode = ModeList
 		return m, nil
 	case crSubmit:
-		name := strings.TrimSpace(m.create.name.Value())
-		m.busy, m.busyLabel = true, "Creating "+name
-		if err := applyCreate(m.create); err != nil {
-			m.busy = false
-			m.create.err = err.Error()
-			return m, nil
-		}
-		m.busy = false
-		m.refreshList()
-		m.mode = ModeList
-		m.notice, m.noticeKind = "Created "+name, "ok"
-		return m, nil
+		cmd := m.createCmd()
+		return m, cmd
 	}
 	return m, cmd
 }
 
-func (m tuiModel) createView() string { return m.create.render(m.th, m.width) }
+func (m tuiModel) createView() string {
+	view := m.create.render(m.th, m.width)
+	if m.busy {
+		view += "\n  " + m.spin.View() + " " + m.th.muted.Render(m.busyLabel)
+	}
+	return view
+}
 
 func (m tuiModel) updatePlugins(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 	pm, cmd, back := m.plugins.Update(msg)
@@ -208,13 +200,8 @@ func (m tuiModel) updateCloneInput(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 			m.cloneErr = "name can't be empty"
 			return m, nil
 		}
-		if err := runClone(m.selected, dst); err != nil {
-			m.cloneErr = err.Error()
-			return m, nil
-		}
-		m.refreshList()
-		m.mode = ModeList
-		return m, nil
+		cmd := m.cloneCmd(dst)
+		return m, cmd
 	}
 	var cmd tea.Cmd
 	m.cloneInput, cmd = m.cloneInput.Update(msg)
@@ -230,6 +217,9 @@ func (m tuiModel) cloneInputView() string {
 	if m.cloneErr != "" {
 		sb.WriteString("\n  " + tuiStopped.Render(m.cloneErr) + "\n")
 	}
+	if m.busy {
+		sb.WriteString("\n  " + m.spin.View() + " " + m.th.muted.Render(m.busyLabel) + "\n")
+	}
 	sb.WriteString("\n" + tuiHelp.Render("  enter clone · esc cancel"))
 	return sb.String()
 }
@@ -239,9 +229,9 @@ func (m tuiModel) cloneInputView() string {
 func (m tuiModel) updateConfirmDelete(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 	switch msg.String() {
 	case "y", "Y":
-		m.performAction("delete")
-		m.refreshList()
 		m.mode = ModeList
+		cmd := m.runActionCmd("delete")
+		return m, cmd
 	case "ctrl+c":
 		return m.quit()
 	default:
@@ -270,8 +260,9 @@ func (m tuiModel) updatePoolsScreen(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 		if m.pools.notice != "" {
 			m.notice, m.noticeKind = m.pools.notice, "ok"
 		}
-		m.refreshList()
 		m.mode = ModeList
+		cmd := m.refreshCmd("")
+		return m, cmd
 	}
 	return m, nil
 }
@@ -283,7 +274,8 @@ func (m tuiModel) updateSnapshotsScreen(msg tea.KeyPressMsg) (tuiModel, tea.Cmd)
 	if !m.updateSnapshots(msg) {
 		m.mode = ModeActions
 		// A restore or a delete changes what the list shows.
-		m.refreshList()
+		cmd := m.refreshCmd("")
+		return m, cmd
 	}
 	return m, nil
 }
@@ -303,9 +295,8 @@ func (m tuiModel) updateEvents(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 func (m tuiModel) updateDoctor(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 	switch msg.String() {
 	case "f":
-		// A fix that fails shows up in the checks that follow it.
-		_, _ = doctor.Fix()
-		m.doctorRows = fleetDiagnosis()
+		cmd := m.doctorCmd(true)
+		return m, cmd
 	case "esc", "q", "enter":
 		m.mode = ModeList
 	case "ctrl+c":

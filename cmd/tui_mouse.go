@@ -88,15 +88,16 @@ func rowAt(g listGeom, x, y, top int) (int, bool) {
 
 // handleMouse routes a click or a wheel tick to whatever is on screen. It
 // returns false when the event means nothing in this state, so Update can leave
-// the model alone instead of redrawing for a stray movement.
-func (m *tuiModel) handleMouse(msg tea.Msg) bool {
+// the model alone instead of redrawing for a stray movement, and the command a
+// click starts — a double click runs the same actions Enter does.
+func (m *tuiModel) handleMouse(msg tea.Msg) (bool, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.MouseWheelMsg:
-		return m.handleWheel(msg)
+		return m.handleWheel(msg), nil
 	case tea.MouseClickMsg:
 		return m.handleClick(msg)
 	}
-	return false
+	return false, nil
 }
 
 func (m *tuiModel) handleWheel(msg tea.MouseWheelMsg) bool {
@@ -140,28 +141,28 @@ func (m *tuiModel) handleWheel(msg tea.MouseWheelMsg) bool {
 	return true
 }
 
-func (m *tuiModel) handleClick(msg tea.MouseClickMsg) bool {
+func (m *tuiModel) handleClick(msg tea.MouseClickMsg) (bool, tea.Cmd) {
 	if msg.Button != tea.MouseLeft {
-		return false
+		return false, nil
 	}
 
 	switch m.mode {
 	case ModeList:
 		index, ok := rowAt(geomOf(m.list, vmItemDelegate{}.Height()+vmItemDelegate{}.Spacing()), msg.X, msg.Y, headerHeight)
 		if !ok {
-			return false
+			return false, nil
 		}
 		repeat := m.registerClick(index)
 		m.list.Select(index)
 		if repeat {
 			m.openActionsForSelection()
 		}
-		return true
+		return true, nil
 
 	case ModeActions:
 		index, ok := rowAt(geomOf(m.actionsList, actionItemDelegate{}.Height()+actionItemDelegate{}.Spacing()), msg.X, msg.Y, 0)
 		if !ok {
-			return false
+			return false, nil
 		}
 		repeat := m.registerClick(index)
 		m.actionsList.Select(index)
@@ -169,9 +170,9 @@ func (m *tuiModel) handleClick(msg tea.MouseClickMsg) bool {
 			// A double click runs the action, and a destructive one still has
 			// to pass its confirmation — runSelectedAction is the same path
 			// Enter takes.
-			m.runSelectedAction()
+			return true, m.runSelectedAction()
 		}
-		return true
+		return true, nil
 
 	case ModeEdit:
 		// The ports form draws its own lines: the title, a blank, then one row
@@ -179,13 +180,12 @@ func (m *tuiModel) handleClick(msg tea.MouseClickMsg) bool {
 		const portsFirstRow = 2
 		row := msg.Y - portsFirstRow
 		if row < 0 || row > len(m.edit.ports)+1 {
-			return false
+			return false, nil
 		}
 		m.edit.cursor = row
-		m.edit.activateCursor()
-		return true
+		return true, m.edit.activateCursor()
 	}
-	return false
+	return false, nil
 }
 
 // registerClick reports whether this click completes a double click on the same

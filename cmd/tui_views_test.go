@@ -116,11 +116,23 @@ func key(s string) tea.KeyPressMsg {
 	}
 }
 
-// press feeds keys to the model in order and returns the final state.
+// press feeds keys to the model in order and returns the final state. Backend
+// work a key starts (the model goes busy and returns a command) runs to the
+// end before the next key, the way an operator waits for the spinner.
 func press(m tuiModel, keys ...string) tuiModel {
 	for _, k := range keys {
-		next, _ := m.Update(key(k))
-		m = next.(tuiModel)
+		next, cmd := m.Update(key(k))
+		m = settle(next.(tuiModel), cmd)
+	}
+	return m
+}
+
+// settle runs the command of a busy model and feeds its result back, until the
+// model is idle again.
+func settle(m tuiModel, cmd tea.Cmd) tuiModel {
+	for m.busy && cmd != nil {
+		next, c := m.Update(cmd())
+		m, cmd = next.(tuiModel), c
 	}
 	return m
 }
@@ -679,7 +691,7 @@ func TestTUITemplate_TogglesBothWays(t *testing.T) {
 	f.AddPrefixResponse("kubectl label", "", nil)
 
 	m := testModel(kubeVM("golden"))
-	m.toggleTemplate()
+	m.notice, m.noticeKind = toggleTemplate(m.selected)
 	if m.noticeKind != "ok" || !strings.Contains(m.notice, "marked as a template") {
 		t.Errorf("notice = %q (%s), want a mark confirmation", m.notice, m.noticeKind)
 	}
@@ -692,7 +704,7 @@ func TestTUITemplate_TogglesBothWays(t *testing.T) {
 	marked := kubeVM("golden")
 	marked.IsTemplate = true
 	m = testModel(marked)
-	m.toggleTemplate()
+	m.notice, m.noticeKind = toggleTemplate(m.selected)
 	if !strings.Contains(m.notice, "no longer a template") {
 		t.Errorf("notice = %q, want an unmark confirmation", m.notice)
 	}
@@ -706,7 +718,7 @@ func TestTUITemplate_FailureIsReported(t *testing.T) {
 	f.AddPrefixResponse("kubectl label", "", errors.New("vm not found"))
 
 	m := testModel(kubeVM("ghost"))
-	m.toggleTemplate()
+	m.notice, m.noticeKind = toggleTemplate(m.selected)
 	if m.noticeKind != "error" || !strings.Contains(m.notice, "vm not found") {
 		t.Errorf("notice = %q (%s), want the failure reported", m.notice, m.noticeKind)
 	}
@@ -879,7 +891,7 @@ func TestTUIBackendAction_RefusesWithTheBackendNamed(t *testing.T) {
 	// migrate, not pause: pause is implemented on every backend now, so it no
 	// longer demonstrates a refusal. Incus cannot migrate between remotes yet,
 	// and the matrix names that gap.
-	m.performBackendAction("migrate")
+	m.notice, m.noticeKind = backendAction(m.selected, "migrate")
 	if m.noticeKind != "error" {
 		t.Fatalf("notice kind = %q, want an error", m.noticeKind)
 	}
@@ -894,7 +906,7 @@ func TestTUIBackendAction_UnknownBackendIsReported(t *testing.T) {
 	demo.Enable()
 
 	m := testModel(types.VM{Name: "mystery", Backend: "vmware", Status: "Running", Running: true})
-	m.performBackendAction("start")
+	m.notice, m.noticeKind = backendAction(m.selected, "start")
 	if m.noticeKind != "error" || !strings.Contains(m.notice, "vmware") {
 		t.Errorf("notice = %q (%s), want an error naming the backend", m.notice, m.noticeKind)
 	}
@@ -909,7 +921,7 @@ func TestTUIBackendAction_ReportsSuccess(t *testing.T) {
 		Name: "dev-fedora", Backend: "kubevirt", Namespace: "corral-vms",
 		Status: "Stopped",
 	})
-	m.performBackendAction("start")
+	m.notice, m.noticeKind = backendAction(m.selected, "start")
 	if m.noticeKind != "ok" {
 		t.Fatalf("notice = %q (%s), want a success", m.notice, m.noticeKind)
 	}
@@ -927,7 +939,7 @@ func TestTUIBackendAction_MigrateRelaysThePreflight(t *testing.T) {
 		Name: "dev-fedora", Backend: "kubevirt", Namespace: "corral-vms",
 		Status: "Stopped", LiveMigratable: false,
 	})
-	m.performBackendAction("migrate")
+	m.notice, m.noticeKind = backendAction(m.selected, "migrate")
 	if m.noticeKind != "error" {
 		t.Fatalf("notice = %q (%s), want the pre-flight refusal", m.notice, m.noticeKind)
 	}
@@ -966,7 +978,7 @@ func TestTUIEventsAndTemplate_RefuseABackendWithoutTheFamily(t *testing.T) {
 		t.Errorf("events on an Incus VM: err = %q, want a refusal naming incus", m.events.err)
 	}
 
-	m.toggleTemplate()
+	m.notice, m.noticeKind = toggleTemplate(m.selected)
 	if m.noticeKind != "error" || !strings.Contains(m.notice, "incus backend does not support template") {
 		t.Errorf("template on an Incus VM: notice = %q (%s), want a refusal naming incus", m.notice, m.noticeKind)
 	}
