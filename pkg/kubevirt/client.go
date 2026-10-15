@@ -1,6 +1,7 @@
 package kubevirt
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
@@ -84,10 +85,27 @@ func LoadSSHPublicKey() string {
 type Client struct {
 	Namespace string
 	Context   string
-	Runner    shell.Runner // injected for tests; defaults to shell.Real
+	Runner    shell.Runner    // injected for tests; defaults to shell.Real
+	ctx       context.Context // request context for command logs; nil outside a request
+}
+
+// WithContext returns a copy of c whose commands are bound to ctx, so their
+// log records carry the request ID that ctx carries.
+func (c *Client) WithContext(ctx context.Context) *Client {
+	bound := *c
+	bound.ctx = ctx
+	return &bound
 }
 
 func (c *Client) runner() shell.Runner {
+	r := c.baseRunner()
+	if c.ctx == nil {
+		return r
+	}
+	return shell.Bind(c.ctx, r)
+}
+
+func (c *Client) baseRunner() shell.Runner {
 	if c.Runner != nil {
 		return c.Runner
 	}

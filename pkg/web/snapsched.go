@@ -42,7 +42,7 @@ func everyToCron(every string) (string, error) {
 // GET /api/vms/{ns}/{name}/snapschedule → {schedule, keep, lastRun} or {}
 func handleGetSnapSchedule(w http.ResponseWriter, r *http.Request) {
 	ns, name := r.PathValue("ns"), r.PathValue("name")
-	out, err := defaultRunner.Run("kubectl", "get", "cronjob", snapCronName(name),
+	out, err := requestRunner(r).Run("kubectl", "get", "cronjob", snapCronName(name),
 		"-n", ns, "-o", "json")
 	if err != nil {
 		jsonResp(w, http.StatusOK, map[string]any{}) // no schedule
@@ -111,7 +111,7 @@ func handleSetSnapSchedule(w http.ResponseWriter, r *http.Request) {
 func handleDeleteSnapSchedule(w http.ResponseWriter, r *http.Request) {
 	ns, name := r.PathValue("ns"), r.PathValue("name")
 	done := taskBegin(requestUser(r), "remove snapshot schedule", ns+"/"+name)
-	_, err := defaultRunner.Run("kubectl", "delete", "cronjob", snapCronName(name),
+	_, err := requestRunner(r).Run("kubectl", "delete", "cronjob", snapCronName(name),
 		"-n", ns, "--ignore-not-found")
 	done(err)
 	if err != nil {

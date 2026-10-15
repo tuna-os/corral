@@ -339,12 +339,19 @@ func (a virtualboxAdapter) Resume(name string) error { return a.client.Resume(na
 // surface that fired and forgot would report success for a migration that failed
 // thirty seconds later.
 
-type proxmoxAdapter struct{ context string }
+type proxmoxAdapter struct {
+	context string
+	ctx     context.Context // request context for API-call logs; nil outside a request
+}
 
 func (proxmoxAdapter) Backend() string { return "proxmox" }
 
 func (a proxmoxAdapter) client() (*proxmoxbe.Client, error) {
-	return proxmoxbe.ClientForContext(a.context)
+	c, err := proxmoxbe.ClientForContext(a.context)
+	if err != nil || a.ctx == nil {
+		return c, err
+	}
+	return c.WithContext(a.ctx), nil
 }
 
 // wait runs a task-returning operation to completion.

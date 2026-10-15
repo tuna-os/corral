@@ -77,7 +77,7 @@ func TestCollectorPeerPollsAreNotActivity(t *testing.T) {
 	}
 
 	fetchPeerVMs(backgroundPoll(context.Background()))
-	peerVMs()
+	fetchPeerVMs(context.Background())
 	if len(counted) != 2 || counted[0] || !counted[1] {
 		t.Fatalf("counted = %v, want [false true] (collector poll, then user-driven fetch)", counted)
 	}

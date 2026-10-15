@@ -21,7 +21,7 @@ type gpuDevice struct {
 
 // GET /api/gpus — passthrough devices permitted in the KubeVirt CR.
 func handleListGPUs(w http.ResponseWriter, r *http.Request) {
-	out, err := defaultRunner.Run("kubectl", "get", "kubevirt", "kubevirt",
+	out, err := requestRunner(r).Run("kubectl", "get", "kubevirt", "kubevirt",
 		"-n", "kubevirt", "-o", "json")
 	if err != nil {
 		jsonResp(w, http.StatusOK, []gpuDevice{}) // no KubeVirt CR / none permitted

@@ -1,8 +1,13 @@
 package web
 
 import (
+	"context"
+	"log/slog"
 	"strings"
 	"sync"
+	"time"
+
+	"github.com/tuna-os/corral/pkg/logging"
 )
 
 // asyncTask is a long-running operation a request started in the background —
@@ -15,6 +20,12 @@ type asyncTask struct {
 	status string // "running", "done", "error"
 	errMsg string
 	done   chan struct{}
+
+	// For the log record of the outcome: the task outlives its request, so
+	// it keeps the request's ID to tie the two together.
+	id      string
+	ctx     context.Context
+	started time.Time
 }
 
 // newAsyncTask creates a running task. Always use this (or taskTracker.start)
@@ -40,6 +51,15 @@ func (t *asyncTask) finish(err error) {
 	}
 	t.mu.Unlock()
 	close(t.done)
+	if t.ctx == nil {
+		return
+	}
+	if err != nil {
+		slog.WarnContext(t.ctx, "task failed", "task", t.id,
+			"duration", time.Since(t.started), "error", logging.Redact(err.Error()))
+		return
+	}
+	slog.InfoContext(t.ctx, "task done", "task", t.id, "duration", time.Since(t.started))
 }
 
 // wait blocks until finish has been called — lets tests synchronize on a
@@ -60,10 +80,17 @@ type taskTracker struct {
 	m sync.Map // id → *asyncTask
 }
 
-// start registers a new running task under id and returns it.
-func (tr *taskTracker) start(id string) *asyncTask {
+// start registers a new running task under id and returns it. ctx is the
+// request that started the task; only its values are kept, so the task does
+// not stop when the request ends.
+func (tr *taskTracker) start(ctx context.Context, id string) *asyncTask {
+	if ctx == nil { // strategy functions called directly, as tests do
+		ctx = context.Background()
+	}
 	t := newAsyncTask()
+	t.id, t.ctx, t.started = id, context.WithoutCancel(ctx), time.Now()
 	tr.m.Store(id, t)
+	slog.InfoContext(t.ctx, "task started", "task", id)
 	return t
 }
 

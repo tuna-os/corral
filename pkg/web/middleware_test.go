@@ -35,7 +35,7 @@ func TestChain_FirstMiddlewareRunsFirst(t *testing.T) {
 }
 
 func TestRequestPipeline_Order(t *testing.T) {
-	want := []middleware{peerServiceAuth, adminGate, activityTracker, peerGate}
+	want := []middleware{requestTracer, peerServiceAuth, adminGate, activityTracker, peerGate}
 	got := requestPipeline()
 	if len(got) != len(want) {
 		t.Fatalf("pipeline has %d middleware, want %d", len(got), len(want))

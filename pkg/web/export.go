@@ -16,7 +16,7 @@ import (
 // pod-local temp file via virtctl, then streamed and removed.
 func handleExport(w http.ResponseWriter, r *http.Request) {
 	ns, name := r.PathValue("ns"), r.PathValue("name")
-	if _, err := defaultRunner.Run("kubectl", "get", "vmi", name, "-n", ns); err == nil {
+	if _, err := requestRunner(r).Run("kubectl", "get", "vmi", name, "-n", ns); err == nil {
 		errResp(w, http.StatusConflict, fmt.Errorf("stop %s before exporting (its disk is in use while running)", name))
 		return
 	}

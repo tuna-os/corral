@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -100,7 +101,7 @@ func TestTaskTracker(t *testing.T) {
 	if _, ok := tr.get("a"); ok {
 		t.Fatal("empty tracker returned a task")
 	}
-	a := tr.start("a")
+	a := tr.start(context.Background(), "a")
 	if got := a.snapshot()["status"]; got != "running" {
 		t.Fatalf("started task status = %q", got)
 	}
@@ -121,7 +122,7 @@ func TestHandleTaskStatus_TracksLifecycle(t *testing.T) {
 	fx := NewTestFixture()
 	defer fx.Close()
 
-	task := tasks.start("char-task")
+	task := tasks.start(context.Background(), "char-task")
 	defer tasks.remove("char-task")
 
 	get := func() map[string]string {

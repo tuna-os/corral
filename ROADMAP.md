@@ -106,7 +106,6 @@ criteria for this phase (#404).
 | VDI session tracking and reclaim | #228 | — |
 | VDI one-click connect | #229 | — |
 | VDI GA | #69 | #228, #229 |
-| Structured logs and request tracing for CLI/TUI | #419 | #503 |
 | Enterprise backends (RFC-0003) | #507 | #214 |
 
 ### Phase 4: Launch and outreach
@@ -148,6 +147,8 @@ Show HN brings many first-time clones and installs.
 - TUI state machine: #305 (#511, #549, #567, #571, #575, #580). Tests
   for each screen transition came first. Each screen has a typed mode, a
   key handler, and a view. Backend work runs in commands, not in `Update`.
+- Structured logs with `log/slog` and request IDs, from the web request to
+  the backend commands: #419 (#578, #579).
 
 ---
 

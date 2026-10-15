@@ -4,12 +4,15 @@ package fleet
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/tuna-os/corral/pkg/backend"
 	"github.com/tuna-os/corral/pkg/config"
+	"github.com/tuna-os/corral/pkg/logging"
 	"github.com/tuna-os/corral/pkg/types"
 )
 
@@ -38,7 +41,9 @@ func List(ctx context.Context) Result {
 				return
 			default:
 			}
-			vms, err := listContext(target)
+			start := time.Now()
+			vms, err := listContext(ctx, target)
+			logContext(ctx, target, len(vms), start, err)
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
@@ -97,12 +102,12 @@ func Resolve(vms []types.VM, selector string) (types.VM, error) {
 }
 
 // listContext inventories one context through its backend's Lister, bound to
-// that context by the adapter.
-func listContext(target config.ContextConfig) ([]types.VM, error) {
+// that context by the adapter and to ctx for the log records of its calls.
+func listContext(ctx context.Context, target config.ContextConfig) ([]types.VM, error) {
 	if !backend.Registered(target.Backend) {
 		return nil, fmt.Errorf("unsupported backend %q", target.Backend)
 	}
-	adapter, err := backend.For(types.InstanceRef{Backend: target.Backend, Context: target.Context})
+	adapter, err := backend.ForContext(ctx, types.InstanceRef{Backend: target.Backend, Context: target.Context})
 	if err != nil {
 		return nil, err
 	}
@@ -111,4 +116,21 @@ func listContext(target config.ContextConfig) ([]types.VM, error) {
 		return nil, fmt.Errorf("the %s backend cannot list its guests", target.Backend)
 	}
 	return lister.List()
+}
+
+// logContext records the outcome of one context's listing at debug level.
+// The caller reports a failure (the CLI prints it, the web server logs it as
+// a warning), so the library does not log it twice at a higher level.
+func logContext(ctx context.Context, target config.ContextConfig, vms int, start time.Time, err error) {
+	attrs := []slog.Attr{
+		slog.String("context", target.Name),
+		slog.String("backend", target.Backend),
+		slog.Duration("duration", time.Since(start)),
+	}
+	if err != nil {
+		attrs = append(attrs, slog.String("error", logging.Redact(err.Error())))
+	} else {
+		attrs = append(attrs, slog.Int("vms", vms))
+	}
+	slog.LogAttrs(ctx, slog.LevelDebug, "fleet context listed", attrs...)
 }

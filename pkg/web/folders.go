@@ -17,13 +17,13 @@ package web
 // cannot do that" into a reportable outcome instead of silence.
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"sort"
 
 	"github.com/tuna-os/corral/pkg/backend"
-	"github.com/tuna-os/corral/pkg/fleet"
 	"github.com/tuna-os/corral/pkg/folder"
 	"github.com/tuna-os/corral/pkg/types"
 )
@@ -67,8 +67,7 @@ func handleListFolders(w http.ResponseWriter, r *http.Request) {
 
 	// The live fleet, so members can be returned as instances rather than as
 	// selectors the client would have to resolve itself.
-	result := fleet.List(r.Context())
-	result.VMs = append(result.VMs, peerVMs()...)
+	result := listFleet(r.Context())
 	byRef := make(map[string]types.VM, len(result.VMs))
 	for _, vm := range result.VMs {
 		byRef[vm.Ref().String()] = vm
@@ -258,8 +257,7 @@ func handleFolderAction(w http.ResponseWriter, r *http.Request) {
 
 	// Live state, so an action that does not apply is reported as skipped rather
 	// than attempted and failed.
-	result := fleet.List(r.Context())
-	result.VMs = append(result.VMs, peerVMs()...)
+	result := listFleet(r.Context())
 	live := make(map[string]types.VM, len(result.VMs))
 	for _, vm := range result.VMs {
 		live[vm.Ref().String()] = vm
@@ -268,7 +266,7 @@ func handleFolderAction(w http.ResponseWriter, r *http.Request) {
 	outcomes := make([]MemberOutcome, 0, len(members))
 	done := taskBegin(requestUser(r), "folder "+body.Action, body.Path)
 	for _, ref := range members {
-		outcomes = append(outcomes, runFolderAction(ref, body.Action, live))
+		outcomes = append(outcomes, runFolderAction(r.Context(), ref, body.Action, live))
 	}
 	done(nil)
 
@@ -292,7 +290,7 @@ func handleFolderAction(w http.ResponseWriter, r *http.Request) {
 
 // runFolderAction applies one action to one member through the operation
 // contract. Every refusal it can give is a sentence an operator can act on.
-func runFolderAction(ref types.InstanceRef, action string, live map[string]types.VM) MemberOutcome {
+func runFolderAction(ctx context.Context, ref types.InstanceRef, action string, live map[string]types.VM) MemberOutcome {
 	outcome := MemberOutcome{Ref: ref.String(), Name: ref.Name, Backend: ref.Backend}
 
 	vm, known := live[ref.String()]
@@ -317,7 +315,7 @@ func runFolderAction(ref types.InstanceRef, action string, live map[string]types
 		}
 	}
 
-	adapter, err := backend.For(ref)
+	adapter, err := backend.ForContext(ctx, ref)
 	if err != nil {
 		outcome.Error = err.Error()
 		return outcome

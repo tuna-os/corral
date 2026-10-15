@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -767,7 +768,7 @@ func TestHandleTaskStatus_Existing(t *testing.T) {
 	defer fx.Close()
 
 	// Register a completed task directly in the package-level tracker
-	task := tasks.start("test-task-1")
+	task := tasks.start(context.Background(), "test-task-1")
 	task.finish(nil) // status = "done"
 	defer tasks.remove("test-task-1")
 

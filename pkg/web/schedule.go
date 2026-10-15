@@ -25,7 +25,7 @@ func stopJobName(vm string) string  { return "corral-stop-" + vm }
 func handleGetPowerSchedule(w http.ResponseWriter, r *http.Request) {
 	ns, name := r.PathValue("ns"), r.PathValue("name")
 	cronSchedule := func(job string) string {
-		out, err := defaultRunner.Run("kubectl", "get", "cronjob", job, "-n", ns,
+		out, err := requestRunner(r).Run("kubectl", "get", "cronjob", job, "-n", ns,
 			"-o", "jsonpath={.spec.schedule}")
 		if err != nil {
 			return ""
@@ -81,10 +81,10 @@ func handleSetPowerSchedule(w http.ResponseWriter, r *http.Request) {
 	}
 	// Clear a boundary the user blanked out.
 	if b.Start == "" {
-		defaultRunner.Run("kubectl", "delete", "cronjob", startJobName(name), "-n", ns, "--ignore-not-found")
+		_, _ = requestRunner(r).Run("kubectl", "delete", "cronjob", startJobName(name), "-n", ns, "--ignore-not-found")
 	}
 	if b.Stop == "" {
-		defaultRunner.Run("kubectl", "delete", "cronjob", stopJobName(name), "-n", ns, "--ignore-not-found")
+		_, _ = requestRunner(r).Run("kubectl", "delete", "cronjob", stopJobName(name), "-n", ns, "--ignore-not-found")
 	}
 	done(nil)
 	jsonResp(w, http.StatusOK, map[string]string{"start": b.Start, "stop": b.Stop})
@@ -94,8 +94,8 @@ func handleSetPowerSchedule(w http.ResponseWriter, r *http.Request) {
 func handleDeletePowerSchedule(w http.ResponseWriter, r *http.Request) {
 	ns, name := r.PathValue("ns"), r.PathValue("name")
 	done := taskBegin(requestUser(r), "remove power schedule", ns+"/"+name)
-	defaultRunner.Run("kubectl", "delete", "cronjob", startJobName(name), "-n", ns, "--ignore-not-found")
-	_, err := defaultRunner.Run("kubectl", "delete", "cronjob", stopJobName(name), "-n", ns, "--ignore-not-found")
+	_, _ = requestRunner(r).Run("kubectl", "delete", "cronjob", startJobName(name), "-n", ns, "--ignore-not-found")
+	_, err := requestRunner(r).Run("kubectl", "delete", "cronjob", stopJobName(name), "-n", ns, "--ignore-not-found")
 	done(err)
 	if err != nil {
 		errResp(w, http.StatusInternalServerError, err)

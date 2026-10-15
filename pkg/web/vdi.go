@@ -179,7 +179,7 @@ func handleVDIRelease(w http.ResponseWriter, r *http.Request, b *vdi.Broker, a v
 		return
 	}
 	id := fmt.Sprintf("vdi-release-%s-%s-%d", ref.Namespace, ref.Name, time.Now().UnixNano())
-	task := tasks.start(id)
+	task := tasks.start(r.Context(), id)
 	go func() { task.finish(release()) }()
 	jsonResp(w, http.StatusAccepted, map[string]string{"task": id, "desktop": ref.ID()})
 }

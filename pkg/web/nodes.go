@@ -37,7 +37,7 @@ func handleNodes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out, err := defaultRunner.Run("kubectl", "get", "nodes", "-o", "json")
+	out, err := requestRunner(r).Run("kubectl", "get", "nodes", "-o", "json")
 	if err != nil {
 		if localNode != nil {
 			jsonResp(w, http.StatusOK, localNode)

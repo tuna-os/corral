@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/tuna-os/corral/pkg/config"
+	"github.com/tuna-os/corral/pkg/logging"
 	"github.com/tuna-os/corral/pkg/types"
 	"golang.org/x/net/websocket"
 )
@@ -29,10 +30,12 @@ func newPeerRequest(ctx context.Context, peer config.PeerConfig, method, target 
 	if err == nil && peer.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+peer.Token)
 	}
+	// The peer adopts the ID, so one request is one ID on both servers.
+	if id := logging.RequestID(ctx); err == nil && id != "" {
+		req.Header.Set(logging.RequestIDHeader, id)
+	}
 	return req, err
 }
-
-func peerVMs() []types.VM { return fetchPeerVMs(context.Background()) }
 
 // fetchPeerVMs lists every peer's instances. ctx marks whether the fetch is
 // on behalf of a user request or the background metrics collector.
