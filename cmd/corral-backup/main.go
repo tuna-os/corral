@@ -241,10 +241,13 @@ func runBackup(vm string) error {
 }
 
 // resolveFormat validates --format against what the instance's backend can
-// actually produce, naming the alternatives when it cannot.
+// actually produce, naming the alternatives when it cannot. With no --format
+// it returns the backend's native format (the first one offered) rather than
+// "", so the uploaded file's extension names what is really in it: a local
+// QEMU backup is a .qcow2 and an Incus one a .tar.gz, not an .img.gz.
 func resolveFormat(adapter export.Adapter) (export.Format, error) {
 	if flagFormat == "" {
-		return "", nil // the adapter's native choice
+		return adapter.Formats()[0], nil
 	}
 	for _, f := range adapter.Formats() {
 		if string(f) == flagFormat {
