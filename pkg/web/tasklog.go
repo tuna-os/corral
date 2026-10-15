@@ -1,6 +1,7 @@
 package web
 
 import (
+	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -96,4 +97,14 @@ func handleTaskLog(w http.ResponseWriter, r *http.Request) {
 	}
 	activity.mu.Unlock()
 	jsonResp(w, http.StatusOK, out)
+}
+
+// GET /api/tasks/{id} — the status and log tail of one async task.
+func handleTaskStatus(w http.ResponseWriter, r *http.Request) {
+	task, ok := tasks.get(r.PathValue("id"))
+	if !ok {
+		errResp(w, http.StatusNotFound, fmt.Errorf("no such task"))
+		return
+	}
+	jsonResp(w, http.StatusOK, task.snapshot())
 }

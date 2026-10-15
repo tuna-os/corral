@@ -15,7 +15,7 @@ import (
 // Previously, the equivalent HTTP-level test self-skipped whenever bootc was
 // compiled in ("handler spawns goroutine that races with cleanup"), which
 // meant the actual build path never ran in CI. createBootc now returns the
-// *buildTask handle directly, so tests can wait() on it instead of racing.
+// *asyncTask handle directly, so tests can wait() on it instead of racing.
 
 func TestCreateBootc_BuildFailure(t *testing.T) {
 	fx := NewTestFixture()

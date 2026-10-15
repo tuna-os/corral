@@ -766,11 +766,10 @@ func TestHandleTaskStatus_Existing(t *testing.T) {
 	fx := NewTestFixture()
 	defer fx.Close()
 
-	// Insert a completed build task directly into the package-level tasks map
-	task := newBuildTask()
+	// Register a completed task directly in the package-level tracker
+	task := tasks.start("test-task-1")
 	task.finish(nil) // status = "done"
-	tasks.Store("test-task-1", task)
-	defer tasks.Delete("test-task-1")
+	defer tasks.remove("test-task-1")
 
 	resp := mustGet(t, fx.Server.URL+"/api/tasks/test-task-1")
 	defer resp.Body.Close()

@@ -252,15 +252,6 @@ type createRequest struct {
 	user string
 }
 
-func handleTaskStatus(w http.ResponseWriter, r *http.Request) {
-	v, ok := tasks.Load(r.PathValue("id"))
-	if !ok {
-		errResp(w, http.StatusNotFound, fmt.Errorf("no such task"))
-		return
-	}
-	jsonResp(w, http.StatusOK, v.(*buildTask).snapshot())
-}
-
 // handleCreateVM dispatches to the strategy matching the request shape —
 // bootc build, Windows guided install, or everything else (catalog images,
 // container disks, import URLs, ISO installs, PVC-backed) — and translates
@@ -486,8 +477,7 @@ func handleMigrate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := fmt.Sprintf("migrate-%s-%d", name, time.Now().UnixNano())
-	task := newBuildTask()
-	tasks.Store(id, task)
+	task := tasks.start(id)
 	done := taskBegin(requestUser(r), "migrate", ns+"/"+name)
 	if b.TargetNode != "" {
 		fmt.Fprintf(task, "Live migration of %s requested → %s\n", name, b.TargetNode)
