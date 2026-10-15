@@ -413,7 +413,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		_, cmd := m.handleMouse(msg)
 		return m, cmd
 
-	case fleetMsg, cloneDoneMsg, createDoneMsg, doctorMsg:
+	case fleetMsg, cloneDoneMsg, createDoneMsg, doctorMsg, portsAppliedMsg, hwAppliedMsg:
 		m.updateOp(msg)
 		return m, nil
 
@@ -989,6 +989,9 @@ type editModel struct {
 	done     bool
 	addInput textinput.Model
 	adding   bool
+	// apply asks the root model to push toggled to the cluster: the form
+	// itself never calls a backend (see portsCmd in cmd/tui_ops.go).
+	apply bool
 }
 
 func newEditModel(vm types.VM) editModel {
@@ -1062,7 +1065,7 @@ func (m editModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				if !isDefault && m.toggled[p] {
 					delete(m.toggled, p)
-					m.applyPorts()
+					m.apply = true
 				}
 			}
 		}
@@ -1078,7 +1081,7 @@ func (m editModel) updateAdding(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if port, err := strconv.Atoi(m.addInput.Value()); err == nil && port > 0 && port < 65536 {
 				m.ports = append(m.ports, port)
 				m.toggled[port] = true
-				m.applyPorts()
+				m.apply = true
 			}
 			m.adding = false
 			m.addInput.Reset()
@@ -1100,30 +1103,36 @@ func (m *editModel) activateCursor() tea.Cmd {
 	case m.cursor < len(m.ports):
 		p := m.ports[m.cursor]
 		m.toggled[p] = !m.toggled[p]
-		m.applyPorts()
+		m.apply = true
 	case m.cursor == len(m.ports):
 		m.adding = true
 		m.addInput.Focus()
 		return textinput.Blink
 	case m.cursor == len(m.ports)+1:
 		m.toggled = make(map[int]bool)
-		m.applyPorts()
+		m.apply = true
 	}
 	return nil
 }
 
-func (m *editModel) applyPorts() {
+// enabledPorts is the set of ports the form has switched on.
+func (m editModel) enabledPorts() []int {
 	var enabled []int
 	for p, on := range m.toggled {
 		if on {
 			enabled = append(enabled, p)
 		}
 	}
+	return enabled
+}
+
+// applyPorts exposes exactly the enabled ports of vm, removing the proxy when
+// there are none.
+func applyPorts(vm types.VM, enabled []int) error {
 	if len(enabled) == 0 {
-		kubevirt.DeleteProxy(m.vm.Name, m.vm.Namespace)
-	} else {
-		kubevirt.ApplyProxy(m.vm.Name, m.vm.Namespace, enabled)
+		return kubevirt.DeleteProxy(vm.Name, vm.Namespace)
 	}
+	return kubevirt.ApplyProxy(vm.Name, vm.Namespace, enabled)
 }
 
 func (m editModel) render() string {
@@ -1187,6 +1196,9 @@ type hwEditModel struct {
 	focus  int // 0 = cpu, 1 = mem
 	status string
 	done   bool
+	// submit asks the root model to apply the form (see hwApplyCmd in
+	// cmd/tui_ops.go); the result lands in status, or closes the form.
+	submit bool
 }
 
 func newHWEditModel(vm types.VM) hwEditModel {
@@ -1224,10 +1236,7 @@ func (m hwEditModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, textinput.Blink
 		case "enter":
-			m.apply()
-			// A failed scale keeps the form open with the reason on screen —
-			// closing it would drop the only copy of the error.
-			m.done = m.status == ""
+			m.submit = true
 			return m, nil
 		}
 	}
@@ -1240,7 +1249,9 @@ func (m hwEditModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m *hwEditModel) apply() {
+// apply scales the VM or CT to the form's values and returns why it could not,
+// or "" on success.
+func (m hwEditModel) apply() string {
 	ns := m.vm.Namespace
 	if ns == "" {
 		ns = "default"
@@ -1255,12 +1266,12 @@ func (m *hwEditModel) apply() {
 			mem = m.ct.Mem
 		}
 		if cpu == m.ct.CPU && mem == m.ct.Mem {
-			return
+			return ""
 		}
 		if err := ct.Scale(m.ct.Name, ns, cpu, mem); err != nil {
-			m.status = err.Error()
+			return err.Error()
 		}
-		return
+		return ""
 	}
 	cpu := 0
 	if v, err := strconv.Atoi(strings.TrimSpace(m.cpu.Value())); err == nil && v > 0 && v != m.vm.CPU {
@@ -1271,11 +1282,12 @@ func (m *hwEditModel) apply() {
 		mem = ""
 	}
 	if cpu == 0 && mem == "" {
-		return
+		return ""
 	}
 	if err := scaleVM(m.vm, cpu, mem); err != nil {
-		m.status = err.Error()
+		return err.Error()
 	}
+	return ""
 }
 
 // scaleVM changes a VM's CPU and memory through its backend's Sizer — the

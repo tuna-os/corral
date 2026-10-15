@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/tuna-os/corral/pkg/ct"
+	"github.com/tuna-os/corral/pkg/types"
 )
 
 // A key that needs a backend does not call it from Update: the model goes busy
@@ -120,5 +122,65 @@ func TestTUIOps_DoubleClickReturnsTheActionsCommand(t *testing.T) {
 	}
 	if _, ok := cmd().(tea.QuitMsg); !ok {
 		t.Error("the double click's command is not tea.Quit")
+	}
+}
+
+// Toggling a port only asks for the change; the proxy is applied by the
+// command the root hands back.
+func TestTUIOps_PortToggleAppliesThroughACommand(t *testing.T) {
+	f := fakeCluster(t)
+	f.AddPrefixResponse("kubectl", "", nil)
+	vm := kubeVM("web-prod")
+	m := testModel(vm)
+	m.mode, m.edit = ModeEdit, newEditModel(vm)
+	f.Reset()
+	f.AddPrefixResponse("kubectl", "", nil)
+
+	next, cmd := m.Update(key("space"))
+	m = next.(tuiModel)
+	if !m.busy || cmd == nil || m.edit.apply {
+		t.Fatalf("space should hand the apply to a command (busy %v, cmd %v)", m.busy, cmd != nil)
+	}
+	if len(f.Calls()) != 0 {
+		t.Fatalf("Update reached the cluster itself: %v", f.Calls())
+	}
+	m = settle(m, cmd)
+	if m.busy || m.mode != ModeEdit {
+		t.Errorf("after the apply: busy %v, mode %v; want the form idle and open", m.busy, m.mode)
+	}
+	if !calledWith(f, "ingressclass", "tailscale") {
+		t.Errorf("the command never applied the ports, calls: %v", f.Calls())
+	}
+}
+
+// Enter on the hardware form scales through a command and closes the form
+// when it succeeds.
+func TestTUIOps_HardwareAppliesThroughACommand(t *testing.T) {
+	f := fakeCluster(t)
+	f.AddPrefixResponse("kubectl patch", "", nil)
+	f.AddPrefixResponse("kubectl get pod", `{"spec":{"containers":[{"name":"ct"}]}}`, nil)
+	f.AddPrefixResponse("kubectl annotate", "", nil)
+	f.AddPrefixResponse("kubectl get pvc", `{"metadata":{"annotations":{}}}`, nil)
+	f.AddPrefixResponse("kubectl", `{"items":[]}`, nil)
+	c := ct.CT{Name: "dev-shell", Namespace: "corral-vms", CPU: 1, Mem: "512Mi", Phase: "Running", Ready: true}
+	m := testModel(types.VM{})
+	m.mode, m.isCT, m.selectedCT = ModeHWEdit, true, c
+	m.hwEdit = newCTHWEditModel(c)
+	m.hwEdit.cpu.SetValue("4")
+
+	next, cmd := m.Update(key("enter"))
+	m = next.(tuiModel)
+	if !m.busy || cmd == nil || len(f.Calls()) != 0 {
+		t.Fatalf("enter should hand the scale to a command (busy %v, calls %v)", m.busy, f.Calls())
+	}
+	if !strings.Contains(m.render(), "Applying hardware") {
+		t.Errorf("the form does not show the apply running:\n%s", m.render())
+	}
+	m = settle(m, cmd)
+	if m.mode != ModeList || m.hwEdit.status != "" {
+		t.Errorf("after a successful scale: mode %v, status %q; want the list", m.mode, m.hwEdit.status)
+	}
+	if !calledWith(f, "dev-shell") {
+		t.Errorf("the command never scaled the CT, calls: %v", f.Calls())
 	}
 }

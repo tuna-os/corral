@@ -183,7 +183,11 @@ func (m *tuiModel) handleClick(msg tea.MouseClickMsg) (bool, tea.Cmd) {
 			return false, nil
 		}
 		m.edit.cursor = row
-		return true, m.edit.activateCursor()
+		cmd := m.edit.activateCursor()
+		if m.edit.apply {
+			cmd = m.portsCmd()
+		}
+		return true, cmd
 	}
 	return false, nil
 }

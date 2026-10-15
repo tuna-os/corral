@@ -57,6 +57,17 @@ type createDoneMsg struct {
 // doctorMsg carries a fresh set of health checks.
 type doctorMsg struct{ rows []doctor.Check }
 
+// portsAppliedMsg reports the ports form's change; err is why it did not
+// reach the cluster.
+type portsAppliedMsg struct{ err error }
+
+// hwAppliedMsg reports a hardware change. A non-empty status is why it
+// failed, and keeps the form open.
+type hwAppliedMsg struct {
+	status string
+	fleet  fleetSnapshot
+}
+
 // actionTarget is what an action applies to: a VM, or a CT when isCT is set.
 type actionTarget struct {
 	vm   types.VM
@@ -134,6 +145,30 @@ func (m *tuiModel) doctorCmd(fix bool) tea.Cmd {
 	}
 }
 
+// portsCmd pushes the ports form's toggles to the cluster. The form stays
+// open; the fleet is reloaded when it closes.
+func (m *tuiModel) portsCmd() tea.Cmd {
+	m.edit.apply = false
+	vm, ports := m.edit.vm, m.edit.enabledPorts()
+	m.busyWith("Applying ports")
+	return func() tea.Msg {
+		return portsAppliedMsg{err: applyPorts(vm, ports)}
+	}
+}
+
+// hwApplyCmd scales the VM or CT to the hardware form's values.
+func (m *tuiModel) hwApplyCmd() tea.Cmd {
+	m.hwEdit.submit = false
+	form, th := m.hwEdit, m.th
+	m.busyWith("Applying hardware")
+	return func() tea.Msg {
+		if status := form.apply(); status != "" {
+			return hwAppliedMsg{status: status}
+		}
+		return hwAppliedMsg{fleet: loadFleet(th)}
+	}
+}
+
 // updateOp applies the result of a command from this file.
 func (m *tuiModel) updateOp(msg tea.Msg) {
 	switch msg := msg.(type) {
@@ -163,6 +198,21 @@ func (m *tuiModel) updateOp(msg tea.Msg) {
 	case doctorMsg:
 		m.busy = false
 		m.doctorRows = msg.rows
+	case portsAppliedMsg:
+		m.busy = false
+		if msg.err != nil {
+			m.notice, m.noticeKind = "ports: "+msg.err.Error(), "error"
+		}
+	case hwAppliedMsg:
+		m.busy = false
+		// A failed scale keeps the form open with the reason on screen —
+		// closing it would drop the only copy of the error.
+		if msg.status != "" {
+			m.hwEdit.status = msg.status
+			return
+		}
+		m.applyFleet(msg.fleet)
+		m.mode = ModeList
 	}
 }
 
