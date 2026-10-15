@@ -31,7 +31,7 @@ func TestPreflightNineBackendRefusalTable(t *testing.T) {
 	exporters := map[string]bool{"kubevirt": true, "qemu": true, "libvirt": true, "incus": true, "proxmox": true, "vsphere": true}
 	receivers := map[string]bool{"kubevirt": true, "qemu": true, "libvirt": true, "incus": true, "proxmox": true}
 	// These export, but an artifact that is not a disk image cannot seed a move.
-	appliances := map[string]bool{"virtualbox": true, "xen": true}
+	appliances := map[string]bool{"virtualbox": true, "xen": true, "nutanix": true}
 
 	for _, from := range backend.Backends {
 		dst := "qemu"

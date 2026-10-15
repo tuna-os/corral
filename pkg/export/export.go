@@ -143,6 +143,8 @@ func For(ref types.InstanceRef) (Adapter, error) {
 		return VirtualBox{}, nil
 	case "xen":
 		return Xen{}, nil
+	case "nutanix":
+		return Nutanix{}, nil
 	case "vsphere":
 		return VSphere{}, nil
 	case "":
@@ -156,7 +158,7 @@ func For(ref types.InstanceRef) (Adapter, error) {
 // touching the instance — for capability reporting and UI gating.
 func Supported(backend string) bool {
 	switch backend {
-	case "kubevirt", "qemu", "libvirt", "incus", "proxmox", "virtualbox", "vsphere", "xen":
+	case "kubevirt", "qemu", "libvirt", "incus", "proxmox", "virtualbox", "vsphere", "xen", "nutanix":
 		return true
 	}
 	return false

@@ -74,7 +74,7 @@ support only KubeVirt.
 | Pause, resume | TUI action | yes | yes | yes | no |
 | Scale | TUI hardware action | stopped VM only | yes | no | no |
 | Migrate | TUI action | no | yes | yes | yes |
-| Export | TUI export action, or the backup plugin | stopped VM only | yes | stopped VM only | no |
+| Export | TUI export action, or the backup plugin | stopped VM only | yes | stopped VM only | with apiVersion v4.1 or later |
 
 Expected results for the backend-specific rules:
 

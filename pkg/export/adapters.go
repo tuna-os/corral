@@ -12,6 +12,7 @@ import (
 
 	"github.com/tuna-os/corral/pkg/incus"
 	"github.com/tuna-os/corral/pkg/kubevirt"
+	"github.com/tuna-os/corral/pkg/nutanix"
 	"github.com/tuna-os/corral/pkg/proxmoxbe"
 	"github.com/tuna-os/corral/pkg/qemu"
 	"github.com/tuna-os/corral/pkg/snapshot"
@@ -821,6 +822,41 @@ func (v VSphere) Export(ctx context.Context, req Request, progress ProgressFunc)
 	}
 	if out, err := runner.Run(qemuImg(), "convert", "-O", "qcow2", "-c", vmdk, req.Dest); err != nil {
 		return Result{}, fmt.Errorf("qemu-img convert: %s", commandError(out, err))
+	}
+	return finish(req.Dest, format, consistency)
+}
+
+// ── Nutanix ───────────────────────────────────────────────────────
+//
+// Prism Central builds an OVA of the VM (vmm v4.1 content/ovas) and serves
+// it for download; pkg/nutanix.ExportOVA deletes it from the catalog after.
+// Prism Central does not document how it reads a running VM's disks, so a
+// running source is disclosed as crash-consistent.
+
+type Nutanix struct{}
+
+func (Nutanix) Formats() []Format { return []Format{OVA} }
+
+func (n Nutanix) Export(ctx context.Context, req Request, progress ProgressFunc) (Result, error) {
+	format, err := pickFormat("nutanix", req.Format, n.Formats())
+	if err != nil {
+		return Result{}, err
+	}
+	if err := ensureDestDir(req.Dest); err != nil {
+		return Result{}, err
+	}
+	client, err := nutanix.ClientForContext(req.Ref.Context)
+	if err != nil {
+		return Result{}, fmt.Errorf("nutanix: no client for context %q: %w", req.Ref.Context, err)
+	}
+	progress.report("building OVA", 0, 0)
+	running, err := client.ExportOVA(ctx, req.Ref.Name, req.Dest)
+	if err != nil {
+		return Result{}, err
+	}
+	consistency := snapshot.Offline
+	if running {
+		consistency = snapshot.Crash
 	}
 	return finish(req.Dest, format, consistency)
 }

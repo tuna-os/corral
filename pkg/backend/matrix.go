@@ -323,7 +323,7 @@ var Matrix = map[string]map[string]Entry{
 		"virtualbox": {Shipped, "VBoxManage export to an OVA appliance while powered off or saved; a running VM is refused — pkg/export.VirtualBox"},
 		"vsphere":    {Shipped, "NFC lease on a temporary snapshot (ExportSnapshot), so a running guest keeps running; qemu-img converts the VMDK — quiesced with VMware Tools, crash-consistent without — pkg/export.VSphere"},
 		"xen":        {Shipped, "GET /export streams an XVA archive of a halted or suspended VM; a running VM is refused — pkg/export.Xen"},
-		"nutanix":    {Possible, "vmm recovery points exist but no download path is proven; pkg/export has no Nutanix adapter yet"},
+		"nutanix":    {Shipped, "Prism Central builds an OVA (vmm v4.1 content/ovas), Corral downloads it and deletes it from the catalog; needs apiVersion v4.1+ — pkg/export.Nutanix"},
 	},
 	"events": {
 		"kubevirt":   {Shipped, "kubectl get events for the VM and its launcher pod"},

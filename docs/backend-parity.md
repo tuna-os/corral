@@ -49,7 +49,7 @@ backend cannot, or it is meaningless there.
 | Add / remove disks | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | 🔨 | 🔨 | 🔨 |
 | Expand disk | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | 🔨 | 🔨 | 🔨 |
 | GPU passthrough | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | 🔨 | 🔨 | — |
-| Export / backup disk | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 🔨 |
+| Export / backup disk | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Events | ✅ | ✅ | — | — | ✅ | — | 🔨 | 🔨 | 🔨 |
 | Tags | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | 🔨 | 🔨 | ✅ |
 | Published ports | ✅ | ✅ | 🔨 | — | — | 🔨 | — | — | — |
@@ -238,7 +238,7 @@ websocket bridge is not. So the capability flags say no, and the matrix says why
 - **events** — The pool logs its own activity. Corral wires no reader for that log yet.
 - **tags** — The VM record carries tags natively. Corral has no tagger to set them yet.
 
-### nutanix — 10 gaps
+### nutanix — 9 gaps
 
 - **create** — VM create exists natively. Corral has no creator for it yet.
 - **ssh** — Corral has no address discovery yet. Use the NIC address, then plain ssh.
@@ -248,7 +248,6 @@ websocket bridge is not. So the capability flags say no, and the matrix says why
 - **scale** — PUT updates cores and memory natively. Nothing drives it yet.
 - **volumes** — Disk endpoints exist in vmm. Nothing drives them yet.
 - **expand** — Disk update exists in vmm. Nothing drives it yet.
-- **export** — Points for VM recovery exist in vmm. Corral has no downloader for them yet.
 - **events** — The task list logs the activity of the pool. Corral wires no per-VM reader yet.
 
 ## Remaining backend-name branches
