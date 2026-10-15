@@ -30,6 +30,7 @@ import { icon } from './icons.js';
 import { poolMenuItems, unassignedMenuItems } from './menus.js';
 import { bindPalette, initKeys, openPalette } from './palette.js';
 import { bindPools, loadPools, poolState } from './pools.js';
+import { singleFlight, startPolling } from './poll.js';
 import { emit, state } from './state.js';
 import { focusTreeFilter, nextTreeView, renderTree, setTreeView, treeRow, treeView, vmRow } from './tree.js';
 import { capabilityFingerprint, capabilityScreen, loadCapabilityData } from './ui/capabilities.js';
@@ -147,67 +148,16 @@ async function renderOffline(msg) {
   if (b) b.onclick = () => { offlineShown = false; refresh(true); };
 }
 
-// One refresh at a time, and the next one scheduled from the end of the last.
-//
-// This used to be `setInterval(refresh, 5000)`. refresh() is asynchronous and
-// awaits several endpoints in turn, so a fixed timer fires whether or not the
-// previous one came back: on a large fleet or a loaded cluster the requests
-// overlap, pile onto a server that is already behind, and can interleave their
-// writes to state so a render draws half of one poll and half of another.
-//
-// Proxmox's UpdateStore does not use a fixed timer. It schedules the next load
-// from the previous load's callback, and adds twice the time that load took,
-// so a slow server is asked less often without anybody tuning anything. That
-// is the behaviour here: the guard below keeps one refresh in flight, and
-// pollLoop() sets the delay from the runtime it measured.
-//
-// A refresh asked for while one runs is not dropped. It runs once the current
-// one finishes, and a forced request stays forced, because the callers that
-// force one have just changed something and need to see it.
 // The floor between polls. The real wait is this plus twice how long the last
-// poll took, so a healthy server is polled on this interval and a slow one
-// gets room to recover.
+// poll took; see startPolling() in poll.js.
 const POLL_MS = 5000;
 
-// Poll, measure, then schedule the next one. A thrown error is already handled
-// inside refresh(), but the loop must survive one regardless: if this function
-// ever threw, polling would stop for the life of the page.
-async function pollLoop() {
-  const started = Date.now();
-  try {
-    // Nobody is looking, so nothing is fetched. The loop keeps its cadence,
-    // and onPageVisible below catches up the moment the page is shown.
-    if (!pageHidden()) await refresh();
-  } finally {
-    setTimeout(pollLoop, POLL_MS + (Date.now() - started) * 2);
-  }
-}
-
-let refreshInFlight = false;
-let refreshAgain = false;
-let refreshAgainForced = false;
-
-export async function refresh(force = false) {
-  if (refreshInFlight) {
-    refreshAgain = true;
-    refreshAgainForced = refreshAgainForced || force;
-    return;
-  }
-  refreshInFlight = true;
-  try {
-    let next = force;
-    for (;;) {
-      await refreshOnce(next);
-      if (!refreshAgain) break;
-      next = refreshAgainForced;
-      refreshAgain = false;
-      refreshAgainForced = false;
-    }
-  } finally {
-    refreshInFlight = false;
-    refreshAgain = false;
-    refreshAgainForced = false;
-  }
+// One refresh at a time, and one asked for meanwhile runs after it; see
+// singleFlight() in poll.js. A declared function, so the modules that import
+// refresh can hold it before this module's body has run.
+const refreshSingle = singleFlight(refreshOnce);
+export function refresh(force = false) {
+  return refreshSingle(force);
 }
 
 async function refreshOnce(force = false) {
@@ -692,7 +642,8 @@ loadWhoami();
 loadCaps();
 loadInstanceTypes();
 refresh();
-setTimeout(pollLoop, POLL_MS);
+// Nobody looking means nothing fetched; onPageVisible below catches up.
+startPolling(refresh, { interval: POLL_MS, hidden: pageHidden });
 // Back from a hidden tab: fetch now rather than show data up to one interval
 // old as if it were current. See ui/visibility.js.
 onPageVisible(() => refresh());
