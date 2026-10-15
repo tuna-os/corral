@@ -415,9 +415,29 @@ func TestTUIActions_GatingMatrix(t *testing.T) {
 	for _, backend := range []string{"qemu", "incus", "libvirt"} {
 		vm := running
 		vm.Backend = backend
-		for _, id := range []string{"hardware", "ports", "clone", "export", "template", "events"} {
+		for _, id := range []string{"ports", "export"} {
 			if actionApplies(id, vm) {
 				t.Errorf("actionApplies(%q) on backend %q, want KubeVirt-only", id, backend)
+			}
+		}
+	}
+
+	// Hardware, clone, template, and events follow the backend's adapter
+	// families: each is offered exactly where its family is implemented (#214).
+	families := map[string]map[string]bool{
+		"kubevirt": {"hardware": true, "clone": true, "template": true, "events": true},
+		"qemu":     {"events": true},
+		"incus":    {},
+		"libvirt":  {},
+		"proxmox":  {"hardware": true, "clone": true, "template": true, "events": true},
+		"vsphere":  {"hardware": true, "clone": true, "template": true},
+	}
+	for backend, want := range families {
+		vm := running
+		vm.Backend = backend
+		for _, id := range []string{"hardware", "clone", "template", "events"} {
+			if got := actionApplies(id, vm); got != want[id] {
+				t.Errorf("actionApplies(%q) on backend %q = %v, want %v", id, backend, got, want[id])
 			}
 		}
 	}
@@ -716,11 +736,13 @@ func TestTUIClone_Succeeds(t *testing.T) {
 	}
 }
 
-func TestTUIClone_RefusesNonKubeVirtAndExistingTargets(t *testing.T) {
+// A backend without a Cloner is refused by name rather than sent to another
+// backend's clone path.
+func TestTUIClone_RefusesABackendWithoutACloner(t *testing.T) {
 	demo.Enable()
 	err := runClone(types.VM{Name: "inc", Backend: "incus"}, "copy")
-	if err == nil || !strings.Contains(err.Error(), "KubeVirt") {
-		t.Errorf("runClone on an Incus VM = %v, want a KubeVirt-only refusal", err)
+	if err == nil || !strings.Contains(err.Error(), "incus backend does not support clone") {
+		t.Errorf("runClone on an Incus VM = %v, want a refusal naming incus", err)
 	}
 }
 

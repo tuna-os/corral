@@ -952,3 +952,59 @@ func TestPastTense(t *testing.T) {
 		}
 	}
 }
+
+// Events and the template mark go through the VM's own adapter. A backend
+// without the family says so by name instead of asking a KubeVirt cluster
+// about a VM that was never there (#214).
+func TestTUIEventsAndTemplate_RefuseABackendWithoutTheFamily(t *testing.T) {
+	f := fakeCluster(t)
+	vm := types.VM{Name: "web", Backend: "incus", Context: "lab", Running: true, Status: "Running"}
+
+	m := testModel(vm)
+	m.events = newEventsState(m.selected)
+	if !strings.Contains(m.events.err, "incus backend does not support events") {
+		t.Errorf("events on an Incus VM: err = %q, want a refusal naming incus", m.events.err)
+	}
+
+	m.toggleTemplate()
+	if m.noticeKind != "error" || !strings.Contains(m.notice, "incus backend does not support template") {
+		t.Errorf("template on an Incus VM: notice = %q (%s), want a refusal naming incus", m.notice, m.noticeKind)
+	}
+	for _, c := range f.Calls() {
+		if c.Name == "kubectl" {
+			t.Errorf("an Incus VM reached kubectl: %v", c)
+		}
+	}
+}
+
+// The VM hardware editor scales through the backend's Sizer — the path
+// `corral scale` and the web form take — and surfaces a refusal or a failure
+// instead of dropping it (#214).
+func TestTUIHardware_ScalesThroughTheBackendSizer(t *testing.T) {
+	f := fakeCluster(t)
+	f.AddPrefixResponse("kubectl get vm", "", errors.New("vm not found"))
+
+	hw := newHWEditModel(kubeVM("web-prod"))
+	hw.cpu.SetValue("4")
+	hw.apply()
+	if !calledWith(f, "get", "vm", "web-prod", "corral-vms") {
+		t.Errorf("hardware edit did not read the VM through the KubeVirt Sizer; calls: %v", f.Calls())
+	}
+	if !strings.Contains(hw.status, "web-prod") {
+		t.Errorf("status = %q, want the scale failure surfaced", hw.status)
+	}
+
+	f.Reset()
+	unchanged := newHWEditModel(kubeVM("web-prod"))
+	unchanged.apply()
+	if len(f.Calls()) != 0 {
+		t.Errorf("an unchanged form still ran %v", f.Calls())
+	}
+
+	inc := newHWEditModel(types.VM{Name: "web", Backend: "incus", Context: "lab", CPU: 2, Mem: "4Gi"})
+	inc.cpu.SetValue("4")
+	inc.apply()
+	if !strings.Contains(inc.status, "incus backend does not support hardware edits") {
+		t.Errorf("hardware edit on an Incus VM: status = %q, want a refusal naming incus", inc.status)
+	}
+}
