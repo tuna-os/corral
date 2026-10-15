@@ -7,8 +7,9 @@
 ## Mission
 
 Corral herds VMs — and containers — into your tailnet. Corral is a single Go binary
-with a CLI, TUI, and web dashboard. It manages VMs across five backends (qemu,
-kubevirt, incus, libvirt, proxmox). It exposes every guest over the Tailscale
+with a CLI, TUI, and web dashboard. It manages VMs across nine backends. Five
+are Tier 1 or 2 (qemu, kubevirt, incus, libvirt, proxmox). Four are Tier 3
+(vsphere, nutanix, xen, virtualbox). It exposes every guest over the Tailscale
 network that your devices already share. Developers also use it to boot-gate tunaOS
 images on a KubeVirt cluster (`scripts/boot-gate.sh` in tunaOS).
 
@@ -18,7 +19,7 @@ images on a KubeVirt cluster (`scripts/boot-gate.sh` in tunaOS).
 
 - Corral is a Go rewrite of the legacy Python `tailvm`. On-disk names keep
   the `tailvm-` prefix during the transition ([SPEC.md](SPEC.md)).
-- Corral supports five backends. The `bootc` mode builds a disk from a
+- Corral supports nine backends. The `bootc` mode builds a disk from a
   bootable container on the cluster. Then it runs that disk as a KubeVirt VM.
 - 🟡 **The org CI change waits for review.** tunaOS#3249 moves the tunaOS boot
   gate (`reusable-build-image.yml`) from `scripts/iso-e2e.sh` to
@@ -32,91 +33,53 @@ images on a KubeVirt cluster (`scripts/boot-gate.sh` in tunaOS).
 
 | Priority | Item | Tracking | Status |
 |----------|------|----------|--------|
-| P0 | Publish v0.7.0 (tag + GitHub Release) | #339, #210 | 🟡 Notes merged; tag not pushed |
-| P1 | tunaOS CI boot-gate adoption | #431 | 🟡 tunaOS#3249 in review (Corral side merged: #512, #514, #546) |
-| P1 | VDI plugin GA | #69 | 🟡 Phase 1 done; Phase 2 open |
+| P0 | Publish v0.7.0 (tag + GitHub Release) | #339, #210 | 🟡 Notes ready; tag push starts `release.yml` |
+| P1 | tunaOS CI boot-gate adoption | #431 | 🟡 tunaOS#3249 in review (Corral side merged: #512, #514, #546, #570) |
 | P3 | Dependency hygiene | #97 | 🟢 Ongoing (Renovate) |
 
 ---
 
 ## Roadmap (dependency order)
 
-Each phase starts when the phases it depends on are done. Items in the same
-phase do not depend on each other and can run in parallel.
+Phases 2 and 3 are done (see the Done list). The open work is the release,
+the tunaOS adoption, and the launch.
 
 ```mermaid
 flowchart TD
-  P1A["#339 v0.7.0 release"] --> P1B["#210 close"]
-  P1H["#264 purge binaries from history"] --> P5
-  P1A --> P5
-  T["#506 test backfill"] --> R1["#214 backend adapters"]
-  T --> R2["#503 split server.go"]
-  T --> R3["#288 / #406 split app.js"]
-  T --> R4["#305 TUI state machine"]
-  R1 --> E1["#507 enterprise backends"]
-  R2 --> V1["#227 VDI broker API"]
-  R2 --> O1["#419 structured logs + tracing"]
-  V1 --> V2["#228 session reclaim"]
-  V1 --> V3["#229 one-click connect"]
-  R3 --> V3
-  V2 & V3 --> VGA["#69 VDI GA"]
-  BG["#431 tunaOS boot gate"]
-  subgraph P3["Phase 3: enterprise readiness"]
-    E1
-    VGA
-    O1
-  end
-  subgraph P5["Phase 4: launch"]
-    L1["#423 Show HN"]
-    L2["#426 bootc case study"]
-    L3["#425 VDI launch"]
-    L4["#424 KubeVirt partnership"]
-  end
-  BG --> L2
-  VGA --> L3
-  R1 --> L4
+  R["#339 v0.7.0 release"] --> C["#210 close"]
+  R --> L1["#423 Show HN"]
+  R --> L4["#424 KubeVirt partnership"]
+  R --> L2["#426 bootc case study"]
+  R --> L3["#425 VDI launch"]
+  BG["#431 tunaOS boot gate"] --> L2
 ```
 
-### Phase 1: Release front door (now)
+### Phase 1: Release and adoption (now)
 
 | Item | Issue | Depends on | Owner |
 |------|-------|------------|-------|
-| Push the `v0.7.0` tag and publish the Release from `docs/releases/v0.7.0.md` | #339 | — | maintainer |
+| Push the `v0.7.0` tag. `release.yml` publishes the signed Release from `docs/releases/v0.7.0.md` | #339 | — | maintainer |
 | Close the release-channel finding after v0.7.0 shows on the Releases page | #210 | #339 | maintainer |
-| Remove the 25 MB of binaries from git history (history rewrite) | #264 | — | maintainer (`needs-human`) |
-| tunaOS CI boot gate: move `reusable-build-image.yml` from `iso-e2e.sh` to Corral | #431 | — (cross-repo) | ci-maintainer |
-
-### Phase 2: Foundations (tests first, then refactors)
-
-The refactors change large files with low test coverage. Land the test
-backfill first so that each refactor has a safety net.
-
-| Item | Issue | Depends on |
-|------|-------|------------|
-| ✅ Split `app.js` into ES modules with node unit tests (`pkg/web/jstest`): API adapter #517, poll #523, session #525, console transports #531, workspace layout | #288, #406 | #506 |
-
-### Phase 3: Enterprise readiness (Q4)
-
-[docs/enterprise-readiness.md](docs/enterprise-readiness.md) defines the
-criteria for this phase (#404).
-
-| Item | Issue | Depends on |
-|------|-------|------------|
-| VDI one-click connect | #229 | — |
-| VDI GA | #69 | #229 |
-| Enterprise backends (RFC-0003) | #507 | #214 |
+| tunaOS CI boot gate: review and merge tunaOS#3249 | #431 | — (cross-repo) | ci-maintainer |
 
 ### Phase 4: Launch and outreach
 
-Do not announce before the release is public and the history is clean. A
-Show HN brings many first-time clones and installs.
+The git history is clean (#264). Announce after the release is public.
 
 | Item | Issue | Depends on |
 |------|-------|------------|
-| Show HN | #423 | #339, #264 |
+| Show HN | #423 | #339 |
 | bootc case study | #426 | #339, #431 |
-| VDI launch announcement | #425 | #69 |
-| KubeVirt ecosystem positioning | #424 | #339, #214 |
+| VDI launch announcement | #425 | #339 |
+| KubeVirt ecosystem positioning | #424 | #339 |
+
+### Open after Phase 3
+
+- Run the manual pass for the Tier 3 backends against real systems
+  ([runbook](docs/runbooks/enterprise-backends-manual-pass.md)). Until then
+  VMware, Nutanix, XenServer/XCP-ng and VirtualBox stay Tier 3.
+- VDI surfaces without an end-to-end test stay Preview: the `corral vdi`
+  CLI, ephemeral and container pools, USB redirection and device checks.
 
 ---
 
@@ -155,6 +118,15 @@ Show HN brings many first-time clones and installs.
   `pkg/backend/matrix_test.go` holds the count.
 - VDI session records and conservative reclaim (disconnect grace, maximum
   duration, ephemeral VM pools): #228.
+
+- VDI one-click connect: the web Desktops screen and `corral vdi connect`:
+  #229.
+- VDI GA: the broker on persistent VM pools is Stable on KubeVirt. CI tests
+  it end to end, and an upgrade test reads v0.6.0 state: #69 (#592, #593).
+- Enterprise backends (RFC-0003): VirtualBox, vSphere, XenServer/XCP-ng and
+  Nutanix, and CLI commands through the adapters: #507 (#586–#591, #594–#596).
+- TUI models in their own files (`cmd/tui.go` 1,496 to 590 lines): #554.
+- Old build files removed from the git history (33 MB to 12 MB): #264.
 
 ---
 
