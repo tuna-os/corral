@@ -611,18 +611,23 @@ func sshSelected(vm types.VM) error {
 // exportVM writes the VM's disk to the working directory in its backend's
 // native export format, through pkg/export — the adapter `corral backup`
 // uses.
-func exportVM(vm types.VM) (string, error) {
-	adapter, err := export.For(vm.Ref())
+func exportVM(vm types.VM) (string, error) { return exportRef(vm.Ref(), "") }
+
+// exportRef exports through the backend's export adapter in its native
+// format. An empty dest means <name> plus the format's extension.
+func exportRef(ref types.InstanceRef, dest string) (string, error) {
+	adapter, err := export.For(ref)
 	if err != nil {
 		return "", err
 	}
 	formats := adapter.Formats()
 	if len(formats) == 0 {
-		return "", fmt.Errorf("the %s backend has no export format", vm.Backend)
+		return "", fmt.Errorf("the %s backend has no export format", ref.Backend)
 	}
-	res, err := adapter.Export(context.Background(), export.Request{
-		Ref: vm.Ref(), Dest: vm.Name + exportSuffix(formats[0]),
-	}, nil)
+	if dest == "" {
+		dest = ref.Name + exportSuffix(formats[0])
+	}
+	res, err := adapter.Export(context.Background(), export.Request{Ref: ref, Dest: dest}, nil)
 	if err != nil {
 		return "", err
 	}

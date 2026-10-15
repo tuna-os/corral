@@ -187,65 +187,82 @@ var restartCmd = &cobra.Command{
 
 var pauseCmd = &cobra.Command{
 	Use:     "pause [name]",
-	Short:   "Pause a running VM (KubeVirt)",
+	Short:   "Pause a running VM",
 	Example: `  corral pause myvm`,
 	Args:    cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		c, name, err := kubevirtOnly(args, "pause")
+		suspender, name, err := suspenderFor(args, "pause")
 		if err != nil {
 			return err
 		}
-		return c.PauseVM(name)
+		return suspender.Pause(name)
 	},
 }
 
 var unpauseCmd = &cobra.Command{
 	Use:     "unpause [name]",
-	Short:   "Resume a paused VM (KubeVirt)",
+	Short:   "Resume a paused VM",
 	Example: `  corral unpause myvm`,
 	Args:    cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		c, name, err := kubevirtOnly(args, "unpause")
+		suspender, name, err := suspenderFor(args, "unpause")
 		if err != nil {
 			return err
 		}
-		return c.UnpauseVM(name)
+		return suspender.Resume(name)
 	},
 }
 
 var migrateCmd = &cobra.Command{
 	Use:   "migrate [name]",
-	Short: "Live-migrate a VM to another node (KubeVirt)",
+	Short: "Migrate a VM to another node or host",
 	Example: `  corral migrate myvm                # let the scheduler choose
   corral migrate myvm --node karnataka`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		c, name, err := kubevirtOnly(args, "migrate")
+		name, err := requireOrPrompt(args, "migrate")
 		if err != nil {
 			return err
 		}
-		return c.Migrate(name, migrateNode)
+		adapter, err := instanceAdapter(name)
+		if err != nil {
+			return err
+		}
+		mover, ok := adapter.(backend.Mover)
+		if !ok {
+			return unsupported(adapter, "migrate")
+		}
+		return mover.Migrate(name, migrateNode)
 	},
 }
 
 var scaleCmd = &cobra.Command{
 	Use:   "scale [name]",
-	Short: "Change a VM's CPU and/or memory (KubeVirt, live when possible)",
-	Long: `Change CPU and/or memory. For live-migratable VMs the change is
-hotplugged without downtime; otherwise the VM is restarted to apply.`,
+	Short: "Change a VM's CPU and/or memory (live when the backend can)",
+	Long: `Change CPU and/or memory through the VM's backend. Where the backend
+hotplugs, the change applies without downtime; otherwise it applies on the
+next boot, or the backend refuses a running VM and says so.`,
 	Example: `  corral scale web --cpu 4
   corral scale web --mem 8G
   corral scale web --cpu 4 --mem 8G`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		c, name, err := kubevirtOnly(args, "scale")
+		name, err := requireOrPrompt(args, "scale")
 		if err != nil {
 			return err
 		}
 		if scaleCPU == 0 && scaleMem == "" {
 			return fmt.Errorf("specify --cpu and/or --mem")
 		}
-		if err := c.Scale(name, scaleCPU, scaleMem); err != nil {
+		adapter, err := instanceAdapter(name)
+		if err != nil {
+			return err
+		}
+		sizer, ok := adapter.(backend.Sizer)
+		if !ok {
+			return unsupported(adapter, "scale")
+		}
+		if err := sizer.Scale(name, scaleCPU, scaleMem); err != nil {
 			return err
 		}
 		if scaleCPU > 0 {
@@ -372,20 +389,38 @@ other LoadBalancer Service on a cluster without one. Same mechanism as
 
 var exportCmd = &cobra.Command{
 	Use:   "export [name]",
-	Short: "Back up a VM's disk to a compressed image (KubeVirt)",
-	Long: `Export (back up) a VM's persistent disk to a gzip image via the
-KubeVirt export API. The VM should be stopped first — its disk can't be read
-while a running VM holds it.`,
-	Example: `  corral export web                       # → web.img.gz
+	Short: "Back up a VM's disk or appliance through its backend",
+	Long: `Export (back up) a VM through its backend's export adapter. The artifact
+is the backend's native format: a gzip disk image on KubeVirt, qcow2 on local
+QEMU and libvirt, an OVA on VirtualBox, an XVA on XenServer/XCP-ng. Some
+backends refuse a running VM and say so.`,
+	Example: `  corral export web                       # → web.img.gz on KubeVirt
   corral export web -o /backups/web.gz
-  corral export web --volume web-disk`,
+  corral export web --volume web-disk     # KubeVirt only`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		c, name, err := kubevirtOnly(args, "export")
+		if exportVolume != "" {
+			// A named volume is a KubeVirt PVC; no other backend has one.
+			c, name, err := kubevirtOnly(args, "export --volume")
+			if err != nil {
+				return err
+			}
+			out, err := c.Export(name, exportVolume, exportOutput)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("Exported %s → %s\n", name, out)
+			return nil
+		}
+		name, err := requireOrPrompt(args, "export")
 		if err != nil {
 			return err
 		}
-		out, err := c.Export(name, exportVolume, exportOutput)
+		ref, err := instanceRef(name)
+		if err != nil {
+			return err
+		}
+		out, err := exportRef(ref, exportOutput)
 		if err != nil {
 			return err
 		}
@@ -596,7 +631,7 @@ func init() {
 	addDiskCmd.Flags().StringVar(&addDiskSize, "size", "10Gi", "Disk size")
 	rmDiskCmd.Flags().StringVar(&rmDiskVol, "volume", "", "Volume (PVC) name to detach")
 	exportCmd.Flags().StringVar(&exportVolume, "volume", "", "Volume/PVC to export (default: primary disk)")
-	exportCmd.Flags().StringVarP(&exportOutput, "output", "o", "", "Output file (default: <name>.img.gz)")
+	exportCmd.Flags().StringVarP(&exportOutput, "output", "o", "", "Output file (default: <name> plus the format's extension)")
 	screenshotCmd.Flags().StringVarP(&screenshotOutput, "output", "o", "", "Output PNG path (default: <name>-screenshot.png)")
 	screenshotCmd.Flags().BoolVar(&screenshotPaint, "require-paint", false, "Exit nonzero when the captured frame is blank")
 	addNicCmd.Flags().StringVar(&addNicNAD, "network-nad", "", "NetworkAttachmentDefinition to bridge onto (\"ns/name\"); default: the cluster's only one")
@@ -604,4 +639,22 @@ func init() {
 
 	snapshotCmd.AddCommand(snapshotCreateCmd, snapshotListCmd, snapshotRestoreCmd, snapshotDeleteCmd)
 	snapshotCreateCmd.Flags().StringVar(&snapshotName, "name", "", "Snapshot name (default: generated)")
+}
+
+// suspenderFor resolves the VM's adapter as a Suspender, or refuses by
+// backend name.
+func suspenderFor(args []string, action string) (backend.Suspender, string, error) {
+	name, err := requireOrPrompt(args, action)
+	if err != nil {
+		return nil, "", err
+	}
+	adapter, err := instanceAdapter(name)
+	if err != nil {
+		return nil, "", err
+	}
+	suspender, ok := adapter.(backend.Suspender)
+	if !ok {
+		return nil, "", unsupported(adapter, action)
+	}
+	return suspender, name, nil
 }
