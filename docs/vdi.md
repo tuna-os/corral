@@ -10,8 +10,12 @@ broker takes back a desktop that its user left, with care.
 (see also [VDI Epic Status](vdi-epic-status.md)). What's here is real and cluster-tested:
 create a pool, hand a member to a user, connect, release it, delete the pool.
 
-**Stability level:** Preview (see the
-[criteria](enterprise-readiness.md#stability-levels)).
+**Stability level** (see the [criteria](enterprise-readiness.md#stability-levels)):
+
+| Surface | Backend | Level | Evidence |
+|---|---|---|---|
+| The [self-service broker](#self-service-broker) on persistent VM pools (members by the `corral.dev/vdi-pool` label): claim, ownership, connect, release, reclaim | KubeVirt | Stable | `scripts/e2e-vdi.sh` in the `e2e-kind` job of [e2e.yml](../.github/workflows/e2e.yml); the [upgrade test](#upgrade-from-v060); [troubleshooting](troubleshooting.md#vdi-desktops) |
+| The `corral vdi` CLI (`pool create` clones, `assign`, `unassign`, `connect`), ephemeral VM pools (`--ephemeral`), [CT-backed pools](vdi-ct-pools.md), [USB redirection](#native-usb-redirection), [device capacity checks](#gpu--host-device-capacity-validation) | KubeVirt | Preview | Unit tests. CI has no end-to-end test of these yet. |
 
 This page is about pools of VMs. For pools of ephemeral Linux desktops that
 Corral builds from a container image, see [CT-backed pools](vdi-ct-pools.md).
@@ -364,6 +368,26 @@ for a CT member. The `corral-auth` gateway signs in with a browser, so
   or `corral start <member>`), or run `corral vdi unassign` to back out.
 - **A release fails** — the member stops before its claim ends. If the stop
   fails, the holder keeps the claim and can send the release again.
+
+## Upgrade from v0.6.0
+
+v0.6.0 kept an assignment only on the VM: the `corral.dev/vdi-assigned-to`
+label and the `corral.dev/vdi-claimed-at` annotation. It had no Lease. The
+current release keeps that state and does not migrate it:
+
+- `corral vdi pool list` and the broker show the member as assigned. The broker
+  does not count it as free, and a claim from a different user does not get it.
+- A claim from the identity in the label adopts the member: Corral creates
+  its Lease and keeps the desktop. A v0.6.0 label value cannot hold `@`.
+  Thus adoption works only when the broker identity is the same string, for
+  example `alice` and not `alice@example.com`.
+- Any other assignment stays until an administrator runs
+  `corral vdi unassign <member>`. That stops the member and frees it.
+
+`pkg/vdi/upgrade_test.go` reads the v0.6.0 state from
+`pkg/vdi/testdata/v0.6.0/`. `scripts/e2e-vdi.sh` builds `corral-vdi` from the
+v0.6.0 tag and assigns a member with it on the kind cluster. Then it checks
+the rules above against the current broker.
 
 ## GPU & Host-Device Capacity Validation
 

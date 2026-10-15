@@ -17,7 +17,10 @@
   `pkg/web`/`pkg/demo` change (`scripts/ui-smoke.mjs`).
 - **VDI broker e2e** (`scripts/e2e-vdi.sh`, in the cluster e2e job): a
   second `corral web` runs the broker on real Leases and VMs. It claims desktops, checks ownership, resolves connect, and releases.
-  Then it waits for a reclaim at the maximum session duration.
+  Then it waits for a reclaim at the maximum session duration. Last, it
+  builds `corral-vdi` from the v0.6.0 tag. It checks that an assignment of
+  that release carries over (see the
+  [upgrade path](enterprise-readiness.md#upgrade-path)).
 - **Cluster e2e** (`.github/workflows/e2e.yml`): kind + emulated KubeVirt on
   GitHub runners — real `kubectl`/`virtctl` against a real API server.
 - **The generated layer, in a real bootc image** (`just vmtest-layer`, the
