@@ -13,6 +13,10 @@ on:
   # Only run the (expensive) browser e2e when something that affects runtime
   # behaviour changes — Go code, the served UI, the e2e specs themselves, or the
   # deploy manifests. Docs/marketplace/CI-config-only PRs skip it.
+  # The "!" lines drop Go that cannot change the `corral web` this job drives:
+  # tests, the TUI, the plugin binaries (cmd/corral-*), and the pkg/ trees the
+  # corral binary does not import (`go list -tags bootc -deps .`). Every push
+  # to main still runs the whole suite.
   pull_request:
     paths:
       - "**.go"
@@ -23,6 +27,14 @@ on:
       - "deploy/**"
       - "Containerfile"
       - ".github/workflows/e2e.yml"
+      - "!**_test.go"
+      - "!cmd/tui*.go"
+      - "!cmd/corral-*/**"
+      - "!pkg/device/**"
+      - "!pkg/lifecycle/**"
+      - "!pkg/schedule/**"
+      - "!pkg/testenv/**"
+      - "!pkg/vdi/**"
   workflow_dispatch:
 
 # Least privilege by default: the read-only token is all any job here needs

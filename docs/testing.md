@@ -118,11 +118,12 @@ dashboard. Neither needs production.
   It checks the console pop-out and the context menu.
 - **Mid-tier Playwright** (`e2e/corral.spec.js` without `@live-only`, in
   `.github/workflows/e2e.yml`). It runs kind + emulated KubeVirt on every
-  push. It covers the wizard for every source type and the catalog. It covers
-  CDI import to Succeeded and scale on a stopped VM. It covers one cirros boot
-  lifecycle and the bulk-action bar. It covers the export picker, tag chips and
-  filters, and `/api/whoami`. It covers the read-only gate and the CT
-  create-console-delete flow.
+  push to `main`, and on each pull request that changes the `corral` binary,
+  the UI or the specs. It covers the wizard for every source type and the
+  catalog. It covers CDI import to Succeeded and scale on a stopped VM. It
+  covers one cirros boot lifecycle and the bulk-action bar. It covers the
+  export picker, tag chips and filters, and `/api/whoami`. It covers the
+  read-only gate and the CT create-console-delete flow.
 
 ## Fuzz targets
 
@@ -475,7 +476,7 @@ safe to run against production.
 
 | Tier | What | Where it runs |
 |---|---|---|
-| CI (default) | wizard flows, catalog content, create for every source type, CDI import to Succeeded (PVC flow), scale on a stopped VM, one full boot lifecycle (cirros) | `.github/workflows/e2e.yml`: kind + KubeVirt `useEmulation` + CDI on every push/PR — `npx playwright test --grep-invert "@live-only"` |
+| CI (default) | wizard flows, catalog content, create for every source type, CDI import to Succeeded (PVC flow), scale on a stopped VM, one full boot lifecycle (cirros) | `.github/workflows/e2e.yml`: kind + KubeVirt `useEmulation` + CDI on every push to `main` and on PRs that change the `corral` binary, UI or specs — `npx playwright test --grep-invert "@live-only"` |
 | `@live-only` | console websockets (VNC RFB handshake, serial output) + fullscreen/scaling controls, SSH login with an injected key, RDP probe, snapshots (longhorn), bootc build → boot → serial check, boot-from-import | manually against the real cluster: `corral web` + `cd e2e && npx playwright test` |
 
 Knobs: `CORRAL_URL` (default `` http://localhost:8006 ``), `CORRAL_NS` (default
