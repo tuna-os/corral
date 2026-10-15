@@ -43,6 +43,10 @@ type BackendResult struct {
 	Detail     string
 	Remedy     string
 	Configured bool
+	// Offerable reports that `corral setup` offers to save a context named
+	// after the backend once the probe is READY. Local QEMU needs no context,
+	// and a Proxmox host comes from flags rather than from the scan.
+	Offerable bool
 }
 
 // Report is the full host scan, in backend-probe order.
@@ -181,7 +185,7 @@ func probeQemu() BackendResult {
 }
 
 func probeIncus() BackendResult {
-	r := BackendResult{Backend: "incus", Configured: true}
+	r := BackendResult{Backend: "incus", Configured: true, Offerable: true}
 	if _, err := runner.LookPath("incus"); err != nil {
 		r.Verdict = VerdictAbsent
 		r.Detail = "incus is not installed"
@@ -227,7 +231,7 @@ func libvirtURIs() []string {
 }
 
 func probeLibvirt() BackendResult {
-	r := BackendResult{Backend: "libvirt", Configured: true}
+	r := BackendResult{Backend: "libvirt", Configured: true, Offerable: true}
 	if _, err := runner.LookPath("virsh"); err != nil {
 		r.Verdict = VerdictAbsent
 		r.Detail = "virsh is not installed"
@@ -269,7 +273,7 @@ func lastErrSuffix(lastErr string) string {
 }
 
 func probeKubevirt() BackendResult {
-	r := BackendResult{Backend: "kubevirt"}
+	r := BackendResult{Backend: "kubevirt", Offerable: true}
 	if !config.KubeconfigPresent() {
 		r.Verdict = VerdictNotConfigured
 		r.Detail = "no kubeconfig found — kubevirt needs a cluster"
