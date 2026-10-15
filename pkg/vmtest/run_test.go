@@ -269,6 +269,89 @@ func TestWaitReady_MarkerTimeout(t *testing.T) {
 	}
 }
 
+// The marker is matched against the whole console, not line by line, so one
+// pattern can require two markers that a guest prints on separate lines and
+// in either order. A gate that needs both a base and a desktop contract to
+// pass relies on that.
+func TestWaitReady_MarkerSpansTheWholeConsole(t *testing.T) {
+	const both = `(?s)BASE_OK.*DESKTOP_OK|DESKTOP_OK.*BASE_OK`
+	for _, tc := range []struct {
+		name    string
+		console string
+		ready   bool
+	}{
+		{"base first", "BASE_OK\nnoise\nDESKTOP_OK\n", true},
+		{"desktop first", "DESKTOP_OK\nnoise\nBASE_OK\n", true},
+		{"only one", "DESKTOP_OK\nnoise\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := vmState(t, "gate")
+			if err := os.WriteFile(filepath.Join(dir, "serial.log"), []byte(tc.console), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			spec := &Spec{Name: "gate", ReadyMarker: both}
+			spec.WithDefaults()
+			spec.Timeout = Duration(10 * time.Millisecond)
+			err := waitReady(spec, Keypair{}, &Result{}, func(string) {})
+			if tc.ready && err != nil {
+				t.Errorf("waitReady: %v", err)
+			}
+			if !tc.ready && err == nil {
+				t.Error("one marker of two should not count as ready")
+			}
+		})
+	}
+}
+
+// A failure line on the console does not end the wait: the marker gate only
+// knows what ready looks like, so a guest that reports its own failure is
+// waited on until the timeout.
+func TestWaitReady_MarkerGateWaitsOutAReportedFailure(t *testing.T) {
+	dir := vmState(t, "gate")
+	if err := os.WriteFile(filepath.Join(dir, "serial.log"),
+		[]byte("Entering emergency mode\nCONTRACT_FAIL dbus\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	spec := &Spec{Name: "gate", ReadyMarker: "CONTRACT_OK"}
+	spec.WithDefaults()
+	spec.Timeout = Duration(10 * time.Millisecond)
+	err := waitReady(spec, Keypair{}, &Result{}, func(string) {})
+	if err == nil || !strings.Contains(err.Error(), "did not appear") {
+		t.Errorf("want the marker timeout, got %v", err)
+	}
+}
+
+// The SSH gate is the default. When it times out, the error carries the tail
+// of the console, because the console is the only witness to why.
+func TestWaitReady_SSHTimeoutCarriesTheConsoleTail(t *testing.T) {
+	dir := vmState(t, "gate")
+	if err := os.WriteFile(filepath.Join(dir, "metadata.json"), []byte(`{"name":"gate","ssh_port":2242}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "serial.log"), []byte("Kernel panic - not syncing\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	qemu.SetSSHRunner(func(string, ...string) ([]byte, error) {
+		return []byte("Connection refused"), errors.New("exit status 255")
+	})
+	t.Cleanup(func() { qemu.SetSSHRunner(nil) })
+
+	spec := &Spec{Name: "gate"}
+	spec.WithDefaults()
+	spec.Timeout = Duration(time.Millisecond)
+	result := &Result{}
+	err := waitReady(spec, Keypair{PrivatePath: "/run/key"}, result, func(string) {})
+	if err == nil {
+		t.Fatal("expected an SSH timeout")
+	}
+	if !strings.Contains(err.Error(), "Kernel panic") {
+		t.Errorf("the error should carry the console tail: %v", err)
+	}
+	if result.ReadyBy != "" {
+		t.Errorf("readyBy = %q for a guest that never answered", result.ReadyBy)
+	}
+}
+
 func TestOperatorKey(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
