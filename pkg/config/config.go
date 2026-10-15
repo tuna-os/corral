@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -54,6 +55,24 @@ type ContextConfig struct {
 	// a config file that lands in a dotfiles repo does not carry cluster
 	// credentials with it.
 	Proxmox *ProxmoxContextConfig `yaml:"proxmox,omitempty" json:"proxmox,omitempty"`
+	// Vsphere carries what a vCenter endpoint needs beyond its host, and is
+	// only read when Backend is "vsphere". The password is a secret and is
+	// never stored here: it comes from CORRAL_VSPHERE_PASSWORD[_<CTX>] in the
+	// environment, so a config file that lands in a dotfiles repo does not
+	// carry estate credentials with it.
+	Vsphere *VsphereContextConfig `yaml:"vsphere,omitempty" json:"vsphere,omitempty"`
+	// Xen carries what a XenServer/XCP-ng pool endpoint needs beyond its
+	// host, and is only read when Backend is "xen". The password is a
+	// secret and is never stored here: it comes from
+	// CORRAL_XEN_PASSWORD[_<CTX>] in the environment, so a config file
+	// that lands in a dotfiles repo does not carry pool credentials with it.
+	Xen *XenContextConfig `yaml:"xen,omitempty" json:"xen,omitempty"`
+	// Nutanix carries what a Prism Central endpoint needs beyond its VIP,
+	// and is only read when Backend is "nutanix". The secret is never
+	// stored here: it comes from CORRAL_NUTANIX_PASSWORD[_<CTX>] in the
+	// environment, so a config file that lands in a dotfiles repo does not
+	// carry cluster credentials with it.
+	Nutanix *NutanixContextConfig `yaml:"nutanix,omitempty" json:"nutanix,omitempty"`
 }
 
 // ProxmoxContextConfig is one PVE cluster's access details (ADR-0009).
@@ -70,6 +89,48 @@ type ProxmoxContextConfig struct {
 	// Node is the default node for operations that need one before the
 	// inventory has resolved (creates, mostly).
 	Node string `yaml:"node,omitempty" json:"node,omitempty"`
+}
+
+// VsphereContextConfig is one vCenter estate's access details (RFC-0003).
+type VsphereContextConfig struct {
+	// Username is the vSphere user, e.g. "administrator@vsphere.local".
+	Username string `yaml:"username,omitempty" json:"username,omitempty"`
+	// Fingerprint pins the server certificate (SHA-256 hex). Self-signed
+	// certs are common on vCenter, and pinning trusts one specifically
+	// rather than trusting anything presented.
+	Fingerprint string `yaml:"fingerprint,omitempty" json:"fingerprint,omitempty"`
+	// Insecure skips verification entirely — explicit, per-context, never a
+	// default.
+	Insecure bool `yaml:"insecure,omitempty" json:"insecure,omitempty"`
+}
+
+// XenContextConfig is one XenServer/XCP-ng pool's access details (RFC-0003).
+type XenContextConfig struct {
+	// Username is the XenAPI user, usually "root".
+	Username string `yaml:"username,omitempty" json:"username,omitempty"`
+	// Fingerprint pins the server certificate (SHA-256 hex). Self-signed
+	// certs are the norm on XenServer, and pinning trusts one specifically
+	// rather than trusting anything presented.
+	Fingerprint string `yaml:"fingerprint,omitempty" json:"fingerprint,omitempty"`
+	// Insecure skips verification entirely — explicit, per-context, never a
+	// default.
+	Insecure bool `yaml:"insecure,omitempty" json:"insecure,omitempty"`
+}
+
+// NutanixContextConfig is one Prism Central endpoint's access details (RFC-0003).
+type NutanixContextConfig struct {
+	// Username is the Prism Central user, usually "admin".
+	Username string `yaml:"username,omitempty" json:"username,omitempty"`
+	// Fingerprint pins the server certificate (SHA-256 hex). Self-signed
+	// certs are the norm on Prism Central, and pinning trusts one
+	// specifically rather than trusting anything presented.
+	Fingerprint string `yaml:"fingerprint,omitempty" json:"fingerprint,omitempty"`
+	// Insecure skips verification entirely — explicit, per-context, never a
+	// default.
+	Insecure bool `yaml:"insecure,omitempty" json:"insecure,omitempty"`
+	// APIVersion selects the v4 version string (default "v4.0").
+	// Availability varies by PC build, so this stays configurable.
+	APIVersion string `yaml:"apiVersion,omitempty" json:"apiVersion,omitempty"`
 }
 
 func (c ContextConfig) IsEnabled() bool { return c.Enabled == nil || *c.Enabled }
@@ -151,7 +212,17 @@ func AddContext(c ContextConfig) error {
 		return fmt.Errorf("qemu is local and does not take a context")
 	}
 	switch c.Backend {
-	case "qemu", "kubevirt", "incus", "libvirt":
+	// virtualbox is local-only: Context is just a label, and there is no
+	// secret block — remote management via vboxwebsrv is out of scope.
+	// vsphere is remote-only: Context is the vCenter host, and the secret
+	// (password) lives in the environment, never in this block.
+	// xen is remote-only: Context is the pool master host, and the secret
+	// (password) lives in the environment, never in this block.
+	// proxmox is remote-only: Context is the PVE host, and the secret (API
+	// token) lives in the environment, never in this block.
+	// nutanix is remote-only: Context is the Prism Central VIP, and the
+	// secret (password or API key) lives in the environment, never here.
+	case "qemu", "kubevirt", "incus", "libvirt", "proxmox", "virtualbox", "vsphere", "xen", "nutanix":
 	default:
 		return fmt.Errorf("unsupported backend %q", c.Backend)
 	}
@@ -253,9 +324,9 @@ func DefaultBackend() string {
 
 func SetDefaultBackend(backend string) error {
 	switch backend {
-	case "qemu", "kubevirt", "incus", "libvirt":
+	case "qemu", "kubevirt", "incus", "libvirt", "virtualbox", "vsphere", "xen", "nutanix":
 	default:
-		return fmt.Errorf("unsupported backend %q (want qemu, kubevirt, incus, or libvirt)", backend)
+		return fmt.Errorf("unsupported backend %q (want qemu, kubevirt, incus, libvirt, virtualbox, vsphere, xen, or nutanix)", backend)
 	}
 	cfg, err := Load("")
 	if err != nil {
@@ -434,8 +505,16 @@ type TailscaleConfig struct {
 }
 
 // ConfigDir returns the directory containing config.yaml.
+// If XDG_CONFIG_HOME is set, it returns $XDG_CONFIG_HOME/corral.
+// Otherwise it defaults to ~/.config/corral.
 func ConfigDir() string {
-	home, _ := os.UserHomeDir()
+	if d := os.Getenv("XDG_CONFIG_HOME"); d != "" {
+		return filepath.Join(d, "corral")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = os.TempDir()
+	}
 	return filepath.Join(home, ".config", "corral")
 }
 
@@ -451,7 +530,9 @@ func Load(path string) (*Config, error) {
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		if os.IsNotExist(err) {
+		// A platform with no filesystem has no config file either: the
+		// browser demo (js/wasm, #284) gets ENOSYS for every file call.
+		if os.IsNotExist(err) || errors.Is(err, errors.ErrUnsupported) {
 			return &Config{}, nil
 		}
 		return nil, err

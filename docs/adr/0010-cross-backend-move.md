@@ -5,35 +5,35 @@
 
 ## Context
 
-Corral aggregates five backends, and an operator who runs more than one
-eventually wants an instance to change which one it lives on: a VM prototyped on
-a laptop's QEMU belongs on the cluster; a Proxmox guest is being retired onto
-KubeVirt; a KubeVirt VM needs to come back down to libvirt for a hardware
-passthrough the cluster cannot give it.
+Corral is an aggregator of five backends. An operator who runs more than one
+eventually wants an instance to change the backend it lives on. A VM prototyped
+on a laptop's QEMU belongs on the cluster. An operator retires a Proxmox guest onto
+KubeVirt. A KubeVirt VM needs to come back down to libvirt for a hardware
+passthrough that the cluster cannot give it.
 
-`migrate` already exists and means something else — moving a guest between
+`migrate` already exists and means something else. It moves a guest between
 *nodes of one backend*, live where the backend supports it (ADR-0009's
-precondition check, KubeVirt's `VirtualMachineInstanceMigration`). This is the
-other axis, and it is necessarily **cold**: there is no shared memory state
-between a KubeVirt VMI and a systemd-managed QEMU process, so the guest stops,
-its disk moves, and it starts again somewhere else. Calling both "migrate" would
-be the kind of overloading that gets someone's production VM stopped when they
-expected a live move.
+precondition check, KubeVirt's `VirtualMachineInstanceMigration`). This ADR is
+about the other axis, and that axis is necessarily **cold**. There is no shared
+memory state between a KubeVirt VMI and a systemd-managed QEMU process. So the
+guest stops, its disk moves, and it starts again somewhere else. One name for
+both would be a dangerous overload: it could stop someone's production VM when
+they expected a live move.
 
-The pieces are already contracts, which is why this is worth doing now rather
-than as a special case per pair:
+The pieces are already contracts. That is why Corral should do this now, as one
+general feature and not as a special case per pair:
 
-- **Disk out** — `pkg/export` (#131) is backend-neutral: adapters for KubeVirt,
-  QEMU, libvirt, and Incus, formats `qcow2` / `raw.gz` / `incus-tar`, progress
-  reporting, and `snapshot.Consistency` on the result so an export says what it
-  actually captured. It already refuses a running instance where that would
-  produce a torn image.
-- **Disk in** — `pkg/bootc.Target` is defined as "puts a built disk onto a
-  backend as a runnable instance", implemented for QEMU and libvirt. KubeVirt
+- **Disk out** — `pkg/export` (#131) is backend-neutral. It has adapters for
+  KubeVirt, QEMU, libvirt, and Incus, and the formats `qcow2` / `raw.gz` /
+  `incus-tar`. It reports progress. It puts `snapshot.Consistency` on the
+  result, so an export says what it captured. It already refuses a live
+  instance where the export would produce a torn image.
+- **Disk in** — `pkg/bootc.Target` means "puts a built disk onto a backend as a
+  runnable instance". It has implementations for QEMU and libvirt. KubeVirt
   ingests through CDI (`ImportDataVolume` from a URL, `UploadDataVolume` from a
   local file). Proxmox creates with `import-from` on `scsi0`.
 - **Everything else** — `pkg/backend`'s operation contract (ADR: parity step 2)
-  gives uniform power control, and `types.InstanceRef` gives an identity that
+  gives uniform power control. `types.InstanceRef` gives an identity that
   already spans backends.
 
 What is missing is the composition, an honest preflight, and a decision about
@@ -44,7 +44,7 @@ which pairs are supported at all.
 ### It is called `move`, never `migrate`
 
 `corral move <instance> --to <context>` and `POST /api/vms/{ns}/{name}/move`.
-The distinction is load-bearing and is stated in every surface: **a move stops
+The distinction matters, and every surface states it: **a move stops
 the guest.** Where a backend can migrate within itself, that stays `migrate` and
 stays live.
 
@@ -52,11 +52,11 @@ stays live.
 
     preflight → export → convert → ingest → verify → (retire source)
 
-The source instance is **stopped, not deleted**, and is only deleted when the
-operator asks (`--delete-source`, default off). A move that has produced a
-working instance on the destination and left a stopped one behind is a good
-outcome; one that deleted the source and failed to ingest is unrecoverable. The
-default therefore leaves both, and the surfaces say so.
+The source instance ends up **stopped, not deleted**. Corral deletes it only
+when the operator asks (`--delete-source`, default off). A move can produce an
+instance that works on the destination and leave a stopped one behind. That is
+a good outcome. A move that deleted the source and then failed to ingest is
+unrecoverable. The default therefore leaves both, and the surfaces say so.
 
 ### Supported pairs, and the one that is not
 
@@ -70,47 +70,51 @@ default therefore leaves both, and the surfaces say so.
 
 ¹ Proxmox as a *destination* needs a disk-ingest path; see below.
 
-This table is the intended end state. **What is wired today is narrower**, and
-the code refuses everything else rather than approximating it — see *First
-slice* below for exactly which cells are live.
+This table is the intended end state. **The code today covers less.** It
+refuses every other cell and does not try to approximate it. See *First slice*
+below for exactly which cells are live.
 
 **Incus cannot be a destination.** `bootc.TargetFor` already assessed this and
-refused, and the reasoning holds unchanged: an Incus VM boots from Incus's own
-image store, `incus import` takes an Incus backup tarball rather than a disk
-image, and attaching a raw disk to an `--empty` VM leaves the guest without the
-agent, config drive, and metadata Incus expects — *"the result would look like
-it worked and then behave unlike every other Incus instance."* The honest path
-is Incus image publishing, which is a separate feature. Incus remains a fine
-**source**, because exporting the VM's disk out of it works.
+refused, and the reason still holds. An Incus VM boots from Incus's own image
+store. `incus import` takes an Incus backup tarball, not a disk image. A raw
+disk on an `--empty` VM leaves the guest without the agent, config drive, and
+metadata that Incus expects. In the words of that refusal: *"the result would
+look like it worked and then behave unlike every other Incus instance."*
+
+The honest path is to publish Incus images, and that is a separate feature. Incus
+remains a fine **source**, because Corral can export the VM's disk out of it.
 
 **Containers are not in this graph at all.** An Incus LXC container and a
-pet-pod CT have no disk image — they are a rootfs and a PVC. Turning one into a
-VM means installing a kernel and a bootloader into a filesystem that never had
-them: a *rebuild*, not a move, and one whose failure mode is a guest that
-imports cleanly and then does not boot. It is out of scope, and `move` refuses a
-container by name rather than attempting something shaped like success.
+pet-pod CT have no disk image. They are a rootfs and a PVC. To turn one into a
+VM, you must put a kernel and a bootloader into a filesystem that never had
+them. That is a *rebuild*, not a move, and its failure mode is a guest that
+imports cleanly and then does not boot. It is out of scope, and `move` refuses
+a container by name and does not try something shaped like success.
 
 ### Preflight refuses before anything is touched
 
-The step that makes this safe rather than exciting. It runs first, changes
-nothing, and reports every reason the move would not work — all of them, not
-just the first:
+This step is what makes the move safe and not a gamble. It runs first and changes nothing.
+It reports every reason that the move would not work — all of them, not only
+the first:
 
-- **Firmware.** A UEFI guest landing on a BIOS-default target boots to a blank
-  screen. Detected from the source (KubeVirt's `firmware.bootloader.efi`,
-  libvirt's `<loader>`, PVE's `bios: ovmf`) and set on the destination, or
-  refused when the destination cannot express it.
-- **Disk bus and drivers.** A Windows guest imported from PVE's SATA default
-  onto virtio-scsi will not boot without virtio drivers already installed. The
-  guest OS is known from the source config where the backend records it; where
-  it is not, the preflight *warns* rather than asserting.
-- **Space.** Source virtual size versus destination free space, and versus local
-  scratch, since the artifact lands on local disk first.
+- **Firmware.** A UEFI guest that lands on a BIOS-default target boots to a
+  blank screen. The preflight reads the firmware from the source (KubeVirt's
+  `firmware.bootloader.efi`, libvirt's `<loader>`, PVE's `bios: ovmf`). It sets
+  the same firmware on the destination, or refuses when the destination cannot
+  express it.
+- **Disk bus and drivers.** Consider a Windows guest that moves from PVE's SATA
+  default onto virtio-scsi. Without virtio drivers already in place, it will not
+  boot. The
+  guest OS is known from the source config where the backend records it. Where
+  the backend does not record it, the preflight *warns* and does not assert.
+- **Space.** The preflight compares the source's virtual size with the free
+  space on the destination and in local scratch. The artifact lands on local
+  disk first.
 - **Address change.** The guest gets a new MAC and (almost always) a new IP.
-  Anything pinned to either breaks. This is a warning, never a refusal — it is
-  the operator's call — but it is always said.
-- **Capability.** The destination must implement the ingest path at all, which
-  is a question `pkg/backend` can already answer.
+  Anything pinned to either breaks. This is a warning, never a refusal, because
+  it is the operator's call. But the preflight always says it.
+- **Capability.** The destination must have the ingest path at all.
+  `pkg/backend` can already answer that question.
 
 `--dry-run` prints the plan and the warnings and exits. The web UI shows the
 same list before the button commits.
@@ -123,23 +127,23 @@ Proxmox resolves one of three paths at preflight, in order:
 
 1. A storage that advertises the `import` content type (PVE 8.4+) —
    `StorageInfo.Holds("import")` already answers this.
-2. A shared storage path Corral can write to directly.
+2. A shared storage path that Corral can write to directly.
 3. SSH to a node plus `qm importdisk`.
 
-If none is available, the move is refused with those three options named. This
-is worth stating loudly because ADR-0009 chose the API precisely to avoid
-requiring SSH; a *destination* move is the one operation that may still need it,
-and an operator should learn that from a refusal rather than from a half-moved
-VM.
+If none is available, the move refuses and names those three options. We say
+this loudly because ADR-0009 chose the API precisely so that Corral does not
+need SSH. A *destination* move is the one operation that may still need it. An
+operator should learn that from a refusal, not from a half-moved VM.
 
 ### Configuration travels, deliberately incompletely
 
 Cores, memory, disk size, firmware, guest OS type, tags, and the folder
-membership (ADR-0008) follow the instance. What does not: the MAC, the IP, the
-node placement, backend-specific tuning (KubeVirt instancetypes, PVE HA groups),
-and anything the destination cannot express. The move reports what it dropped —
-a silent loss of a passthrough device or a pinned NUMA layout is exactly the
-kind of thing that turns up three weeks later as a performance mystery.
+membership (ADR-0008) follow the instance. What does not follow: the MAC, the
+IP, the node placement, backend-specific settings (KubeVirt instancetypes, PVE
+HA groups), and anything the destination cannot express. The move reports what
+it dropped. Assume that a move silently drops a passthrough device or a pinned
+NUMA layout. That is exactly the kind of loss that turns up three weeks later
+as a performance mystery.
 
 ### The contract
 
@@ -160,16 +164,16 @@ type Mover interface {
 }
 ```
 
-`Ingester` joins `pkg/backend`'s families as the destination half, so
-"can this backend receive a disk" becomes a type assertion the parity matrix
-derives from, exactly like every other operation. `bootc.Target` is the existing
-implementation of that idea for two backends; generalising it here means bootc
-and move share one ingest path rather than growing a second.
+`Ingester` joins `pkg/backend`'s families as the destination half. So "can this
+backend receive a disk" becomes a type assertion that the parity matrix derives
+from, exactly like every other operation. `bootc.Target` is the existing
+implementation of that idea for two backends. If we generalise it here, bootc
+and move share a single ingest path, and a second one does not grow.
 
 ## First slice: what is actually wired
 
-`pkg/move` and `corral move` exist, and every cell the table above promises is
-now wired except the Incus destination, which is refused by design:
+`pkg/move` and `corral move` exist. They now wire every cell that the table
+above promises, except the Incus destination. Corral refuses that one by design:
 
 | From ↓ To → | qemu | libvirt | kubevirt | proxmox | incus |
 |---|---|---|---|---|---|
@@ -186,90 +190,93 @@ Two things narrow it beyond what the ADR anticipated, each with a refusal that
 names the reason:
 
 - **The four ingest paths, and what each costs.** qemu and libvirt delegate to
-  the `bootc.Target` that already puts a disk onto them, so a bootc disk and a
-  moved disk land the same way. KubeVirt uploads through CDI (`virtctl
-  image-upload` creates the DataVolume, and the VM then adopts the resulting
-  PVC as its boot disk — `PVC`, never `ImportURL`, since the disk is already in
-  the cluster). Proxmox uploads to a storage advertising the `import` content
-  type and creates with `import-from`; where no such storage exists it refuses
-  with the three ways forward, which is the bend in ADR-0009 described below.
-- **Firmware travels now.** A UEFI guest was previously refused everywhere but
-  libvirt. KubeVirt sets `firmware.bootloader.efi` and PVE sets `bios: ovmf`
-  plus an `efidisk0`, so only qemu — whose generated systemd unit has no OVMF
-  path — still refuses one. Secure Boot stays off on both: it needs an EFI vars
-  volume and a signed bootloader, and enabling it silently would break exactly
-  the imported guests this serves.
-- **Incus is a source, not a destination.** `pkg/export`'s Incus adapter grew a
-  `qcow2` format for this: it exports the instance archive to scratch, pulls
-  `backup/virtual-machine.img` out of it, and converts. Going through the
-  archive rather than the storage pool is deliberate — the pool layout differs
-  per driver, usually needs root, and is not reachable at all for a remote
-  instance, while `incus export` works the same way everywhere and over the
+  `bootc.Target`, which already puts a disk onto them. So a bootc disk and a
+  moved disk land the same way. KubeVirt uploads through CDI: `virtctl
+  image-upload` creates the DataVolume. The VM then adopts the new PVC as its
+  boot disk. It uses `PVC`, never `ImportURL`, since the disk is already in the
+  cluster. Proxmox uploads to a storage that advertises the `import` content
+  type, and creates with `import-from`. Where no such storage exists, it
+  refuses with the three ways forward. That is the bend in ADR-0009 that this
+  ADR describes.
+- **Firmware travels now.** Before, Corral refused a UEFI guest everywhere but
+  libvirt. KubeVirt sets `firmware.bootloader.efi`, and PVE sets `bios: ovmf`
+  plus an `efidisk0`. So only qemu still refuses one, because its generated
+  systemd unit has no OVMF path. Secure Boot stays off on both. It needs an EFI
+  vars volume and a signed bootloader. If Corral enabled it silently, it would
+  break exactly the imported guests this serves.
+- **Incus is a source, not a destination.** The Incus adapter in `pkg/export`
+  grew a `qcow2` format for this. It exports the instance archive to scratch,
+  pulls `backup/virtual-machine.img` out of it, and converts. The path through
+  the archive, not the storage pool, is deliberate. The pool layout differs per
+  driver, usually needs root, and is not reachable at all for a remote
+  instance. But `incus export` works the same way everywhere and over the
   network. The archive stays the *native* format, because it is the right
-  artifact for a backup (configuration and every volume) where the qcow2 is only
-  the boot disk. A container archive has no such member, and the refusal says
-  so in those words rather than failing later inside `qemu-img`.
-- **Only qcow2 is ingested.** `raw.gz` is a disk, but a compressed one, and the
+  artifact for a backup (configuration and every volume). The qcow2 is only the
+  boot disk. A container archive has no such member. The refusal says so in
+  those words, and does not fail later inside `qemu-img`.
+- **Ingest takes only qcow2.** `raw.gz` is a disk, but a compressed one. The
   ingest path hands the file to `qemu-img convert`, which does not read gzip.
-  Every backend that can export offers qcow2, so nothing is lost by naming the
-  constraint instead of producing an artifact the destination rejects.
+  Every backend that can export offers qcow2. So Corral loses nothing when it
+  names the constraint, and it does not produce an artifact that the
+  destination rejects.
 
 ### The web surface: drag to propose, never to commit
 
-`POST /api/move/preflight` and `POST /api/move` are two endpoints rather than
-one, and the split is what makes drag-and-drop safe. The Pool View tree holds
-two kinds of node and they behave differently by design:
+`POST /api/move/preflight` and `POST /api/move` are two endpoints, not one, and
+the split is what makes drag-and-drop safe. The tree in Pool View holds two
+kinds of node, and they behave differently by design:
 
-- Dropping a VM onto a **pool** reassigns folder membership. Nothing is touched,
-  so it commits immediately and is undone by dragging back.
-- Dropping a VM onto a **backend** proposes a move. The drop calls the
-  preflight — which changes nothing, so it is safe on a stray gesture — and what
-  comes back *is* the dialog: the steps, the warnings, the dropped
-  configuration, and any refusals. A refused plan has no confirm button.
+- A drop of a VM onto a **pool** reassigns folder membership. It does not touch
+  the VM itself, so it commits immediately. A drag back undoes it.
+- A drop of a VM onto a **backend** proposes a move. The drop calls the
+  preflight, which changes nothing, so a stray gesture is safe. What comes back
+  *is* the dialog: the steps, the warnings, the dropped configuration, and any
+  refusals. A refused plan has no confirm button.
 
-Backends that cannot receive a move are rendered inert with the reason on hover
-rather than accepting a drop and refusing afterwards. `POST /api/move` re-runs
-the preflight server-side before committing, so a client cannot skip the check
-and a plan that went stale between the drop and the click is caught. A refused
-preflight is a 200 (the refusals *are* the answer); a refused commit is a 409
-carrying the same list.
+The UI renders inert any backend that cannot receive a move, and shows the
+reason on hover. It does not accept a drop and refuse afterwards.
+`POST /api/move` re-runs the preflight server-side before it commits. So a client
+cannot skip the check, and the server catches a plan that went stale between
+the drop and the click. A refused preflight is a 200 (the refusals *are* the
+answer); a refused commit is a 409 with the same list.
 
-The instance's folder membership follows it to the destination, since a move
-that silently drops a VM out of the grouping an operator organised it into is a
+The instance's folder membership follows it to the destination. A move that
+silently drops a VM out of the group that an operator organised it into is a
 worse surprise than the IP change.
 
-- **Firmware and guest OS are asked of the source, not assumed.** `move.Inspect`
-  goes through a `backend.Inspector` family — KubeVirt's
+- **Firmware and guest OS come from the source.** Corral does not assume them.
+  `move.Inspect` goes through a `backend.Inspector` family: KubeVirt's
   `firmware.bootloader.efi`, libvirt's `firmware='efi'` or an OVMF `<loader>`,
   PVE's `bios: ovmf` and `ostype`. An Incus VM always answers UEFI, because
-  Incus boots its VMs under OVMF with no BIOS option: that is the one backend
-  where the fact belongs to the backend rather than the instance, and it means
-  an Incus VM cannot move to qemu until qemu's generated unit grows a firmware
-  path. qemu is also the one backend that cannot be *asked* — its unit records
-  no firmware — so a qemu source inspects to unknown, which downgrades the
-  refusal to the unknown-OS warning rather than asserting BIOS.
+  Incus boots its VMs under OVMF with no BIOS option. That is the one backend
+  where the fact belongs to the backend, not the instance. It also means an
+  Incus VM cannot move to qemu until qemu's generated unit grows a firmware
+  path. qemu is also the one backend that Corral cannot *ask*, because its unit
+  records no firmware. So a qemu source inspects to unknown. That downgrades
+  the refusal to the unknown-OS warning, and Corral does not assert BIOS.
 
-Also deviating from the sketch above: `Preflight` takes the `types.VM` the
-caller's inventory already holds rather than an `InstanceRef`, which keeps
-`pkg/move` out of the listing business — the same shape `pkg/web`'s folder
-actions use. Firmware and guest OS ride alongside it in `move.Source`, filled
-by `Inspect` rather than by the listing: a config read per instance is the right
-price at preflight and the wrong one on the dashboard's five-second poll.
+Another deviation from the sketch above: `Preflight` takes the `types.VM` that
+the caller's inventory already holds, not an `InstanceRef`. That keeps
+`pkg/move` out of the listing business, the same shape that `pkg/web`'s folder
+actions use. Firmware and guest OS ride alongside it in `move.Source`.
+`Inspect` fills them, not the listing. A config read per instance is the right
+price at preflight. It is the wrong one on the dashboard's five-second poll.
 
 ## Consequences
 
-- Long-running and resumable-ish: a 40 GiB export, convert, and upload is
-  minutes to hours. It runs as a task with progress (the web task log already
-  exists, and Proxmox's UPIDs give real progress on that side), and a failure
-  leaves the source stopped but intact.
-- Local scratch space becomes a real requirement, and the preflight checks it.
-- `pkg/export` gains no new API; `pkg/bootc.Target` becomes the seed of
-  `backend.Ingester`, which is a refactor with two existing implementations and
-  their e2e tests already in place.
-- CI can cover qemu ⇄ libvirt on the existing `e2e-incus` runner (both are
+- The move is slow and resumable-ish: a 40 GiB export, convert, and upload
+  takes minutes to hours. It runs as a task with progress. The web UI already
+  has a task log, and Proxmox's UPIDs give real progress on that side. A
+  failure leaves the source stopped but intact.
+- Corral now needs space for local scratch, and the preflight checks it.
+- `pkg/export` gains no new API. `pkg/bootc.Target` becomes the seed of
+  `backend.Ingester`. That is a refactor with two existing implementations, and
+  their e2e tests are already in place.
+- CI can cover qemu ⇄ libvirt on the existing `e2e-incus` runner. Both are
   installed there today, and it already exercises the export adapters against
-  the real tools). KubeVirt and Proxmox destinations stay unit-tested plus
-  manual, the same honesty `docs/backend-parity.md` applies elsewhere.
+  the real tools. KubeVirt and Proxmox destinations stay unit-tested plus
+  manual. That is the same honesty that `docs/backend-parity.md` applies
+  elsewhere.
 
 ## Alternatives considered
 
@@ -277,16 +284,17 @@ price at preflight and the wrong one on the dashboard's five-second poll.
 a verb that means "no downtime" everywhere else in the tool.
 
 **`virt-v2v`.** The right tool for VMware and Hyper-V conversions, and a
-plausible future dependency for those. Rejected for this ADR because every pair
-here is already qemu-family — the disks are qcow2 or raw and need no guest
-conversion — so it would add a heavy dependency to solve a problem this
+plausible future dependency for those. Rejected for this ADR, because every
+pair here is already qemu-family. The disks are qcow2 or raw and need no guest
+conversion. So it would add a heavy dependency to solve a problem that this
 particular graph does not have.
 
 **Stream disk-to-disk without local scratch.** Attractive for large disks, and
-possible for some pairs (CDI can import from a URL Corral serves). Rejected for
-the first slice: it multiplies the failure modes and needs a reachable listener,
-and the artifact-on-disk path is the one that is debuggable when it goes wrong.
-Worth revisiting once the plain path is trusted.
+possible for some pairs (CDI can import from a URL that Corral serves).
+Rejected for the first slice: it multiplies the failure modes and needs a
+reachable listener. Also, the artifact-on-disk path is the one that is
+debuggable when it goes wrong. Worth another look once operators trust the
+plain path.
 
 ## Not in scope
 

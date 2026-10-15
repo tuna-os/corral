@@ -4,9 +4,9 @@
 > [API reference](api.md), [architecture](architecture.md)
 
 This guide turns a plain Kubernetes cluster into a Proxmox-style virtualization
-host: a web UI with in-browser consoles, live CPU/RAM scaling, snapshots,
-backups, templates, and more — all driven by **KubeVirt** and the **Corral**
-front-end.
+host. You get a web UI with in-browser consoles, live CPU/RAM changes,
+snapshots, backups, templates, and more. **KubeVirt** and the **Corral**
+front-end drive all of it.
 
 Corral is a single static Go binary (CLI + TUI + web UI) that shells out to
 `kubectl`/`virtctl`. There is no operator or controller to install for Corral
@@ -57,7 +57,7 @@ kubectl apply -f https://github.com/kubevirt/containerized-data-importer/release
 
 ## 3. Enable the feature gates + LiveUpdate
 
-This is what lights up scaling, hotplug, snapshots, and export:
+This is what lights up CPU/RAM changes, hotplug, snapshots, and export:
 
 ```bash
 kubectl patch kubevirt kubevirt -n kubevirt --type merge -p '{
@@ -72,8 +72,8 @@ kubectl patch kubevirt kubevirt -n kubevirt --type merge -p '{
 ```
 
 - `vmRolloutStrategy: LiveUpdate` + `workloadUpdateMethods: [LiveMigrate]` →
-  CPU/memory hotplug (applied by live-migrating the VM).
-- `HotplugVolumes` → add/remove disks on a running VM.
+  CPU/memory hotplug (KubeVirt applies it with a live migration of the VM).
+- `HotplugVolumes` → add/remove disks on a live VM.
 - `Snapshot` → `VirtualMachineSnapshot`/`Restore`.
 - `VMExport` → deploys `virt-exportproxy`; powers Corral's backup/export.
 
@@ -125,15 +125,15 @@ EOF
 ```
 
 Corral prefers a StorageClass named `local-path` for new VM disks (local NVMe
-speed, no network IO) when present, falling back to the cluster default
-otherwise. Use `--storage-class` at create time to override per-VM.
+speed, no network IO) when present. If not, it falls back to the cluster
+default. Use `--storage-class` at create time to override per-VM.
 
 ### 4c. TopoLVM on Talos: `dm_thin_pool` kernel module
 
-TopoLVM needs the `dm-thin-pool` kernel module for LVM thin provisioning. On
-Talos, that module is compiled as loadable (`CONFIG_DM_THIN_PROVISIONING=m`),
-and Talos blocks `modprobe`/`insmod` via seccomp even from privileged
-containers — so TopoLVM's `lvmd` DaemonSet pod can't load it itself:
+TopoLVM needs the `dm-thin-pool` kernel module to thin-provision LVM volumes. On
+Talos, the kernel build makes that module loadable (`CONFIG_DM_THIN_PROVISIONING=m`).
+But Talos blocks `modprobe`/`insmod` via seccomp even from privileged
+containers. So TopoLVM's `lvmd` DaemonSet pod can't load it itself:
 
 ```
 # From any privileged container on the host
@@ -155,19 +155,19 @@ machine:
 ```
 
 This is a Talos machine-config change, not something Corral or `just`
-recipes can apply for you — `corral doctor` doesn't currently detect it
-either (tracked as a possible future check, since the failure mode is a
-silently-stuck lvmd pod rather than a clear error).
+recipes can apply for you. `corral doctor` doesn't detect it now either. We
+track it as a possible future check, because the failure mode is an lvmd pod
+that is stuck in silence, not a clear error.
 
 ## 4d. GPU / PCI device passthrough (optional)
 
 The `gpu` extension (`corral gpu enable`) registers a PCI vendor:device
 selector in the KubeVirt CR so VMs can request it as a resource. That's the
-*Kubernetes* half — it assumes the **host** already has passthrough working:
+*Kubernetes* half. It assumes that passthrough already works on the **host**:
 
 1. **IOMMU enabled** — in the BIOS/UEFI (`Intel VT-d` / `AMD-Vi`, sometimes
-   labeled "IOMMU") and on the kernel command line: `intel_iommu=on` (Intel)
-   or `amd_iommu=on` (AMD), plus `iommu=pt` is usually recommended. On Talos,
+   labeled "IOMMU"). Also on the kernel command line: `intel_iommu=on` (Intel)
+   or `amd_iommu=on` (AMD). We usually recommend `iommu=pt` too. On Talos,
    this is a kernel argument in the machine config:
    ```yaml
    machine:
@@ -177,25 +177,27 @@ selector in the KubeVirt CR so VMs can request it as a resource. That's the
          - iommu=pt
    ```
 2. **The device bound to `vfio-pci`**, not its normal driver (e.g. `nvidia`,
-   `amdgpu`) — otherwise the host kernel keeps it and KubeVirt's device
+   `amdgpu`). If not, the host kernel keeps it. Then KubeVirt's device
    plugin never sees it as available. How you bind this depends on your
-   distro; Talos doesn't support arbitrary driver rebinding the way a
-   general-purpose Linux host does, so GPU passthrough on Talos specifically
-   needs the device to come up as `vfio-pci` from boot (via
-   `extraKernelArgs`, e.g. `vfio-pci.ids=10de:1234`, matched to the actual
-   PCI vendor:device ID from `lspci -nn`).
+   distro. Talos doesn't let you rebind a device to an arbitrary driver the
+   way a general-purpose Linux host does. So GPU passthrough on Talos
+   specifically needs the device to come up as `vfio-pci` from boot. Do this
+   via `extraKernelArgs`, e.g. `vfio-pci.ids=10de:1234`. Match the value to
+   the real PCI vendor:device ID from `lspci -nn`.
 
-`corral doctor` has a check for this — **GPU/PCI passthrough** — but it's an
-indirect signal, not a direct probe of IOMMU/vfio-pci (that would need a
-privileged pod/DaemonSet on the node, which none of Corral's other checks
-do). It runs only when a device is permitted (`corral gpu enable` has been
-used) and fails if that device is never reported **Allocatable** on any
-node — KubeVirt's device plugin only advertises devices it can actually
-bind, so "permitted but never allocatable anywhere" is the strongest
-symptom of a missing IOMMU/vfio-pci prerequisite that's checkable this way.
-It won't catch a *partially* working setup (e.g. allocatable on the wrong
-node) — check `kubectl describe node <name>` for the resource under
-`Allocatable` if passthrough isn't working the way you expect.
+`corral doctor` has a check for this — **GPU/PCI passthrough**. But it's an
+indirect signal, not a direct probe of IOMMU/vfio-pci. A direct probe would
+need a privileged pod/DaemonSet on the node, and none of Corral's other
+checks do that.
+
+The check runs only when you allow a device (you used
+`corral gpu enable`). It fails if no node ever reports that device as
+**Allocatable**. KubeVirt's device plugin only advertises devices that it can
+bind. So "permitted but never allocatable anywhere" is the strongest symptom
+of a missing IOMMU/vfio-pci prerequisite that this check can see. It won't
+catch a setup that *partially* works (e.g. allocatable on the wrong node). If
+passthrough doesn't work the way you expect, check
+`kubectl describe node <name>` for the resource under `Allocatable`.
 
 ## 5. Deploy Corral
 
@@ -224,10 +226,11 @@ corral list
 
 ## 6. (Optional) LAN access for VMs
 
-By default a KubeVirt VM only gets a NATed pod-network interface: outbound
-internet works, but nothing on your actual LAN can reach it, and it can't
-reach LAN-only devices either (a smartwatch, a NAS, a router admin panel).
-Corral has two ways to fix that, depending on what your cluster already runs.
+By default a KubeVirt VM only gets a NATed pod-network interface. Outbound
+internet works, but nothing on your LAN can reach the VM. The VM also can't
+reach devices that are only on the LAN (a smartwatch, a NAS, a router admin
+panel). Corral has two ways to fix that. The right one depends on what your
+cluster already runs.
 
 ### 6a. A real secondary NIC — Multus
 
@@ -257,24 +260,24 @@ corral addnic myvm --network-nad tailvm/lan --iface net1   # explicit, if there'
 
 Or use Corral's **Add NIC** (Hardware → Network) in the web UI. `--lan`/
 `corral addnic` only auto-picks a NAD when exactly one exists on the
-cluster — with several, pass `--network-nad` explicitly so a VM never ends
-up bridged onto the wrong network by a guess. The NAD's `config` can wrap
-any CNI plugin — macvlan/ipvlan/bridge/sriov — Multus is just the KubeVirt
+cluster. With several, pass `--network-nad` explicitly. That way a guess
+never bridges a VM onto the wrong network. The NAD's `config` can wrap
+any CNI plugin — macvlan/ipvlan/bridge/sriov. Multus is only the KubeVirt
 attachment mechanism, not a networking technology in itself.
 
 ### 6b. No new interface — a LoadBalancer Service (Cilium or MetalLB)
 
-If you'd rather not touch the CNI chain at all, `--lan-service` exposes a
-VM's ports through a plain `type: LoadBalancer` Service instead — reusing
-the same proxy Deployment `corral create`'s tailnet exposure already runs,
-just fronted by a second Service with no vendor-specific annotations. Any
-controller that fulfills LoadBalancer Services assigns it an external IP the
-same way:
+If you prefer not to touch the CNI chain at all, `--lan-service` exposes a
+VM's ports through a plain `type: LoadBalancer` Service instead. It uses the
+same proxy Deployment again that the tailnet exposure of `corral create`
+already runs. The only difference is a second Service in front of it, with
+no vendor-specific annotations. Any controller that fulfills LoadBalancer
+Services gives it an external IP the same way:
 
 - **Cilium** with [L2 Announcement](https://docs.cilium.io/en/stable/network/l2-announcements/)
-  (flat network, ARP-based) or the [BGP Control Plane](https://docs.cilium.io/en/stable/network/bgp-control-plane/)
-  (peers with your router/switch — needed if the LAN spans an L3 boundary),
-  plus a `CiliumLoadBalancerIPPool` to hand out addresses from.
+  (flat network, ARP-based) or the [BGP Control Plane](https://docs.cilium.io/en/stable/network/bgp-control-plane/).
+  BGP peers with your router/switch, and you need it if the LAN spans an L3
+  boundary. Also add a `CiliumLoadBalancerIPPool` to hand out addresses from.
 - **[MetalLB](https://metallb.io/)** on any other CNI (Calico, Flannel, …) —
   same Service-based contract, its own L2/BGP modes.
 
@@ -284,7 +287,7 @@ corral lanservice myvm                                        # existing VM
 kubectl get svc myvm-lan -n tailvm                             # external IP once a controller assigns one
 ```
 
-Without an LB-IPAM controller installed, `myvm-lan` just sits `<pending>`
+Without an LB-IPAM controller installed, `myvm-lan` sits `<pending>`
 forever — same as any other LoadBalancer Service on a cluster without one.
 
 ## 7. Extensions (the marketplace)
@@ -305,12 +308,12 @@ Plugins live in `~/.local/share/corral/plugins` and run as `corral <name> …`.
 ## Caveats worth knowing up front
 
 - **Live migration needs same-vendor CPUs.** KubeVirt pins a migration target
-  to the source node's CPU vendor, so you cannot live-migrate (or live-hotplug
-  CPU/RAM) between an Intel and an AMD node — even with a common `cpu.model`.
-  Corral detects this and uses a single offline reboot instead.
+  to the source node's CPU vendor. So you cannot live-migrate (or live-hotplug
+  CPU/RAM) between an Intel and an AMD node, even with a common `cpu.model`.
+  Corral detects this and instead uses a single offline reboot.
 - **Snapshots of persistent VMs need CSI + a VolumeSnapshotClass.** Ephemeral
   container-disk VMs can snapshot their definition without one.
-- **Export requires the VM stopped** (its RWO disk is busy while running);
+- **Export needs the VM stopped** (its RWO disk is busy while the VM runs);
   Corral downloads via `virtctl vmexport --port-forward`.
 - **No auth** in the web UI — gate it behind a VPN/tailnet, never the public net.
 

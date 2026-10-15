@@ -1,6 +1,6 @@
 # Corral as a CI boot gate for bootc images
 
-A build of a bootc OS image proves that it *assembles*. It does not prove that
+If a bootc OS image builds, that proves that it *assembles*. It does not prove that
 it *boots*. Bootloader installs, initramfs contents, display-manager wiring and
 compression formats all fail in ways `podman build` cannot see. Corral turns
 "does this image boot?" into one command with an exit code. That makes it a
@@ -260,9 +260,9 @@ Note that `corral create` runs `provision:` scripts **offline**, chrooted into
 the installed disk. `corral vmtest` follows Lima's own meaning and runs them in
 the booted guest, unless you mark one `mode: image`.
 
-Corral reads Lima YAML natively; `bootc:` plus `provision:` covers the
-common CI need — enable sshd or drop test hooks **chrooted into the
-installed disk before first boot**, without touching the published image:
+Corral reads Lima YAML natively. `bootc:` plus `provision:` covers the
+common CI need. You can enable sshd or drop test hooks **chrooted into the
+installed disk before first boot**, and the published image stays unchanged:
 
 ```yaml
 # verify.yaml
@@ -306,7 +306,7 @@ jobs:
 ## Beyond "it boots": health checks over SSH
 
 Once `--wait-ssh` returns, the VM is a normal SSH target — assert whatever
-"working" means for your image:
+"it works" means for your image:
 
 ```bash
 check() { corral ssh gate -u root -c "$1"; }
@@ -325,7 +325,7 @@ corral start gate      # bootc creates the VM stopped
 ```
 
 The build runs in a builder VM **on the cluster** (`bootc install to-disk`
-onto a PVC), which is the only way to install images whose filesystems the
+onto a PVC). This is the only way to install images whose filesystems the
 node kernel can't handle (btrfs/composefs on Talos, for example). Notes
 that matter in practice:
 
@@ -333,12 +333,12 @@ that matter in practice:
   provisioner works — including `local-path`. Block-mode provisioners are
   not required.
 - **Registry cache**: deploy `deploy/registry-cache.yaml`, a pull-through cache
-  for ghcr.io. Builders then use it on their own, and a desktop image of several
+  for ghcr.io. Builders then use it on their own. A desktop image of several
   gigabytes pulls at LAN speed after the first fetch.
-  `CORRAL_REGISTRY_MIRROR=off` turns the detection off. One instance serves one
-  upstream, so a registry:2 aimed at quay cannot serve content from ghcr.
-- **Interrupted builds**: where the builder finished but the final VM step was
-  lost, `corral bootc create --resume <name>` reuses the disk PVC that the
+  `CORRAL_REGISTRY_MIRROR=off` turns the detection off. Each instance serves only one
+  upstream. A registry:2 aimed at quay is not able to serve content from ghcr.
+- **Interrupted builds**: sometimes the builder finishes but the final VM step
+  does not. Then `corral bootc create --resume <name>` reuses the disk PVC that the
   builder completed. It does not build the disk again.
 
 ## Troubleshooting the gate

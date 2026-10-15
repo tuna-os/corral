@@ -35,6 +35,19 @@ type ConsoleDialer interface {
 // `virtctl vnc --proxy-only` (VNC) or `virtctl port-forward` (RDP).
 type RealConsoleDialer struct{ Context string }
 
+// consoleDialTries and consoleDialInterval bound how long Dial waits for the
+// virtctl proxy to open its port. Vars rather than consts so tests can fail
+// fast against a stub virtctl that records its argv without listening; the
+// production values are unchanged.
+var consoleDialTries = 50
+var consoleDialInterval = 200 * time.Millisecond
+
+// consoleCommand builds the virtctl proxy subprocess Dial manages. A var so
+// tests can record the argv without opening a port: Dial kills the proxy on
+// timeout, so a stub binary on PATH races the kill and flakes. The
+// production value is shell.CommandForContext unchanged.
+var consoleCommand = shell.CommandForContext
+
 func (d RealConsoleDialer) Dial(ns, name string, console Console) (net.Conn, error) {
 	port, err := freePort()
 	if err != nil {
@@ -44,10 +57,10 @@ func (d RealConsoleDialer) Dial(ns, name string, console Console) (net.Conn, err
 	var cmd *exec.Cmd
 	switch console {
 	case VNC:
-		cmd = shell.CommandForContext(d.Context, "virtctl", "vnc", name, "-n", ns,
+		cmd = consoleCommand(d.Context, "virtctl", "vnc", name, "-n", ns,
 			"--proxy-only", "--port", strconv.Itoa(port))
 	case RDP:
-		cmd = shell.CommandForContext(d.Context, "virtctl", "port-forward", "vm/"+name,
+		cmd = consoleCommand(d.Context, "virtctl", "port-forward", "vm/"+name,
 			fmt.Sprintf("%d:3389", port), "-n", ns)
 	default:
 		return nil, fmt.Errorf("unknown console kind %d", console)
@@ -59,12 +72,12 @@ func (d RealConsoleDialer) Dial(ns, name string, console Console) (net.Conn, err
 	}
 
 	var conn net.Conn
-	for i := 0; i < 50; i++ {
+	for i := 0; i < consoleDialTries; i++ {
 		conn, err = net.Dial("tcp", "127.0.0.1:"+strconv.Itoa(port))
 		if err == nil {
 			break
 		}
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(consoleDialInterval)
 	}
 	if conn == nil {
 		cmd.Process.Kill()

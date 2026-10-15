@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Corral demo</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body {
+      margin: 0; min-height: 100vh; display: grid; place-items: center;
+      font: 16px/1.5 system-ui, sans-serif; background: #111418; color: #e6e8eb;
+    }
+    main { max-width: 32rem; padding: 1rem; text-align: center; }
+    .err { color: #ff8a80; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>🐴 Corral demo</h1>
+    <p id="status">Loading the dashboard into your browser. The first visit downloads about 5 MB.</p>
+    <noscript><p class="err">This demo needs JavaScript.</p></noscript>
+  </main>
+  <script>
+    // This page shows only on the first visit. After the service worker
+    // (sw.js) takes control, it answers every request with the dashboard,
+    // so the reload below loads the real UI.
+    const status = document.getElementById('status');
+    function fail(msg) {
+      status.textContent = msg;
+      status.className = 'err';
+    }
+    if (!('serviceWorker' in navigator)) {
+      fail('This browser has no service workers, so the demo cannot run. Try a current Firefox, Chrome, or Safari, outside private mode.');
+    } else {
+      // Reload once the worker is active. A hard reload skips the worker
+      // for one page load, so reload even when it was already installed.
+      navigator.serviceWorker.register('sw.js')
+        .then(() => navigator.serviceWorker.ready)
+        .then(() => location.reload())
+        .catch((err) => fail('The demo could not start: ' + err.message));
+    }
+  </script>
+</body>
+</html>

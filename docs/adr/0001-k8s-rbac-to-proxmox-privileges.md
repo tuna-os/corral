@@ -5,10 +5,10 @@
 
 ## Context
 
-The Proxmox API compatibility layer must return plausible RBAC responses to
-the `/access/users`, `/access/groups`, and `/access/roles` endpoints so that
-Proxmox ecosystem tools (Terraform providers, Ansible modules) can complete
-their initialization without errors.
+The compatibility layer for the Proxmox API must return plausible RBAC
+responses to the `/access/users`, `/access/groups`, and `/access/roles`
+endpoints. Then Proxmox ecosystem tools (Terraform providers, Ansible modules)
+can complete their initialization without errors.
 
 KubeVirt clusters use Kubernetes RBAC (ClusterRoles, ClusterRoleBindings,
 ServiceAccounts) — a fundamentally different model from Proxmox's flat
@@ -30,19 +30,20 @@ Proxmox users are `user@realm` strings. We map K8s identities as follows:
 | ClusterRoleBinding subject `kind: Group` | → group, not user | Groups get their own endpoint |
 
 On clusters where RBAC queries fail (e.g. insufficient permissions), the
-endpoint falls back to returning only `root@pam`.
+endpoint falls back and returns only `root@pam`.
 
 ### Group mapping
 
-Proxmox groups are extracted from ClusterRoleBinding subjects with
-`kind: Group`. If no groups exist, a synthetic `Administrators` group is
-returned so that tools expecting at least one group don't break.
+The endpoint takes the Proxmox groups from the subjects of each
+`ClusterRoleBinding` with `kind: Group`. If no groups exist, the endpoint
+returns a synthetic `Administrators` group. Tools that expect at least one
+group then don't break.
 
 ### Role mapping
 
 K8s ClusterRoles use (apiGroups, resources, verbs) tuples. Proxmox uses
 privilege strings like `VM.Allocate`, `Datastore.Audit`. We define four
-fixed roles that approximate the most common K8s RBAC profiles:
+roles with a fixed set of privileges. The roles approximate the most common RBAC profiles in K8s:
 
 | Proxmox role | K8s equivalent | Privileges granted |
 |---|---|---|
@@ -53,8 +54,8 @@ fixed roles that approximate the most common K8s RBAC profiles:
 
 We do **not** dynamically enumerate every K8s ClusterRole and translate it
 rule-by-rule. That mapping is lossy (K8s rules are per-resource, Proxmox
-privileges are per-category) and the Proxmox ecosystem tools do not
-meaningfully enforce or gate on specific privilege strings — they validate
+privileges are per-category). Also, the Proxmox ecosystem tools do not
+meaningfully enforce or gate on specific privilege strings. They validate
 that a role set exists.
 
 ### Privilege taxonomy
@@ -76,14 +77,14 @@ Permissions.Modify
 
 ## Consequences
 
-- **Positive**: Proxmox ecosystem tools that enumerate users/roles during
-  initialization (bpg Terraform provider, proxmoxer Python client) receive
-  plausible responses and complete without errors.
+- **Positive**: Some tools in the Proxmox ecosystem enumerate users/roles during
+  initialization (bpg Terraform provider, proxmoxer Python client). These
+  tools get plausible responses and complete without errors.
 - **Positive**: The static role mapping is simple to reason about and
-  requires no RBAC reconciliation loop.
+  needs no RBAC reconciliation loop.
 - **Negative**: There is no dynamic sync between K8s RBAC changes and the
   Proxmox API view. Users created/removed via `kubectl` will not appear
   until the next API request rebuilds the list from live state.
 - **Negative**: We do not enforce Proxmox privileges at the API layer.
-  Auth enforcement is delegated to tailnet membership + K8s RBAC. The
+  Tailnet membership + K8s RBAC do the auth enforcement. The
   Proxmox privilege strings are presentation-only.

@@ -12,8 +12,8 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,7 +23,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/creack/pty"
 	"github.com/tuna-os/corral/pkg/qemu"
 	"golang.org/x/net/websocket"
 
@@ -49,7 +48,7 @@ var staticFS embed.FS
 var store *registry.Store
 
 // Serve starts the web UI on addr and blocks.
-func Serve(addr string) error {
+func Serve(addr string, allowedHosts ...string) error {
 	if s, err := registry.NewStore(); err == nil {
 		store = s
 	}
@@ -65,18 +64,80 @@ func Serve(addr string) error {
 	if err != nil {
 		return err
 	}
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	if len(allowedHosts) == 0 {
+		allowedHosts = loopbackAllowedHosts(addr, listener.Addr())
+	}
+	if len(allowedHosts) > 0 {
+		mux, err = enforceAllowedHosts(mux, allowedHosts)
+		if err != nil {
+			_ = listener.Close()
+			return err
+		}
+	}
 	startMetricSampler()
 	if MetricsEnabled {
 		StartMetrics(context.Background())
 		fmt.Fprintln(os.Stderr, "Prometheus metrics on /metrics")
 	}
-	fmt.Fprintf(os.Stderr, "Corral web UI listening on http://%s\n", addr)
-	return http.ListenAndServe(addr, mux)
+	fmt.Fprintf(os.Stderr, "Corral web UI listening on http://%s\n", listener.Addr())
+	return (&http.Server{Handler: mux}).Serve(listener)
+}
+
+// loopbackAllowedHosts pins the HTTP Host header to the local listener address
+// when Corral binds only to loopback. This closes DNS rebinding against the
+// default local web UI without constraining tailnet or explicitly public binds.
+func loopbackAllowedHosts(bindAddr string, listenerAddr net.Addr) []string {
+	bindHost, _, err := net.SplitHostPort(bindAddr)
+	if err != nil || listenerAddr == nil {
+		return nil
+	}
+	if ip := net.ParseIP(strings.Trim(bindHost, "[]")); ip != nil && ip.IsLoopback() {
+		_, port, err := net.SplitHostPort(listenerAddr.String())
+		if err == nil {
+			return []string{net.JoinHostPort(bindHost, port), net.JoinHostPort("localhost", port)}
+		}
+	}
+	if strings.EqualFold(bindHost, "localhost") {
+		_, port, err := net.SplitHostPort(listenerAddr.String())
+		if err == nil {
+			return []string{net.JoinHostPort(bindHost, port)}
+		}
+	}
+	return nil
+}
+
+func enforceAllowedHosts(next http.Handler, hosts []string) (http.Handler, error) {
+	allowed := make(map[string]struct{}, len(hosts))
+	for _, host := range hosts {
+		host = strings.TrimSpace(host)
+		if host == "" || strings.ContainsAny(host, "*/\\") {
+			return nil, fmt.Errorf("invalid allowed host %q: expected an exact host[:port]", host)
+		}
+		allowed[strings.ToLower(host)] = struct{}{}
+	}
+	if len(allowed) == 0 {
+		return nil, fmt.Errorf("allowed-host policy must include at least one exact host")
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := allowed[strings.ToLower(r.Host)]; !ok {
+			http.Error(w, "request Host is not allowed", http.StatusMisdirectedRequest)
+			return
+		}
+		next.ServeHTTP(w, r)
+	}), nil
 }
 
 // newMux builds the HTTP router (wrapped in the admin gate). Split out from
 // Serve so tests can exercise the full route table with httptest.
 func newMux() (http.Handler, error) {
+	// Capture this for the router being built, then clear it so a demo mux in
+	// one test cannot turn later production-style muxes into demo consoles.
+	useDemoConsole := demoEnabled
+	demoEnabled = false
 	sub, err := fs.Sub(staticFS, "static")
 	if err != nil {
 		return nil, err
@@ -123,6 +184,9 @@ func newMux() (http.Handler, error) {
 	mux.HandleFunc("DELETE /api/cts/{ns}/{name}", handleDeleteCT)
 	mux.HandleFunc("PUT /api/cts/{ns}/{name}/scale", handleScaleCT)
 	mux.HandleFunc("GET /api/nodes", handleNodes)
+	mux.HandleFunc("GET /api/nodes/{name}/metrics/history", handleNodeMetricsHistory)
+	mux.HandleFunc("GET /api/metrics/history", handleDCMetricsHistory)
+	mux.HandleFunc("GET /api/metrics/top", handleTopVMs)
 	mux.HandleFunc("GET /api/hostpower", handleHostPower)
 	mux.HandleFunc("POST /api/hostpower/{plugin}/{action}", handleHostPowerAction)
 	mux.HandleFunc("GET /api/capabilities", handleCapabilities)
@@ -198,25 +262,18 @@ func newMux() (http.Handler, error) {
 		return websocket.Server{
 			Handler: h,
 			Handshake: func(cfg *websocket.Config, r *http.Request) error {
-				if !authenticationRequired() {
-					return nil
-				}
-				if r.Header.Get("Corral-Service-Identity") != "" {
-					return nil
-				}
-				origin := r.Header.Get("Origin")
-				if origin == "" {
-					return fmt.Errorf("websocket origin is required")
-				}
-				u, err := url.Parse(origin)
-				if err != nil || !strings.EqualFold(u.Host, r.Host) {
-					return fmt.Errorf("websocket origin %q does not match host", origin)
-				}
-				return nil
+				return validateWebSocketOrigin(r)
 			},
 		}
 	}
-	mux.Handle("GET /api/vnc/{ns}/{name}", wsServer(vncBridge))
+	vncHandler := websocket.Handler(vncBridge)
+	if useDemoConsole {
+		vncHandler = func(ws *websocket.Conn) {
+			defer func() { _ = ws.Close() }()
+			serveDemoVNC(ws)
+		}
+	}
+	mux.Handle("GET /api/vnc/{ns}/{name}", wsServer(vncHandler))
 	mux.Handle("GET /api/tty/{ns}/{name}", wsServer(ttyBridge))
 	mux.Handle("GET /api/rdp/{ns}/{name}", wsServer(rdpBridge))
 
@@ -332,6 +389,19 @@ func handleReadyz(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"status": "not_ready",
 			"error":  "registry store not initialized",
+		})
+		return
+	}
+	// store != nil only proves the server completed startup; it says nothing
+	// about whether the registry's state directory is still mounted and
+	// writable right now (readAll/writeAll swallow I/O errors, see
+	// pkg/registry). Ping exercises that path on every call so a probe never
+	// reports ready while writes are silently failing underneath it.
+	if err := store.Ping(); err != nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "not_ready",
+			"error":  "registry store unwritable: " + err.Error(),
 		})
 		return
 	}
@@ -1154,24 +1224,5 @@ func bridgeConsolePipes(ws *websocket.Conn, cmd *exec.Cmd) {
 	done := make(chan struct{}, 2)
 	go func() { io.Copy(stdin, ws); done <- struct{}{} }()
 	go func() { io.Copy(ws, stdout); done <- struct{}{} }()
-	<-done
-}
-
-// bridgeConsolePTY wires cmd to a real pseudo-terminal — needed for
-// commands (like kubectl exec -t) that check isatty on their own stdin.
-func bridgeConsolePTY(ws *websocket.Conn, cmd *exec.Cmd) {
-	f, err := pty.Start(cmd)
-	if err != nil {
-		return
-	}
-	defer func() {
-		f.Close()
-		cmd.Process.Kill()
-		cmd.Wait()
-	}()
-
-	done := make(chan struct{}, 2)
-	go func() { io.Copy(f, ws); done <- struct{}{} }()
-	go func() { io.Copy(ws, f); done <- struct{}{} }()
 	<-done
 }

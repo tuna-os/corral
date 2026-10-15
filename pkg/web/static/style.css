@@ -1,20 +1,143 @@
+/* ── Colour schemes ───────────────────────────────────────────────
+   Both palettes are written once, then aliased. There is no build step
+   (ADR-0004), so the mapping below is repeated rather than the colours: three
+   short blocks of `--bg: var(--d-bg)` is a cost worth paying to keep one
+   definition of each colour.
+
+   --accent and --accent-2 are deliberately absent from every block. The server
+   injects those at `:root` from /api/theme, and a `:root[data-theme=...]`
+   selector outranks a plain `:root`, so setting them here would silently
+   override the accent an operator configured. The accent is a mid-tone orange
+   that carries its own dark foreground, so it reads on either scheme. */
 :root {
-  --bg: #0e1116;
-  --panel: #151a22;
-  --panel-2: #1b212c;
-  --border: #2a3240;
-  --text: #d8dde6;
-  --muted: #8b96a5;
+  /* dark */
+  --d-bg: #0e1116;
+  --d-panel: #151a22;
+  --d-panel-2: #1b212c;
+  --d-border: #2a3240;
+  --d-text: #d8dde6;
+  --d-muted: #8b96a5;
+  --d-green: #3fb950;
+  --d-red: #f85149;
+  --d-yellow: #d29922;
+  --d-shadow: rgba(0,0,0,.5);
+
+  /* light. Not the dark values inverted: the greens, reds and yellows are
+     darkened so they still pass as text on a white panel, where the dark
+     scheme's brighter versions wash out. */
+  --l-bg: #f4f6f9;
+  --l-panel: #ffffff;
+  --l-panel-2: #eceff4;
+  --l-border: #d3d9e2;
+  --l-text: #1b2028;
+  --l-muted: #5a6573;
+  --l-green: #1a7f37;
+  --l-red: #cf222e;
+  --l-yellow: #8a6100;
+  --l-shadow: rgba(16,24,40,.18);
+
+  /* color-scheme tells the browser which way to paint the things CSS does not
+     reach: form controls, the scrollbar gutter, the canvas behind the page. */
+  color-scheme: dark;
+  --bg: var(--d-bg);
+  --panel: var(--d-panel);
+  --panel-2: var(--d-panel-2);
+  --border: var(--d-border);
+  --text: var(--d-text);
+  --muted: var(--d-muted);
+  --green: var(--d-green);
+  --red: var(--d-red);
+  --yellow: var(--d-yellow);
+  --shadow: var(--d-shadow);
+
   --accent: #f0883e;
   --accent-2: #d9742e;
-  --green: #3fb950;
-  --red: #f85149;
-  --yellow: #d29922;
   --radius: 8px;
   font-size: 15px;
 }
 
+/* Follow the operating system unless the operator has chosen for themselves. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+    --bg: var(--l-bg);
+    --panel: var(--l-panel);
+    --panel-2: var(--l-panel-2);
+    --border: var(--l-border);
+    --text: var(--l-text);
+    --muted: var(--l-muted);
+    --green: var(--l-green);
+    --red: var(--l-red);
+    --yellow: var(--l-yellow);
+    --shadow: var(--l-shadow);
+  }
+}
+
+/* An explicit choice. These come after the media query on purpose: the two
+   selectors have the same specificity, so source order is what lets "always
+   dark" win on a light desktop. */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: var(--l-bg);
+  --panel: var(--l-panel);
+  --panel-2: var(--l-panel-2);
+  --border: var(--l-border);
+  --text: var(--l-text);
+  --muted: var(--l-muted);
+  --green: var(--l-green);
+  --red: var(--l-red);
+  --yellow: var(--l-yellow);
+  --shadow: var(--l-shadow);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: var(--d-bg);
+  --panel: var(--d-panel);
+  --panel-2: var(--d-panel-2);
+  --border: var(--d-border);
+  --text: var(--d-text);
+  --muted: var(--d-muted);
+  --green: var(--d-green);
+  --red: var(--d-red);
+  --yellow: var(--d-yellow);
+  --shadow: var(--d-shadow);
+}
+
 * { box-sizing: border-box; }
+
+/* Skip link: off-screen until focused, then the first thing in the tab order.
+   WCAG calls this bypassing blocks; here the block is a sidebar with a row per
+   guest, which a keyboard user would otherwise tab through to reach what they
+   just selected. */
+.skip-link {
+  position: absolute;
+  left: 8px;
+  top: -60px;
+  z-index: 100;
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  text-decoration: none;
+  transition: top .12s ease;
+}
+.skip-link:focus { top: 8px; }
+
+/* Respect a system request for less motion. The transitions here are small —
+   a drawer sliding, a skip link dropping in — but "small" is not the test:
+   the operating system was told to stop animating, and this is part of the
+   operating system's screen. Animation that conveys nothing is simply turned
+   off rather than shortened. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
 
 /* Scrollbars — theme them everywhere; the browser defaults render as chunky
    light bars against the dark panels. */
@@ -35,8 +158,12 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: Inter, "Segoe UI", system-ui, -apple-system, sans-serif;
-  min-height: 100vh;
-  min-height: 100dvh;
+  /* An app shell, not a document: the height is the viewport's, so only the
+     panes inside scroll. With min-height the document grew past the viewport
+     and the window scrolled, which carried the header and the sidebar tree
+     off-screen — the two things an operator always needs in reach. */
+  height: 100vh;
+  height: 100dvh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -56,6 +183,20 @@ header {
 .spacer { flex: 1; }
 
 .layout { display: flex; flex: 1; min-height: 0; }
+
+/* The content pane is the only thing that scrolls. min-height:0 is what lets a
+   flex item shrink below its content; without it the pane sizes to its content
+   and the scroll moves to the document. */
+#content {
+  /* Focused only by the skip link, so it must not paint a ring of its own. */
+  outline: none;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+}
 
 /* The sidebar width is an operator preference (#290): --tree-w is set by the
    drag handle below and remembered in localStorage. The clamp keeps a stored
@@ -180,8 +321,12 @@ main {
 /* In read-only mode the server rejects mutations anyway — hide the controls
    that would only ever 403, leaving view-only surfaces (consoles, tabs). */
 body.read-only #btn-create,
+body.read-only #btn-create-ct,
+body.read-only .pool-actions,
 body.read-only .toolbar,
-body.read-only .hp-action { display: none !important; }
+body.read-only .hp-action,
+body.read-only .bulkbar button[data-bulk],
+body.read-only .menu-mutate { display: none !important; }
 
 .btn {
   display: inline-flex;
@@ -244,6 +389,48 @@ tbody tr { cursor: pointer; }
 tbody tr:hover { background: var(--panel-2); }
 th.check, td.check { width: 1px; padding-right: 0; cursor: default; }
 td.check input, th.check input { cursor: pointer; vertical-align: middle; }
+.tree-vm-check { flex: none; margin: 0 2px 0 0; }
+
+/* Reusable inventory grid: the table remains native for screen readers while
+   its toolbar supplies keyboard equivalents for drag resizing/reordering. */
+.data-grid { min-width: 0; }
+.grid-toolbar { display: flex; align-items: center; gap: 7px; margin-bottom: 7px; }
+.grid-result-count { margin-left: auto; font-size: .78rem; }
+.grid-scroll { overflow: auto; max-height: 52vh; border: 1px solid var(--border); border-radius: var(--radius); }
+.data-grid table { table-layout: fixed; min-width: 100%; width: max-content; }
+.data-grid th, .data-grid td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; height: var(--grid-row-h, 39px); }
+.data-grid thead { position: sticky; top: 0; z-index: 2; background: var(--panel); }
+.data-grid th { position: relative; padding: 0; }
+.grid-sort { width: 100%; height: 38px; padding: 0 18px 0 10px; border: 0; background: none; color: var(--muted); text-align: left; text-transform: uppercase; letter-spacing: .04em; cursor: pointer; }
+.grid-sort:hover, .grid-sort:focus-visible { color: var(--text); background: var(--panel-2); }
+/* A column of controls: the same header box as a sortable column, without the
+   affordances of one, so it does not read as a button that does nothing. */
+.grid-plain { display: block; width: 100%; height: 38px; padding: 0 18px 0 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; line-height: 38px; }
+/* Row actions sit flush and quiet until the row is hovered or holds focus,
+   so a long list does not read as a wall of buttons. */
+.row-acts { display: inline-flex; gap: 4px; }
+.row-acts .btn.sm { padding: 2px 6px; opacity: .55; transition: opacity .12s ease; }
+tr:hover .row-acts .btn.sm, tr:focus-within .row-acts .btn.sm { opacity: 1; }
+.row-acts .btn.ghost { background: none; border-color: transparent; }
+@media (prefers-reduced-motion: reduce) { .row-acts .btn.sm { transition: none; } }
+@media (hover: none) { .row-acts .btn.sm { opacity: 1; } }
+.grid-resizer { position: absolute; top: 4px; right: 0; bottom: 4px; width: 8px; border-right: 2px solid var(--border); cursor: col-resize; }
+.grid-resizer:hover, .grid-resizer:focus-visible { border-color: var(--accent); outline: 0; }
+.grid-filters input { width: calc(100% - 8px); margin: 3px 4px 5px; padding: 5px 7px; font-size: .75rem; }
+.grid-spacer { pointer-events: none; }
+.grid-spacer td { height: inherit; padding: 0; border: 0; }
+.grid-columns, .grid-views { position: relative; }
+.grid-columns summary, .grid-views summary { list-style: none; }
+.grid-menu { position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; min-width: 330px; padding: 9px; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 8px 24px var(--shadow); }
+.grid-view-menu { min-width: 240px; }
+.grid-view-menu > label { display: flex; gap: 6px; align-items: center; }
+.grid-view-name { width: 130px; }
+.grid-column-option, .grid-saved-view { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 32px; }
+.grid-column-actions { display: flex; }
+.grid-column-actions button, .grid-saved-view button { border: 0; background: none; color: var(--text); cursor: pointer; min-width: 28px; min-height: 28px; }
+.grid-column-actions button:hover, .grid-saved-view button:hover { background: var(--panel-2); }
+.grid-view-list { border-top: 1px solid var(--border); margin-top: 8px; padding-top: 5px; }
+.grid-view-apply { flex: 1; text-align: left; }
 
 /* Bulk-action toolbar — appears above the VM table once rows are selected. */
 .bulkbar {
@@ -350,19 +537,103 @@ dl.props dd { margin: 0; word-break: break-all; }
 }
 .wiz-chip.active { border-color: var(--accent, #4a9eda); }
 
-/* CPU sparkline (RRD-style history on the Summary tab) */
-.spark {
-  width: 100%;
-  height: 80px;
-  display: block;
-  background: var(--panel-2);
+/* Dashboard widget grid + live charts (#348, pkg/web/static/dashboard.js).
+   gridstack positions the items; these rules only dress them. */
+/* The dashboard picker. The three buttons sit tight to the select so the row
+   reads as one control rather than four. */
+.dash-pick select { max-width: 180px; }
+.dash-toolbar .dash-new, .dash-toolbar .dash-rename, .dash-toolbar .dash-delete { padding: 2px 8px; }
+.dash-toolbar .btn[disabled] { opacity: .45; cursor: not-allowed; }
+
+/* Failures from a bulk action: each guest and what the API said, because the
+   reason is what the operator acts on. */
+.failure-report { max-width: 560px; }
+.failure-report h2 { margin: 0 0 10px; font-size: 1rem; }
+.failure-report table { width: 100%; font-size: .86rem; }
+.failure-report td { padding: 3px 8px 3px 0; vertical-align: top; }
+.failure-report td:first-child { white-space: nowrap; font-weight: 600; }
+
+/* A removal you cannot undo. The field is the gate: the button beside it stays
+   disabled until what is typed matches, so the action needs a deliberate look
+   at the list rather than a dismissed box. */
+.confirm-destroy { max-width: 460px; }
+.confirm-destroy h2 { margin: 0 0 10px; font-size: 1rem; }
+.confirm-items { max-height: 180px; overflow: auto; margin: 0 0 10px; padding-left: 18px; font-size: .86rem; }
+.confirm-note { margin: 0 0 12px; color: var(--muted); font-size: .86rem; }
+.confirm-label { display: block; margin-bottom: 14px; font-size: .86rem; }
+.confirm-input { display: block; width: 100%; margin-top: 4px; }
+.confirm-destroy .btn[disabled] { opacity: .45; cursor: not-allowed; }
+
+.dash-toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; font-size: .85rem; }
+.dash-toolbar select { margin-left: 6px; }
+.dash-hint { font-size: .78rem; }
+.grid-stack { margin: 0 -5px 18px; }
+.widget {
+  display: flex; flex-direction: column;
+  background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
+  overflow: hidden;
 }
-.spark-line { fill: none; stroke: var(--accent); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
-.spark-area { fill: var(--accent); opacity: .12; stroke: none; }
-.spark-cap { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; opacity: .6; }
-.spark-legend { margin-top: 6px; font-size: .82rem; }
+.widget-head {
+  display: flex; align-items: center; gap: 6px;
+  position: relative;
+  padding: 6px 8px 6px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: .85rem; font-weight: 600;
+  cursor: move; user-select: none;
+}
+.widget-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.widget-head .spacer { flex: 1; }
+.widget-menu-btn {
+  background: none; border: 1px solid transparent; border-radius: 6px;
+  color: var(--muted); cursor: pointer; padding: 0 8px; font-size: 1.05rem; line-height: 1.4;
+}
+.widget-menu-btn:hover, .widget-menu-btn[aria-expanded="true"] { color: var(--text); border-color: var(--border); }
+.widget-menu {
+  position: absolute; right: 6px; top: calc(100% + 2px); z-index: 20;
+  display: flex; flex-direction: column; min-width: 200px;
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 4px; box-shadow: 0 8px 24px rgba(0, 0, 0, .35);
+  font-weight: 400; cursor: default;
+}
+.widget-menu[hidden] { display: none; }
+.widget-menu button {
+  display: flex; justify-content: space-between; gap: 12px;
+  background: none; border: none; color: var(--text); text-align: left;
+  padding: 6px 10px; border-radius: 6px; cursor: pointer; font-size: .84rem;
+}
+.widget-menu button:hover, .widget-menu button:focus-visible { background: var(--border); outline: none; }
+.widget-menu kbd { color: var(--muted); font-size: .72rem; font-family: inherit; }
+.widget-body { flex: 1; min-height: 0; overflow: auto; padding: var(--widget-pad, 10px 12px); font-size: .86rem; }
+/* Widget density. The gap between widgets and the grid row height belong to
+   GridStack and live in DASH_DENSITIES; the padding inside a widget is here,
+   keyed off the mode the dashboard writes onto its root. */
+[data-density="compact"] .widget-body { --widget-pad: 5px 8px; }
+[data-density="compact"] .widget-head { min-height: 26px; }
+[data-density="roomy"] .widget-body { --widget-pad: 14px 16px; }
+[data-density="roomy"] .widget-head { min-height: 38px; }
+.widget-body table { font-size: .82rem; }
+.widget-body .kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; margin: 0; }
+.widget-body .kv dt { color: var(--muted); }
+.widget-body .kv dd { margin: 0; }
+.widget-body .big { font-size: 1.4rem; font-weight: 700; }
+.widget-body ul.plain { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.widget-body .dot { display: inline-block; }
+.widget-body a { color: var(--text); }
+.widget-body a:hover { color: var(--accent); }
+.meter { height: 6px; background: var(--panel-2); border-radius: 3px; overflow: hidden; margin-top: 3px; }
+.meter > span { display: block; height: 100%; background: var(--accent); }
+.grid-stack-item > .ui-resizable-se { opacity: .5; }
+.grid-stack-placeholder > .placeholder-content { border: 1px dashed var(--accent); border-radius: var(--radius); background: transparent; }
+.dash-chart { width: 100%; }
+.dash-chart-note { font-size: .78rem; margin-top: 4px; }
+.charts-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+.u-axis { font-size: 11px; }
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
 
 /* Inset panel section (snapshot schedule, etc.) */
 .panel-section {
@@ -377,49 +648,100 @@ dl.props dd { margin: 0; word-break: break-all; }
 /* Doctor: broken features stand out */
 .doc-broken { color: var(--red, #e25b5b); }
 
-/* Multiview — grid of live view-only consoles */
-.mv-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
-  gap: 12px;
-}
-.mv-tile {
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  overflow: hidden;
-  background: #000;
-}
-.mv-title {
-  padding: 6px 10px; font-size: .85rem; cursor: pointer;
-  background: var(--panel);
-  border-bottom: 1px solid var(--border);
-}
-.mv-title:hover { text-decoration: underline; }
-.mv-screen { height: 260px; position: relative; }
-
 /* Task panel — Proxmox-style activity log docked at the bottom */
+/* The dock is a row of the shell, not an overlay. Its height is an operator
+   preference (--dock-h, set by #dock-resizer) and the body scrolls nothing, so
+   whatever height it takes is height the content pane gives up — visible
+   rather than covered. */
+:root { --dock-h: 220px; }
 #task-panel {
-  position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
+  flex: none;
   background: var(--panel);
   border-top: 1px solid var(--border);
-  max-height: 40vh; display: flex; flex-direction: column;
+  display: flex; flex-direction: column;
+  max-height: 60vh;
 }
+#task-panel.collapsed #task-panel-body { display: none; }
+
+/* The handle only makes sense while the dock is open. */
+#dock-resizer {
+  flex: none; height: 6px; margin-bottom: -3px;
+  cursor: row-resize; background: transparent; z-index: 5;
+}
+#dock-resizer:hover, #dock-resizer:focus-visible, #dock-resizer.dragging {
+  background: var(--accent); outline: none;
+}
+body:has(#task-panel.collapsed) #dock-resizer { display: none; }
+body.resizing { user-select: none; }
+
+/* A collapsed sidebar hides the pane but never the separator. The separator
+   owns the Enter key that restores the pane, so hiding it would let a
+   keyboard-only operator collapse the sidebar and never get it back. It stays
+   as a grabbable rail at the edge, which is also how a dragged-to-zero sash
+   behaves in an editor. */
+body.tree-collapsed #tree { display: none; }
+body.tree-collapsed #tree-resizer {
+  width: 8px; margin-left: 0;
+  background: var(--border);
+}
+body.tree-collapsed #tree-resizer:hover,
+body.tree-collapsed #tree-resizer:focus-visible { background: var(--accent); }
 #task-panel-head {
   display: flex; gap: 10px; align-items: center;
   padding: 6px 14px; cursor: pointer; user-select: none;
   font-size: .85rem;
 }
 #task-panel-head .spacer { flex: 1; }
-#task-panel-body { overflow-y: auto; padding: 0 14px 10px; }
-#task-panel.collapsed #task-panel-body { display: none; }
+/* The dock's panel tabs. One stop in the tab order (roving tabindex, set by
+   dock.js), so Tab moves past the strip rather than through every panel. */
+#dock-tabs { display: flex; gap: 2px; }
+.dock-tab {
+  background: none; border: none; border-bottom: 2px solid transparent;
+  color: var(--muted); font: inherit; padding: 2px 10px 4px; cursor: pointer;
+  border-radius: 4px 4px 0 0;
+}
+.dock-tab:hover { color: var(--fg); }
+.dock-tab.active { color: var(--fg); border-bottom-color: var(--accent); }
+.dock-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+#task-panel-body { height: var(--dock-h); overflow-y: auto; padding: 0 14px 10px; }
 #task-panel table { width: 100%; font-size: .82rem; }
 
-/* Console controls (fullscreen + scaling) */
-.console-bar { margin: 0 0 10px 0; align-items: center; }
+/* Console workspace: several VM consoles can stay in the in-page tab strip,
+   or one can use the same page in distraction-free pop-out mode. */
+.console-tabs { display: flex; gap: 3px; overflow-x: auto; margin-bottom: 8px; }
+.console-tab {
+  display: inline-flex; align-items: center; flex: none;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 6px 6px 0 0;
+}
+.console-tab.active { border-color: var(--accent); background: var(--panel-2); }
+.console-tab button { color: inherit; background: none; border: 0; padding: 6px 8px; cursor: pointer; }
+.console-tab .console-tab-close { color: var(--muted); padding-left: 2px; }
+.console-tab .console-tab-close:hover { color: var(--red); }
+.console-bar { margin: 0 0 10px 0; align-items: center; gap: 8px; }
+.console-scale { display: inline-flex; gap: 8px; border: 0; padding: 0; margin: 0; }
 .console-opt {
   color: var(--muted); font-size: .82rem;
   display: inline-flex; align-items: center; gap: 5px;
 }
+.send-keys { position: relative; }
+.send-keys summary { list-style: none; cursor: pointer; }
+.send-keys summary::-webkit-details-marker { display: none; }
+.send-keys-menu {
+  position: absolute; z-index: 20; top: calc(100% + 4px); right: 0;
+  min-width: 150px; padding: 4px; background: var(--panel);
+  border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 8px 24px var(--shadow);
+}
+.send-keys-menu button {
+  display: block; width: 100%; padding: 6px 8px; text-align: left;
+  border: 0; background: none; color: var(--text); cursor: pointer;
+}
+.send-keys-menu button:hover, .send-keys-menu button:focus { background: var(--panel-2); }
+body.console-popout header, body.console-popout #tree,
+body.console-popout #tree-resizer, body.console-popout #task-panel,
+body.console-popout .page-head, body.console-popout .tabs { display: none; }
+body.console-popout .layout { display: block; height: 100vh; }
+body.console-popout main { width: 100%; height: 100vh; padding: 10px; }
+body.console-popout #vnc-screen { height: calc(100vh - 100px); }
 /* Fill the display in browser fullscreen; noVNC's scaleViewport and xterm's
    fit addon handle the rest. */
 #vnc-screen:fullscreen, #tty-screen:fullscreen {
@@ -534,6 +856,59 @@ td .btn { cursor: pointer; }
 tr.ev-warn td { color: var(--yellow); }
 
 /* ── Extensions store ───────────────────────────────────── */
+.ext-filter { display: block; margin-bottom: 12px; }
+
+/* Row density. Three named modes rather than one fixed row height, because how
+   many rows fit on a screen is a judgement about the work: triaging a fleet
+   wants as many as will go, reading one row's values wants room.
+   The heights match DENSITIES in grid.js, which the virtual scroller reads to
+   size its spacers — they have to agree. */
+.data-grid { --grid-row-h: 39px; --grid-row-pad: 6px; }
+.data-grid[data-density="compact"] { --grid-row-h: 28px; --grid-row-pad: 2px; }
+.data-grid[data-density="roomy"] { --grid-row-h: 48px; --grid-row-pad: 11px; }
+.data-grid tbody td { padding-top: var(--grid-row-pad); padding-bottom: var(--grid-row-pad); }
+.grid-density { display: inline-flex; align-items: center; gap: 6px; font-size: .78rem; color: var(--muted); }
+/* The shortcut a palette row would also answer to. Pushed to the right so the
+   labels stay aligned, and faint: it teaches the key without competing with
+   the name you came to read. */
+.palette-keys { margin-left: auto; display: inline-flex; gap: 3px; flex: none; }
+
+/* A segmented control: one choice out of a few, shown as a single unit so it
+   does not read as three unrelated buttons. */
+/* The overflow button only earns its place where the bar cannot hold the
+   buttons; on a wide screen every action is already visible. */
+.btn-overflow { display: none; }
+
+.seg { display: inline-flex; }
+.seg .seg-btn { border-radius: 0; margin-left: -1px; }
+.seg .seg-btn:first-child { border-radius: var(--radius) 0 0 var(--radius); margin-left: 0; }
+.seg .seg-btn:last-child { border-radius: 0 var(--radius) var(--radius) 0; }
+.seg .seg-btn[aria-checked="true"] {
+  background: var(--accent); border-color: var(--accent); color: #14100b; font-weight: 600;
+  position: relative; z-index: 1;
+}
+
+/* Breadcrumb: the path above the object on screen, each step a way back. Faint
+   and small, because it is orientation rather than content. */
+.breadcrumb { margin: 0 0 6px; font-size: .78rem; }
+.breadcrumb ol { list-style: none; display: flex; flex-wrap: wrap; gap: 4px; margin: 0; padding: 0; }
+.breadcrumb li + li::before { content: '›'; color: var(--muted); margin-right: 4px; }
+.breadcrumb .crumb { color: var(--muted); background: none; border: 0; padding: 0; font: inherit; }
+.breadcrumb button.crumb { cursor: pointer; text-decoration: underline; text-decoration-color: var(--border); }
+.breadcrumb button.crumb:hover { color: var(--fg); }
+.breadcrumb button.crumb:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.breadcrumb [aria-current="page"] { color: var(--fg); }
+.palette-foot code { font-size: .72rem; opacity: .85; }
+/* A loud hover flickers as the cursor crosses a dense table, so it stays faint
+   while the keyboard focus ring stays obvious — and the ring is an outline, not
+   a colour change, so it does not depend on colour alone. */
+.data-grid tbody tr:hover { background: color-mix(in srgb, var(--fg) 4%, transparent); }
+.data-grid tbody tr:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+.ext-filter input { width: min(360px, 100%); }
+/* A filtered-out card is hidden, and a hidden grid child must not keep its
+   track, so the attribute wins over the grid's display. */
+.ext-card[hidden] { display: none; }
 .ext-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
 .ext-card {
   background: var(--panel);
@@ -573,48 +948,42 @@ tr.ev-warn td { color: var(--yellow); }
 }
 
 /* ── Multiview Grid ──────────────────────────────────────── */
+.mv-help { margin-top: -6px; font-size: .8rem; }
 .mv-grid {
   display: grid;
+  grid-template-columns: repeat(4, minmax(180px, 1fr));
+  grid-auto-rows: minmax(190px, 28vh);
+  grid-auto-flow: dense;
   gap: 12px;
-  height: calc(100vh - 120px);
   width: 100%;
 }
-.mv-grid[data-count="1"] { grid-template-columns: 1fr; grid-template-rows: 1fr; }
-.mv-grid[data-count="2"] { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr; }
-.mv-grid[data-count="3"],
-.mv-grid[data-count="4"] { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
-.mv-grid[data-count="5"],
-.mv-grid[data-count="6"] { grid-template-columns: 1fr 1fr 1fr; grid-template-rows: 1fr 1fr; }
-
 .mv-tile {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  min-height: 0;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--radius); display: flex; flex-direction: column;
+  overflow: hidden; min-width: 0; min-height: 0;
 }
+.mv-tile.mv-wide { grid-column: span 2; }
+.mv-tile.mv-tall { grid-row: span 2; }
+.mv-tile.mv-large { grid-column: span 2; grid-row: span 2; }
+.mv-tile.dragging { opacity: .45; }
 .mv-title {
-  padding: 8px 12px;
-  background: var(--panel-2);
-  border-bottom: 1px solid var(--border);
-  font-weight: 600;
-  font-size: .9rem;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  padding: 6px 8px; background: var(--panel-2); border-bottom: 1px solid var(--border);
+  font-weight: 600; font-size: .85rem; cursor: grab;
+  display: flex; align-items: center; gap: 6px;
 }
-.mv-title:hover { color: var(--accent); }
+.mv-title:focus { outline: 2px solid var(--accent); outline-offset: -2px; }
+.mv-open { border: 0; padding: 0; background: none; color: var(--text); font: inherit; cursor: pointer; }
+.mv-open:hover, .mv-open:focus { color: var(--accent); text-decoration: underline; }
+.mv-size-label { color: var(--muted); font-size: .72rem; font-weight: normal; }
+.mv-size { max-width: 76px; font-size: .72rem; }
 .mv-screen {
-  flex: 1;
-  background: #000;
-  position: relative;
-  overflow: hidden;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  flex: 1; background: #000; position: relative; overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+}
+@media (max-width: 1050px) { .mv-grid { grid-template-columns: repeat(2, minmax(180px, 1fr)); } }
+@media (max-width: 600px) {
+  .mv-grid { grid-template-columns: 1fr; }
+  .mv-tile.mv-wide, .mv-tile.mv-large { grid-column: span 1; }
 }
 
 /* ── Mobile ─────────────────────────────────────────────── */
@@ -623,6 +992,11 @@ tr.ev-warn td { color: var(--yellow); }
   .brand span { display: none; }
   /* Header: keep the create buttons on one line and finger-sized. */
   header { padding: 8px 10px; gap: 8px; }
+  /* The palette button is the only way into the command palette without a
+     keyboard, so it stays at this width and gives up its label instead of its
+     place. The button keeps an aria-label, so dropping the text costs the
+     accessible name nothing. */
+  #btn-palette .btn-label { display: none; }
   header .btn { padding: 8px 10px; font-size: .82rem; }
   /* Touch targets — comfortable tap heights for rows, tabs, buttons. */
   .btn { min-height: 40px; }
@@ -641,7 +1015,7 @@ tr.ev-warn td { color: var(--yellow); }
     transform: translateX(-100%);
     transition: transform .18s ease;
     width: min(300px, 85vw);
-    box-shadow: 4px 0 24px rgba(0,0,0,.5);
+    box-shadow: 4px 0 24px var(--shadow);
   }
   #tree.open { transform: translateX(0); }
   /* The sidebar is a drawer at this width: fixed, so there is nothing to
@@ -652,6 +1026,54 @@ tr.ev-warn td { color: var(--yellow); }
   dl.props dt { margin-top: 8px; }
   #vnc-screen, #tty-screen { height: 60vh; }
   .toolbar { margin-left: 0; }
+
+  /* A guest's toolbar is eleven buttons. With their labels they wrapped onto
+     three rows and filled most of the first screen before any detail showed.
+     The lifecycle verbs keep their place and give up their text — play, stop
+     and restart are the icons people already read on every other device —
+     while the rarer and less guessable ones (Migrate, Clone, Make template,
+     Export, Delete) move behind "More", where they keep their words.
+     Each button carries an aria-label, so the hidden text costs no name. */
+  .toolbar .btn .btn-label { display: none; }
+  .toolbar .btn { padding: 8px 10px; }
+  .toolbar .btn.act-more { display: none; }
+  .btn-overflow { display: inline-flex; }
+
+  /* Dashboard on a phone. The grid is one column here (see dashboard.js), so
+     the widgets are full width and the figures stop wrapping into their own
+     borders. */
+  .dash-hint { display: none; } /* describes dragging with a pointer */
+  .dash-toolbar { gap: 8px; }
+  /* One column also means the grid's row height is the wrong measure. A
+     widget sized for three rows beside two others becomes a tall, almost
+     empty box when it has the full width to itself: four lines of capacity
+     figures in 240px of panel, and a long scroll past nothing to reach the
+     next widget. So the items stop being positioned and simply stack, each
+     as tall as it needs.
+     This gives up dragging at this width, which is the right trade: the drag
+     hint is already hidden here, and rearranging a grid by touch on a 420px
+     screen was never the point of it. */
+  .dash-narrow .grid-stack { height: auto !important; }
+  .dash-narrow .grid-stack > .grid-stack-item {
+    position: static !important;
+    width: 100% !important;
+    height: auto !important;
+    min-height: 0 !important;
+    transform: none !important;
+    margin: 0 0 10px !important;
+    inset: auto !important;
+  }
+  .dash-narrow .grid-stack-item-content {
+    position: static !important;
+    inset: auto !important;
+    height: auto !important;
+  }
+  /* The body already scrolls (.widget-body overflow:auto), and now that the
+     item is content-height that scroll applies to width only: a table too wide
+     for the screen slides sideways instead of crushing "win11-desktop" to
+     "win11-deskto". A chart has no content height of its own, so it is given
+     one. */
+  .dash-narrow .dash-chart { min-height: 140px; }
 }
 
 /* ── Pool View: drag-and-drop tree (ADR-0008) and the move dialog (ADR-0010) ── */
@@ -668,6 +1090,11 @@ tr.ev-warn td { color: var(--yellow); }
   outline-offset: -2px;
   background: var(--panel-2);
 }
+.tree-item.drop-invalid {
+  outline: 2px dashed var(--red, #f85149);
+  outline-offset: -2px;
+  cursor: not-allowed;
+}
 /* A backend that cannot receive a move: visibly inert, with the reason on
    hover. It is never a drop target, so it never highlights. */
 .tree-item.disabled { opacity: .45; cursor: not-allowed; }
@@ -681,6 +1108,9 @@ tr.ev-warn td { color: var(--yellow); }
    three buttons on every folder is noise, and one of them stops everything. */
 .pool-actions { visibility: hidden; }
 .tree-item:hover .pool-actions, .tree-item:focus-within .pool-actions { visibility: visible; }
+
+ul.migrate-checks { list-style: none; padding: 0; margin: 12px 0; }
+.migrate-checks li { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: .85rem; }
 
 .modal {
   position: fixed; inset: 0; z-index: 60;
@@ -701,3 +1131,197 @@ tr.ev-warn td { color: var(--yellow); }
 .modal-card .refusals li { color: var(--bad, #f85149); }
 .modal-card .check { display: block; margin: 16px 0 0; font-size: .85rem; }
 .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px; }
+
+/* ── Command palette, shortcut overlay and tree filter (#349) ── */
+
+#tree-filter {
+  display: block;
+  width: 100%;
+  margin: 0 0 8px;
+  padding: 6px 9px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: .85rem;
+}
+#tree-filter:focus { outline: none; border-color: var(--accent); }
+.tree-item.flash { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+kbd {
+  display: inline-block;
+  min-width: 1.6em;
+  padding: 1px 6px;
+  font: .75rem ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-align: center;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+}
+
+/* The palette sits high rather than centred: the list grows downward as you
+   type, and a centred box would jump. */
+#palette {
+  width: min(640px, 94vw);
+  margin-top: 12vh;
+  padding: 0;
+  overflow: hidden;
+}
+#palette-input {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 14px 16px;
+  font-size: 1rem;
+  background: var(--panel);
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+}
+#palette-input:focus { outline: none; }
+#palette-list {
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  max-height: min(420px, 60vh);
+  overflow-y: auto;
+}
+#palette-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  white-space: nowrap;
+}
+#palette-list li .icon { width: 17px; height: 17px; flex: none; }
+#palette-list li .palette-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+#palette-list li .muted { color: var(--muted); font-size: .8rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+#palette-list li .chip { margin-left: auto; }
+#palette-list li:hover { background: var(--panel-2); }
+#palette-list li.active { background: var(--accent); color: #14100b; }
+#palette-list li.active .muted { color: #14100b; }
+#palette-list li.palette-empty { cursor: default; }
+.palette-foot {
+  display: flex; gap: 4px; align-items: center; flex-wrap: wrap;
+  padding: 8px 14px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: .75rem;
+}
+
+#shortcuts dl.shortcuts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 8px 16px;
+  margin: 0;
+  font-size: .9rem;
+}
+#shortcuts dt { color: var(--muted); font-size: .8rem; }
+#shortcuts dd { margin: 0; }
+
+/* ── Context Menus & Keyboard Focus ──────────────────────────────── */
+
+.tree-item:focus-visible,
+tbody tr:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.context-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 180px;
+  max-width: 280px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.05);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  outline: none;
+  user-select: none;
+  animation: context-menu-in 0.08s ease-out;
+}
+
+@keyframes context-menu-in {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  font-size: 0.85rem;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+  outline: none;
+}
+
+.menu-item .icon {
+  width: 15px;
+  height: 15px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.menu-item .menu-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.menu-item:hover,
+.menu-item:focus,
+.menu-item:focus-visible {
+  background: var(--panel-2);
+  color: var(--text);
+}
+
+.menu-item:hover .icon,
+.menu-item:focus .icon,
+.menu-item:focus-visible .icon {
+  color: var(--accent);
+}
+
+.menu-item.danger:hover,
+.menu-item.danger:focus,
+.menu-item.danger:focus-visible {
+  background: rgba(248, 81, 73, 0.15);
+  color: var(--red);
+}
+
+.menu-item.danger:hover .icon,
+.menu-item.danger:focus .icon,
+.menu-item.danger:focus-visible .icon {
+  color: var(--red);
+}
+
+.menu-item:disabled {
+  opacity: 0.4;
+  cursor: default;
+  pointer-events: none;
+}
+
+.menu-separator {
+  height: 1px;
+  background: var(--border);
+  margin: 3px 0;
+}
+
+
+/* Tree multi-select (#344): rows in the shared VM selection. */
+.tree-item.multi-selected { background: color-mix(in srgb, var(--accent) 16%, transparent); }
