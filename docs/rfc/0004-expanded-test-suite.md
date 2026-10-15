@@ -1,21 +1,23 @@
 # RFC-0004: Expanded test suite — spend coverage where the risk is
 
-**Status:** Design proposal, not committed. No code in this RFC.
+**Status:** Proposal. Draft; this RFC changes no code.
 **Date:** 2026-10-11
 **Author:** omp + coding assistant
 
 ## Summary
 
-Corral's suite is large (149 files, ~1674 test/fuzz functions) and honestly
-gated (race, shuffle, both tag sets, coverage ratchet, lint two-gate, fuzz
-seeds + nightly, kind e2e, ui-smoke, vmtest layers). The problem is not size,
-it is shape: total coverage sits at 60.7% against a 59.5% floor, the thinnest
-areas are the riskiest ones (an untested off-cluster bootc path, a 32%
-libvirt client, the 53% shell seam everything fakes through), and at least
-one test passes in CI while failing on a tool-rich workstation. This RFC
-measures the gaps, then proposes backfills in cheapest-first order — with
-explicit non-goals, because a testing proposal without them becomes a 100%
-mandate nobody follows.
+Corral's suite is large (149 files, ~1674 test/fuzz functions). Honest gates
+protect it (race, shuffle, both tag sets, coverage ratchet, lint two-gate,
+fuzz seeds + nightly, kind e2e, ui-smoke, vmtest layers). The problem is
+shape, not size. Total coverage is 60.7% against a 59.5% floor. The thinnest
+areas are the riskiest ones. At least one test passes in CI but fails on a
+workstation with many tools.
+
+The weak areas: the off-cluster bootc path has no tests, and the libvirt
+client has 32%. The shell seam under all fakes has 53%. This RFC measures
+the gaps. Then it proposes backfills in cheapest-first order, with explicit
+non-goals. Without non-goals, a test proposal becomes a 100% mandate that
+nobody follows.
 
 ## Where we are (measured 2026-10-11, main @ `eece036`)
 
@@ -45,12 +47,12 @@ mandate nobody follows.
 | pkg/promtext | 95.8% | 8 | |
 | **total** | **60.7%** | | floor 59.5% — 1.2pp of slack |
 
-Tiers already running: unit (race + shuffle + both tag sets) on every push;
-coverage ratchet (`just cover`); lint two-gate; fuzz seed corpora in-suite +
-2-minute nightly targets (`FuzzParseQuantity`, `FuzzMemoryMiB`); kind +
-emulated-KubeVirt browser e2e; real-Incus/libvirt/QEMU e2e; ui-smoke
-(Chromium against `--demo`); vmtest layer (per-PR) and boot (weekly);
-`@live-only` Playwright against the production cluster (manual).
+Tiers that run now: unit (race + shuffle + both tag sets) on every push;
+coverage ratchet (`just cover`); lint two-gate. Fuzz seed corpora run in the
+suite. Fuzz targets also run for 2 minutes each night (`FuzzParseQuantity`, `FuzzMemoryMiB`).
+Other tiers: kind + emulated-KubeVirt browser e2e; real-Incus/libvirt/QEMU
+e2e; ui-smoke (Chromium against `--demo`); vmtest layer (per-PR) and boot
+(weekly); `@live-only` Playwright against the production cluster (manual).
 
 `docs/testing.md` is stale in the other direction: its Layer-1 "plan" to
 introduce `pkg/shell` predates `shell.Fake`, and its success criteria
@@ -59,40 +61,43 @@ younger suite than the one that exists.
 
 ## Gaps, with evidence
 
-1. **Untested production paths, not just low numbers.** `buildAndImport`
-   (cmd/corral-bootc/main.go:77) is the entire off-cluster bootc flow at
-   0% — #368 prescribes the exact seam (a `Builder` interface next to the
-   existing mockable `Target` interface). `corral-incus` and `corral-wasm`
-   have no test files. passkeys.go is 0%.
+1. **Untested production paths, not only low numbers.** `buildAndImport`
+   (cmd/corral-bootc/main.go:77) is the full bootc flow off the cluster.
+   It has 0% coverage. #368 prescribes the exact seam: a `Builder`
+   interface next to the existing mockable `Target` interface.
+   `corral-incus` and `corral-wasm` have no test files. passkeys.go is 0%.
 2. **Thinness correlates with risk, inversely with attention.** libvirt
    carries SSH/matrix claims at 31.8%. `pkg/demo` at 36.6% underpins both
    ui-smoke and the TUI demo tests — a bug there green-lights everything
-   above it. `pkg/shell` at 52.6% is the fake seam: every backend unit
-   test trusts it.
+   above it. `pkg/shell` at 52.6% is the fake seam: all unit tests for
+   backends trust it.
 3. **One environment-dependent test.** `TestList_EmptyLocalQemu` sets
-   `KUBECONFIG` to a nonexistent path yet still shells out to a real
-   `kubectl`, whose behavior varies by version and environment: it fails
-   on a tool-rich workstation (this audit: `kubevirt: exit status 1`)
-   while green in CI. The suite's answer to "does this pass?" currently
-   depends on which tools the machine happens to have — the exact failure
-   mode `CORRAL_REQUIRE_TOOLS` loud-skips were built to prevent.
+   `KUBECONFIG` to a nonexistent path. But it still shells out to a real
+   `kubectl`, and that behavior changes with version and environment. The
+   test fails on a workstation with many tools (this audit:
+   `kubevirt: exit status 1`), but passes in CI. Thus the result now
+   depends on the tools that the machine has. `CORRAL_REQUIRE_TOOLS`
+   loud-skips exist to prevent this failure mode.
 4. **The ratchet watches the average, not the organs.** `pkg/web` (203
-   fns, 72%) can mask a regressing small package indefinitely. Total-only
-   floors also punish honest work: adding a large new backend package at
-   0%-first-PR drops the total even when every new line is fixture-tested.
-5. **Fuzz covers 2 parsers; the repo has a dozen.** InstanceRef parsing,
-   catalog resolution, config load, and every matrix/adapter constructor
-   take adversarial input (peer-supplied IDs, dotfiles YAML) with only
-   example-based tests.
-6. **Frontend depth stops at smoke.** ui-smoke proves the dashboard renders
-   against `--demo`; the SPA flows (multi-select bulk bar, export picker,
-   tag chips, read-only gate) rely on `@live-only` manual runs plus the
-   2026-06-21 widened non-live specs. No tier owns the middle: scripted
-   interaction against the demo cluster on every push.
-7. **New-backend tax is unbilled.** RFC-0003 adds four backends; without a
-   fixture standard (govmomi/simulator, recorded XenAPI payloads, prism
-   stubs, VBoxManage fake) each matrix column ships test-free and the
-   conformance tests can only check consistency, not behavior.
+   fns, 72%) can hide a small package that regresses.
+   Total-only floors also punish honest work. A large new backend
+   package at 0% in its first PR drops the total. This occurs even when
+   fixture tests cover each new line.
+5. **Fuzz covers 2 parsers; the repo has a dozen.** Other code gets
+   adversarial input (peer-supplied IDs, dotfiles YAML). It has only
+   example-based tests. This code includes the InstanceRef parser, catalog
+   resolution, config load, and all matrix/adapter constructors.
+6. **Frontend depth stops at smoke.** ui-smoke proves that the dashboard
+   renders against `--demo`. The SPA flows (multi-select bulk bar, export
+   picker, tag chips, read-only gate) rely on `@live-only` manual runs.
+   They also rely on the non-live specs that the 2026-06-21 change widened.
+   No tier owns the middle: scripted interaction against the demo cluster
+   on every push.
+7. **Nobody pays the new-backend tax.** RFC-0003 adds four backends. A
+   fixture standard is necessary (govmomi/simulator, recorded XenAPI
+   payloads, prism stubs, VBoxManage fake). Without it, each matrix column
+   ships with no tests. Then the conformance tests can only check
+   consistency, not behavior.
 
 ## Proposal, cheapest first
 
@@ -108,20 +113,22 @@ younger suite than the one that exists.
 | 7 | Backend-fixture standard folded into RFC-0003's per-backend checklist: no matrix column without a fixture test; simulator/recorded-payload pattern per backend family | RFC-0003 |
 | 8 | Refresh `docs/testing.md` (Layer-1 past tense, current counts, both tag sets, the mid-tier) so the next audit starts from truth | — |
 
-Slices 0–2 are each under an hour and independently mergeable. Slice 4 is
-deliberately report-before-gate: per-package hard floors on day one would
-either freeze new backends (gap 4) or get disabled within a month — the
-coverage-gate script's own header says a gate nobody trusts gets disabled.
+Slices 0–2 are each under an hour and independently mergeable. Slice 4
+deliberately reports before it gates. Per-package hard floors on day one
+would freeze new backends (gap 4), or people would disable them within a
+month. The header of the coverage-gate script says that people disable a
+gate that nobody trusts.
 
 ## Explicitly not in this RFC
 
 - **No 100% target, no per-package hard floors yet.** Slice 4 reports for
-  a quarter first; floors follow only where the numbers prove stable.
+  a quarter first. Floors follow only where the numbers prove stable.
 - **No TUI layout assertions.** The existing rule stands: assert dispatch
   and content, never padding, borders, or columns.
-- **No testing upstream tools.** Right flags, not their behavior — unchanged.
-- **No weekly-boot on every push.** `vmtest-e2e` stays weekly/on-demand;
-  the layer tier remains the per-PR boot-evidence gate (cost decision from
+- **No tests of upstream tools.** Right flags, not their behavior — unchanged.
+- **No weekly-boot on every push.** `vmtest-e2e` stays weekly/on-demand.
+  The layer tier remains the per-PR boot-evidence gate (cost decision from
   2026-07, not revisited here).
-- **No fixing CI-pass-local-fail beyond slice 2.** Other latent
-  environment dependencies get filed as found, not hunted in one sweep.
+- **No CI-pass-local-fail fixes beyond slice 2.** We file other latent
+  environment dependencies when we find them. We do not hunt them in one
+  sweep.
