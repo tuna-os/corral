@@ -316,9 +316,8 @@ func (a libvirtAdapter) SSH(name string, opts SSHOptions) error {
 // ── VirtualBox ────────────────────────────────────────────────────
 //
 // Local VBoxManage only: Power plus the backend's own reset and pause, clonevm,
-// and modifyvm while powered off. No
-// Addresser — a NAT guest has no stable address of its own, and a bridged
-// one's would need Guest Additions guestproperty reads nothing else uses yet.
+// and modifyvm while powered off. SSH goes to a NAT port-forward for guest
+// port 22 when one exists, else to the Guest Additions address.
 
 type virtualboxAdapter struct{ client virtualbox.Client }
 
@@ -341,6 +340,12 @@ func (a virtualboxAdapter) Scale(name string, cores int, mem string) error {
 
 // HotplugsLive is false by construction: modifyvm refuses a running VM.
 func (virtualboxAdapter) HotplugsLive(string) bool { return false }
+
+func (a virtualboxAdapter) Address(name string) (string, error) { return a.client.Address(name) }
+
+func (a virtualboxAdapter) SSH(name string, opts SSHOptions) error {
+	return a.client.SSH(name, opts.User, opts.Identity, opts.Command, opts.Port, opts.Password, opts.LocalForwards)
+}
 
 // ── Proxmox ───────────────────────────────────────────────────────
 //

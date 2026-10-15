@@ -43,6 +43,7 @@ backends. CI runs their fixture tests only; no live backend runs in CI. See
 |---|---:|---:|---:|---:|
 | Aggregate inventory | yes | yes | yes | yes |
 | Start, stop, restart, delete | yes | yes | yes | yes |
+| SSH | NAT forward or Guest Additions address | not yet | not yet | not yet |
 | Pause, resume | yes | yes | yes | no |
 | Snapshots | yes | yes | yes | yes |
 | Clone | yes | yes | yes | yes |
