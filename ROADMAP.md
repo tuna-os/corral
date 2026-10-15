@@ -20,7 +20,7 @@ images on a KubeVirt cluster (`scripts/boot-gate.sh` in tunaOS).
   the `tailvm-` prefix during the transition ([SPEC.md](SPEC.md)).
 - Corral supports five backends. The `bootc` mode builds a disk from a
   bootable container on the cluster. Then it runs that disk as a KubeVirt VM.
-- 🟡 **Org CI adoption waits for review.** tunaOS#3249 moves the tunaOS boot
+- 🟡 **The org CI change waits for review.** tunaOS#3249 moves the tunaOS boot
   gate (`reusable-build-image.yml`) from `scripts/iso-e2e.sh` to
   `corral vmtest`. Its smoke cells pass on hosted KVM. See #431.
 - 🟡 **v0.7.0 notes are on main**
