@@ -48,6 +48,10 @@ const (
 	// IncusTar is Incus's own instance archive — configuration and volumes,
 	// restorable only with `incus import`.
 	IncusTar Format = "incus-tar"
+	// OVA is an Open Virtualization Appliance: an OVF descriptor plus its
+	// disks in one tar. It imports into another hypervisor's appliance
+	// importer, and it is not a bare disk image.
+	OVA Format = "ova"
 )
 
 // Request is one export.
@@ -132,6 +136,8 @@ func For(ref types.InstanceRef) (Adapter, error) {
 		return Incus{}, nil
 	case "proxmox":
 		return PVE{}, nil
+	case "virtualbox":
+		return VirtualBox{}, nil
 	case "":
 		return nil, fmt.Errorf("instance reference has no backend; export needs a fully-scoped instance")
 	default:
@@ -143,7 +149,7 @@ func For(ref types.InstanceRef) (Adapter, error) {
 // touching the instance — for capability reporting and UI gating.
 func Supported(backend string) bool {
 	switch backend {
-	case "kubevirt", "qemu", "libvirt", "incus", "proxmox":
+	case "kubevirt", "qemu", "libvirt", "incus", "proxmox", "virtualbox":
 		return true
 	}
 	return false

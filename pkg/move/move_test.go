@@ -50,6 +50,8 @@ func newStub(t *testing.T) *stub {
 			"libvirt":  {export.Qcow2, export.RawGz},
 			"incus":    {export.IncusTar, export.Qcow2},
 			"proxmox":  {export.Qcow2, export.RawGz},
+			// An OVA appliance exports, but it is not a disk image.
+			"virtualbox": {export.OVA},
 		},
 		free: 1 << 40,
 	}
