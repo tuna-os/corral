@@ -886,6 +886,12 @@ func (a nutanixAdapter) Clone(source, target string) error {
 	return a.complete(func(c *nutanix.Client) (nutanix.Task, error) { return c.Clone(source, target) })
 }
 
+// SetTag assigns a Prism Central category: Nutanix has no free-form tags, so
+// the tag must name an existing key=value category.
+func (a nutanixAdapter) SetTag(name, tag string, on bool) error {
+	return a.complete(func(c *nutanix.Client) (nutanix.Task, error) { return c.SetCategory(name, tag, on) })
+}
+
 // firstImageStorage picks a storage that accepts disk images, so AddDisk works
 // without the caller knowing the cluster's storage layout.
 func firstImageStorage(client *proxmoxbe.Client) (string, error) {

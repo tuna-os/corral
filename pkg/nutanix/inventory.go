@@ -54,6 +54,7 @@ type VM struct {
 	NICs              []NIC  `json:"nics"`
 	Cluster           *Ref   `json:"cluster"`
 	Host              *Ref   `json:"host"`
+	Categories        []Ref  `json:"categories"`
 }
 
 // listResponse is the v4 list envelope: data plus OData metadata. The page

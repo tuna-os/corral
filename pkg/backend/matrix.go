@@ -345,7 +345,7 @@ var Matrix = map[string]map[string]Entry{
 		"virtualbox": {Possible, "setextradata keys or the registry mark; nothing reads them back yet"},
 		"vsphere":    {Possible, "vSphere tags exist natively; nothing drives them yet"},
 		"xen":        {Possible, "the VM record carries tags natively; Corral has no tagger writing them yet"},
-		"nutanix":    {Possible, "categories with associate/disassociate actions exist natively; value-to-extId resolution is unproven, so no tagger writes them yet"},
+		"nutanix":    {Shipped, "categories, not free-form tags: key=value resolves to the category extId, then associate/disassociate-categories with If-Match; Corral never creates a category — pkg/nutanix.SetCategory"},
 	},
 	"ports": {
 		"kubevirt":   {Shipped, "port-proxy Service on the tailnet, ApplyProxy"},

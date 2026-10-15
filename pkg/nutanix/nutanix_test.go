@@ -52,7 +52,8 @@ const listFixture = `{
       "memorySizeBytes": 8589934592,
       "nics": [{"networkInfo": {"ipv4Config": {"ipAddress": {"value": "10.8.23.6"}}}}],
       "cluster": {"extId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"},
-      "host": {"extId": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"}
+      "host": {"extId": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"},
+      "categories": [{"extId": "cat-env-prod"}]
     },
     {
       "extId": "22222222-2222-2222-2222-222222222222",
@@ -146,6 +147,8 @@ func (f *fakePC) serve(w http.ResponseWriter, r *http.Request) {
 		f.serveAction(w, path+"/create")
 	case r.Method == http.MethodDelete && strings.Contains(path, "/ahv/config/vm-recovery-points/"):
 		f.serveAction(w, path+"/delete")
+	case r.Method == http.MethodGet && strings.HasSuffix(path, "/config/categories"):
+		f.serveCategories(w, r)
 	case r.Method == http.MethodGet && strings.Contains(path, "/config/tasks/"):
 		f.serveTask(w, path)
 	default:
