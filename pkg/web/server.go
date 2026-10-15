@@ -963,7 +963,7 @@ func handleDeleteVM(w http.ResponseWriter, r *http.Request) {
 	if ns == localNS {
 		if err := qemu.Delete(name); err != nil {
 			done(err)
-			errResp(w, http.StatusInternalServerError, err)
+			errResp(w, localErrStatus(err), err)
 			return
 		}
 		done(nil)
