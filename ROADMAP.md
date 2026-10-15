@@ -26,7 +26,7 @@ images on a KubeVirt cluster (`scripts/boot-gate.sh` in tunaOS).
 - 🟡 **The org CI change waits for review.** tunaOS#3249 moves the tunaOS boot
   gate (`reusable-build-image.yml`) from `scripts/iso-e2e.sh` to
   `corral vmtest`. Its smoke cells pass on hosted KVM. See #431.
-- ✅ **v0.7.0 is released** (2026-10-15): signed binaries with SBOMs,
+- ✅ **v0.7.0 is out** (2026-10-15): signed binaries with SBOMs,
   and Homebrew is on v0.7.0 (#339, #210).
 - The repo has no milestones. This file and the issue labels track the work.
 
