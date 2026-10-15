@@ -250,6 +250,12 @@ func Preflight(spec *Spec) (notes []string, err error) {
 		// symptom is a timeout that looks like a broken image.
 		notes = append(notes, "no /dev/kvm: the guest will run under software emulation, which is slow enough that the default timeout may not be enough")
 	}
+	if !qemu.UEFIAvailable() {
+		// Not fatal: an ostree image installed with --generic-image carries a
+		// BIOS bootloader too. A composefs image (systemd-boot) does not, and
+		// boots to nothing.
+		notes = append(notes, "no UEFI firmware (install ovmf): the guest boots with legacy BIOS, which a composefs image cannot boot from")
+	}
 	return notes, nil
 }
 
@@ -286,6 +292,9 @@ func buildAndImport(spec *Spec, layered Layered, keys Keypair, progress func(str
 	target := bootc.QEMUTarget{}
 	if err := target.Import(types.InstanceRef{Backend: "qemu", Name: spec.Name}, built.Path, bootc.CreateOpts{
 		CPU: spec.CPUs, Memory: spec.Memory, Disk: spec.Disk, SSHKey: keys.AuthorizedKeys(),
+		// bootc installs a UEFI bootloader, and only an ostree image adds a
+		// BIOS one beside it, so UEFI is the firmware every image boots on.
+		UEFI: qemu.UEFIAvailable(),
 	}); err != nil {
 		return fmt.Errorf("creating the VM: %w", err)
 	}
