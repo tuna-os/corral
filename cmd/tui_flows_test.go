@@ -573,7 +573,7 @@ func TestTUIActions_PowerActionsRunAndReturnToTheList(t *testing.T) {
 	}
 }
 
-// performAction dispatches per backend; the demo cluster records the calls, so
+// actionTarget.run dispatches per backend; the demo cluster records the calls, so
 // this checks the qemu/incus/libvirt/kubevirt split does not crash or cross
 // wires for any backend the fleet can contain.
 func TestTUIPerformAction_AllBackends(t *testing.T) {
@@ -584,7 +584,7 @@ func TestTUIPerformAction_AllBackends(t *testing.T) {
 				Name: "probe", Backend: backend, Namespace: "corral-vms",
 				Status: "Running", Running: true,
 			})
-			m.performAction(action) // must not panic for any pairing
+			actionTarget{vm: m.selected}.run(action) // must not panic for any pairing
 		}
 	}
 }
@@ -595,7 +595,7 @@ func TestTUIPerformCTAction(t *testing.T) {
 	m.isCT = true
 	m.selectedCT = ct.CT{Name: "files", Namespace: "corral-vms", Phase: "Stopped"}
 	for _, action := range []string{"start", "stop", "delete"} {
-		m.performAction(action) // routed to performCTAction
+		actionTarget{ct: m.selectedCT, isCT: true}.run(action) // routed to ctAction
 	}
 }
 
