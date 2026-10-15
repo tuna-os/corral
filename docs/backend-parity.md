@@ -258,6 +258,56 @@ websocket bridge is not. So the capability flags say no, and the matrix says why
 - **events** — The task list logs the activity of the pool. Corral wires no per-VM reader yet.
 - **tags** — Corral associates no categories yet: no reference shows the value lookup.
 
+## Remaining backend-name branches
+
+Issue #214 moved the CLI, TUI, plugin, setup, and fleet dispatch onto
+`pkg/backend`. The ratchet `TestKubeVirtBranchesRatchet` in
+`pkg/backend/matrix_test.go` counts each `== "kubevirt"` or `case "kubevirt"`
+outside `pkg/backend` and `pkg/kubevirt`. It fails when the count goes up. The
+branches below remain on purpose. Each entry gives the reason.
+
+**Per-feature adapter registries.** These packages are the adapter layer for
+one feature. A `switch` on the backend selects that feature's adapter, the same
+pattern as `backend.For`:
+
+- `pkg/snapshot` (`For`, `Supported`)
+- `pkg/export` (`For`, `Supported`)
+- `pkg/device` (`For`, `Supported`)
+- `pkg/windows` (`For`)
+- `pkg/bootc` (target selection)
+- `pkg/setup` (`Apply`, and the KubeVirt probe's context lookup)
+- `pkg/doctor` (per-backend checks)
+- `types.CapabilitiesForBackend`, which the conformance tests check against the
+  matrix
+
+**Lists of valid backend names.** These validate input. They do not dispatch:
+
+- `pkg/config` (`AddContext`, `SetDefaultBackend`, and the legacy KubeVirt
+  context)
+- `pkg/plugin` (the `supportedBackends` values in the marketplace)
+
+**Display only.** These change text or colour, not behaviour:
+
+- `pkg/move` (`droppedConfig` names the settings that a move loses)
+- `cmd/tui_theme.go` (backend colours)
+- `cmd/list.go` (the KubeVirt port-proxy column)
+
+**KubeVirt-only features.** The operation exists only on KubeVirt:
+
+- `cmd/create.go` and `cmd/tui_create.go` pass KubeVirt create flags that
+  `types.CreateOpts` does not describe. The `backend.Creator` comment records
+  this.
+- `cmd/corral-vdi` uses USB redirection through the KubeVirt API.
+- `pkg/web/server.go` (`clusterContext`) selects the KubeVirt context for a
+  create from a container disk, a PVC, or a bootc image.
+- `cmd/corral-windows` creates a KubeVirt Windows VM with
+  `kubevirt.CreateWindowsVM`. `pkg/kubevirt` imports `pkg/windows`, so a
+  KubeVirt `windows.Adapter` would cause an import cycle.
+
+Most direct imports of `pkg/kubevirt` from `cmd/` and `pkg/web` remain. Each
+one becomes a capability interface in `pkg/backend/ops.go` when a second
+backend can do the operation.
+
 ## Testing parity
 
 Three layers, and each one catches what the others cannot:
