@@ -153,15 +153,14 @@ it:
   private key or a secret to sign.
 - **Pinned identity.** A verifier pins the OIDC issuer
   (`https://token.actions.githubusercontent.com`) and the exact workflow and
-  ref that publish. A regular expression that a fork can match is not
-  permitted.
+  ref that publish. Do not use a regular expression that a fork can match.
 - **SBOM.** Each released binary has an SPDX JSON SBOM. A signed attestation
   binds the SBOM to the digest of that binary.
-- **Fail closed.** A release fails when signing or verification fails. An
+- **Fail closed.** A release fails when CI cannot sign or verify an artifact. An
   install fails when the signature or the SBOM attestation is missing or not
   valid.
 - **Immutable targets.** CI signs digests and immutable release assets, not
-  mutable tags or rolling channels.
+  mutable tags or channels that change.
 
 The existing Ed25519 `signature` field in the marketplace index does not
 meet these requirements. The public key comes from the same index as the
@@ -178,8 +177,9 @@ calls a feature enterprise ready:
 - [ ] CI runs end-to-end tests of the feature on a Tier 1 backend.
 - [ ] A test reads the on-disk state of the previous release.
 - [ ] The release notes give the upgrade steps.
-- [ ] The artifacts that deliver the feature are signed and have an SBOM.
-- [ ] The troubleshooting guide has an entry for the feature.
+- [ ] CI signs the artifacts that deliver the feature, and each has an SBOM.
+- [ ] The [guide to problems and fixes](troubleshooting.md) has an entry for
+  the feature.
 - [ ] The feature uses only the RBAC verbs in `deploy/` that it needs.
 
 ## Phase 3 goals
