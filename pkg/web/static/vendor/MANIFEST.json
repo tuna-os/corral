@@ -45,14 +45,14 @@
     },
     {
       "path": "vendor/iron-remote-desktop.js",
-      "package": "unknown",
-      "version": "unknown",
-      "url": "unknown",
+      "package": "@devolutions/iron-remote-desktop",
+      "version": "0.11.0",
+      "url": "https://cdn.jsdelivr.net/npm/@devolutions/iron-remote-desktop@0.11.0/iron-remote-desktop.js",
       "sha256": "22359dfb201017ebf7f25c2e496dbbfd1668bcad1a34d0dabfd05a968e1aa50f",
       "bytes": 128765,
       "usedFor": "in-browser RDP (ADR-0002 phase 2)",
-      "note": "Provenance was not recorded when this file was vendored and is not recoverable from the bytes: the build carries no version string, and no npm package by this name is published. The sha256 here pins the copy in tree so it cannot change unnoticed, but it cannot be checked against an upstream release until the source package and version are identified. Tracked by https://github.com/tuna-os/corral/issues/215.",
-      "upstreamVerified": false
+      "note": "Provenance recovered by digesting every published version of @devolutions/iron-remote-desktop: 0.11.0's package/iron-remote-desktop.js matches the vendored bytes exactly (same sha256, same 128765 bytes), and re-downloading the recorded url reproduces them. The bundle carries no version string of its own, which is why the scoped package name was not obvious from the file. ADR-0002 names the component 'iron-remote-desktop-rdp'; that is the RDP backend package, while the file vendored here is the host web component it plugs into.",
+      "upstreamVerified": true
     },
     {
       "path": "vendor/gridstack-all.js",
