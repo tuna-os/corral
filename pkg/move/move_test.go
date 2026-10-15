@@ -52,6 +52,8 @@ func newStub(t *testing.T) *stub {
 			"proxmox":  {export.Qcow2, export.RawGz},
 			// An OVA appliance exports, but it is not a disk image.
 			"virtualbox": {export.OVA},
+			// An XVA archive exports, but it is not a disk image.
+			"xen": {export.XVA},
 		},
 		free: 1 << 40,
 	}

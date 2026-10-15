@@ -52,6 +52,9 @@ const (
 	// disks in one tar. It imports into another hypervisor's appliance
 	// importer, and it is not a bare disk image.
 	OVA Format = "ova"
+	// XVA is XenServer/XCP-ng's own VM archive — metadata and every disk,
+	// restorable with VM import on a pool, and not a bare disk image.
+	XVA Format = "xva"
 )
 
 // Request is one export.
@@ -138,6 +141,8 @@ func For(ref types.InstanceRef) (Adapter, error) {
 		return PVE{}, nil
 	case "virtualbox":
 		return VirtualBox{}, nil
+	case "xen":
+		return Xen{}, nil
 	case "":
 		return nil, fmt.Errorf("instance reference has no backend; export needs a fully-scoped instance")
 	default:
@@ -149,7 +154,7 @@ func For(ref types.InstanceRef) (Adapter, error) {
 // touching the instance — for capability reporting and UI gating.
 func Supported(backend string) bool {
 	switch backend {
-	case "kubevirt", "qemu", "libvirt", "incus", "proxmox", "virtualbox":
+	case "kubevirt", "qemu", "libvirt", "incus", "proxmox", "virtualbox", "xen":
 		return true
 	}
 	return false

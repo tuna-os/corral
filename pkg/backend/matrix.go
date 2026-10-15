@@ -322,7 +322,7 @@ var Matrix = map[string]map[string]Entry{
 		"proxmox":    {Shipped, "vzdump in snapshot mode; the export adapter downloads the backup over the PVE API, extracts the disk via vma, and converts to qcow2 — pkg/proxmoxbe.Export"},
 		"virtualbox": {Shipped, "VBoxManage export to an OVA appliance while powered off or saved; a running VM is refused — pkg/export.VirtualBox"},
 		"vsphere":    {Possible, "ExportVm serves an OVF/NFC lease natively; pkg/export has no vSphere adapter yet"},
-		"xen":        {Possible, "GET /export serves XVA natively; pkg/export has no Xen adapter yet"},
+		"xen":        {Shipped, "GET /export streams an XVA archive of a halted or suspended VM; a running VM is refused — pkg/export.Xen"},
 		"nutanix":    {Possible, "vmm recovery points exist but no download path is proven; pkg/export has no Nutanix adapter yet"},
 	},
 	"events": {

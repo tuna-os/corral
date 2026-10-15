@@ -20,6 +20,7 @@
 package xen
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -175,8 +176,9 @@ func (c *Client) HostRef(name string) (string, error) {
 
 // Export downloads the VM as an XVA image via the /export HTTP endpoint,
 // streaming the body so a multi-GB disk never sits in memory. The caller
-// closes the stream.
-func (c *Client) Export(name string) (io.ReadCloser, error) {
+// closes the stream. The download is bound to ctx, not to Timeout: Timeout
+// bounds a whole request including its body, and an XVA takes minutes.
+func (c *Client) Export(ctx context.Context, name string) (io.ReadCloser, error) {
 	vmRef, err := c.VMRef(name)
 	if err != nil {
 		return nil, err
@@ -191,11 +193,12 @@ func (c *Client) Export(name string) (io.ReadCloser, error) {
 		"session_id": {sess},
 		"ref":        {vmRef},
 	}.Encode()
-	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, fmt.Errorf("xen: export %q: %w", name, err)
 	}
-	resp, err := c.http.Do(req)
+	download := &http.Client{Transport: c.http.Transport}
+	resp, err := download.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("xen: export %q: %w", name, err)
 	}

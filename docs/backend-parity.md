@@ -49,7 +49,7 @@ backend cannot, or it is meaningless there.
 | Add / remove disks | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | 🔨 | 🔨 | 🔨 |
 | Expand disk | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | 🔨 | 🔨 | 🔨 |
 | GPU passthrough | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | 🔨 | 🔨 | — |
-| Export / backup disk | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 🔨 | 🔨 | 🔨 |
+| Export / backup disk | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 🔨 | ✅ | 🔨 |
 | Events | ✅ | ✅ | — | — | ✅ | — | 🔨 | 🔨 | 🔨 |
 | Tags | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | 🔨 | 🔨 | ✅ |
 | Published ports | ✅ | ✅ | 🔨 | — | — | 🔨 | — | — | — |
@@ -224,7 +224,7 @@ websocket bridge is not. So the capability flags say no, and the matrix says why
 - **events** — The event manager keeps per-VM history. Corral wires no reader for it yet.
 - **tags** — vSphere has native tags. Nothing drives them yet.
 
-### xen — 14 gaps
+### xen — 13 gaps
 
 - **create** — VM.create works natively. Corral has no creator for it yet.
 - **ssh** — Corral has no address discovery yet. Use the guest-metrics address, then plain ssh.
@@ -237,7 +237,6 @@ websocket bridge is not. So the capability flags say no, and the matrix says why
 - **volumes** — VBD plug and VDI create exist natively. Nothing drives them yet.
 - **expand** — VDI.resize grows a disk natively. Nothing drives it yet.
 - **gpu** — Hosts can assign PCI devices to guests. That path stays experimental and host-limited.
-- **export** — The pool serves XVA on /export. pkg/export has no Xen adapter yet.
 - **events** — The pool logs its own activity. Corral wires no reader for that log yet.
 - **tags** — The VM record carries tags natively. Corral has no tagger to set them yet.
 

@@ -48,7 +48,7 @@ backends. CI runs their fixture tests only; no live backend runs in CI. See
 | Clone | yes | yes | yes | yes |
 | CPU and memory change | powered off only | yes | not yet | not yet |
 | Migration | no, one host | yes | yes | yes |
-| Export | OVA, powered off only | not yet | not yet | not yet |
+| Export | OVA, powered off only | not yet | XVA, halted or suspended only | not yet |
 | Backend doctor | yes | yes | yes | yes |
 
 [backend-parity.md](backend-parity.md) has the full per-operation matrix.

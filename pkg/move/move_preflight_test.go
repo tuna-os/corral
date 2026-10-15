@@ -14,7 +14,8 @@ import (
 
 // The tests below sweep the whole backend matrix through the stubbed seams.
 // newStub mirrors reality (only kubevirt/qemu/libvirt/incus/proxmox export a
-// disk and ingest one; virtualbox exports an OVA appliance, not a disk);
+// disk and ingest one; virtualbox exports an OVA appliance and xen an XVA
+// archive, neither a disk);
 // export.Supported itself is a pure switch, so the backends without an export
 // adapter are refused without touching anything.
 
@@ -30,7 +31,7 @@ func TestPreflightNineBackendRefusalTable(t *testing.T) {
 	exporters := map[string]bool{"kubevirt": true, "qemu": true, "libvirt": true, "incus": true, "proxmox": true}
 	receivers := map[string]bool{"kubevirt": true, "qemu": true, "libvirt": true, "incus": true, "proxmox": true}
 	// These export, but an artifact that is not a disk image cannot seed a move.
-	appliances := map[string]bool{"virtualbox": true}
+	appliances := map[string]bool{"virtualbox": true, "xen": true}
 
 	for _, from := range backend.Backends {
 		dst := "qemu"
