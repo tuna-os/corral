@@ -154,6 +154,9 @@ func Exists(name string) bool {
 // currently being created, so that corral list and the web UI can display
 // it as in-progress rather than invisible during long image builds.
 func RecordCreating(name string, opts types.CreateOpts) error {
+	if err := ValidateVMName(name); err != nil {
+		return err
+	}
 	vmDir := filepath.Join(VMHome(), name)
 	if err := os.MkdirAll(vmDir, 0755); err != nil {
 		return err
@@ -187,6 +190,9 @@ func RecordCreating(name string, opts types.CreateOpts) error {
 // Create creates a new QEMU VM.
 func Create(opts types.CreateOpts) error {
 	name := opts.Name
+	if err := ValidateVMName(name); err != nil {
+		return err
+	}
 	vmDir := filepath.Join(VMHome(), name)
 
 	if Exists(name) && !opts.Force {
@@ -402,6 +408,9 @@ func Create(opts types.CreateOpts) error {
 // Start starts a QEMU VM: through systemd where there is a user session, and
 // as a detached process where there is not.
 func Start(name string) error {
+	if err := checkVMPath(name); err != nil {
+		return err
+	}
 	// TPM daemon must be up before QEMU tries to connect to its socket.
 	if meta, err := readMetadata(name); err == nil && meta.TPM {
 		if err := EnsureTPMDir(name, true); err != nil {
@@ -446,6 +455,9 @@ func Start(name string) error {
 
 // Stop stops a QEMU VM, whichever way it was started.
 func Stop(name string) error {
+	if err := checkVMPath(name); err != nil {
+		return err
+	}
 	if _, alive := directPID(name); alive || !userSystemd() {
 		if err := stopDirect(name); err != nil {
 			return err
@@ -465,6 +477,9 @@ func Stop(name string) error {
 
 // Delete removes a QEMU VM and its files.
 func Delete(name string) error {
+	if err := checkVMPath(name); err != nil {
+		return err
+	}
 	// A directly started VM has no unit to stop, and leaving the process
 	// running while its disk is deleted is the worst of both.
 	_ = stopDirect(name)

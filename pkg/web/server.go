@@ -205,6 +205,8 @@ func newMux() (http.Handler, error) {
 	mux.HandleFunc("GET /api/plugins", handlePlugins)
 	mux.HandleFunc("POST /api/plugins/{name}/install", handleInstallPlugin)
 	mux.HandleFunc("DELETE /api/plugins/{name}", handleRemovePlugin)
+	mux.HandleFunc("GET /api/plugins/ui", handlePluginUI)
+	mux.HandleFunc("GET /api/plugins/{plugin}/ui/{id}", handlePluginUIItem)
 	mux.HandleFunc("POST /api/vms/{ns}/{name}/nics", handleAddNIC)
 	mux.HandleFunc("GET /api/datavolumes", handleListDataVolumes)
 	mux.HandleFunc("POST /api/datavolumes", handleImportDataVolume)
@@ -963,7 +965,7 @@ func handleDeleteVM(w http.ResponseWriter, r *http.Request) {
 	if ns == localNS {
 		if err := qemu.Delete(name); err != nil {
 			done(err)
-			errResp(w, http.StatusInternalServerError, err)
+			errResp(w, localErrStatus(err), err)
 			return
 		}
 		done(nil)

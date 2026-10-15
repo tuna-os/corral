@@ -52,6 +52,67 @@ func TestContextSetAggregatesAndDefaultOnlySelects(t *testing.T) {
 	}
 }
 
+// `corral context use NAME` must steer later creates to that context's target.
+// It used to write default.context and nothing read it, so an unqualified
+// create went to libvirt.uri / incus.remote / qemu:///system instead (#490).
+func TestContextUseAppliesTheTargetToDefaults(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CORRAL_INCUS_REMOTE", "")
+	t.Setenv("CORRAL_LIBVIRT_URI", "")
+	t.Setenv("CORRAL_KUBE_CONTEXT", "")
+	for _, c := range []ContextConfig{
+		{Name: "hv", Backend: "libvirt", Context: "qemu+ssh://hv/system"},
+		{Name: "lab", Backend: "incus", Context: "lab-remote"},
+		{Name: "prod", Backend: "kubevirt", Context: "prod-admin"},
+	} {
+		if err := AddContext(c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := SetLibvirtURI("qemu:///session"); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetIncusRemote("legacy"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := SetDefaultContext("hv"); err != nil {
+		t.Fatal(err)
+	}
+	if got := LibvirtURI(); got != "qemu+ssh://hv/system" {
+		t.Errorf("after `context use hv`, LibvirtURI() = %q, want the context's URI", got)
+	}
+	if got := IncusRemote(); got != "legacy" {
+		t.Errorf("a libvirt default context changed the Incus remote to %q", got)
+	}
+
+	if err := SetDefaultContext("lab"); err != nil {
+		t.Fatal(err)
+	}
+	if got := IncusRemote(); got != "lab-remote" {
+		t.Errorf("after `context use lab`, IncusRemote() = %q, want the context's remote", got)
+	}
+	if got := LibvirtURI(); got != "qemu:///session" {
+		t.Errorf("an Incus default context changed the libvirt URI to %q", got)
+	}
+
+	if err := SetDefaultContext("prod"); err != nil {
+		t.Fatal(err)
+	}
+	if got := KubeContext(); got != "prod-admin" {
+		t.Errorf("after `context use prod`, KubeContext() = %q, want the context's kubeconfig context", got)
+	}
+
+	// The environment still wins: that is what --context exports.
+	t.Setenv("CORRAL_INCUS_REMOTE", "flag")
+	if err := SetDefaultContext("lab"); err != nil {
+		t.Fatal(err)
+	}
+	if got := IncusRemote(); got != "flag" {
+		t.Errorf("IncusRemote() = %q, want CORRAL_INCUS_REMOTE to override the default context", got)
+	}
+}
+
 func TestAuthKey_FromFile(t *testing.T) {
 	// Clear env var so we fall through to file
 	t.Setenv("TS_AUTHKEY", "")

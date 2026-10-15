@@ -4,23 +4,201 @@ Welcome to the comprehensive user guide for **Corral** — the unified managemen
 
 ## Backends, contexts, and peers
 
-`corral config set-default-backend incus` makes unqualified creates use
-Incus. `corral context list|set|get` switches Corral's context and does not
-change kubectl or the Incus CLI; `--context` is a one-shot override.
+A *context* is a named connection to one backend. Examples are the local
+host, a kube context, an Incus remote, a libvirt URI and a Proxmox VE
+cluster. Corral shows the instances of all contexts at the same time.
 
-Libvirt URIs make remote QEMU a normal backend, for example:
-`corral context set qemu+ssh://hypervisor/system`.
+```bash
+corral setup                                  # find the backends on this host and save them
+corral context list                           # the * marks the default destination
+corral context add hv --backend libvirt --context qemu+ssh://hypervisor/system
+corral context use hv                         # aliases: set, switch
+corral config set-default-backend incus       # backend for creates with no backend flag
+```
+
+`corral context use` takes a context name, not a URI. It does not change
+kubectl or the Incus client. The global `--context NAME` flag selects a
+context for one command.
 
 A local dashboard can aggregate an in-cluster Corral without a local
-kubeconfig: `corral peer add homelab https://corral.example.ts.net`.
-Console routing tries the VM's advertised direct address first and relays
-through the peer only when direct access is unavailable.
+kubeconfig:
+
+```bash
+corral peer add homelab https://corral.example.ts.net
+```
+
+For a console, Corral tries the direct address that the VM advertises first.
+It relays through the peer only when direct access is not available.
+
+## Start here
+
+Run `corral --demo`, `corral web --demo` or `corral list --demo` to try
+Corral with a built-in fake fleet. Then pick the backend that you have.
+
+| Backend | Setup guide |
+|---|---|
+| Local QEMU/KVM | No setup. Run `corral doctor --context local` |
+| KubeVirt | [kubevirt-proxmox-setup.md](kubevirt-proxmox-setup.md) |
+| Incus | [incus-backend-setup.md](incus-backend-setup.md) |
+| libvirt | [libvirt-backend-setup.md](libvirt-backend-setup.md) |
+| Proxmox VE | The commands below, and [ADR-0009](adr/0009-proxmox-backend.md) |
+
+**Local QEMU/KVM** — a VM on this machine, under a systemd user unit:
+
+```bash
+corral create scratch --iso ~/Downloads/ubuntu-24.04.iso --disk 40G --start
+corral viewer scratch          # VNC, to run the installer
+corral ssh scratch             # after the guest has an SSH server
+```
+
+**KubeVirt** — a VM on the cluster of your current kube context:
+
+```bash
+corral doctor
+corral create web --kubevirt --image fedora
+corral start web
+corral ssh web -u fedora
+```
+
+**Incus** — a VM on an Incus remote:
+
+```bash
+corral context add lab --backend incus --context local
+corral create web --context lab --image images:ubuntu/24.04 --mem 4GiB
+corral ssh web                 # runs incus exec
+```
+
+**libvirt** — a domain on a local or remote hypervisor:
+
+```bash
+corral context add hv1 --backend libvirt --context qemu+ssh://admin@hv1.example.net/system
+corral create db --context hv1 --iso /var/lib/libvirt/images/debian-12.iso
+corral list
+```
+
+**Proxmox VE** — the guests of an existing cluster:
+
+```bash
+corral context add pve --backend proxmox --context pve.example.net
+export CORRAL_PROXMOX_TOKEN='corral@pve!corral=TOKEN-SECRET'
+corral doctor --context pve
+corral list
+```
+
+Corral reads the Proxmox token from `CORRAL_PROXMOX_TOKEN`, or from
+`proxmox.token` in the context entry of `~/.config/corral/config.yaml`.
+The CLI `corral create` cannot create on Proxmox yet
+([#493](https://github.com/tuna-os/corral/issues/493)).
+
+## Common workflows
+
+### CLI, TUI or web UI
+
+The CLI, the TUI and the web UI use the same inventory and the same
+configuration. Use the interface that fits the task:
+
+| Interface | Use it to |
+|---|---|
+| CLI (`corral COMMAND`) | Write scripts and CI jobs. Add `--json` for machine-readable output |
+| TUI (`corral`) | Look at the whole fleet in a terminal, and do actions from a menu that shows only the operations that the backend supports |
+| Web UI (`corral web`) | Use consoles in the browser, dashboards and graphs, and access from a phone |
+
+Some operations have a gap on one interface. For example, Incus and libvirt
+snapshots work in the TUI only. See
+[backend support](backend-support.md#incus-and-libvirt-snapshots-migration-and-hotplug).
+
+### Create, connect and remove
+
+```bash
+corral create web --kubevirt --image fedora
+corral list                              # status, context and the ID of each instance
+corral info web
+corral ssh web -c 'uptime'               # one command, no shell
+corral ssh web -L 8080:localhost:80      # open http://localhost:8080 for port 80 of the VM
+corral stop web
+corral delete web                        # asks first; -f does not ask
+```
+
+When two contexts have an instance with the same name, give the ID from the
+`id:` line of `corral list` instead of the name.
+
+### Clone a VM and use templates (KubeVirt)
+
+```bash
+corral clone web web-copy
+corral images pull ubuntu                # a stopped VM with the template mark
+corral template ls
+corral template new tmpl-ubuntu dev1     # a new VM from the template
+corral template mark web                 # use your own VM as a template
+```
+
+Clone and templates work on KubeVirt only. On other backends, use a cold
+move or the native clone command of the backend.
+
+### Move a VM to another backend
+
+`corral move` copies the disk to another backend and makes a VM there. It is
+a cold move: the guest stops, and it gets a new MAC address and usually a new
+IP address. The source stays, stopped, unless you add `--delete-source`.
+
+```bash
+corral move web --to libvirt --dry-run   # the plan and the warnings, no change
+corral move web --to libvirt
+corral move web --to qemu --name web-local
+```
+
+To move a KubeVirt VM to another node of the same cluster with no stop, use
+`corral migrate web --node NODE`.
+
+### Snapshots
+
+```bash
+corral snapshot create web
+corral snapshot ls web
+corral stop web
+corral snapshot restore web SNAPSHOT
+corral snapshot rm web SNAPSHOT
+```
+
+The `corral snapshot` commands work on KubeVirt. For local QEMU, Incus and
+libvirt instances, use the **Snapshots** action in the TUI.
+
+### Install plugins
+
+Plugins add workflows that not every user needs. They install into
+`~/.local/share/corral/plugins` and run as `corral NAME`.
+
+```bash
+corral plugin search
+corral plugin info backup
+corral plugin install backup
+corral plugin update                     # every plugin that you did not pin
+```
+
+If a plugin asks for permissions, `corral plugin install` stops and names
+them. Read them with `corral plugin info NAME`, then add
+`--accept-permissions`.
+
+| Plugin | Install it when | First commands |
+|---|---|---|
+| `bootc` | You boot bootable container images as VMs | `corral bootc create dev --image bluefin` |
+| `backup` | You keep VM disks in S3, R2 or another rclone remote | `corral backup create web --dest r2:backups/corral`, `corral backup list` |
+| `windows` | You install Windows guests with UEFI, TPM and virtio drivers | `corral windows requirements`, `corral windows create win11 --iso URL` |
+| `gpu` | You give a GPU or another PCI device to a VM | `corral gpu list`, `corral gpu attach web --device ID` |
+
+[first-party-plugins.md](first-party-plugins.md) lists the backends that each
+plugin supports.
+
+### When something fails
+
+Run `corral doctor`, then look for the error text in
+[problems and fixes](troubleshooting.md).
 
 ---
 
 ## 1. Overview & Architecture
 
-Corral brings together diverse virtualization and container workloads under a single interface, CLI, and Tailscale network.
+Corral puts VMs and containers from many backends into one interface, one CLI, and one Tailscale network.
 
 ```mermaid
 flowchart TD
@@ -64,7 +242,7 @@ flowchart TD
 
 ### Web Dashboard
 
-Access the Proxmox-style Web UI at `http://localhost:8006` or via `corral web`. For public, local, homelab, and always-on setups see [deployment modes](deployment-modes.md).
+Run `corral web`, then open the Proxmox-style web UI on port 8006 of `localhost`. For public, local, homelab, and always-on setups see [deployment modes](deployment-modes.md).
 
 ![Automated unified fleet capture](screenshots/generated/web-fleet.png)
 
@@ -78,6 +256,16 @@ Access the Proxmox-style Web UI at `http://localhost:8006` or via `corral web`. 
 - **Theme & Brand**: Customize accent colours and the header brand, and inject custom CSS. Use CLI flags, a config file, or the built-in Settings page.
 
 ![Mobile Dashboard](screenshots/dashboard-mobile.png)
+
+#### Topology
+
+Topology, under Datacenter in the tree, draws the fleet as the machines it
+runs on. Each node is a card, with its guests inside and the CPU and memory
+they take summed at the top. A tile's left edge shows the guest's state.
+
+To migrate a guest, drag its tile onto another node's card. corral asks you
+to confirm first. If it cannot make the move, it says why and refuses it. The
+keys `g` then `t` open the topology from anywhere.
 
 #### Several dashboards
 
@@ -106,7 +294,9 @@ and the address holds both. Send that address to somebody else and they arrive
 on the same screen. The back and forward buttons move through the screens you
 visited.
 
-The address carries the tree view, the selection and the open tab. It does not
+The address carries the tree view, the selection and the open tab. On a screen
+with the guest list, it also carries the list's filters and sort. So you can
+send somebody the stopped guests on one node, sorted by memory. It does not
 carry how wide you keep the sidebar, which columns you hid, or where you put
 the dashboard widgets. Those stay in your own browser.
 
@@ -120,11 +310,13 @@ The items that you used last show at the top of the list.
 | Key | Action |
 |---|---|
 | `Ctrl+K` | Open the command palette |
+| `Ctrl+B` | Hide or show the sidebar |
 | `?` | Show the list of shortcuts |
 | `/` | Filter the tree by guest name |
 | `c` | Open the console of the selected VM |
 | `s` | Start or stop the selected VM |
 | `g` then `d` | Go to the datacenter |
+| `g` then `t` | Go to the topology |
 | `v` | Switch the tree to the next view |
 | `t` | Show the Tasks panel, and hide it again |
 | `e` | Show the Events panel for the selection, and hide it again |
@@ -228,7 +420,7 @@ corral create dev-vm --iso https://example.com/ubuntu.iso --disk 40G
 corral create prod-vm --kubevirt --image fedora
 
 # Create on an existing Incus remote
-corral create fast-ct --backend incus --context lab --image images:ubuntu/22.04
+corral create fast-vm --backend incus --context lab --image images:ubuntu/24.04
 
 # Universal operations
 corral start dev-vm
@@ -246,7 +438,7 @@ Corral provides single-command remote access to guest displays and shells:
 ![VM Summary & VNC](screenshots/vm-summary.png)
 
 - **VNC Display**: `corral viewer <vm-name>` opens a VNC session. In the Web UI, `noVNC` shows the display in the browser, with nothing to install.
-- **Interactive TTY / SSH**: `corral ssh <vm-name>` or `corral tty <ct-name>` connects your terminal directly into guest shell namespaces (via SSH, `virtctl console`, or `incus exec`).
+- **Interactive TTY / SSH**: `corral ssh <vm-name>` or `corral ct console <ct-name>` connects your terminal to a shell in the guest (through SSH, `virtctl ssh`, or `incus exec`).
 
 ![Local VM Framebuffer](screenshots/local-vm-console.png)
 
@@ -322,6 +514,20 @@ corral plugin remove <name>
 - `windows`: First-class creation of Windows VMs (UEFI, TPM, virtio drivers).
 - `vdi`: Desktop pools for Virtual Desktop Infrastructure (VDI).
 
+#### Plugin screens and widgets
+
+Some plugins add screens and dashboard widgets to the web UI. The Extensions
+screen shows what each plugin adds, before and after you install it.
+
+- A plugin widget does not appear on its own. Add it from "Add widget" on the
+  Datacenter dashboard.
+- A plugin screen opens from "Added by plugins" on the Extensions screen, or
+  from the command palette.
+- A plugin screen is read-only. It shows information, and it cannot change the
+  fleet.
+- If a plugin does not answer, the widget or screen tells you why. Click "Try
+  again" to ask again.
+
 ---
 
 ## 4. Diagnostics & Troubleshooting
@@ -337,14 +543,24 @@ libvirt, and Proxmox target. Use `corral doctor --context NAME` for one target. 
 complete capability matrix and the direct-versus-relayed networking behavior
 are in [backend-support.md](backend-support.md).
 
+```text
+local [qemu]
+  ✓ QEMU (local backend)              qemu-system-x86_64 found (probe 2ms)
+  ✓ KVM acceleration                  /dev/kvm accessible
+  ✓ qemu-img                          found — disk create/resize for local VMs
+
+kubevirt [kubevirt]
+  ✓ KubeVirt installed                operator + CR present (probe 41ms)
+  ✓ CDI installed                     containerized-data-importer present
+  ✓ VolumeSnapshotClass               persistent-VM snapshots available
+
+lab [incus]
+  ✓ Incus remote reachable            remote API and trust are valid (probe 18ms)
+  ✓ Incus VM support                  virtual-machine instances supported
 ```
-✓ KubeVirt installed (v1.8.2)
-✓ CDI containerized data importer available
-✓ Default StorageClass supports volume expansion
-✓ VolumeSnapshotClass available for backups
-✓ QEMU KVM hardware acceleration (/dev/kvm) accessible
-✓ Incus daemon socket (/var/lib/incus/unix.socket) active
-```
+
+[Problems and fixes](troubleshooting.md) explains each check, the common
+error messages, and how to collect evidence when a VM does not boot.
 
 ## Reproducible screenshots
 

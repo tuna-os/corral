@@ -25,6 +25,13 @@ Corral asks a slow server less often, and nobody has to tune it. And two polls
 can never be in flight together, which a fixed timer allowed as soon as the
 server took longer than the interval.
 
+Nothing polls while nobody can see the page. A tab behind another, or a
+minimised window, makes no requests. Each poller then runs once the moment the
+page comes back into view, so nobody reads stale data as current. A new poller uses
+`pollWhileVisible(fn, ms, alive)` from `ui/visibility.js`. Pass `alive` when
+the poller belongs to one element: the poller then stops, listener and all,
+once that element leaves the page.
+
 `refresh()` holds that guarantee: it runs one refresh at a time. A refresh
 asked for while one runs waits, and then happens. A caller that forces one has
 changed something and has to see it. Do not reach past this function.
@@ -165,6 +172,17 @@ The line between them is simple. A link must mean the same thing for the
 person you send it to. So where you are belongs in the address, and how wide
 you keep your sidebar does not.
 
+The inventory grid's sort and filters go in the address too, as
+`sort=mem:desc` and `f.status=stopped`, so a filtered list is something to
+send. Column order, widths and density stay local, for the same reason as the
+sidebar width. A saved view's name stays local as well, because it means
+nothing in another browser. When the operator picks a view, its filters and
+sort go in the address instead.
+
+A change to the place pushes a history entry. A change to the grid alone
+replaces the current one. Without that rule, each letter of a filter would
+add an entry, and back would spell the word out in reverse.
+
 A new selection type needs nothing here. `route.js` encodes the type and the
 one thing it names. On the way back it puts that payload into both `key` and
 `name`, because the UI addresses a guest by key and a node by name. It holds
@@ -199,6 +217,8 @@ hook is optional:
 | `treeRows(sink)` | Rows for the sidebar. |
 | `menuItems(kind, subject)` | Entries for another object's context menu. |
 | `alerts()` | Lines for the Alerts widget. |
+| `nodeBadges(node)` | Short marks on a node wherever one is drawn, such as its power state in the topology. |
+| `paletteEntries()` | Command palette entries. They must not change the fleet. |
 
 Import the module for its side effect in `app.js`. That import is the only
 mention of it in core.
@@ -207,6 +227,10 @@ Read the registry when you draw, never when your module loads. Core imports
 the Datacenter screen before it imports the capability, so a widget map built
 at load time came out empty. `content/hostpower.js` is the worked example, and
 `content/datacenter.js` shows the lazy call.
+
+A plugin does not write a module like this. It declares widgets and screens
+in its metadata, and `content/pluginui.js` registers them for it. See "Adding
+a screen or a widget" in `docs/plugin-marketplace.md`.
 
 ### A dock panel
 

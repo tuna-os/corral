@@ -9,6 +9,8 @@
 // that mutates is not offered to a read-only caller, exactly as the toolbar
 // that holds the same buttons is hidden from them.
 
+import { capabilityPaletteEntries } from './ui/capabilities.js';
+
 // Injected by app.js so this module does not import the entry point back.
 let ctx = {};
 export function bindPalette(helpers) { ctx = helpers; }
@@ -36,6 +38,7 @@ const readOnly = () => document.body.classList.contains('read-only');
 // handful of bindings that initKeys() actually registers.
 const SHORTCUT_KEYS = {
   'view:dc': ['g', 'd'],
+  'view:topology': ['g', 't'],
   'vm-console': ['c'],
   'vm-start': ['s'],
   'vm-stop': ['s'],
@@ -55,6 +58,7 @@ function entries() {
 
   const views = [
     ['dc', 'Datacenter', 'datacenter'],
+    ['topology', 'Topology', 'server'],
     ['doctor', 'Cluster health', 'health'],
     ['extensions', 'Extensions', 'extension'],
     ['multiview', 'Multiview', 'cube'],
@@ -100,6 +104,10 @@ function entries() {
     // so a read-only caller gets it too.
     run: () => { ctx.cycleTheme(); },
   });
+  // Screens a capability adds, such as a plugin's sections.
+  for (const e of capabilityPaletteEntries()) {
+    add({ ...e, kind: 'view', icon: icon(e.icon), mutates: false });
+  }
   if (resetLayout) {
     add({
       id: 'action:reset-layout', kind: 'view', icon: icon('restart'),
@@ -402,11 +410,13 @@ export async function openPalette() {
 
 const SHORTCUTS = [
   [['Ctrl', 'K'], 'Open the command palette (⌘K on macOS)'],
+  [['Ctrl', 'B'], 'Hide or show the sidebar (⌘B on macOS)'],
   [['?'], 'Show this list'],
   [['/'], 'Filter the tree'],
   [['c'], 'Open the selected VM\'s console'],
   [['s'], 'Start or stop the selected VM'],
   [['g', 'd'], 'Go to the datacenter'],
+  [['g', 't'], 'Go to the topology'],
   [['v'], 'Switch the tree to the next view'],
   [['t'], 'Show tasks (again to hide)'],
   [['e'], 'Show events for the selection (again to hide)'],
@@ -472,6 +482,15 @@ function onKey(e) {
     openPalette();
     return;
   }
+  // Ctrl/Cmd+B folds the sidebar away, as in most editors (#341). In a field
+  // it may mean bold, and in a console it is the tmux prefix, so both keep it.
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'b') {
+    if (typing(e.target)) return;
+    if (document.querySelector('dialog[open]') || document.querySelector('.modal')) return;
+    e.preventDefault();
+    ctx.toggleTree();
+    return;
+  }
   if (e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return;
   if (typing(e.target)) return;
   // A modal owns the keyboard while it is open; the overlay's own keys aside.
@@ -480,6 +499,7 @@ function onKey(e) {
   if (pendingG && Date.now() - pendingG < 1200) {
     pendingG = 0;
     if (e.key === 'd') { e.preventDefault(); closeShortcuts(); ctx.go({ type: 'dc' }); }
+    if (e.key === 't') { e.preventDefault(); closeShortcuts(); ctx.go({ type: 'topology' }); }
     return;
   }
   pendingG = 0;
