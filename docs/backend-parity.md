@@ -51,7 +51,7 @@ backend cannot, or it is meaningless there.
 | GPU passthrough | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | 🔨 | 🔨 | — |
 | Export / backup disk | ✅ | ✅ | ✅ | ✅ | ✅ | 🔨 | 🔨 | 🔨 | 🔨 |
 | Events | ✅ | ✅ | — | — | ✅ | — | 🔨 | 🔨 | 🔨 |
-| Tags | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | 🔨 | 🔨 | 🔨 |
+| Tags | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | 🔨 | 🔨 | ✅ |
 | Published ports | ✅ | ✅ | 🔨 | — | — | 🔨 | — | — | — |
 | Containers (CT) | ✅ | — | ✅ | — | 🔨 | — | — | — | — |
 
@@ -244,7 +244,7 @@ websocket bridge is not. So the capability flags say no, and the matrix says why
 - **events** — The pool logs its own activity. Corral wires no reader for that log yet.
 - **tags** — The VM record carries tags natively. Corral has no tagger to set them yet.
 
-### nutanix — 11 gaps
+### nutanix — 10 gaps
 
 - **create** — VM create exists natively. Corral has no creator for it yet.
 - **ssh** — Corral has no address discovery yet. Use the NIC address, then plain ssh.
@@ -256,7 +256,6 @@ websocket bridge is not. So the capability flags say no, and the matrix says why
 - **expand** — Disk update exists in vmm. Nothing drives it yet.
 - **export** — Points for VM recovery exist in vmm. Corral has no downloader for them yet.
 - **events** — The task list logs the activity of the pool. Corral wires no per-VM reader yet.
-- **tags** — Corral associates no categories yet: no reference shows the value lookup.
 
 ## Remaining backend-name branches
 
