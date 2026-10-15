@@ -23,13 +23,20 @@ var peerInventory sync.Map // encoded namespace/name -> types.VM
 
 func newPeerRequest(ctx context.Context, peer config.PeerConfig, method, target string, body io.Reader) (*http.Request, error) {
 	req, err := http.NewRequestWithContext(ctx, method, target, body)
+	if err == nil && isBackgroundPoll(ctx) {
+		req.Header.Set("User-Agent", collectorUserAgent)
+	}
 	if err == nil && peer.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+peer.Token)
 	}
 	return req, err
 }
 
-func peerVMs() []types.VM {
+func peerVMs() []types.VM { return fetchPeerVMs(context.Background()) }
+
+// fetchPeerVMs lists every peer's instances. ctx marks whether the fetch is
+// on behalf of a user request or the background metrics collector.
+func fetchPeerVMs(ctx context.Context) []types.VM {
 	var all []types.VM
 	for _, peer := range config.Peers() {
 		// Clear stale inventory for this peer before publishing the latest view.
@@ -39,7 +46,7 @@ func peerVMs() []types.VM {
 			}
 			return true
 		})
-		req, err := newPeerRequest(context.Background(), peer, http.MethodGet, peer.URL+"/api/v1/inventory", nil)
+		req, err := newPeerRequest(ctx, peer, http.MethodGet, peer.URL+"/api/v1/inventory", nil)
 		if err != nil {
 			continue
 		}
@@ -52,7 +59,7 @@ func peerVMs() []types.VM {
 		}
 		if resp.StatusCode == http.StatusNotFound {
 			resp.Body.Close()
-			req, err = newPeerRequest(context.Background(), peer, http.MethodGet, peer.URL+"/api/vms", nil)
+			req, err = newPeerRequest(ctx, peer, http.MethodGet, peer.URL+"/api/vms", nil)
 			if err != nil {
 				continue
 			}

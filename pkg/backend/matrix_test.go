@@ -10,9 +10,11 @@ package backend
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -488,3 +490,75 @@ func TestDocsGapCountsMatchTheMatrix(t *testing.T) {
 		}
 	}
 }
+
+// TestKubeVirtBranchesRatchet ensures that hardcoded `== "kubevirt"` branches
+// in non-backend code (the abstraction boundary violation tracked in issue #214)
+// are being steadily eliminated rather than allowed to grow. The ratchet pins
+// the count and fails if new branches are added without convergence elsewhere.
+func TestKubeVirtBranchesRatchet(t *testing.T) {
+	// The count on main when the ratchet landed. It should only go down as
+	// KubeVirt-specific operations move behind the adapter interface. If this
+	// test fails because the count went up, a new kubevirt branch was added
+	// without removing one elsewhere: route it through the adapter instead.
+	const maxAllowedBranches = 46
+
+	// go test runs in the package directory, so walk from the module root.
+	root := filepath.Join("..", "..")
+	if _, err := os.Stat(filepath.Join(root, "go.mod")); err != nil {
+		t.Fatalf("module root not found at %s: %v", root, err)
+	}
+	// The backend packages themselves are allowed to name kubevirt.
+	allowed := map[string]bool{
+		filepath.Join("pkg", "backend"):  true,
+		filepath.Join("pkg", "kubevirt"): true,
+	}
+
+	count := 0
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			name := d.Name()
+			if rel != "." && (strings.HasPrefix(name, ".") || name == "vendor" || name == "testdata" || name == "node_modules") {
+				return filepath.SkipDir
+			}
+			if allowed[rel] {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		// Test files may branch on a backend to verify behaviour.
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		count += len(kubevirtBranch.FindAllIndex(content, -1))
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking module tree: %v", err)
+	}
+
+	if count > maxAllowedBranches {
+		t.Errorf("kubevirt branches ratchet broken: found %d, limit is %d. "+
+			"New == \"kubevirt\" or case \"kubevirt\" branches were added without removing equivalents elsewhere. "+
+			"Either remove the new branches or coordinate convergence via issue #214.",
+			count, maxAllowedBranches)
+	}
+	if count < maxAllowedBranches {
+		t.Logf("kubevirt branches ratchet: %d branches (limit %d) — lower the limit to %d",
+			count, maxAllowedBranches, count)
+	}
+}
+
+// kubevirtBranch matches a comparison against the "kubevirt" literal on either
+// side, or a case clause that lists it (alone or among other values).
+var kubevirtBranch = regexp.MustCompile(`==\s*"kubevirt"|"kubevirt"\s*==|\bcase\s[^:\n]*"kubevirt"`)
