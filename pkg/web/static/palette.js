@@ -410,6 +410,7 @@ export async function openPalette() {
 
 const SHORTCUTS = [
   [['Ctrl', 'K'], 'Open the command palette (⌘K on macOS)'],
+  [['Ctrl', 'B'], 'Hide or show the sidebar (⌘B on macOS)'],
   [['?'], 'Show this list'],
   [['/'], 'Filter the tree'],
   [['c'], 'Open the selected VM\'s console'],
@@ -479,6 +480,15 @@ function onKey(e) {
     if (document.querySelector('dialog[open]:not(#palette):not(#shortcuts)') || document.querySelector('.modal')) return;
     e.preventDefault();
     openPalette();
+    return;
+  }
+  // Ctrl/Cmd+B folds the sidebar away, as in most editors (#341). In a field
+  // it may mean bold, and in a console it is the tmux prefix, so both keep it.
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'b') {
+    if (typing(e.target)) return;
+    if (document.querySelector('dialog[open]') || document.querySelector('.modal')) return;
+    e.preventDefault();
+    ctx.toggleTree();
     return;
   }
   if (e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return;

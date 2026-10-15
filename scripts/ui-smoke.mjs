@@ -718,6 +718,18 @@ check(
   check(await page.evaluate(() => !document.body.classList.contains('tree-collapsed')),
     'workspace-layout: Enter again restores the sidebar');
 
+  // Ctrl+B does the same from anywhere on the page, as in most editors, and
+  // the choice survives a reload like the width does.
+  const treeCollapsed = () => page.evaluate(() => document.body.classList.contains('tree-collapsed'));
+  await page.keyboard.press('Control+b');
+  check(await treeCollapsed(), 'workspace-collapse: Ctrl+B hides the sidebar');
+  await page.goto(BASE);
+  await page.waitForSelector('#tree-resizer');
+  check(await treeCollapsed(), 'workspace-collapse: a hidden sidebar stays hidden after reload');
+  await page.keyboard.press('Control+b');
+  check(!(await treeCollapsed()), 'workspace-collapse: Ctrl+B brings the sidebar back');
+  await page.waitForSelector('#tree .tree-item');
+
   // The dock is a row of the shell, so making it taller shortens the content
   // pane rather than covering it.
   await page.click('#task-panel-head');
