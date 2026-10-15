@@ -1,16 +1,22 @@
-// Consoles: noVNC, the xterm.js serial terminal and IronRDP, plus console
-// tabs and the pop-out route.
+// Consoles: the console tabs, their toolbars and the pop-out route. The
+// connections themselves are transports in console/ (VNC, serial TTY, RDP),
+// each opened into a screen element and closed by disconnectConsoles().
 
-import { findVM, rdpURL, vmKey, wsURL } from './api.js';
+import { findVM, vmKey } from './api.js';
 import { markRendered, renderContent } from './app.js';
+import { openRDP } from './console/rdp.js';
+import { openTTY } from './console/tty.js';
+import { chordFor, openVNC } from './console/vnc.js';
 import { icon } from './icons.js';
 import { state } from './state.js';
 import { renderTree } from './tree.js';
 import { $, esc } from './ui/dom.js';
 
-let rfb = null;        // noVNC connection
-let term = null;       // xterm instance
-let ttyWS = null;      // serial console websocket
+// The open sessions. One console tab shows at a time, but each kind is held
+// on its own so disconnectConsoles() can close whatever is open.
+let vnc = null;
+let tty = null;
+let rdp = null;
 
 // ── Consoles ──────────────────────────────────────────────────────
 
@@ -91,40 +97,18 @@ function popOutConsole(vm) {
   window.open(url, `corral-console-${key.replace(/[^a-z0-9]/gi, '-')}`, 'popup,width=1100,height=760');
 }
 
-function sendChord(keys) {
-  if (!rfb) return;
-  for (const [keysym, code] of keys) rfb.sendKey(keysym, code, true);
-  for (const [keysym, code] of [...keys].reverse()) rfb.sendKey(keysym, code, false);
-  rfb.focus();
-}
-
-function sendTextAsKeys(text) {
-  if (!rfb) return;
-  for (const char of text.replace(/\r\n?/g, '\n')) {
-    const point = char.codePointAt(0);
-    const keysym = char === '\n' ? 0xff0d : char === '\t' ? 0xff09
-      : point <= 0xff ? point : 0x01000000 | point;
-    rfb.sendKey(keysym, '', undefined);
-  }
-  rfb.focus();
-}
-
 async function pasteConsoleText() {
   let text = '';
   try { text = await navigator.clipboard.readText(); }
   catch { text = prompt('Paste text to type into the guest:', '') ?? ''; }
-  if (text) sendTextAsKeys(text);
+  if (text) vnc?.sendText(text);
 }
 
 function bindConsoleControls(vm, body, screen) {
   bindConsoleTabs(body, vm);
   $('#vnc-popout').onclick = () => popOutConsole(vm);
   $('#vnc-fullscreen').onclick = () => toggleFullscreen(screen);
-  const applyScale = (mode) => {
-    if (!rfb) return;
-    rfb.scaleViewport = mode === 'fit';
-    rfb.resizeSession = mode === 'remote';
-  };
+  const applyScale = (mode) => vnc?.setScale(mode);
   body.querySelectorAll('[name=vnc-scale-mode]').forEach((input) => {
     input.onchange = () => { if (input.checked) applyScale(input.value); };
   });
@@ -132,10 +116,8 @@ function bindConsoleControls(vm, body, screen) {
   body.querySelectorAll('[data-send-keys]').forEach((button) => {
     button.onclick = () => {
       const key = button.dataset.sendKeys;
-      if (key === 'cad') return rfb?.sendCtrlAltDel();
-      if (key === 'print') return sendChord([[0xff61, 'PrintScreen']]);
-      const f = Number(key.slice(1));
-      sendChord([[0xffe3, 'ControlLeft'], [0xffe9, 'AltLeft'], [0xffbd + f, `F${f}`]]);
+      if (key === 'cad') return vnc?.ctrlAltDel();
+      return vnc?.sendChord(chordFor(key));
     };
   });
 }
@@ -166,19 +148,14 @@ export async function connectVNC(vm, body) {
     </div>
     <div id="vnc-screen"><p class="console-msg">Connecting…</p></div>`;
   try {
-    const { default: RFB } = await import(
-      './vendor/novnc-rfb.esm.js');
     const screen = $('#vnc-screen');
-    screen.replaceChildren();
-    rfb = new RFB(screen, wsURL('vnc', vm));
-    rfb.scaleViewport = true;  // noVNC local scaling — fits any window size
-    rfb.resizeSession = false; // remote resize is opt-in (guest must support it)
+    vnc = await openVNC(screen, vm);
     bindConsoleControls(vm, body, screen);
-    rfb.addEventListener('connect', () => {
+    vnc.on('connect', () => {
       screen.dataset.connected = 'true';
       screen.setAttribute('aria-label', `${vm.name} console connected`);
     });
-    rfb.addEventListener('disconnect', () => {
+    vnc.on('disconnect', () => {
       if (state.tab === 'console') {
         screen.innerHTML = `<p class="console-msg">Console disconnected.<br>
           <button class="btn sm" id="vnc-reconnect" style="margin-top:10px">${icon('play')} Reconnect</button></p>`;
@@ -203,24 +180,7 @@ export function connectTTY(vm, body) {
     <div id="tty-screen"></div>
     <p class="hint" style="color:var(--muted);font-size:.78rem">Serial console via virtctl — hit Enter if blank.</p>`;
   $('#tty-fullscreen').onclick = () => toggleFullscreen($('#tty-screen'));
-
-  term = new Terminal({ fontSize: 14, theme: { background: '#000000' }, cursorBlink: true });
-  const fit = new FitAddon.FitAddon();
-  term.loadAddon(fit);
-  term.open($('#tty-screen'));
-  fit.fit();
-  const onResize = () => fit.fit();
-  window.addEventListener('resize', onResize);
-
-  ttyWS = new WebSocket(wsURL('tty', vm));
-  ttyWS.binaryType = 'arraybuffer';
-  const enc = new TextEncoder();
-  ttyWS.onmessage = (e) => term.write(new Uint8Array(e.data));
-  ttyWS.onclose = () => term?.write('\r\n\x1b[33m[disconnected]\x1b[0m\r\n');
-  term.onData((d) => {
-    if (ttyWS?.readyState === WebSocket.OPEN) ttyWS.send(enc.encode(d));
-  });
-  term.focus();
+  tty = openTTY($('#tty-screen'), vm);
 }
 
 // Bumped every time the consoles are torn down. A caller holding on to the
@@ -231,18 +191,15 @@ export const consoleGeneration = () => generation;
 
 export function disconnectConsoles() {
   generation++;
-  try { rfb?.disconnect(); } catch { /* already gone */ }
-  rfb = null;
-  try { ttyWS?.close(); } catch { /* already gone */ }
-  ttyWS = null;
-  try { term?.dispose(); } catch { /* already gone */ }
-  term = null;
+  vnc?.close();
+  vnc = null;
+  tty?.close();
+  tty = null;
+  rdp?.close();
+  rdp = null;
 }
-// Task panel polling now lives in the taskPanel() Alpine component (x-init="start()").
 
 // ── RDP console (IronRDP via RDCleanPath) ────────────────────────
-
-let rdpSession = null;
 
 export function connectRDP(vm, body) {
   if (!vm.running) {
@@ -270,11 +227,13 @@ export function connectRDP(vm, body) {
   if (password === null) { screen.innerHTML = '<p class="console-msg">RDP cancelled.</p>'; return; }
 
   screen.innerHTML = '';
-
-  // IronRDP uses the UserInteraction API.
-  const ironRDP = document.createElement('div');
-  ironRDP.id = 'rdp-iron';
-  screen.appendChild(ironRDP);
+  rdp = openRDP(screen, vm, {
+    username,
+    password,
+    onFail: (e) => {
+      screen.innerHTML = `<p class="console-msg">RDP connection failed: ${esc(e.message || String(e))}</p>`;
+    },
+  });
 
   // Fullscreen toggles the container.
   $('#rdp-fullscreen').onclick = () => {
@@ -284,28 +243,5 @@ export function connectRDP(vm, body) {
       screen.requestFullscreen();
     }
   };
-
-  // Ctrl+Alt+Del — IronRDP exposes this via the session.
-  $('#rdp-ctrlaltdel').onclick = () => {
-    if (rdpSession) rdpSession.ctrlAltDel();
-  };
-
-  // Initialize IronRDP via the ConfigBuilder API.
-  // The ConfigBuilder is exposed globally by iron-remote-desktop.js.
-  const cfg = new window.IronRemoteDesktop.ConfigBuilder()
-    .withUsername(username)
-    .withPassword(password)
-    .withDestination(vm.name)
-    .withProxyAddress(rdpURL(vm))
-    .withAuthToken('corral')
-    .build();
-
-  const ui = new window.IronRemoteDesktop.UserInteraction(ironRDP);
-  ui.setVisibility(true);
-  ui.connect(cfg).then((info) => {
-    rdpSession = ui;
-    info.run(); // start the RDP session loop
-  }).catch((e) => {
-    screen.innerHTML = `<p class="console-msg">RDP connection failed: ${esc(e.message || String(e))}</p>`;
-  });
+  $('#rdp-ctrlaltdel').onclick = () => rdp?.ctrlAltDel();
 }
