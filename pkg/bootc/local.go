@@ -123,7 +123,7 @@ func (b LocalBuilder) Build(req BuildRequest, progress func(string)) (BuildResul
 		report("composefs: restoring the kernel and initrd on the ESP")
 		name, args := b.podman(b.composefsFixupArgs(req, keyPath)...)
 		if out, err := runner.Run(name, args...); err != nil {
-			os.Remove(req.Dest)
+			_ = os.Remove(req.Dest)
 			return BuildResult{}, fmt.Errorf("finishing the composefs disk: %s", commandError(out, err))
 		}
 	}

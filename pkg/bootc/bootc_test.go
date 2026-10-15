@@ -183,8 +183,9 @@ func TestComposefsFixupArgs_RunsInTheImageWithTheDiskAndKey(t *testing.T) {
 	if args[len(args)-1] != composefsFixupScript {
 		t.Errorf("the script should be the last argument")
 	}
-	noKey := strings.Join(LocalBuilder{}.composefsFixupArgs(BuildRequest{Image: "img", Dest: "/tmp/d.raw"}, ""), " ")
-	if strings.Contains(noKey, "buildkey.pub") {
+	// The script names /buildkey.pub; the mounts before it must not.
+	noKeyArgs := LocalBuilder{}.composefsFixupArgs(BuildRequest{Image: "img", Dest: "/tmp/d.raw"}, "")
+	if noKey := strings.Join(noKeyArgs[:len(noKeyArgs)-1], " "); strings.Contains(noKey, "buildkey.pub") {
 		t.Errorf("no key means no key mount:\n%s", noKey)
 	}
 }
