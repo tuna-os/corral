@@ -133,7 +133,14 @@ func tpmPID(name string) (int, bool) {
 		return pid, false
 	}
 	if state, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid)); err == nil {
-		if fields := strings.Fields(string(state)); len(fields) > 2 && fields[2] == "Z" {
+		fields := strings.Fields(string(state))
+		if len(fields) > 2 && fields[2] == "Z" {
+			return pid, false
+		}
+		// A stale pid file (swtpm crashed, or the host rebooted) can name a
+		// PID the kernel has since given to another process. That process is
+		// not our swtpm: StopSwtpm must never signal it.
+		if len(fields) > 1 && fields[1] != "(swtpm)" {
 			return pid, false
 		}
 	}
