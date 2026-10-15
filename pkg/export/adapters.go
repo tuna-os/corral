@@ -789,7 +789,7 @@ func (v VSphere) Export(ctx context.Context, req Request, progress ProgressFunc)
 	}
 
 	vmdk := req.Dest + ".vmdk"
-	defer os.Remove(vmdk)
+	defer func() { _ = os.Remove(vmdk) }()
 	progress.report("downloading disk", 0, 0)
 	exported, err := client.ExportDisk(ctx, req.Ref.Name, vmdk)
 	if err != nil {
@@ -809,7 +809,7 @@ func (v VSphere) Export(ctx context.Context, req Request, progress ProgressFunc)
 	progress.report("converting disk", 0, virtualSize(vmdk))
 	if format == RawGz {
 		raw := req.Dest + ".raw"
-		defer os.Remove(raw)
+		defer func() { _ = os.Remove(raw) }()
 		if out, err := runner.Run(qemuImg(), "convert", "-O", "raw", vmdk, raw); err != nil {
 			return Result{}, fmt.Errorf("qemu-img convert: %s", commandError(out, err))
 		}
