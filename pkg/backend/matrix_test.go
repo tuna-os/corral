@@ -10,9 +10,11 @@ package backend
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -494,59 +496,55 @@ func TestDocsGapCountsMatchTheMatrix(t *testing.T) {
 // are being steadily eliminated rather than allowed to grow. The ratchet pins
 // the count and fails if new branches are added without convergence elsewhere.
 func TestKubeVirtBranchesRatchet(t *testing.T) {
-	// The expected count as of the test baseline. This number should only
-	// decrease as work lands to route KubeVirt-specific operations through
-	// the adapter interface instead. If this test fails because the count went
-	// up, it means a new `== "kubevirt"` branch was added without removing one
-	// elsewhere — the ratchet is working as intended and should reject the PR.
-	const maxAllowedBranches = 48
+	// The count on main when the ratchet landed. It should only go down as
+	// KubeVirt-specific operations move behind the adapter interface. If this
+	// test fails because the count went up, a new kubevirt branch was added
+	// without removing one elsewhere: route it through the adapter instead.
+	const maxAllowedBranches = 46
 
-	// Count all `== "kubevirt"` and `case "kubevirt"` branches outside
-	// pkg/backend and pkg/kubevirt. These are the call sites that bypass the
-	// adapter abstraction.
+	// go test runs in the package directory, so walk from the module root.
+	root := filepath.Join("..", "..")
+	if _, err := os.Stat(filepath.Join(root, "go.mod")); err != nil {
+		t.Fatalf("module root not found at %s: %v", root, err)
+	}
+	// The backend packages themselves are allowed to name kubevirt.
+	allowed := map[string]bool{
+		filepath.Join("pkg", "backend"):  true,
+		filepath.Join("pkg", "kubevirt"): true,
+	}
+
 	count := 0
-	err := filepath.Walk(".", func(path string, info os.FileInfo, err error) error {
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if info.IsDir() {
-			// Skip vendor and git directories
-			if strings.HasPrefix(info.Name(), ".") || info.Name() == "vendor" {
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			name := d.Name()
+			if rel != "." && (strings.HasPrefix(name, ".") || name == "vendor" || name == "testdata" || name == "node_modules") {
 				return filepath.SkipDir
 			}
-			// Skip the backend packages themselves — they are allowed to reference kubevirt
-			if strings.HasPrefix(path, "./pkg/backend") || strings.HasPrefix(path, "./pkg/kubevirt") {
+			if allowed[rel] {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		// Only check Go files
-		if !strings.HasSuffix(path, ".go") {
+		// Test files may branch on a backend to verify behaviour.
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
-		// Skip test files for this scan — they may have branches to verify behavior
-		if strings.HasSuffix(path, "_test.go") {
-			return nil
-		}
-
 		content, err := os.ReadFile(path)
 		if err != nil {
 			return err
 		}
-		text := string(content)
-
-		// Count == "kubevirt" and case "kubevirt" branches
-		for _, line := range strings.Split(text, "\n") {
-			trimmed := strings.TrimSpace(line)
-			if strings.Contains(trimmed, "== \"kubevirt\"") ||
-				strings.Contains(trimmed, "case \"kubevirt\"") {
-				count++
-			}
-		}
+		count += len(kubevirtBranch.FindAllIndex(content, -1))
 		return nil
 	})
 	if err != nil {
-		t.Fatalf("walking directory tree: %v", err)
+		t.Fatalf("walking module tree: %v", err)
 	}
 
 	if count > maxAllowedBranches {
@@ -556,7 +554,11 @@ func TestKubeVirtBranchesRatchet(t *testing.T) {
 			count, maxAllowedBranches)
 	}
 	if count < maxAllowedBranches {
-		t.Logf("✓ kubevirt branches ratchet: %d branches (was %d) — lower the limit to %d",
+		t.Logf("kubevirt branches ratchet: %d branches (limit %d) — lower the limit to %d",
 			count, maxAllowedBranches, count)
 	}
 }
+
+// kubevirtBranch matches a comparison against the "kubevirt" literal on either
+// side, or a case clause that lists it (alone or among other values).
+var kubevirtBranch = regexp.MustCompile(`==\s*"kubevirt"|"kubevirt"\s*==|\bcase\s[^:\n]*"kubevirt"`)
