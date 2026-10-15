@@ -104,9 +104,8 @@ criteria for this phase (#404).
 
 | Item | Issue | Depends on |
 |------|-------|------------|
-| VDI self-service broker API | #227 | #503 |
-| VDI session tracking and reclaim | #228 | #227 |
-| VDI one-click connect | #229 | #227, #288 |
+| VDI session tracking and reclaim | #228 | — |
+| VDI one-click connect | #229 | — |
 | VDI GA | #69 | #228, #229 |
 | Structured logs and request tracing for CLI/TUI | #419 | #503 |
 | Enterprise backends (RFC-0003) | #507 | #214 |
@@ -145,6 +144,8 @@ Show HN brings many first-time clones and installs.
 - VDI pools of ephemeral CT desktops
   ([docs/vdi-ct-pools.md](docs/vdi-ct-pools.md)): #230.
 - Signed plugins with SBOMs, verified at install time: #505.
+- Self-service API for VDI: opt-in `/api/vdi/` routes in `corral web`
+  ([ADR-0013](docs/adr/0013-vdi-broker-placement.md)): #227.
 
 ---
 

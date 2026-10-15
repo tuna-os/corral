@@ -1,11 +1,12 @@
 # VDI plugin — desktop pools
 
-`corral-vdi` is the Phase 1 implementation of
-[RFC-0001](rfc/0001-vdi-plugin.md). It gives static desktop pools with manual
-(CLI-driven) assignment, and it builds each pool from clones of an
-already-built VM. It has no broker, no self-serve web page, and no idle reclaim
-yet. Those are later phases, and
-[issue #69](https://github.com/tuna-os/corral/issues/69) tracks them (see also
+`corral-vdi` is Phase 1 of [RFC-0001](rfc/0001-vdi-plugin.md). It
+gives static desktop pools with admin (CLI-driven) assignment, and it builds
+each pool from clones of an already-built VM. `corral web` adds the Phase 2
+[self-service broker](#self-service-broker): an authenticated user claims,
+starts, and releases their own desktop without an admin. Reclaim and
+one-click connect are later Phase 2 work, which
+[issue #69](https://github.com/tuna-os/corral/issues/69) tracks (see also
 [VDI Epic Status](vdi-epic-status.md)). What's here is real and cluster-tested:
 create a pool, hand a member to a user, connect, release it, delete the pool.
 
@@ -40,9 +41,13 @@ a stale Lease with its `resourceVersion`, so concurrent claimants cannot select
 the same member.
 
 The Lease records the pool/member in labels,
-the identity, acquisition/renewal time, and a one-hour expiry. The
-`corral.dev/vdi-assigned-to=<user>` label plus `corral.dev/vdi-claimed-at`
-annotation remain presentation state on the VM. Existing Phase 1 pools have
+the identity, acquisition/renewal time, and a one-hour expiry. The VM keeps
+presentation state. The `corral.dev/vdi-assigned-to` annotation holds the
+exact identity. The label of the same name holds a label-safe copy
+(`alice@example.com` becomes `alice_example.com`).
+`corral.dev/vdi-claimed-at` holds the claim time.
+
+Existing Phase 1 pools have
 no Lease and remain visible; their first atomic claim creates one. A legacy
 `unassign` can clear label-only members, but only its owner can release an
 active Lease.
@@ -111,6 +116,94 @@ corral vdi unassign devpool-1
 corral vdi pool delete devpool
 ```
 
+## Self-service broker
+
+`corral web` serves an optional self-service API on `/api/vdi/`
+([ADR-0013](adr/0013-vdi-broker-placement.md)). An authenticated user
+claims a desktop from a pool, starts it, inspects it, and releases it. Admins
+still create pools with `corral vdi pool create` or `corral vdi ct-pool apply`.
+The broker serves pools of VMs and [CT-backed pools](vdi-ct-pools.md).
+
+### Configuration
+
+| Variable | Meaning |
+|---|---|
+| `CORRAL_VDI_BROKER=1` | Turns the broker on. When it is off, every `/api/vdi/` route answers 404. |
+| `CORRAL_VDI_NAMESPACES` | Comma-separated namespaces whose pools the broker serves. Default: Corral's default namespace. The broker ignores pool labels in any other namespace. |
+| `CORRAL_ADMINS` | The admin allowlist of [ADR-0003](adr/0003-identity-source.md). Admins may inspect, start, and release any user's desktop. |
+| `CORRAL_AUTH_REQUIRED=1` | Recommended. Refuses every anonymous `/api` call, not only the broker's. |
+
+### Permissions
+
+The service account of `corral web` needs these permissions in each served
+namespace. `deploy/corral-web.yaml` grants the VM and Lease rules.
+
+- `coordination.k8s.io` `leases`: `get`, `list`, `create`, `update`,
+  `delete`. One Lease per member is the claim.
+- `kubevirt.io` `virtualmachines`: `get`, `list`, `patch`, and the `start`
+  and `stop` subresources, for VM pools.
+- For CT pools: `configmaps` `get`/`list`, and the `pods`, `services`, and
+  `persistentvolumeclaims` permissions that `corral vdi ct-pool reconcile`
+  uses, because a CT release destroys and recreates the member.
+
+### API
+
+A desktop has three stable identifiers. The pool ID is `kind/namespace/pool`,
+where `kind` is `vm` or `ct`. The desktop ID is `kind/namespace/member`, and
+it stays the same across claims. The session ID changes with every claim of
+the member.
+
+| Route | Who | Result |
+|---|---|---|
+| `GET /api/vdi/pools` | any user | The served pools with member, claimed, and free counts. |
+| `POST /api/vdi/pools/{kind}/{ns}/{pool}/claim` | any user | Claims a member for the caller and starts it. A retry returns the desktop the caller already holds. 409 when the pool has no free member. |
+| `GET /api/vdi/desktops` | any user | The caller's desktops. `?all=1` lists every user's desktops (admin only). |
+| `GET /api/vdi/desktops/{kind}/{ns}/{member}` | holder or admin | One desktop. |
+| `POST /api/vdi/desktops/{kind}/{ns}/{member}/start` | holder or admin | Starts the desktop; a running desktop is left alone. |
+| `POST /api/vdi/desktops/{kind}/{ns}/{member}/release` | holder or admin | 202 with a task ID (`GET /api/tasks/{id}`). A VM member stops and keeps its disks; a CT member is destroyed and recreated from its image. |
+
+A claim whose member fails to start still succeeds. The response carries
+`startError`, the caller keeps the desktop, and a `start` retries. A
+release that fails keeps the claim, so the holder can retry it. The task
+log (`GET /api/tasklog`) records every claim, start, and release as
+`vdi claim`, `vdi start`, `vdi release`, or `vdi force-release` (an admin
+released another user's desktop).
+
+### Threat boundaries
+
+- **Identity comes only from the request pipeline.** The broker takes the
+  login from Tailscale or from the `corral-auth` gateway
+  ([ADR-0006](adr/0006-optional-auth-gateway-plugin.md)). A request body or
+  query never names the user, so nobody can claim or release as someone
+  else. The headers are trustworthy only if every path to `corral web` goes
+  through that proxy; [ADR-0003](adr/0003-identity-source.md) describes the
+  guarantee.
+- **Anonymous callers and Corral peers get nothing.** A request without an
+  identity gets 401. A request with the peer token is a service identity,
+  not a user, and gets 403.
+- **Ownership is the Lease holder.** Only the holder or an admin may
+  inspect, start, or release a desktop. A release names the holder that the
+  broker checked. The pool's release primitive refuses a claim that changed
+  in between.
+- **Open mode has no ownership.** Without `CORRAL_ADMINS`, every caller is
+  an admin and may release any desktop. Set an allowlist before you offer
+  the broker to more than one person.
+- **Console routes predate the broker.** The broker does not yet gate the
+  console websockets of a claimed member. The one-click connect work (#229)
+  adds that gate. Until then, restrict console access with the ingress or the tailnet
+  ACLs if desktops must be private.
+
+### Example
+
+```bash
+# Through the Tailscale ingress, curl carries the caller's tailnet identity.
+curl -X POST https://corral.example.ts.net/api/vdi/pools/vm/corral-vms/devpool/claim
+#   {"id":"vm/corral-vms/devpool-1","sessionId":"5f0c…","poolId":"vm/corral-vms/devpool",
+#    "owner":"alice@example.com","phase":"Running","running":true,…}
+curl -X POST https://corral.example.ts.net/api/vdi/desktops/vm/corral-vms/devpool-1/release
+#   {"desktop":"vm/corral-vms/devpool-1","task":"vdi-release-corral-vms-devpool-1-…"}
+```
+
 ## Native USB Redirection
 
 `corral vdi usb redir <member>` redirects a local USB device from the operator's machine straight to the guest via `virtctl usbredir`. This wraps the native USB redirection of KubeVirt, not legacy SPICE.
@@ -171,9 +264,12 @@ that VNC already gives Linux members. Until then:
   any partial clones exist.
 - **Assigned member won't start** — `corral vdi assign` shows the
   `virtctl start` error directly. Typical causes are a lack of cluster
-  capacity, or a feature-gate that the golden VM's spec needs. The assignment label stays on
-  the VM even if the start failed. Run `corral vdi unassign` to back out, and
-  retry after you fix the cause.
+  capacity, or a feature-gate that the golden VM's spec needs. The claim
+  stays on the member when the start fails, so a second user does not get
+  it. Retry the start after you fix the cause (the broker's `start` route,
+  or `corral start <member>`), or run `corral vdi unassign` to back out.
+- **A release fails** — the member stops before its claim ends. If the stop
+  fails, the holder keeps the claim and can send the release again.
 
 ## GPU & Host-Device Capacity Validation
 
@@ -189,9 +285,9 @@ When a golden VM asks for host devices or GPUs (via `gpus` or `hostDevices` in i
 
 ## Current limitations (by design, not bugs)
 
-- **No self-serve.** Assignment is a CLI/admin action — there's no
-  end-user "get a desktop" page yet. The Lease primitive is ready for the
-  later broker, but the broker is not part of this plugin slice.
+- **Self-service is a web API.** The [broker](#self-service-broker) has no
+  "get a desktop" page in the web UI yet. The one-click connect work (#229)
+  adds it.
 - **No idle/logout reclaim.** An unassigned member never stays on, because
   unassign always stops it. But nothing notices "alice hasn't touched
   devpool-1 in 3 hours" and reclaims it automatically.

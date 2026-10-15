@@ -31,11 +31,6 @@ const (
 	labelCTPool   = "corral.dev/vdi-ct-pool"
 	labelCTMember = "corral.dev/vdi-ct-member"
 	labelCTSource = "corral.dev/vdi-ct-source"
-	// annoCTAssignedTo mirrors the claim holder on the member PVC. Like the
-	// VM pool label it is presentation state; the Lease is authoritative.
-	// It is an annotation because identities (e-mail addresses) are not
-	// valid label values.
-	annoCTAssignedTo = "corral.dev/vdi-assigned-to"
 
 	ctPoolConfigPrefix = "corral-vdi-ctpool-"
 	ctLeasePrefix      = "corral-vdi-ct-"
@@ -45,9 +40,6 @@ const (
 	CTReconcilerHolder    = "corral-vdi/reconciler"
 	ctMaintenanceDuration = 10 * time.Minute
 
-	CTPoolModeEphemeral  = "ephemeral"
-	CTPoolModePersistent = "persistent"
-
 	ctPoolNameMax = 40
 	ctPoolSizeMax = 500
 )
@@ -56,9 +48,6 @@ const (
 // A recreated member would destroy tenant state, so only ephemeral CT pools
 // are supported.
 var ErrPersistentCTPool = errors.New("persistent CT pools are unsupported: CT pool members are destroyed and recreated on release; use a VM pool for persistent desktops")
-
-// ErrCTPoolExhausted is returned by ClaimCTMember when no member is free.
-var ErrCTPoolExhausted = errors.New("CT pool has no free members")
 
 var ctPoolNameRE = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
 
@@ -104,10 +93,10 @@ func (s CTPoolSpec) Validate() error {
 		return fmt.Errorf("CT pool name %q must be a DNS label of at most %d characters", s.Name, ctPoolNameMax)
 	case s.Namespace == "":
 		return fmt.Errorf("CT pool %q needs a namespace", s.Name)
-	case s.Mode == CTPoolModePersistent:
+	case s.Mode == PoolModePersistent:
 		return ErrPersistentCTPool
-	case s.Mode != CTPoolModeEphemeral:
-		return fmt.Errorf("CT pool %q: unknown mode %q (want %q)", s.Name, s.Mode, CTPoolModeEphemeral)
+	case s.Mode != PoolModeEphemeral:
+		return fmt.Errorf("CT pool %q: unknown mode %q (want %q)", s.Name, s.Mode, PoolModeEphemeral)
 	case s.Size < 0 || s.Size > ctPoolSizeMax:
 		return fmt.Errorf("CT pool %q: size %d must be between 0 and %d", s.Name, s.Size, ctPoolSizeMax)
 	case strings.TrimSpace(s.Source.Image) == "":
@@ -240,7 +229,7 @@ var ctc ctCluster = kubeCTCluster{}
 // members; run ReconcileCTPool afterwards.
 func ApplyCTPool(spec CTPoolSpec) (CTPoolSpec, error) {
 	if spec.Mode == "" {
-		spec.Mode = CTPoolModeEphemeral
+		spec.Mode = PoolModeEphemeral
 	}
 	if err := spec.Validate(); err != nil {
 		return spec, err
@@ -259,7 +248,7 @@ func GetCTPool(namespace, name string) (CTPoolSpec, CTPoolStatus, error) {
 		return spec, status, err
 	}
 	if !found {
-		return spec, status, fmt.Errorf("CT pool %q not found in ns/%s", name, namespace)
+		return spec, status, fmt.Errorf("%w: CT pool %q in ns/%s", ErrPoolNotFound, name, namespace)
 	}
 	return spec, status, nil
 }
@@ -576,7 +565,7 @@ func ClaimCTMember(namespace, pool, identity string) (string, error) {
 		return row.Name, ctStartIfStopped(namespace, row.Name, byName[row.Name].state())
 	}
 	return "", fmt.Errorf("%w: pool %q in ns/%s (%d desired, %d claimed, %d unschedulable)",
-		ErrCTPoolExhausted, pool, namespace, status.Desired, status.Claimed, status.Unschedulable)
+		ErrPoolExhausted, pool, namespace, status.Desired, status.Claimed, status.Unschedulable)
 }
 
 func ctStartIfStopped(namespace, member string, state CTMemberState) error {
@@ -584,7 +573,7 @@ func ctStartIfStopped(namespace, member string, state CTMemberState) error {
 		return nil
 	}
 	if err := ctc.StartMember(namespace, member); err != nil {
-		return fmt.Errorf("claimed %s but failed to start it: %w", member, err)
+		return &StartError{Member: member, Err: err}
 	}
 	return nil
 }

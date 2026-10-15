@@ -25,6 +25,7 @@ The VDI epic waits on hardware and media prerequisites (`#129` and `#132`). The 
 - **Phase 1 VDI Plugin (`pkg/vdi`, `cmd/corral-vdi`)**: Static pools, golden VM clones via `kubevirt.Client.Clone`, label-based assignment (`corral.dev/vdi-pool`, `corral.dev/vdi-assigned-to`), and CLI lifecycle (`pool create/list/delete`, `assign`, `unassign`, `connect`).
 - **Atomic claims (`#226`)**: One `coordination.k8s.io` Lease for each pool member. The first writer wins, and Corral takes over an expired claim with a `resourceVersion` compare-and-swap. A release deletes the Lease only with a `resourceVersion` precondition (fixed in #530).
 - **CT-backed ephemeral pools (`#230`)**: `corral vdi ct-pool` and `pkg/vdi/ctpool.go`. A ConfigMap holds the pool definition and the recorded status. A reconciler creates, starts, replaces, and scales down CT members, and never destroys a claimed member. Claims use the `#226` Lease. A release destroys the member and creates it again from the image. A pool in persistent mode gives an explicit error. Guide: [docs/vdi-ct-pools.md](vdi-ct-pools.md).
+- **Self-service broker (`#227`)**: Opt-in `/api/vdi/` routes in `corral web` ([ADR-0013](adr/0013-vdi-broker-placement.md)). An authenticated user claims, starts, inspects, and releases their own desktop from a VM or CT pool. The caller comes from the trusted identity headers, and the holder of the member's Lease is the owner. Admins in `CORRAL_ADMINS` may act on any desktop. Guide: [docs/vdi.md](vdi.md#self-service-broker).
 - **In-Browser RDP Proxy**: RDCleanPath proxy that supports IronRDP (ADR-0002 Phase 2).
 - **Disk Snapshot Adapters (`#134`)**: Multi-backend snapshot/restore/retention in `pkg/snapshot`.
 - **Export Adapters (`#131`)**: Per-backend export of disk images in `pkg/export`.
@@ -35,9 +36,9 @@ The VDI epic waits on hardware and media prerequisites (`#129` and `#132`). The 
 | Issue | Scope | State |
 |---|---|---|
 | `#226` | Atomic claim and release | Done |
-| `#227` | Authenticated self-service broker API | Open; waits on the `pkg/web` split (`#503`) |
-| `#228` | Session tracking and reclaim | Open; waits on `#227` |
-| `#229` | Protocol-aware one-click connect | Open; waits on `#227` and the `app.js` split (`#288`) |
+| `#227` | Authenticated self-service broker API | Done; [ADR-0013](adr/0013-vdi-broker-placement.md) |
+| `#228` | Session tracking and reclaim | Open |
+| `#229` | Protocol-aware one-click connect | Open |
 | `#230` | CT-backed ephemeral pools | Done (#520, #528, #530, #544, #557) |
 
 ## Roadmap Recommendation

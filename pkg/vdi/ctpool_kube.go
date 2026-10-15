@@ -188,7 +188,7 @@ func (kubeCTCluster) ListMembers(namespace, pool string) ([]ctMemberObs, error) 
 		}
 		m := ctMemberObs{
 			Name: name, SourceHash: pvc.Metadata.Labels[labelCTSource],
-			AssignedTo: pvc.Metadata.Annotations[annoCTAssignedTo], Terminating: pvc.Metadata.DeletionTimestamp != "",
+			AssignedTo: pvc.Metadata.Annotations[annoAssignedTo], Terminating: pvc.Metadata.DeletionTimestamp != "",
 		}
 		if i, ok := podByName[name]; ok {
 			p := pods.Items[i]
@@ -256,7 +256,7 @@ func (kubeCTCluster) DeleteMember(namespace, member string) error {
 }
 
 func (kubeCTCluster) SetAssignee(namespace, member, identity string) error {
-	_, err := run("kubectl", "annotate", "pvc", member+"-data", "-n", namespace, annoCTAssignedTo+"="+identity, "--overwrite")
+	_, err := run("kubectl", "annotate", "pvc", member+"-data", "-n", namespace, annoAssignedTo+"="+identity, "--overwrite")
 	return err
 }
 
