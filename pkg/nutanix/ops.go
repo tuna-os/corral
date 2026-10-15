@@ -218,6 +218,12 @@ func (c *Client) Clone(source, target string) (Task, error) {
 // TaskStatus is a v4 task's current state.
 type TaskStatus struct {
 	Status string `json:"status"`
+	// EntitiesAffected names what the task touched or made, each as an
+	// extId plus a rel such as "vmm:content:ova" (prism EntityReference).
+	EntitiesAffected []struct {
+		ExtID string `json:"extId"`
+		Rel   string `json:"rel"`
+	} `json:"entitiesAffected"`
 }
 
 // Done reports whether the task reached a terminal state. The states come

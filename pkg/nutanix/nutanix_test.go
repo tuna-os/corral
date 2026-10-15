@@ -147,6 +147,16 @@ func (f *fakePC) serve(w http.ResponseWriter, r *http.Request) {
 		f.serveAction(w, path+"/create")
 	case r.Method == http.MethodDelete && strings.Contains(path, "/ahv/config/vm-recovery-points/"):
 		f.serveAction(w, path+"/delete")
+	case r.Method == http.MethodPost && strings.HasSuffix(path, "/content/ovas"):
+		f.serveAction(w, path)
+	case r.Method == http.MethodGet && strings.HasSuffix(path, "/content/ovas/ova-1/file"):
+		w.Header().Set("Content-Type", "application/octet-stream")
+		_, _ = w.Write([]byte("ova-bytes"))
+	case r.Method == http.MethodGet && strings.HasSuffix(path, "/content/ovas/ova-1"):
+		w.Header().Set("Etag", "etag-ova-1")
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"extId": "ova-1"}})
+	case r.Method == http.MethodDelete && strings.HasSuffix(path, "/content/ovas/ova-1"):
+		f.serveAction(w, path+"/delete")
 	case r.Method == http.MethodGet && strings.HasSuffix(path, "/config/categories"):
 		f.serveCategories(w, r)
 	case r.Method == http.MethodGet && strings.Contains(path, "/config/tasks/"):
@@ -202,8 +212,16 @@ func (f *fakePC) serveTask(w http.ResponseWriter, path string) {
 	}
 	f.taskHits[taskID]++
 	f.mu.Unlock()
+	data := map[string]any{"extId": taskID, "status": seq[i]}
+	if strings.HasPrefix(taskID, "task-ovas-") {
+		// An OVA build names the OVA it made (prism EntityReference).
+		data["entitiesAffected"] = []any{
+			map[string]any{"extId": "11111111-1111-1111-1111-111111111111", "rel": "vmm:ahv:config:vm"},
+			map[string]any{"extId": "ova-1", "rel": "vmm:content:ova"},
+		}
+	}
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"data": map[string]any{"extId": taskID, "status": seq[i]},
+		"data": data,
 	})
 }
 
