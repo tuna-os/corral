@@ -38,7 +38,7 @@ The VDI epic waits on hardware and media prerequisites (`#129` and `#132`). The 
 | `#227` | Authenticated self-service broker API | Open; waits on the `pkg/web` split (`#503`) |
 | `#228` | Session tracking and reclaim | Open; waits on `#227` |
 | `#229` | Protocol-aware one-click connect | Open; waits on `#227` and the `app.js` split (`#288`) |
-| `#230` | CT-backed ephemeral pools | Done (#520, #528, #530, and the PRs that close #230) |
+| `#230` | CT-backed ephemeral pools | Done (#520, #528, #530, #544, #545) |
 
 ## Roadmap Recommendation
 
