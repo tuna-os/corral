@@ -2,9 +2,10 @@
 
 **Status:** Phases 0 and 1 implemented. Browser RDP via IronRDP/RDCleanPath
 and the `corral-vdi` static-pool CLI have shipped. From Phase 2, atomic Lease
-claims (#226) and CT-backed ephemeral pools (#230) have shipped. The rest of
-Phases 2–4 remain a design proposal; this RFC defines their corrected scope
-but does not commit their implementation. Setup guides: [docs/vdi.md](../vdi.md)
+claims (#226), CT-backed ephemeral pools (#230), and the self-service broker
+API (#227, [ADR-0013](../adr/0013-vdi-broker-placement.md)) have shipped. The
+rest of Phases 2–4 remain a design proposal; this RFC defines their corrected
+scope but does not commit their implementation. Setup guides: [docs/vdi.md](../vdi.md)
 and [docs/vdi-ct-pools.md](../vdi-ct-pools.md), epic status: [docs/vdi-epic-status.md](../vdi-epic-status.md).
 **Date:** 2026-07-02
 **Updated:** 2026-10-15
@@ -188,6 +189,12 @@ definition, and members are CTs. Claims use the same per-member Lease, and a
 release recreates the member from its image.
 This phase is the actual VDI broker, not another VM-management command.
 
+The broker API has shipped (#227): `corral web` serves claim, start,
+inspect, and release under `/api/vdi/` when `CORRAL_VDI_BROKER=1` is set.
+It takes the caller from the trusted identity headers and authorizes each
+desktop operation against the holder of the member's Lease. See
+[docs/vdi.md](../vdi.md#self-service-broker).
+
 **Phase 3 — capacity-aware GPU pools and native USB redirection. Proposed.**
 Pool creation inspects the golden VM's host-device requests and compares the
 requested pool size with allocatable matching devices. It must distinguish
@@ -259,10 +266,12 @@ seam.
    as leaned toward above. Revisit if/when Phase 2's broker becomes a
    genuinely separate, long-lived process, unlike Phase 1's one-shot CLI
    commands. That is a real reason to split, and not mere default caution.
-6. **Broker placement**: keep Phase 2's long-lived broker inside
-   `corral-vdi`, or expose VDI routes through a peer/gateway protocol? It must
-   preserve the lean core and work with both Tailscale and ingress-agnostic
-   deployments.
+6. ~~**Broker placement**~~ — **resolved by #227**
+   ([ADR-0013](../adr/0013-vdi-broker-placement.md)): opt-in `/api/vdi/`
+   routes in `corral web`, behind the existing request pipeline. Only that
+   process holds both the trusted caller identity and the console sessions
+   that reclaim (#228) needs. The policy lives in `pkg/vdi`, and the admin
+   workflow stays in the `corral-vdi` plugin.
 
 ## Sources
 

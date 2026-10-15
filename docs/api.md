@@ -354,6 +354,40 @@ Statuses: `"running"` → `"done"` (success) or `"error"` (failure).
 
 ---
 
+## VDI self-service
+
+These routes exist only when `CORRAL_VDI_BROKER=1`; otherwise they answer
+404. Any authenticated user may call them, also a user outside
+`CORRAL_ADMINS`. The broker checks that the caller holds the desktop, and it
+takes the caller only from the identity headers. See
+[docs/vdi.md](vdi.md#self-service-broker) and
+[ADR-0013](adr/0013-vdi-broker-placement.md).
+
+| Route | Result |
+|---|---|
+| `GET /api/vdi/pools` | Served pools: `id`, `kind`, `namespace`, `name`, `mode`, `members`, `claimed`, `free`. |
+| `POST /api/vdi/pools/{kind}/{ns}/{pool}/claim` | The caller's desktop (below). 409 when no member is free. |
+| `GET /api/vdi/desktops[?all=1]` | The caller's desktops; `all=1` lists every user's (admin only). |
+| `GET /api/vdi/desktops/{kind}/{ns}/{member}` | One desktop (holder or admin). |
+| `POST /api/vdi/desktops/{kind}/{ns}/{member}/start` | Starts it (holder or admin). |
+| `POST /api/vdi/desktops/{kind}/{ns}/{member}/release` | 202 `{"task": "...", "desktop": "..."}`; poll `GET /api/tasks/{id}`. |
+
+A desktop:
+
+```json
+{"id": "vm/corral-vms/devpool-1", "sessionId": "5f0c2a9e41b7d388",
+ "poolId": "vm/corral-vms/devpool", "kind": "vm", "namespace": "corral-vms",
+ "pool": "devpool", "member": "devpool-1", "owner": "alice@example.com",
+ "claimedAt": "2026-10-15T09:00:00Z", "phase": "Running", "running": true}
+```
+
+`startError` is set when the claim succeeded and the start failed.
+`claimExpired` is set when the Lease expired. Status codes: 401 without an
+identity, 403 for another user's desktop or a peer service identity, 404 for
+an unknown or unclaimed desktop.
+
+---
+
 ## Guest info
 
 ### `GET /api/vms/{ns}/{name}/guestinfo`

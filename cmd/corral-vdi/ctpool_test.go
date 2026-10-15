@@ -30,7 +30,7 @@ func TestCTPoolApplyCmd_PersistentModeFailsBeforeTouchingTheCluster(t *testing.T
 
 	c := ctPoolApplyCmd()
 	_ = c.Flags().Set("image", "ghcr.io/example/desktop:1")
-	_ = c.Flags().Set("mode", vdi.CTPoolModePersistent)
+	_ = c.Flags().Set("mode", vdi.PoolModePersistent)
 	err := c.RunE(c, []string{"desk"})
 	if !errors.Is(err, vdi.ErrPersistentCTPool) {
 		t.Fatalf("apply --mode persistent: %v", err)

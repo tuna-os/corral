@@ -158,7 +158,7 @@ func TestLeaseExpired(t *testing.T) {
 
 func TestClaim_LegacyLabelOnlyAssignmentIsNotStolen(t *testing.T) {
 	fake := withFake(t)
-	fake.AddResponseKV("kubectl", []string{"get", "vm", "-A", "-o", "json", "-l", labelPool + "=devpool"}, `{"items":[
+	fake.AddResponseKV("kubectl", []string{"get", "vm", "-n", "corral-vms", "-o", "json", "-l", labelPool + "=devpool"}, `{"items":[
 		{"metadata":{"name":"devpool-1","namespace":"corral-vms","labels":{"corral.dev/vdi-pool":"devpool","corral.dev/vdi-assigned-to":"bob"}},"status":{"printableStatus":"Running"}}
 	]}`, nil)
 	fake.AddResponse("kubectl "+leaseGetArgs, "", &fakeErr{"NotFound"})
@@ -175,14 +175,13 @@ func TestClaim_LegacyLabelOnlyAssignmentIsNotStolen(t *testing.T) {
 
 func TestClaim_ExpiredLeaseIsRecovered(t *testing.T) {
 	fake := withFake(t)
-	fake.AddResponseKV("kubectl", []string{"get", "vm", "-A", "-o", "json", "-l", labelPool + "=devpool"}, `{"items":[
+	fake.AddResponseKV("kubectl", []string{"get", "vm", "-n", "corral-vms", "-o", "json", "-l", labelPool + "=devpool"}, `{"items":[
 		{"metadata":{"name":"devpool-1","namespace":"corral-vms","labels":{"corral.dev/vdi-pool":"devpool","corral.dev/vdi-assigned-to":"bob"}},"status":{"printableStatus":"Running"}}
 	]}`, nil)
 	fake.AddResponse("kubectl "+leaseGetArgs, leaseJSON("bob", "2000-01-01T00:00:00Z", "7"), nil)
 	fake.AddResponseKV("kubectl", []string{"create", "-f", "-"}, "", &fakeErr{"AlreadyExists"})
 	fake.AddResponseKV("kubectl", []string{"replace", "-f", "-"}, "", nil)
-	fake.AddResponseKV("kubectl", []string{"label", "vm", "devpool-1", "-n", "corral-vms", labelPool + "=devpool", "--overwrite"}, "", nil)
-	fake.AddResponseKV("kubectl", []string{"label", "vm", "devpool-1", "-n", "corral-vms", labelAssignedTo + "=alice", "--overwrite"}, "", nil)
+	fake.AddResponseKV("kubectl", []string{"label", "vm", "devpool-1", "-n", "corral-vms", labelPool + "=devpool", labelAssignedTo + "=alice", "--overwrite"}, "", nil)
 	fake.AddPrefixResponse("kubectl annotate vm devpool-1 -n corral-vms "+annoClaimedAt+"=", "", nil)
 
 	got, err := Claim("corral-vms", "devpool", "alice")
@@ -203,9 +202,8 @@ func TestRelease_OwnerDeletesLeaseClearsLabelsAndStops(t *testing.T) {
 	fake.AddResponse("kubectl "+leaseGetArgs, leaseJSON("alice", time.Now().UTC().Format(time.RFC3339Nano), "7"), nil)
 	fake.AddResponseKV("kubectl", []string{"get", "vm", "devpool-1", "-n", "corral-vms", "-o",
 		`jsonpath={.metadata.labels.corral\.dev/vdi-pool}`}, "devpool", nil)
-	fake.AddResponseKV("kubectl", []string{"label", "vm", "devpool-1", "-n", "corral-vms", labelPool + "=devpool", "--overwrite"}, "", nil)
-	fake.AddResponseKV("kubectl", []string{"label", "vm", "devpool-1", "-n", "corral-vms", labelAssignedTo + "-", "--overwrite"}, "", nil)
-	fake.AddResponseKV("kubectl", []string{"annotate", "vm", "devpool-1", "-n", "corral-vms", annoClaimedAt + "-", "--overwrite"}, "", nil)
+	fake.AddResponseKV("kubectl", []string{"label", "vm", "devpool-1", "-n", "corral-vms", labelPool + "=devpool", labelAssignedTo + "-", "--overwrite"}, "", nil)
+	fake.AddResponseKV("kubectl", []string{"annotate", "vm", "devpool-1", "-n", "corral-vms", annoClaimedAt + "-", annoAssignedTo + "-", "--overwrite"}, "", nil)
 	fake.AddPrefixResponse("kubectl delete", "", nil)
 	fake.AddResponseKV("/fake/bin/virtctl", []string{"stop", "devpool-1", "-n", "corral-vms"}, "", nil)
 

@@ -292,7 +292,7 @@ func rowOf(t *testing.T, status CTPoolStatus, name string) CTMemberStatus {
 
 func TestCTPoolSpec_Validate(t *testing.T) {
 	ok := deskSpec(2)
-	ok.Mode = CTPoolModeEphemeral
+	ok.Mode = PoolModeEphemeral
 	if err := ok.Validate(); err != nil {
 		t.Fatalf("valid spec rejected: %v", err)
 	}
@@ -314,7 +314,7 @@ func TestCTPoolSpec_Validate(t *testing.T) {
 		}
 	}
 	persistent := ok
-	persistent.Mode = CTPoolModePersistent
+	persistent.Mode = PoolModePersistent
 	if err := persistent.Validate(); !errors.Is(err, ErrPersistentCTPool) {
 		t.Errorf("persistent mode: got %v, want ErrPersistentCTPool", err)
 	}
@@ -343,11 +343,11 @@ func TestCTSourceHash_ChangesWithSource(t *testing.T) {
 func TestApplyCTPool_DefaultsToEphemeralAndRejectsPersistent(t *testing.T) {
 	f := newFakeCT(t)
 	spec, err := ApplyCTPool(deskSpec(1))
-	if err != nil || spec.Mode != CTPoolModeEphemeral {
+	if err != nil || spec.Mode != PoolModeEphemeral {
 		t.Fatalf("ApplyCTPool = %+v, %v; want ephemeral mode", spec, err)
 	}
 	p := deskSpec(1)
-	p.Name, p.Mode = "keep", CTPoolModePersistent
+	p.Name, p.Mode = "keep", PoolModePersistent
 	if _, err := ApplyCTPool(p); !errors.Is(err, ErrPersistentCTPool) {
 		t.Fatalf("persistent pool: got %v, want ErrPersistentCTPool", err)
 	}
@@ -614,7 +614,7 @@ func TestReconcileCTPool_UnschedulableMembersReportCapacity(t *testing.T) {
 		t.Errorf("row = %+v", row)
 	}
 	_, err := ClaimCTMember("vdi", "desk", "alice")
-	if !errors.Is(err, ErrCTPoolExhausted) || !strings.Contains(err.Error(), "2 unschedulable") {
+	if !errors.Is(err, ErrPoolExhausted) || !strings.Contains(err.Error(), "2 unschedulable") {
 		t.Fatalf("claim on an unschedulable pool: %v", err)
 	}
 
@@ -631,7 +631,7 @@ func TestReconcileCTPool_UnschedulableMembersReportCapacity(t *testing.T) {
 func TestReconcileCTPool_PersistentModeFailsExplicitly(t *testing.T) {
 	f := newFakeCT(t)
 	spec := deskSpec(1)
-	spec.Mode = CTPoolModePersistent // e.g. an edited ConfigMap
+	spec.Mode = PoolModePersistent // e.g. an edited ConfigMap
 	_ = f.PutPoolSpec(spec)
 
 	status, err := ReconcileCTPool("vdi", "desk")
@@ -671,7 +671,7 @@ func TestClaimCTMember_ConcurrentClaimsGetDistinctMembers(t *testing.T) {
 			mu.Lock()
 			defer mu.Unlock()
 			switch {
-			case errors.Is(err, ErrCTPoolExhausted):
+			case errors.Is(err, ErrPoolExhausted):
 				exhausted++
 			case err != nil:
 				t.Errorf("%s: %v", user, err)
@@ -730,7 +730,7 @@ func TestClaimCTMember_PrefersReadySkipsDriftedAndStartsStopped(t *testing.T) {
 	if err != nil || member != "desk-2" || f.starts["desk-2"] != 1 {
 		t.Fatalf("second claim = %q, %v (starts %d); want stopped desk-2 started", member, err, f.starts["desk-2"])
 	}
-	if _, err := ClaimCTMember("vdi", "desk", "carol"); !errors.Is(err, ErrCTPoolExhausted) {
+	if _, err := ClaimCTMember("vdi", "desk", "carol"); !errors.Is(err, ErrPoolExhausted) {
 		t.Fatalf("a drifted member must not be handed out: %v", err)
 	}
 }

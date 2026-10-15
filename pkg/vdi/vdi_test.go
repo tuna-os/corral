@@ -23,9 +23,8 @@ func TestCreatePool_ClonesAndLabelsMembers(t *testing.T) {
 	for i := 1; i <= 3; i++ {
 		name := memberName("devpool", i)
 		fake.AddResponseKV("kubectl", []string{"get", "vm", name, "-n", "corral-vms", "-o", "name"}, "vm/"+name, nil)
-		fake.AddResponseKV("kubectl", []string{"label", "vm", name, "-n", "corral-vms", labelPool + "=devpool", "--overwrite"}, "", nil)
-		fake.AddResponseKV("kubectl", []string{"label", "vm", name, "-n", "corral-vms", labelAssignedTo + "-", "--overwrite"}, "", nil)
-		fake.AddResponseKV("kubectl", []string{"annotate", "vm", name, "-n", "corral-vms", annoClaimedAt + "-", "--overwrite"}, "", nil)
+		fake.AddResponseKV("kubectl", []string{"label", "vm", name, "-n", "corral-vms", labelPool + "=devpool", labelAssignedTo + "-", "--overwrite"}, "", nil)
+		fake.AddResponseKV("kubectl", []string{"annotate", "vm", name, "-n", "corral-vms", annoClaimedAt + "-", annoAssignedTo + "-", "--overwrite"}, "", nil)
 	}
 
 	pool, err := CreatePool(CreateOpts{Name: "devpool", Namespace: "corral-vms", From: "golden", Size: 3})
@@ -125,15 +124,14 @@ func TestListPools_GroupsByPoolLabel(t *testing.T) {
 
 func TestAssign_ClaimsFirstFreeMemberAndStartsIfStopped(t *testing.T) {
 	fake := withFake(t)
-	fake.AddResponseKV("kubectl", []string{"get", "vm", "-A", "-o", "json", "-l", labelPool + "=devpool"}, `{"items":[
+	fake.AddResponseKV("kubectl", []string{"get", "vm", "-n", "corral-vms", "-o", "json", "-l", labelPool + "=devpool"}, `{"items":[
 		{"metadata":{"name":"devpool-1","namespace":"corral-vms","labels":{"corral.dev/vdi-pool":"devpool","corral.dev/vdi-assigned-to":"bob"}},
 			"status":{"printableStatus":"Running"}},
 		{"metadata":{"name":"devpool-2","namespace":"corral-vms","labels":{"corral.dev/vdi-pool":"devpool"}},
 			"status":{"printableStatus":"Stopped"}}
 	]}`, nil)
 	fake.AddResponseKV("kubectl", []string{"create", "-f", "-"}, "", nil)
-	fake.AddResponseKV("kubectl", []string{"label", "vm", "devpool-2", "-n", "corral-vms", labelPool + "=devpool", "--overwrite"}, "", nil)
-	fake.AddResponseKV("kubectl", []string{"label", "vm", "devpool-2", "-n", "corral-vms", labelAssignedTo + "=alice", "--overwrite"}, "", nil)
+	fake.AddResponseKV("kubectl", []string{"label", "vm", "devpool-2", "-n", "corral-vms", labelPool + "=devpool", labelAssignedTo + "=alice", "--overwrite"}, "", nil)
 	fake.AddPrefixResponse("kubectl annotate vm devpool-2 -n corral-vms corral.dev/vdi-claimed-at=", "", nil)
 	fake.AddResponseKV("/fake/bin/virtctl", []string{"start", "devpool-2", "-n", "corral-vms"}, "", nil)
 
@@ -157,7 +155,7 @@ func TestAssign_ClaimsFirstFreeMemberAndStartsIfStopped(t *testing.T) {
 
 func TestAssign_NoFreeMembers(t *testing.T) {
 	fake := withFake(t)
-	fake.AddResponseKV("kubectl", []string{"get", "vm", "-A", "-o", "json", "-l", labelPool + "=devpool"}, `{"items":[
+	fake.AddResponseKV("kubectl", []string{"get", "vm", "-n", "corral-vms", "-o", "json", "-l", labelPool + "=devpool"}, `{"items":[
 		{"metadata":{"name":"devpool-1","namespace":"corral-vms","labels":{"corral.dev/vdi-pool":"devpool","corral.dev/vdi-assigned-to":"bob"}},
 			"status":{"printableStatus":"Running"}}
 	]}`, nil)
@@ -170,7 +168,7 @@ func TestAssign_NoFreeMembers(t *testing.T) {
 
 func TestAssign_PoolNotFound(t *testing.T) {
 	fake := withFake(t)
-	fake.AddResponseKV("kubectl", []string{"get", "vm", "-A", "-o", "json", "-l", labelPool + "=ghost"}, `{"items":[]}`, nil)
+	fake.AddResponseKV("kubectl", []string{"get", "vm", "-n", "corral-vms", "-o", "json", "-l", labelPool + "=ghost"}, `{"items":[]}`, nil)
 
 	_, err := Assign("corral-vms", "ghost", "alice")
 	if err == nil {
@@ -180,11 +178,11 @@ func TestAssign_PoolNotFound(t *testing.T) {
 
 func TestUnassign_ClearsLabelAndStops(t *testing.T) {
 	fake := withFake(t)
+	fake.AddResponseKV("kubectl", []string{"get", "lease", leaseName("devpool-2"), "-n", "corral-vms", "-o", "json"}, "", &fakeErr{"NotFound"})
 	fake.AddResponseKV("kubectl", []string{"get", "vm", "devpool-2", "-n", "corral-vms", "-o",
 		`jsonpath={.metadata.labels.corral\.dev/vdi-pool}`}, "devpool", nil)
-	fake.AddResponseKV("kubectl", []string{"label", "vm", "devpool-2", "-n", "corral-vms", labelPool + "=devpool", "--overwrite"}, "", nil)
-	fake.AddResponseKV("kubectl", []string{"label", "vm", "devpool-2", "-n", "corral-vms", labelAssignedTo + "-", "--overwrite"}, "", nil)
-	fake.AddResponseKV("kubectl", []string{"annotate", "vm", "devpool-2", "-n", "corral-vms", annoClaimedAt + "-", "--overwrite"}, "", nil)
+	fake.AddResponseKV("kubectl", []string{"label", "vm", "devpool-2", "-n", "corral-vms", labelPool + "=devpool", labelAssignedTo + "-", "--overwrite"}, "", nil)
+	fake.AddResponseKV("kubectl", []string{"annotate", "vm", "devpool-2", "-n", "corral-vms", annoClaimedAt + "-", annoAssignedTo + "-", "--overwrite"}, "", nil)
 	fake.AddResponseKV("/fake/bin/virtctl", []string{"stop", "devpool-2", "-n", "corral-vms"}, "", nil)
 
 	if err := Unassign("corral-vms", "devpool-2"); err != nil {
@@ -203,10 +201,9 @@ func TestUnassign_ClearsLabelAndStops(t *testing.T) {
 
 func TestClaim_RecordsAtomicLease(t *testing.T) {
 	fake := withFake(t)
-	fake.AddResponseKV("kubectl", []string{"get", "vm", "-A", "-o", "json", "-l", labelPool + "=devpool"}, `{"items":[{"metadata":{"name":"devpool-1","namespace":"corral-vms","labels":{"corral.dev/vdi-pool":"devpool"}},"status":{"printableStatus":"Running"}}]}`, nil)
+	fake.AddResponseKV("kubectl", []string{"get", "vm", "-n", "corral-vms", "-o", "json", "-l", labelPool + "=devpool"}, `{"items":[{"metadata":{"name":"devpool-1","namespace":"corral-vms","labels":{"corral.dev/vdi-pool":"devpool"}},"status":{"printableStatus":"Running"}}]}`, nil)
 	fake.AddResponseKV("kubectl", []string{"create", "-f", "-"}, "", nil)
-	fake.AddResponseKV("kubectl", []string{"label", "vm", "devpool-1", "-n", "corral-vms", labelPool + "=devpool", "--overwrite"}, "", nil)
-	fake.AddResponseKV("kubectl", []string{"label", "vm", "devpool-1", "-n", "corral-vms", labelAssignedTo + "=alice", "--overwrite"}, "", nil)
+	fake.AddResponseKV("kubectl", []string{"label", "vm", "devpool-1", "-n", "corral-vms", labelPool + "=devpool", labelAssignedTo + "=alice", "--overwrite"}, "", nil)
 	fake.AddPrefixResponse("kubectl annotate vm devpool-1 -n corral-vms "+annoClaimedAt+"=", "", nil)
 
 	got, err := Claim("corral-vms", "devpool", "alice")
@@ -237,7 +234,7 @@ func TestRelease_RejectsNonOwner(t *testing.T) {
 
 func TestDeletePool_DeletesAllMembers(t *testing.T) {
 	fake := withFake(t)
-	fake.AddResponseKV("kubectl", []string{"get", "vm", "-A", "-o", "json", "-l", labelPool + "=devpool"}, `{"items":[
+	fake.AddResponseKV("kubectl", []string{"get", "vm", "-n", "corral-vms", "-o", "json", "-l", labelPool + "=devpool"}, `{"items":[
 		{"metadata":{"name":"devpool-1","namespace":"corral-vms"},"status":{"printableStatus":"Running"}},
 		{"metadata":{"name":"devpool-2","namespace":"corral-vms"},"status":{"printableStatus":"Stopped"}}
 	]}`, nil)
@@ -268,7 +265,7 @@ func TestDeletePool_DeletesAllMembers(t *testing.T) {
 
 func TestDeletePool_NotFound(t *testing.T) {
 	fake := withFake(t)
-	fake.AddResponseKV("kubectl", []string{"get", "vm", "-A", "-o", "json", "-l", labelPool + "=ghost"}, `{"items":[]}`, nil)
+	fake.AddResponseKV("kubectl", []string{"get", "vm", "-n", "corral-vms", "-o", "json", "-l", labelPool + "=ghost"}, `{"items":[]}`, nil)
 
 	if err := DeletePool("corral-vms", "ghost"); err == nil {
 		t.Error("expected an error deleting a pool with no members")
@@ -495,7 +492,7 @@ func TestCreatePool_DeviceCapacityExhaustionRefusesCreation(t *testing.T) {
 func TestValidateUSBRedir_Success(t *testing.T) {
 	fake := withFake(t)
 	fake.AddResponseKV("kubectl", []string{"get", "vm", "devpool-1", "-n", "corral-vms", "-o", `jsonpath={.metadata.labels.corral\.dev/vdi-pool}`}, "devpool", nil)
-	fake.AddResponseKV("kubectl", []string{"get", "vm", "-A", "-o", "json", "-l", labelPool + "=devpool"}, `{"items":[
+	fake.AddResponseKV("kubectl", []string{"get", "vm", "-n", "corral-vms", "-o", "json", "-l", labelPool + "=devpool"}, `{"items":[
 		{"metadata":{"name":"devpool-1","namespace":"corral-vms","labels":{"corral.dev/vdi-pool":"devpool","corral.dev/vdi-assigned-to":"alice"}},
 			"status":{"printableStatus":"Running"}}
 	]}`, nil)
@@ -516,7 +513,7 @@ func TestValidateUSBRedir_Success(t *testing.T) {
 func TestValidateUSBRedir_Unassigned(t *testing.T) {
 	fake := withFake(t)
 	fake.AddResponseKV("kubectl", []string{"get", "vm", "devpool-1", "-n", "corral-vms", "-o", `jsonpath={.metadata.labels.corral\.dev/vdi-pool}`}, "devpool", nil)
-	fake.AddResponseKV("kubectl", []string{"get", "vm", "-A", "-o", "json", "-l", labelPool + "=devpool"}, `{"items":[
+	fake.AddResponseKV("kubectl", []string{"get", "vm", "-n", "corral-vms", "-o", "json", "-l", labelPool + "=devpool"}, `{"items":[
 		{"metadata":{"name":"devpool-1","namespace":"corral-vms","labels":{"corral.dev/vdi-pool":"devpool"}},
 			"status":{"printableStatus":"Running"}}
 	]}`, nil)
@@ -533,7 +530,7 @@ func TestValidateUSBRedir_Unassigned(t *testing.T) {
 func TestValidateUSBRedir_UnauthorizedUser(t *testing.T) {
 	fake := withFake(t)
 	fake.AddResponseKV("kubectl", []string{"get", "vm", "devpool-1", "-n", "corral-vms", "-o", `jsonpath={.metadata.labels.corral\.dev/vdi-pool}`}, "devpool", nil)
-	fake.AddResponseKV("kubectl", []string{"get", "vm", "-A", "-o", "json", "-l", labelPool + "=devpool"}, `{"items":[
+	fake.AddResponseKV("kubectl", []string{"get", "vm", "-n", "corral-vms", "-o", "json", "-l", labelPool + "=devpool"}, `{"items":[
 		{"metadata":{"name":"devpool-1","namespace":"corral-vms","labels":{"corral.dev/vdi-pool":"devpool","corral.dev/vdi-assigned-to":"bob"}},
 			"status":{"printableStatus":"Running"}}
 	]}`, nil)
@@ -551,7 +548,7 @@ func TestValidateUSBRedir_UnauthorizedUser(t *testing.T) {
 func TestValidateUSBRedir_Stopped(t *testing.T) {
 	fake := withFake(t)
 	fake.AddResponseKV("kubectl", []string{"get", "vm", "devpool-1", "-n", "corral-vms", "-o", `jsonpath={.metadata.labels.corral\.dev/vdi-pool}`}, "devpool", nil)
-	fake.AddResponseKV("kubectl", []string{"get", "vm", "-A", "-o", "json", "-l", labelPool + "=devpool"}, `{"items":[
+	fake.AddResponseKV("kubectl", []string{"get", "vm", "-n", "corral-vms", "-o", "json", "-l", labelPool + "=devpool"}, `{"items":[
 		{"metadata":{"name":"devpool-1","namespace":"corral-vms","labels":{"corral.dev/vdi-pool":"devpool","corral.dev/vdi-assigned-to":"alice"}},
 			"status":{"printableStatus":"Stopped"}}
 	]}`, nil)
