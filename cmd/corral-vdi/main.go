@@ -42,11 +42,15 @@ func rootCmd() *cobra.Command {
 via corral create / corral bootc / corral-windows). Pool members are clones
 of that VM; assignment is a label on the VM object, not a new CRD — see
 docs/rfc/0001-vdi-plugin.md for the design and what's still ahead of this
-first slice (self-serve claim, idle reclaim, GPU pools).`,
+first slice (self-serve claim, idle reclaim, GPU pools).
+
+"ct-pool" manages CT-backed ephemeral Linux desktop pools: a declarative pool
+definition, a reconciler, and release-recreates-from-image semantics (see
+docs/vdi-ct-pools.md).`,
 	}
 	root.PersistentFlags().StringVarP(&namespace, "namespace", "n", "", "Namespace (default: corral's default)")
 	root.PersistentFlags().StringVar(&contextName, "context", "", "Corral context to act on (default: the selected context)")
-	root.AddCommand(poolCmd(), assignCmd(), unassignCmd(), connectCmd(), usbCmd())
+	root.AddCommand(poolCmd(), assignCmd(), unassignCmd(), connectCmd(), usbCmd(), ctPoolCmd())
 	return root
 }
 
@@ -347,11 +351,12 @@ func usbRedirCmd() *cobra.Command {
 func main() {
 	if sdk.HandleMetadata(sdk.Metadata{
 		Name:        "vdi",
-		Version:     "0.2.0",
-		Description: "Desktop pools and native USB redirection",
+		Version:     "0.3.0",
+		Description: "Desktop pools, CT-backed ephemeral desktop pools, and native USB redirection",
 		Capabilities: []string{
 			"cli-command",
 			"vdi-pools",
+			"vdi-ct-pools",
 			"usb-redirection",
 		},
 		Permissions: []string{
@@ -359,6 +364,7 @@ func main() {
 			"enumerate local USB devices",
 			"redirect local host USB devices to guest VMs",
 			"mutate KubeVirt VMs and labels",
+			"manage CT pods, PVCs, ConfigMaps, and Leases for CT pools",
 		},
 		SupportedBackends: []string{"kubevirt"},
 	}) {

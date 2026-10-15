@@ -361,6 +361,16 @@ RFC and [issue #69](https://github.com/tuna-os/corral/issues/69) for what's
 next. Pool membership and assignment are plain K8s labels on the VM objects,
 nothing more.
 
+`corral vdi ct-pool` keeps a declared pool of CTs: ephemeral Linux desktops
+built from a container image. When a user releases a member, Corral makes it
+again from the image. See [docs/vdi-ct-pools.md](docs/vdi-ct-pools.md).
+
+```bash
+corral vdi ct-pool apply desk --image ghcr.io/example/desktop:1 --size 3
+corral vdi ct-pool claim desk alice
+corral vdi ct-pool release desk desk-1 alice
+```
+
 ## Bootc images as a CI boot gate
 
 `corral create --bootc` runs entirely on local QEMU — no cluster, no

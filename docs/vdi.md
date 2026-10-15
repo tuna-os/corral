@@ -9,6 +9,9 @@ yet. Those are later phases, and
 [VDI Epic Status](vdi-epic-status.md)). What's here is real and cluster-tested:
 create a pool, hand a member to a user, connect, release it, delete the pool.
 
+This page is about pools of VMs. For pools of ephemeral Linux desktops that
+Corral builds from a container image, see [CT-backed pools](vdi-ct-pools.md).
+
 ## Install
 
 ```bash
@@ -194,9 +197,9 @@ When a golden VM asks for host devices or GPUs (via `gpus` or `hostDevices` in i
   devpool-1 in 3 hours" and reclaims it automatically.
 - **No live resize.** To grow or shrink a pool, delete and recreate it. Or
   clone one more member manually and label it by hand.
-- **CT-backed pools aren't implemented.** Only VM (KubeVirt) golden
-  sources work today. Pools of Containers (CT) are exploratory (RFC's Phase
-  4 territory).
+- **CT-backed pools are a separate command.** `corral vdi ct-pool` manages
+  ephemeral pools of Containers (CT) with a declared size and a reconciler.
+  See [CT-backed pools](vdi-ct-pools.md).
 
 None of this is a secret. See [RFC-0001](rfc/0001-vdi-plugin.md) for the
 full phased plan, and [docs/vdi-epic-status.md](vdi-epic-status.md) for the

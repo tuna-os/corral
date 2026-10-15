@@ -1,11 +1,13 @@
 # RFC-0001: VDI plugin — Windows/Linux desktop pools on Corral
 
 **Status:** Phases 0 and 1 implemented. Browser RDP via IronRDP/RDCleanPath
-and the `corral-vdi` static-pool CLI have shipped. Phases 2–4 remain a
-design proposal; this RFC defines their corrected scope but does not commit
-their implementation. Setup guide: [docs/vdi.md](../vdi.md), epic status: [docs/vdi-epic-status.md](../vdi-epic-status.md).
+and the `corral-vdi` static-pool CLI have shipped. From Phase 2, atomic Lease
+claims (#226) and CT-backed ephemeral pools (#230) have shipped. The rest of
+Phases 2–4 remain a design proposal; this RFC defines their corrected scope
+but does not commit their implementation. Setup guides: [docs/vdi.md](../vdi.md)
+and [docs/vdi-ct-pools.md](../vdi-ct-pools.md), epic status: [docs/vdi-epic-status.md](../vdi-epic-status.md).
 **Date:** 2026-07-02
-**Updated:** 2026-07-29
+**Updated:** 2026-10-15
 **Author:** grilled out of a live session with James Reilly + Claude
 
 ## Summary
@@ -179,7 +181,11 @@ The first reclaim policy is deliberately conservative:
 
 After reclaim, persistent pools stop the VM and retain its disks. Ephemeral
 pools destroy and recreate the member from the golden source. CT-backed pools
-remain a later sub-slice because they need their own reconciliation primitive.
+have their own reconciliation primitive, now implemented
+([#230](https://github.com/tuna-os/corral/issues/230),
+[docs/vdi-ct-pools.md](../vdi-ct-pools.md)). A ConfigMap holds the pool
+definition, and members are CTs. Claims use the same per-member Lease, and a
+release recreates the member from its image.
 This phase is the actual VDI broker, not another VM-management command.
 
 **Phase 3 — capacity-aware GPU pools and native USB redirection. Proposed.**
@@ -238,10 +244,10 @@ seam.
    and adds no new API. A CRD gives clearer domain state and validation. This
    RFC rules out a local registry or an unguarded ConfigMap, because claims
    must be cluster-visible and concurrency-safe.
-2. **CT-backed pool primitive**: KubeVirt gives us `VirtualMachinePool` for
-   free; nothing upstream gives us a pooled-pod equivalent. Build our own
-   (small: a label-based reconcile loop)? Or is this premature for CT pools
-   specifically, and should we start VM-only?
+2. ~~**CT-backed pool primitive**~~ — **resolved by #230**: a small
+   reconciler of our own. A ConfigMap holds the declared pool, and labels mark
+   the member CTs. The reconciler takes the member Lease before each
+   destructive step. Only ephemeral CT pools are supported.
 3. **Reclaim defaults**: choose disconnect grace, maximum session duration,
    and whether an administrator may force-release a connected session. Input
    idle remains unavailable without guest/protocol cooperation.
