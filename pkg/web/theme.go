@@ -211,34 +211,31 @@ func handlePutTheme(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cfgPath := config.DefaultPath()
-	cfg, err := config.Load(cfgPath)
+	var cfg *config.Config
+	err := config.Update(func(c *config.Config) error {
+		// Merge incoming values into c.Web (non-zero only).
+		if req.Accent != "" {
+			c.Web.Accent = req.Accent
+		}
+		if req.Accent2 != "" {
+			c.Web.Accent2 = req.Accent2
+		}
+		if req.BrandTitle != "" {
+			c.Web.BrandTitle = req.BrandTitle
+		}
+		if req.BrandEmoji != "" {
+			c.Web.BrandEmoji = req.BrandEmoji
+		}
+		if req.BrandSubtitle != "" {
+			c.Web.BrandSubtitle = req.BrandSubtitle
+		}
+		if req.CustomCSS != "" {
+			c.Web.CustomCSS = req.CustomCSS
+		}
+		cfg = c
+		return nil
+	})
 	if err != nil {
-		errResp(w, http.StatusInternalServerError, fmt.Errorf("reading config: %w", err))
-		return
-	}
-
-	// Merge incoming values into cfg.Web (non-zero only).
-	if req.Accent != "" {
-		cfg.Web.Accent = req.Accent
-	}
-	if req.Accent2 != "" {
-		cfg.Web.Accent2 = req.Accent2
-	}
-	if req.BrandTitle != "" {
-		cfg.Web.BrandTitle = req.BrandTitle
-	}
-	if req.BrandEmoji != "" {
-		cfg.Web.BrandEmoji = req.BrandEmoji
-	}
-	if req.BrandSubtitle != "" {
-		cfg.Web.BrandSubtitle = req.BrandSubtitle
-	}
-	if req.CustomCSS != "" {
-		cfg.Web.CustomCSS = req.CustomCSS
-	}
-
-	if err := config.Save(cfg); err != nil {
 		errResp(w, http.StatusInternalServerError, fmt.Errorf("saving config: %w", err))
 		return
 	}

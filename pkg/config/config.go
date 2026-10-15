@@ -1,7 +1,6 @@
 package config
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -505,10 +504,10 @@ func DefaultPath() string {
 
 // Load reads the config file from path. Returns empty config if file doesn't
 // exist. An empty path, or a path equal to DefaultPath(), is served from an
-// in-process byte cache (store.go) that avoids re-reading the file when
-// several helpers are called back-to-back; the returned *Config is always a
-// fresh, independent value, never shared with another caller. Any other
-// explicit path is always read straight from disk.
+// in-process byte cache (store.go) that is revalidated with a stat on every
+// call, so it only skips the read and parse when the file is unchanged; the
+// returned *Config is always a fresh, independent value, never shared with
+// another caller. Any other explicit path is always read straight from disk.
 func Load(path string) (*Config, error) {
 	if path == "" || path == DefaultPath() {
 		return store.loadDefault()
@@ -518,17 +517,9 @@ func Load(path string) (*Config, error) {
 
 // loadFromDisk always reads path fresh, bypassing the cache.
 func loadFromDisk(path string) (*Config, error) {
-	data, notFound, err := readFileTolerant(path)
+	data, _, err := readFileTolerant(path)
 	if err != nil {
-		// A platform with no filesystem has no config file either: the
-		// browser demo (js/wasm, #284) gets ENOSYS for every file call.
-		if os.IsNotExist(err) || errors.Is(err, errors.ErrUnsupported) {
-			return &Config{}, nil
-		}
 		return nil, err
-	}
-	if notFound {
-		return &Config{}, nil
 	}
 	return unmarshalConfig(data)
 }
@@ -625,19 +616,16 @@ func SetIncusRemote(remote string) error {
 	})
 }
 
-// Save writes config.yaml with private permissions. When cfg is being saved
-// to the default path, the in-process cache (store.go) is updated to match
-// the bytes just written, so a subsequent Load("") doesn't re-read the file.
+// Save writes config.yaml with private permissions and updates the
+// in-process cache (store.go) to match the bytes just written.
 //
-// Save takes the store's lock for the duration of the write. Prefer mutate
+// Save takes the store's locks for the duration of the write. Prefer mutate
 // (store.go) over a bare Load("")+Save pair in a new helper: mutate holds
-// the lock across the whole load-modify-save span, which is what actually
+// the locks across the whole load-modify-save span, which is what actually
 // prevents two concurrent writers from losing one of their changes; calling
 // Save alone only makes the write itself atomic on disk.
 func Save(cfg *Config) error {
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	return store.saveLocked(cfg)
+	return withLock(func() error { return store.saveLocked(cfg) })
 }
 
 func detectCTBackend() string {

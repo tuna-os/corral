@@ -1,7 +1,10 @@
 package config
 
 import (
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 )
@@ -97,11 +100,76 @@ func TestLoad_DefaultCacheInvalidatesOnHOMEChange(t *testing.T) {
 	}
 }
 
-func TestInvalidate(t *testing.T) {
+// TestLoad_SeesExternalEdits guards the cache against serving stale bytes
+// after another process (or a hand edit) rewrites or deletes config.yaml:
+// a long-running `corral web` must see a concurrent `corral context add`.
+func TestLoad_SeesExternalEdits(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	_, err := Load("")
-	if err != nil {
-		t.Fatalf("Load: %v", err)
+	if err := SetIncusRemote("first"); err != nil {
+		t.Fatalf("SetIncusRemote: %v", err)
 	}
-	Invalidate()
+	if got := IncusRemote(); got != "first" {
+		t.Fatalf("IncusRemote() = %q, want first", got)
+	}
+
+	// Rewrite in place (same inode, different size).
+	if err := os.WriteFile(DefaultPath(), []byte("incus:\n  remote: edited-by-hand\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := IncusRemote(); got != "edited-by-hand" {
+		t.Fatalf("IncusRemote() after in-place edit = %q, want edited-by-hand", got)
+	}
+
+	// Replace via rename, as another corral process's Save does. Same
+	// size as the previous content, so the inode is what changes.
+	tmp := filepath.Join(ConfigDir(), "other.yaml")
+	if err := os.WriteFile(tmp, []byte("incus:\n  remote: edited-by-peer\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(tmp, DefaultPath()); err != nil {
+		t.Fatal(err)
+	}
+	if got := IncusRemote(); got != "edited-by-peer" {
+		t.Fatalf("IncusRemote() after rename = %q, want edited-by-peer", got)
+	}
+
+	if err := os.Remove(DefaultPath()); err != nil {
+		t.Fatal(err)
+	}
+	if got := IncusRemote(); got != "local" {
+		t.Fatalf("IncusRemote() after delete = %q, want default local", got)
+	}
+}
+
+// TestUpdate_AppliesAndPersists covers the exported read-modify-write entry
+// point used outside this package (the web theme handler).
+func TestUpdate_AppliesAndPersists(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := SetPeer("keep", "https://keep.example"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Update(func(cfg *Config) error {
+		cfg.Web.BrandTitle = "Ranch"
+		return nil
+	}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	cfg, err := loadFromDisk(DefaultPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Web.BrandTitle != "Ranch" || len(cfg.Peers) != 1 {
+		t.Fatalf("on-disk config = %+v, want BrandTitle Ranch and the existing peer", cfg)
+	}
+
+	wantErr := errors.New("boom")
+	if err := Update(func(cfg *Config) error {
+		cfg.Web.BrandTitle = "discarded"
+		return wantErr
+	}); !errors.Is(err, wantErr) {
+		t.Fatalf("Update error = %v, want %v", err, wantErr)
+	}
+	if cfg, _ := Load(""); cfg.Web.BrandTitle != "Ranch" {
+		t.Fatalf("failed Update was saved: BrandTitle = %q", cfg.Web.BrandTitle)
+	}
 }
