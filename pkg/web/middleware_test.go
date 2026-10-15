@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,38 @@ import (
 // Characterization tests for the request pipeline (#503): the host allowlist
 // Serve wraps around the router, and the middleware chain newMux returns.
 // They pin today's behaviour so the routing code can move without changing it.
+
+func TestChain_FirstMiddlewareRunsFirst(t *testing.T) {
+	var order []string
+	tag := func(name string) middleware {
+		return func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				order = append(order, name)
+				next.ServeHTTP(w, r)
+			})
+		}
+	}
+	h := chain(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		order = append(order, "handler")
+	}), tag("a"), tag("b"), tag("c"))
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
+	if got := strings.Join(order, ","); got != "a,b,c,handler" {
+		t.Fatalf("order = %s", got)
+	}
+}
+
+func TestRequestPipeline_Order(t *testing.T) {
+	want := []middleware{peerServiceAuth, adminGate, activityTracker, peerGate}
+	got := requestPipeline()
+	if len(got) != len(want) {
+		t.Fatalf("pipeline has %d middleware, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if reflect.ValueOf(got[i]).Pointer() != reflect.ValueOf(want[i]).Pointer() {
+			t.Errorf("pipeline[%d] is not the expected middleware", i)
+		}
+	}
+}
 
 func TestEnforceAllowedHosts_MatchesCaseInsensitivelyAfterTrimming(t *testing.T) {
 	handler, err := enforceAllowedHosts(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
