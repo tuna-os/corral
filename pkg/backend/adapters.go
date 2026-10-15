@@ -171,6 +171,12 @@ func (a kubevirtAdapter) Events(name string) ([]Event, error) {
 func (a kubevirtAdapter) View(name string) error { return a.client.Viewer(name) }
 func (a kubevirtAdapter) Logs(name string) error { return a.client.Logs(name) }
 
+func (a kubevirtAdapter) Describe(name string) ([]byte, error) { return a.client.VMInfo(name) }
+
+func (a kubevirtAdapter) SSH(name string, opts SSHOptions) error {
+	return a.client.SSH(name, opts.User, opts.Identity, opts.Command, opts.Port, opts.Password, opts.LocalForwards)
+}
+
 // ── local QEMU ────────────────────────────────────────────────────
 //
 // Power plus a real restart. Everything else is a gap the matrix names: the unit
@@ -202,6 +208,15 @@ func (qemuAdapter) Metrics(name string) (map[string]string, error) { return qemu
 func (qemuAdapter) View(name string) error                 { return qemu.Viewer(name) }
 func (qemuAdapter) Logs(name string) error                 { return qemu.Logs(name) }
 func (qemuAdapter) SerialLogs(name string, tail int) error { return qemu.LogsSerial(name, tail) }
+
+func (qemuAdapter) Describe(name string) ([]byte, error) { return qemu.Info(name) }
+
+func (qemuAdapter) SSH(name string, opts SSHOptions) error {
+	if opts.Vsock {
+		return qemu.SSHViaVsock(name, opts.User, opts.Command)
+	}
+	return qemu.SSH(name, opts.User, opts.Identity, opts.Command, opts.Port, opts.Password, opts.LocalForwards)
+}
 
 // Events: journald already keeps the local backend's history, keyed by the
 // unit systemd started. This is the only backend outside KubeVirt and PVE
@@ -242,6 +257,14 @@ func (a incusAdapter) Resume(name string) error { return a.client.Resume(name) }
 func (a incusAdapter) View(name string) error { return a.client.Viewer(name) }
 func (a incusAdapter) Logs(name string) error { return a.client.ConsoleLog(name) }
 
+func (a incusAdapter) Describe(name string) ([]byte, error) { return a.client.Info(name) }
+
+// SSH is `incus exec` into the instance; Incus authenticates the operator,
+// so user, identity, and password do not apply.
+func (a incusAdapter) SSH(name string, opts SSHOptions) error {
+	return a.client.SSH(name, opts.Command)
+}
+
 func (a incusAdapter) Address(name string) (string, error) {
 	instances, err := a.client.ListInstances()
 	if err != nil {
@@ -277,6 +300,14 @@ func (a libvirtAdapter) Resume(name string) error { return a.client.Resume(name)
 // Logger: libvirt keeps no guest log a client can read back, and `virsh
 // console` is an interactive attach, not a log.
 func (a libvirtAdapter) View(name string) error { return a.client.Viewer(name) }
+
+func (a libvirtAdapter) Describe(name string) ([]byte, error) { return a.client.Info(name) }
+
+// SSH reports why libvirt cannot shell in yet: Corral discovers no guest
+// address for a domain, and the client says so in terms of the fix.
+func (a libvirtAdapter) SSH(name string, opts SSHOptions) error {
+	return a.client.SSH(name, opts.Command)
+}
 
 // ── VirtualBox ────────────────────────────────────────────────────
 //
