@@ -944,7 +944,11 @@ func memSpec(memMib int) map[string]any {
 }
 
 func parseMem(s string) int {
-	upper := strings.ToUpper(s)
+	// CLI memory accepts G/M as well as the binary units used by KubeVirt.
+	// Without normalization, 6Gi fell through to raw MiB and became 6Mi.
+	upper := strings.ToUpper(strings.TrimSpace(s))
+	upper = strings.TrimSuffix(upper, "B")
+	upper = strings.TrimSuffix(upper, "I")
 	var val int
 	if strings.HasSuffix(upper, "G") {
 		fmt.Sscanf(s, "%d", &val)

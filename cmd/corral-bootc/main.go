@@ -70,6 +70,13 @@ func resolveContext(name string) (config.ContextConfig, error) {
 	return found, nil
 }
 
+// newBuilder and targetFor are indirection vars over bootc.LocalBuilder and
+// bootc.TargetFor so tests can inject fakes without touching podman or a
+// backend's storage. Production behavior is unchanged.
+var newBuilder = func(sudo bool) bootc.Builder { return bootc.LocalBuilder{Sudo: sudo} }
+
+var targetFor = bootc.TargetFor
+
 // buildAndImport is the off-cluster path: build the disk here with podman,
 // then hand it to the backend's target. The split is the point of #130 — the
 // same built disk works for local QEMU and for libvirt, and neither needs a
@@ -80,11 +87,11 @@ func buildAndImport(name string, target config.ContextConfig, image, sshKey, dis
 	}
 	image = catalog.ResolveBootc(image)
 
-	importer, err := bootc.TargetFor(target.Backend)
+	importer, err := targetFor(target.Backend)
 	if err != nil {
 		return err
 	}
-	builder := bootc.LocalBuilder{Sudo: useSudo}
+	builder := newBuilder(useSudo)
 	if err := builder.Available(); err != nil {
 		// Report what the target needs too, so one run tells the operator
 		// everything to install rather than one thing per attempt.
@@ -214,7 +221,7 @@ func main() {
 	create.Flags().StringVar(&sshKey, "ssh-key", "", "SSH public key (default: ~/.ssh/*.pub)")
 	create.Flags().StringVarP(&storageClass, "storage-class", "s", "", "StorageClass for the disk PVC (default: cluster preference)")
 	create.Flags().BoolVar(&resume, "resume", false, "Finish a build that completed after a previous `create` was interrupted")
-	create.Flags().StringVar(&filesystem, "filesystem", "", "Override the root filesystem a local build would pick from the image (xfs for ostree, btrfs for composefs)")
+	create.Flags().StringVar(&filesystem, "filesystem", "", "Override the root filesystem a local build would pick from the image (xfs for ostree, ext4 or btrfs for composefs)")
 	create.Flags().BoolVar(&useSudo, "sudo", false, "Run the local build's podman under sudo — bootc install needs root (off-cluster backends only)")
 
 	images := &cobra.Command{

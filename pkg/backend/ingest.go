@@ -102,6 +102,15 @@ func (libvirtAdapter) AcceptsUEFI() bool { return true }
 
 // ── kubevirt ──────────────────────────────────────────────────────
 
+// TEST SEAM (no behavior change): UploadDataVolume shells to virtctl via
+// os/exec directly, so it cannot go through the shell.Runner fakes the other
+// backends use, and CreateVM is wrapped so tests can capture the exact opts
+// the adapter derived. Production keeps the defaults below.
+var (
+	kubevirtUpload   = kubevirt.UploadDataVolume
+	kubevirtCreateVM = kubevirt.CreateVM
+)
+
 // Ingest uploads the disk into a CDI DataVolume and creates a VM that adopts
 // the resulting PVC as its boot disk.
 //
@@ -109,6 +118,7 @@ func (libvirtAdapter) AcceptsUEFI() bool { return true }
 // protocol (UploadTokenRequest, then streaming to cdi-uploadproxy with a bearer
 // token): pkg/kubevirt already wraps it, including the retries and progress
 // that a multi-gigabyte upload over a self-signed proxy needs.
+
 func (a kubevirtAdapter) Ingest(ref types.InstanceRef, disk string, shape Shape) error {
 	namespace := ref.Namespace
 	if namespace == "" {
@@ -122,14 +132,14 @@ func (a kubevirtAdapter) Ingest(ref types.InstanceRef, disk string, shape Shape)
 
 	// The upload creates the DataVolume and its PVC. Progress goes to stderr,
 	// which is where the CLI's other long operations report.
-	if err := kubevirt.UploadDataVolume(claim, namespace, disk, size,
+	if err := kubevirtUpload(claim, namespace, disk, size,
 		kubevirt.PreferredStorageClass(), os.Stderr); err != nil {
 		return fmt.Errorf("uploading the disk into %s/%s: %w", namespace, claim, err)
 	}
 
 	// PVC, not ImportURL: the disk is already in the cluster, and pointing CDI
 	// at a URL would make it fetch what was just uploaded.
-	return kubevirt.CreateVM(types.CreateOpts{
+	return kubevirtCreateVM(types.CreateOpts{
 		Name: ref.Name, Namespace: namespace, Backend: "kubevirt",
 		CPU: shape.CPU, Mem: shape.Mem, Disk: size,
 		PVC: claim, SSHPublicKey: shape.SSHKey, UEFI: shape.UEFI,

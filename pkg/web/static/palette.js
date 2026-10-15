@@ -1,0 +1,518 @@
+// Command palette (Ctrl/Cmd+K), keyboard shortcuts and their `?` overlay (#349).
+//
+// The palette searches the same things the tree shows — VMs, CTs, nodes and
+// pools — plus the verbs an operator reaches for ("stop web-prod", "migrate
+// db-prod", "create VM"). Whatever was run from it recently ranks first, so
+// the second visit to a VM is two keystrokes.
+//
+// It is a keyboard equivalent, never a second way around the rules: an action
+// that mutates is not offered to a read-only caller, exactly as the toolbar
+// that holds the same buttons is hidden from them.
+
+// Injected by app.js so this module does not import the entry point back.
+let ctx = {};
+export function bindPalette(helpers) { ctx = helpers; }
+
+const RECENT_KEY = 'corral.palette.recent';
+const RECENT_MAX = 20;
+const RESULTS_MAX = 50;
+
+function loadRecent() {
+  try {
+    const list = JSON.parse(localStorage.getItem(RECENT_KEY) || '[]');
+    return Array.isArray(list) ? list.filter((id) => typeof id === 'string') : [];
+  } catch { return []; }
+}
+
+function remember(id) {
+  const list = [id, ...loadRecent().filter((x) => x !== id)].slice(0, RECENT_MAX);
+  try { localStorage.setItem(RECENT_KEY, JSON.stringify(list)); } catch { /* private mode */ }
+}
+
+const readOnly = () => document.body.classList.contains('read-only');
+
+// Which palette entries have a key of their own. Keyed by entry id prefix so
+// the keys and the `?` overlay below cannot drift apart: both name the same
+// handful of bindings that initKeys() actually registers.
+const SHORTCUT_KEYS = {
+  'view:dc': ['g', 'd'],
+  'vm-console': ['c'],
+  'vm-start': ['s'],
+  'vm-stop': ['s'],
+  'dock:tasks': ['t'],
+  'dock:events': ['e'],
+  'action:next-view': ['v'],
+};
+
+// ── entries ───────────────────────────────────────────────────────
+// Each entry: { id, kind, label, sub, keywords, mutates, run }. The id is
+// stable across polls so "recently used" survives a refresh and a reload.
+
+function entries() {
+  const { vms, cts, nodes, pools, go, openVM, vmAction, ctAction, openPool, createVM, createCT, icon, resetLayout } = ctx;
+  const out = [];
+  const add = (e) => out.push({ keywords: '', mutates: false, ...e });
+
+  const views = [
+    ['dc', 'Datacenter', 'datacenter'],
+    ['doctor', 'Cluster health', 'health'],
+    ['extensions', 'Extensions', 'extension'],
+    ['multiview', 'Multiview', 'cube'],
+    ['settings', 'Settings', 'cog'],
+  ];
+  for (const [type, label, ic] of views) {
+    add({
+      id: `view:${type}`, kind: 'view', icon: icon(ic), label, sub: 'go to',
+      // The palette doubles as the place people learn the keyboard: VS Code
+      // shows a command's shortcut beside it, and Linear's palette does the
+      // same. A shortcut nobody is ever shown is a shortcut nobody uses. The
+      // hint is aria-hidden because the key is registered in code, not here,
+      // and a screen reader would otherwise read out the letters as content.
+      keys: SHORTCUT_KEYS[`view:${type}`],
+      run: () => go({ type }),
+    });
+  }
+  // The dock panels, so the keys above are discoverable and the panels can be
+  // reached by search as well as by their tab.
+  for (const [id, label, sub] of [
+    ['tasks', 'Tasks', 'recent activity'],
+    ['events', 'Events', 'for the current selection'],
+  ]) {
+    add({
+      id: `dock:${id}`, kind: 'view', icon: icon(id === 'tasks' ? 'menu' : 'info'),
+      label, sub, keywords: 'dock panel log',
+      keys: SHORTCUT_KEYS[`dock:${id}`],
+      run: () => document.dispatchEvent(new CustomEvent('corral:open-dock-panel', { detail: id })),
+    });
+  }
+  add({ id: 'action:create-vm', kind: 'create', icon: icon('plus'), label: 'Create VM', sub: 'new virtual machine', keywords: 'new', mutates: true, run: createVM });
+  add({ id: 'action:create-ct', kind: 'create', icon: icon('plus'), label: 'Create CT', sub: 'new container', keywords: 'new container', mutates: true, run: createCT });
+  // The sidebar width, the dock height and whether either is collapsed are all
+  // remembered, so there has to be a way back to the defaults. It is not a
+  // mutation of the fleet — only of this browser's layout — so a read-only
+  // caller gets it too.
+  add({
+    id: 'action:theme', kind: 'view', icon: icon('cog'),
+    label: `Appearance: ${ctx.themeMode()}`,
+    sub: 'system, light or dark',
+    keywords: 'theme dark light mode colour color scheme appearance night day',
+    // Like Reset layout, this changes the browser's view and not the fleet,
+    // so a read-only caller gets it too.
+    run: () => { ctx.cycleTheme(); },
+  });
+  if (resetLayout) {
+    add({
+      id: 'action:reset-layout', kind: 'view', icon: icon('restart'),
+      label: 'Reset layout', sub: 'sidebar, dock and panel sizes',
+      keywords: 'layout reset sidebar dock width height restore default workspace',
+      run: resetLayout,
+    });
+  }
+
+  for (const vm of vms()) {
+    const key = ctx.vmKey(vm);
+    const where = [vm.backend, vm.namespace, vm.node].filter(Boolean).join(' · ');
+    // What a field filter can ask about. `sub` already shows most of it, but
+    // as one string: "node=corral-1" has to mean the node and not a guest
+    // whose name happens to contain it.
+    const facts = {
+      node: vm.node || '',
+      namespace: vm.namespace || '',
+      status: vm.status || '',
+      backend: vm.backend || '',
+      tag: vm.tags || [],
+    };
+    add({ id: `vm:${key}`, kind: 'vm', icon: icon(vm.isTemplate ? 'template' : 'cube'), label: vm.name, sub: where, keywords: (vm.tags || []).join(' '), facts, run: () => openVM(key) });
+
+    const cap = vm.capabilities || {};
+    const verb = (act, label, when = true) => {
+      if (!when) return;
+      add({
+        id: `vm-${act}:${key}`, kind: 'action', icon: icon({ console: 'desktop', start: 'play' }[act] || act),
+        label: `${label} ${vm.name}`, sub: where, mutates: act !== 'console',
+        // `c` and `s` act on the selected VM, so the hint belongs only on that
+        // VM's rows. On any other guest the key would do something else.
+        keys: ctx.selectedVMKey?.() === key ? SHORTCUT_KEYS[`vm-${act}`] : undefined,
+        run: () => (act === 'console' ? openVM(key, 'console') : vmAction(key, act)),
+      });
+    };
+    verb('console', 'Console', !!(cap.vnc || cap.tty));
+    verb('start', 'Start', !!cap.start && !vm.running);
+    verb('stop', 'Stop', !!cap.stop && vm.running);
+    verb('restart', 'Restart', !!(cap.start && cap.stop) && vm.running);
+    verb('migrate', 'Migrate', vm.backend === 'kubevirt' && vm.ready && vm.liveMigratable);
+  }
+
+  for (const c of cts()) {
+    const key = `${c.namespace}/${c.name}`;
+    add({
+      id: `ct:${key}`, kind: 'ct', icon: icon('container'), label: c.name,
+      sub: `container · ${c.namespace}`,
+      facts: { node: c.node || '', namespace: c.namespace || '', status: c.phase || '', backend: 'container', tag: [] },
+      run: () => go({ type: 'ct', key }),
+    });
+    const running = c.ready || c.phase === 'Running';
+    add({
+      id: `ct-${running ? 'stop' : 'start'}:${key}`, kind: 'action', icon: icon(running ? 'stop' : 'play'),
+      label: `${running ? 'Stop' : 'Start'} ${c.name}`, sub: `container · ${c.namespace}`, mutates: true,
+      run: () => ctAction(key, running ? 'stop' : 'start'),
+    });
+  }
+
+  for (const n of nodes()) {
+    add({ id: `node:${n.name}`, kind: 'node', icon: icon('server'), label: n.name, sub: `node${n.roles ? ` · ${n.roles}` : ''}`, run: () => go({ type: 'node', name: n.name }) });
+  }
+
+  for (const f of pools().folders || []) {
+    add({ id: `pool:${f.path}`, kind: 'pool', icon: icon('folder'), label: f.path, sub: 'pool', run: () => openPool(f.path) });
+  }
+
+  return readOnly() ? out.filter((e) => !e.mutates) : out;
+}
+
+// ── matching ──────────────────────────────────────────────────────
+// Subsequence match, scored so a prefix beats a word start beats a scatter.
+// Every query word must match somewhere in the entry; "stop web" finds
+// "Stop web-prod" and "web st" does too.
+
+function scoreWord(word, text, scatter) {
+  const idx = text.indexOf(word);
+  if (idx === 0) return 100;
+  if (idx > 0) return /[\s\-_./·]/.test(text[idx - 1]) ? 80 : 60;
+  if (!scatter) return 0;
+  let t = 0;
+  let gaps = 0;
+  for (const ch of word) {
+    const at = text.indexOf(ch, t);
+    if (at < 0) return 0;
+    gaps += at - t;
+    t = at + 1;
+  }
+  return Math.max(1, 40 - gaps);
+}
+
+// With nothing typed, the list reads top-down: places, then the create verbs,
+// then the fleet. Per-guest verbs come last; they are for searching.
+const BROWSE_ORDER = { view: 50, create: 40, action: 0, vm: 30, ct: 20, node: 10, pool: 10 };
+
+// Typing a kind and a colon narrows the palette to that kind: "vm:" for guests,
+// "node:" for nodes, "do:" for the things that act. k9s does this with ":po"
+// and ":svc", and VS Code's Quick Open with its leading ">": one input, and a
+// prefix says which of several lists you mean. Without it a fleet of a hundred
+// VMs buries the five views and two create actions under the guests.
+const SCOPES = {
+  vm: ['vm'], vms: ['vm'],
+  ct: ['ct'], cts: ['ct'],
+  node: ['node'], nodes: ['node'],
+  pool: ['pool'], pools: ['pool'],
+  view: ['view'], go: ['view'],
+  do: ['action', 'create'], action: ['action', 'create'], new: ['create'],
+};
+
+// Fields a query can name. Prism's search takes the same shape, as
+// `vm alerts severity=critical`, and the reason is that a fleet of any size
+// makes "every guest on the node that is down" a thing worth asking directly
+// rather than by eye.
+//
+// Only fields a guest actually has. An unknown field matches nothing, which is
+// the honest answer: silently ignoring it would show a list that looks like it
+// answered the question.
+const FILTER_FIELDS = ['node', 'namespace', 'status', 'backend', 'tag'];
+
+/**
+ * Pull `field=value` out of a query, and return the words that are left.
+ * "node=corral-1 web" filters by node and then searches for "web".
+ */
+export function parseFilters(query) {
+  const filters = [];
+  const rest = [];
+  for (const token of query.split(/\s+/)) {
+    const m = /^([a-z]+)=(.*)$/i.exec(token);
+    if (m && m[2]) filters.push({ key: m[1].toLowerCase(), value: m[2].toLowerCase() });
+    else if (token) rest.push(token);
+  }
+  return { filters, rest: rest.join(' ') };
+}
+
+// One filter against one entry. An entry with no facts cannot answer a
+// question about a node, so it drops out rather than ranking low.
+function matchesFilter(entry, { key, value }) {
+  if (!FILTER_FIELDS.includes(key)) return false;
+  const fact = entry.facts?.[key];
+  if (fact === undefined) return false;
+  const values = Array.isArray(fact) ? fact : [fact];
+  return values.some((v) => String(v).toLowerCase().includes(value));
+}
+
+/** Split "vm: web" into the kinds to keep and the rest of the query. */
+export function parseScope(query) {
+  const m = /^\s*([a-z]+)\s*:\s*(.*)$/i.exec(query);
+  if (!m) return null;
+  const kinds = SCOPES[m[1].toLowerCase()];
+  return kinds ? { kinds, rest: m[2] } : null;
+}
+
+export function rank(list, query, recent) {
+  const scope = parseScope(query);
+  if (scope) {
+    list = list.filter((e) => scope.kinds.includes(e.kind));
+    query = scope.rest;
+  }
+  // Field filters come off before the words, so "status=running web" does not
+  // try to match "status=running" as a name.
+  const { filters, rest } = parseFilters(query);
+  if (filters.length) {
+    list = list.filter((e) => filters.every((f) => matchesFilter(e, f)));
+    query = rest;
+  }
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const recency = new Map(recent.map((id, i) => [id, recent.length - i]));
+  const scored = [];
+  for (const e of list) {
+    const label = e.label.toLowerCase();
+    const hay = `${label} ${(e.sub || '').toLowerCase()} ${e.keywords.toLowerCase()} ${e.kind}`;
+    let score = 0;
+    let ok = true;
+    for (const w of words) {
+      // Letters scattered across the name ("dbp" → db-prod) count; scattered
+      // across the namespace, node and tags they would match almost anything.
+      const s = Math.max(scoreWord(w, label, true) * 1.5, scoreWord(w, hay, false));
+      if (!s) { ok = false; break; }
+      score += s;
+    }
+    if (!ok) continue;
+    // An exact name beats anything else: typing a VM's whole name and hitting
+    // Enter must land on that VM, not on "Stop <name>".
+    if (words.length && label === words.join(' ')) score += 1000;
+    const r = recency.get(e.id) || 0;
+    // Recently used ranks first when browsing (empty query) and breaks near-
+    // ties when searching, without letting a stale hit outrank a real match.
+    score += r ? (words.length ? 30 + r : 10000 + r) : 0;
+    if (!words.length) score += BROWSE_ORDER[e.kind] || 0;
+    scored.push({ e, score });
+  }
+  scored.sort((a, b) => b.score - a.score || a.e.label.localeCompare(b.e.label));
+  return scored.slice(0, RESULTS_MAX).map((s) => s.e);
+}
+
+// ── palette dialog ────────────────────────────────────────────────
+
+let dlg = null;
+let results = [];
+let active = 0;
+
+function build() {
+  dlg = document.createElement('dialog');
+  dlg.id = 'palette';
+  dlg.setAttribute('aria-label', 'Command palette');
+  dlg.innerHTML = `
+    <input id="palette-input" type="text" autocomplete="off" spellcheck="false"
+      role="combobox" aria-expanded="true" aria-controls="palette-list" aria-autocomplete="list"
+      placeholder="Search VMs, nodes, pools and actions…">
+    <ul id="palette-list" role="listbox" aria-label="Results"></ul>
+    <!-- How many matches there are is obvious on screen and silent otherwise:
+         arrowing through a list reads out each option but never says how long
+         it is, and an empty result reads as nothing happening at all. The
+         count is announced politely so it waits for the typing to settle
+         instead of interrupting every keystroke. -->
+    <div id="palette-count" class="sr-only" role="status" aria-live="polite"></div>
+    <div class="palette-foot muted"><kbd>↑</kbd><kbd>↓</kbd> move · <kbd>Enter</kbd> run · <kbd>Esc</kbd> close · <kbd>?</kbd> shortcuts · <code>vm:</code> <code>node:</code> <code>do:</code> narrow</div>`;
+  document.body.appendChild(dlg);
+
+  const input = dlg.querySelector('#palette-input');
+  input.addEventListener('input', () => { active = 0; update(); });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown') { move(1); e.preventDefault(); }
+    else if (e.key === 'ArrowUp') { move(-1); e.preventDefault(); }
+    else if (e.key === 'Enter') { runActive(); e.preventDefault(); }
+  });
+  // A click on the backdrop lands on the dialog itself; one inside the card
+  // lands on a child.
+  dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close(); });
+  dlg.querySelector('#palette-list').addEventListener('click', (e) => {
+    const li = e.target.closest('li[data-i]');
+    if (!li) return;
+    active = Number(li.dataset.i);
+    runActive();
+  });
+}
+
+function update() {
+  const input = dlg.querySelector('#palette-input');
+  const list = dlg.querySelector('#palette-list');
+  const recent = loadRecent();
+  results = rank(entries(), input.value, recent);
+  if (active >= results.length) active = Math.max(0, results.length - 1);
+  const { esc } = ctx;
+  list.innerHTML = results.length
+    ? results.map((e, i) => `<li id="palette-opt-${i}" role="option" data-i="${i}" data-id="${esc(e.id)}"
+        aria-selected="${i === active}" class="${i === active ? 'active' : ''}">
+        ${e.icon}<span class="palette-label">${esc(e.label)}</span>
+        <span class="muted">${esc(e.sub || '')}</span>
+        ${recent.includes(e.id) ? '<span class="chip mini">recent</span>' : ''}
+        ${(e.keys || []).length ? `<span class="palette-keys" aria-hidden="true">${e.keys.map((k) => `<kbd>${esc(k)}</kbd>`).join('')}</span>` : ''}</li>`).join('')
+    : '<li class="muted palette-empty">No matches.</li>';
+  if (results.length) input.setAttribute('aria-activedescendant', `palette-opt-${active}`);
+  else input.removeAttribute('aria-activedescendant');
+  const count = dlg.querySelector('#palette-count');
+  if (count) {
+    count.textContent = results.length
+      ? `${results.length} result${results.length === 1 ? '' : 's'}`
+      : 'No matches.';
+  }
+}
+
+function move(delta) {
+  if (!results.length) return;
+  active = (active + delta + results.length) % results.length;
+  const list = dlg.querySelector('#palette-list');
+  list.querySelectorAll('li[data-i]').forEach((li) => {
+    const on = Number(li.dataset.i) === active;
+    li.classList.toggle('active', on);
+    li.setAttribute('aria-selected', String(on));
+    if (on) li.scrollIntoView({ block: 'nearest' });
+  });
+  dlg.querySelector('#palette-input').setAttribute('aria-activedescendant', `palette-opt-${active}`);
+}
+
+function runActive() {
+  const e = results[active];
+  if (!e) return;
+  remember(e.id);
+  dlg.close();
+  e.run();
+}
+
+export async function openPalette() {
+  if (!dlg) build();
+  closeShortcuts();
+  if (!dlg.open) dlg.showModal();
+  const input = dlg.querySelector('#palette-input');
+  input.value = '';
+  active = 0;
+  update();
+  input.focus();
+  // Pools are only polled while Pool View is showing; fetch them once so the
+  // palette can find one from any view.
+  await ctx.ensurePools();
+  if (dlg.open) update();
+}
+
+// ── shortcut overlay ──────────────────────────────────────────────
+
+const SHORTCUTS = [
+  [['Ctrl', 'K'], 'Open the command palette (⌘K on macOS)'],
+  [['?'], 'Show this list'],
+  [['/'], 'Filter the tree'],
+  [['c'], 'Open the selected VM\'s console'],
+  [['s'], 'Start or stop the selected VM'],
+  [['g', 'd'], 'Go to the datacenter'],
+  [['v'], 'Switch the tree to the next view'],
+  [['t'], 'Show tasks (again to hide)'],
+  [['e'], 'Show events for the selection (again to hide)'],
+  [['Esc'], 'Close a dialog'],
+  [['vm:'], 'In the palette, narrow to guests (also node:, pool:, view:, do:)'],
+];
+
+let help = null;
+
+function closeShortcuts() { if (help?.open) help.close(); }
+
+// The dock is an Alpine island, so it is asked rather than called. It decides
+// what to do, which keeps the toggle behaviour in one place.
+function openDockPanel(id) {
+  document.dispatchEvent(new CustomEvent('corral:open-dock-panel', { detail: id }));
+}
+
+export function openShortcuts() {
+  if (!help) {
+    help = document.createElement('dialog');
+    help.id = 'shortcuts';
+    help.setAttribute('aria-labelledby', 'shortcuts-title');
+    help.innerHTML = `
+      <h2 id="shortcuts-title">Keyboard shortcuts</h2>
+      <dl class="shortcuts">${SHORTCUTS.map(([keys, what]) =>
+        `<dt>${keys.map((k) => `<kbd>${k}</kbd>`).join(' then ')}</dt><dd>${what}</dd>`).join('')}</dl>
+      <p class="hint">Single-key shortcuts are ignored while you type in a field or a console.</p>
+      <div class="dialog-actions"><button type="button" class="btn" id="shortcuts-close">Close</button></div>`;
+    document.body.appendChild(help);
+    help.querySelector('#shortcuts-close').onclick = () => help.close();
+    help.addEventListener('click', (e) => { if (e.target === help) help.close(); });
+  }
+  // Start/stop mutates, so a read-only caller is not told it exists.
+  help.querySelectorAll('dt').forEach((dt) => {
+    const mutating = dt.textContent.trim() === 's';
+    dt.hidden = mutating && readOnly();
+    dt.nextElementSibling.hidden = dt.hidden;
+  });
+  if (!help.open) help.showModal();
+}
+
+// ── global keys ───────────────────────────────────────────────────
+
+// A key typed into a field, or into a live console, belongs to that field:
+// `s` in a VM name is a letter, and Ctrl+K in a serial shell kills a line.
+function typing(target) {
+  if (!(target instanceof Element)) return false;
+  if (target.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"]')) return true;
+  return !!target.closest('#vnc-screen, #tty-screen, #rdp-screen, .xterm');
+}
+
+let pendingG = 0;
+
+function onKey(e) {
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'k') {
+    // Inside the palette's own box Ctrl+K reopens it, which is harmless; in a
+    // console it is the console's key.
+    if (typing(e.target) && e.target.id !== 'palette-input') return;
+    // Another dialog (the create wizard, a move preflight) owns the screen;
+    // jumping elsewhere from behind it would strand it.
+    if (document.querySelector('dialog[open]:not(#palette):not(#shortcuts)') || document.querySelector('.modal')) return;
+    e.preventDefault();
+    openPalette();
+    return;
+  }
+  if (e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return;
+  if (typing(e.target)) return;
+  // A modal owns the keyboard while it is open; the overlay's own keys aside.
+  if (document.querySelector('dialog[open]:not(#shortcuts)') || document.querySelector('.modal')) return;
+
+  if (pendingG && Date.now() - pendingG < 1200) {
+    pendingG = 0;
+    if (e.key === 'd') { e.preventDefault(); closeShortcuts(); ctx.go({ type: 'dc' }); }
+    return;
+  }
+  pendingG = 0;
+
+  switch (e.key) {
+    case '?': e.preventDefault(); openShortcuts(); break;
+    // Prism gives a panel its own key rather than only a tab to click. The
+    // letters are corral's own, because the panels are named Tasks and Events.
+    // Prism gives the view switch a key of its own. corral has four views of
+    // the same fleet and reached them by mouse only, so this walks them.
+    case 'v': e.preventDefault(); closeShortcuts(); ctx.nextTreeView(); break;
+    case 't': e.preventDefault(); closeShortcuts(); openDockPanel('tasks'); break;
+    case 'e': e.preventDefault(); closeShortcuts(); openDockPanel('events'); break;
+    case '/': e.preventDefault(); closeShortcuts(); ctx.focusFilter(); break;
+    case 'g': pendingG = Date.now(); break;
+    case 'c': {
+      const key = ctx.selectedVMKey();
+      if (key) { e.preventDefault(); ctx.openVM(key, 'console'); }
+      break;
+    }
+    case 's': {
+      if (readOnly()) break;
+      const key = ctx.selectedVMKey();
+      const vm = key && ctx.vms().find((v) => ctx.vmKey(v) === key);
+      if (!vm) break;
+      const cap = vm.capabilities || {};
+      const act = vm.running ? 'stop' : 'start';
+      if (!cap[act]) break;
+      e.preventDefault();
+      ctx.vmAction(key, act);
+      break;
+    }
+  }
+}
+
+export function initKeys() { document.addEventListener('keydown', onKey); }

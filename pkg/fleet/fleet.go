@@ -12,9 +12,13 @@ import (
 	"github.com/tuna-os/corral/pkg/incus"
 	"github.com/tuna-os/corral/pkg/kubevirt"
 	"github.com/tuna-os/corral/pkg/libvirt"
+	"github.com/tuna-os/corral/pkg/nutanix"
 	"github.com/tuna-os/corral/pkg/proxmoxbe"
 	"github.com/tuna-os/corral/pkg/qemu"
 	"github.com/tuna-os/corral/pkg/types"
+	"github.com/tuna-os/corral/pkg/virtualbox"
+	"github.com/tuna-os/corral/pkg/vsphere"
+	"github.com/tuna-os/corral/pkg/xen"
 )
 
 type Result struct {
@@ -53,9 +57,35 @@ func List(ctx context.Context) Result {
 				vms, err = incus.NewClient(target.Context).List()
 			case "libvirt":
 				vms, err = libvirt.NewClient(target.Context).List()
+			case "virtualbox":
+				vms, err = virtualbox.NewClient(target.Context).List()
 			case "proxmox":
 				var client *proxmoxbe.Client
 				if client, err = proxmoxbe.ClientForContext(target.Context); err == nil {
+					vms, err = client.List()
+				}
+			case "vsphere":
+				// The 20s SOAP timeout inside the client bounds this the way
+				// proxmoxbe.Timeout bounds the PVE path — a wedged vCenter
+				// fails one context, not the whole aggregation.
+				var client *vsphere.Client
+				if client, err = vsphere.ClientForContext(target.Context); err == nil {
+					vms, err = client.List()
+				}
+			case "xen":
+				// The 20s XML-RPC timeout inside the client bounds this the
+				// way proxmoxbe.Timeout bounds the PVE path — a wedged pool
+				// master fails one context, not the whole aggregation.
+				var client *xen.Client
+				if client, err = xen.ClientForContext(target.Context); err == nil {
+					vms, err = client.List()
+				}
+			case "nutanix":
+				// The 20s REST timeout inside the client bounds this the
+				// way proxmoxbe.Timeout bounds the PVE path — a wedged
+				// Prism Central fails one context, not the whole aggregation.
+				var client *nutanix.Client
+				if client, err = nutanix.ClientForContext(target.Context); err == nil {
 					vms, err = client.List()
 				}
 			default:

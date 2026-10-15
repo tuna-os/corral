@@ -1,7 +1,10 @@
 package bootc
 
 import (
+	"archive/tar"
+	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -169,7 +172,7 @@ func TestDetectBackend_FollowsTheClusterRule(t *testing.T) {
 		"bootupd present":          {[]string{"/usr/sbin/bootupctl"}, ostreeBackend},
 		"bootupd in /usr/bin":      {[]string{"/usr/bin/bootupctl"}, ostreeBackend},
 		"systemd-boot, no bootupd": {[]string{"/usr/lib/systemd/boot/efi/systemd-bootx64.efi"}, composefsBackend},
-		"neither marker":           {nil, ostreeBackend},
+		"Marlin ships both tools":  {[]string{"/usr/bin/bootupctl", "/usr/lib/systemd/boot/efi/systemd-bootx64.efi", "/usr/bin/mkfs.ext4"}, Backend{Kind: "composefs", Filesystem: "ext4", Flag: "--composefs-backend"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			fake := withFake(t)
@@ -201,6 +204,7 @@ func TestDetectBackend_NeverExecutesTheImage(t *testing.T) {
 	fake.AddPrefixResponse("podman create", "container123", nil)
 	fake.AddPrefixResponse("podman rm", "", nil)
 	fake.AddPrefixResponse("podman cp", "", errors.New("absent"))
+	fake.AddResponse("podman cp container123:/usr/bin/bootupctl -", "", nil)
 
 	if _, err := (LocalBuilder{}).DetectBackend("img"); err != nil {
 		t.Fatal(err)
@@ -357,10 +361,76 @@ func TestQEMUTarget_ReportsAMissingBuild(t *testing.T) {
 // A bootc image installs a UEFI bootloader. A BIOS domain boots it to a blank
 // screen with no error, which is the worst way to find out.
 func TestLibvirtTarget_DomainIsUEFI(t *testing.T) {
-	doc := (LibvirtTarget{}).DomainXML("dev", "/disks/dev.qcow2", CreateOpts{CPU: 2, Memory: "4Gi"})
+	// No firmware on the host: ask libvirt to auto-select an EFI firmware.
+	t.Setenv("CORRAL_OVMF_CODE", "/nonexistent/OVMF_CODE.fd")
+	t.Setenv("CORRAL_OVMF_VARS", "/nonexistent/OVMF_VARS.fd")
+	doc := (LibvirtTarget{}).DomainXML("qemu:///system", "dev", "/disks/dev.qcow2", CreateOpts{CPU: 2, Memory: "4Gi"})
 	if !strings.Contains(doc, "firmware='efi'") {
-		t.Errorf("the domain is not UEFI, so a bootc disk will not boot:\n%s", doc)
+		t.Errorf("without host firmware the domain should request auto-selected EFI, got:\n%s", doc)
 	}
+	assertDomainShape(t, doc)
+
+	// Firmware on the host: name the loader explicitly. Auto-selection
+	// depends on the daemon's firmware-descriptor cache, which a
+	// qemu:///session daemon can lack while qemu:///system defines fine
+	// (e2e-incus #482) — an explicit pflash loader defines on either URI.
+	dir := t.TempDir()
+	code := filepath.Join(dir, "OVMF_CODE.fd")
+	vars := filepath.Join(dir, "OVMF_VARS.fd")
+	for _, p := range []string{code, vars} {
+		if err := os.WriteFile(p, []byte("firmware"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("CORRAL_OVMF_CODE", code)
+	t.Setenv("CORRAL_OVMF_VARS", vars)
+	for _, uri := range []string{"qemu:///system", "qemu:///session", ""} {
+		doc = (LibvirtTarget{}).DomainXML(uri, "dev", "/disks/dev.qcow2", CreateOpts{CPU: 2, Memory: "4Gi"})
+		for what, want := range map[string]string{
+			"explicit pflash loader": "<loader readonly='yes' type='pflash'>" + code + "</loader>",
+			"vars template":          "<nvram template='" + vars + "'/>",
+		} {
+			if !strings.Contains(doc, want) {
+				t.Errorf("uri %q: domain is missing the %s (%q):\n%s", uri, what, want, doc)
+			}
+		}
+		if strings.Contains(doc, "firmware='efi'") {
+			t.Errorf("uri %q: explicit loader and auto-selection must not be mixed:\n%s", uri, doc)
+		}
+		assertDomainShape(t, doc)
+	}
+}
+
+// A remote hypervisor (qemu+ssh, qemu+tcp, …) has its own filesystem: the
+// manager's local OVMF paths may not exist there, so they must never leak
+// into the domain — the target daemon auto-selects from its own descriptors.
+func TestLibvirtTarget_RemoteTargetKeepsAutoSelectedFirmware(t *testing.T) {
+	dir := t.TempDir()
+	code := filepath.Join(dir, "OVMF_CODE.fd")
+	vars := filepath.Join(dir, "OVMF_VARS.fd")
+	for _, p := range []string{code, vars} {
+		if err := os.WriteFile(p, []byte("firmware"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("CORRAL_OVMF_CODE", code)
+	t.Setenv("CORRAL_OVMF_VARS", vars)
+	for _, uri := range []string{"qemu+ssh://hypervisor/system", "qemu+tcp://hypervisor:16509/system"} {
+		doc := (LibvirtTarget{}).DomainXML(uri, "dev", "/disks/dev.qcow2", CreateOpts{CPU: 2, Memory: "4Gi"})
+		if !strings.Contains(doc, "firmware='efi'") {
+			t.Errorf("uri %q: remote domain should request auto-selected EFI, got:\n%s", uri, doc)
+		}
+		for _, leaked := range []string{dir, "/usr/share/", "<loader", "<nvram"} {
+			if strings.Contains(doc, leaked) {
+				t.Errorf("uri %q: local firmware path %q leaked into remote XML:\n%s", uri, leaked, doc)
+			}
+		}
+		assertDomainShape(t, doc)
+	}
+}
+
+func assertDomainShape(t *testing.T, doc string) {
+	t.Helper()
 	for what, want := range map[string]string{
 		"q35 machine type": "machine='q35'",
 		"virtio boot disk": "bus='virtio'",
@@ -374,9 +444,30 @@ func TestLibvirtTarget_DomainIsUEFI(t *testing.T) {
 }
 
 func TestLibvirtTarget_DomainXMLIsWellFormed(t *testing.T) {
-	doc := (LibvirtTarget{}).DomainXML("dev", "/disks/dev.qcow2", CreateOpts{})
-	if err := wellFormed(doc); err != nil {
-		t.Fatalf("generated domain XML is not well-formed: %v\n%s", err, doc)
+	// Every firmware spelling must parse: the auto-selection fallback
+	// without host firmware, the explicit loader with code and vars, and
+	// the explicit loader with code alone.
+	code := filepath.Join(t.TempDir(), "OVMF_CODE.fd")
+	if err := os.WriteFile(code, []byte("firmware"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	vars := filepath.Join(t.TempDir(), "OVMF_VARS.fd")
+	if err := os.WriteFile(vars, []byte("firmware"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for name, env := range map[string][2]string{
+		"auto-selection fallback": {"/nonexistent/OVMF_CODE.fd", "/nonexistent/OVMF_VARS.fd"},
+		"explicit loader":         {code, vars},
+		"loader without vars":     {code, ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("CORRAL_OVMF_CODE", env[0])
+			t.Setenv("CORRAL_OVMF_VARS", env[1])
+			doc := (LibvirtTarget{}).DomainXML("qemu:///system", "dev", "/disks/dev.qcow2", CreateOpts{})
+			if err := wellFormed(doc); err != nil {
+				t.Fatalf("generated domain XML is not well-formed: %v\n%s", err, doc)
+			}
+		})
 	}
 }
 
@@ -531,6 +622,7 @@ func TestDetectBackend_GivesPodmanACommandToRecord(t *testing.T) {
 	fake.AddPrefixResponse("podman create", "container123", nil)
 	fake.AddPrefixResponse("podman rm", "", nil)
 	fake.AddPrefixResponse("podman cp", "", errors.New("absent"))
+	fake.AddResponse("podman cp container123:/usr/bin/bootupctl -", "", nil)
 
 	if _, err := (LocalBuilder{}).DetectBackend("ghcr.io/ublue-os/bluefin:stable"); err != nil {
 		t.Fatal(err)
@@ -551,5 +643,55 @@ func TestDetectBackend_GivesPodmanACommandToRecord(t *testing.T) {
 	// would fail loudly rather than execute something real.
 	if !strings.HasPrefix(probeCommand[0], "/corral-probe") {
 		t.Errorf("the placeholder should be an obviously fake path: %q", probeCommand[0])
+	}
+}
+
+// GRUB payloads win over systemd-boot binaries installed by the same systemd
+// package. Cover both bootupd layouts without requiring a container engine.
+func TestDetectBackend_GRUBPayloadWins(t *testing.T) {
+	for _, modern := range []bool{false, true} {
+		t.Run(fmt.Sprint(modern), func(t *testing.T) {
+			fake := withFake(t)
+			fake.AddPrefixResponse("podman create", "container123", nil)
+			fake.AddPrefixResponse("podman rm", "", nil)
+			fake.AddPrefixResponse("podman cp", "", errors.New("absent"))
+			for _, p := range []string{"/usr/lib/systemd/boot/efi/systemd-bootx64.efi", "/usr/bin/mkfs.xfs"} {
+				fake.AddResponse("podman cp container123:"+p+" -", "", nil)
+			}
+			addTar := func(dir, filename string) {
+				var b bytes.Buffer
+				tw := tar.NewWriter(&b)
+				if err := tw.WriteHeader(&tar.Header{Name: filename, Mode: 0644, Size: 1}); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := tw.Write([]byte("x")); err != nil {
+					t.Fatal(err)
+				}
+				if err := tw.Close(); err != nil {
+					t.Fatal(err)
+				}
+				fake.AddResponse("podman cp container123:"+dir+" -", b.String(), nil)
+			}
+			if modern {
+				fake.AddResponse("podman cp container123:/usr/lib/bootupd/updates/EFI.json -", "", nil)
+				addTar("/usr/lib/efi/grub2", "grub2/2.14/grubaa64.efi")
+				addTar("/usr/lib/efi/shim", "shim/16/shimaa64.efi")
+			} else {
+				addTar("/usr/lib/bootupd/updates/EFI", "EFI/fedora/grubx64.efi")
+			}
+			got, err := (LocalBuilder{}).DetectBackend("img")
+			if err != nil || got != ostreeBackend {
+				t.Fatalf("got %+v, %v", got, err)
+			}
+		})
+	}
+}
+func TestDetectBackend_RejectsUnknownImage(t *testing.T) {
+	fake := withFake(t)
+	fake.AddPrefixResponse("podman create", "container123", nil)
+	fake.AddPrefixResponse("podman rm", "", nil)
+	fake.AddPrefixResponse("podman cp", "", errors.New("absent"))
+	if _, err := (LocalBuilder{}).DetectBackend("img"); err == nil {
+		t.Fatal("unknown image silently chose OSTree")
 	}
 }

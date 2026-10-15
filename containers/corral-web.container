@@ -1,0 +1,33 @@
+# Quadlet unit for the Corral web UI (rootless Podman).
+#
+# Install (user scope, no root):
+#   mkdir -p ~/.config/containers/systemd
+#   cp containers/corral-web.container ~/.config/containers/systemd/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now corral-web.service
+#
+# The dashboard then listens on http://127.0.0.1:8006 (loopback only).
+# Logs: journalctl --user -u corral-web.service
+[Unit]
+Description=Corral web UI (Proxmox-style VM/CT dashboard)
+Documentation=https://github.com/tuna-os/corral
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+Image=ghcr.io/tuna-os/corral:latest
+ContainerName=corral-web
+# Loopback only: the UI has no login on its own. See docs/deployment-modes.md.
+PublishPort=127.0.0.1:8006:8006
+# Persist the VM registry across container replacements (HOME=/tmp in the
+# image, so the store lives under /tmp/.local/share/corral).
+Volume=corral-web-data:/tmp/.local/share/corral
+
+[Service]
+# Restart lives here, not in [Container]. Quadlet copies it
+# into the generated systemd unit verbatim.
+Restart=always
+TimeoutStartSec=60
+
+[Install]
+WantedBy=default.target
