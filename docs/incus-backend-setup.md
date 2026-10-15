@@ -19,7 +19,8 @@ default remotes.
 |---|---|
 | Inventory in `corral list`, the TUI and the web UI | yes. VMs show in `corral list`; containers show in `corral ct list` |
 | Start, stop, delete | yes (CLI, TUI, web) |
-| Restart | TUI and web. The CLI `corral restart` does not support Incus today ([#489](https://github.com/tuna-os/corral/issues/489)) |
+| Restart | yes (CLI, TUI, web), with `incus restart` |
+| Console and log | `corral viewer` runs `incus console --type=vga` (needs `remote-viewer` or `spicy`). `corral logs` prints `incus console --show-log` |
 | Create | yes, from an Incus image (`images:ubuntu/24.04` and similar) |
 | Shell | `corral ssh` and the web terminal run `incus exec`, not network SSH |
 | Snapshots | TUI only today, see [backend support](backend-support.md#incus-and-libvirt-snapshots-migration-and-hotplug) |

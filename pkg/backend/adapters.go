@@ -168,6 +168,9 @@ func (a kubevirtAdapter) Events(name string) ([]Event, error) {
 	return out, nil
 }
 
+func (a kubevirtAdapter) View(name string) error { return a.client.Viewer(name) }
+func (a kubevirtAdapter) Logs(name string) error { return a.client.Logs(name) }
+
 // ── local QEMU ────────────────────────────────────────────────────
 //
 // Power plus a real restart. Everything else is a gap the matrix names: the unit
@@ -195,6 +198,10 @@ func (qemuAdapter) Pause(name string) error  { return qemu.Pause(name) }
 func (qemuAdapter) Resume(name string) error { return qemu.Resume(name) }
 
 func (qemuAdapter) Metrics(name string) (map[string]string, error) { return qemu.Metrics(name) }
+
+func (qemuAdapter) View(name string) error                 { return qemu.Viewer(name) }
+func (qemuAdapter) Logs(name string) error                 { return qemu.Logs(name) }
+func (qemuAdapter) SerialLogs(name string, tail int) error { return qemu.LogsSerial(name, tail) }
 
 // Events: journald already keeps the local backend's history, keyed by the
 // unit systemd started. This is the only backend outside KubeVirt and PVE
@@ -232,6 +239,9 @@ func (a incusAdapter) Metrics(name string) (map[string]string, error) {
 }
 func (a incusAdapter) Resume(name string) error { return a.client.Resume(name) }
 
+func (a incusAdapter) View(name string) error { return a.client.Viewer(name) }
+func (a incusAdapter) Logs(name string) error { return a.client.ConsoleLog(name) }
+
 func (a incusAdapter) Address(name string) (string, error) {
 	instances, err := a.client.ListInstances()
 	if err != nil {
@@ -261,6 +271,12 @@ func (a libvirtAdapter) Metrics(name string) (map[string]string, error) {
 	return a.client.Metrics(name)
 }
 func (a libvirtAdapter) Resume(name string) error { return a.client.Resume(name) }
+
+// View is virt-viewer against the domain's own URI, so a domain on a remote
+// hypervisor opens there rather than looking for local QEMU metadata. No
+// Logger: libvirt keeps no guest log a client can read back, and `virsh
+// console` is an interactive attach, not a log.
+func (a libvirtAdapter) View(name string) error { return a.client.Viewer(name) }
 
 // ── VirtualBox ────────────────────────────────────────────────────
 //

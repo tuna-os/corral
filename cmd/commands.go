@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/tuna-os/corral/pkg/backend"
 	"github.com/tuna-os/corral/pkg/config"
 	"github.com/tuna-os/corral/pkg/fleet"
 	"github.com/tuna-os/corral/pkg/incus"
@@ -215,15 +216,15 @@ var viewerCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		backend, err := requireBackend(name)
+		adapter, err := instanceAdapter(name)
 		if err != nil {
 			return err
 		}
-		if backend == "kubevirt" {
-			ns, _ := resolveNamespace(name)
-			return kubevirt.NewClient(ns).Viewer(name)
+		viewer, ok := adapter.(backend.Viewer)
+		if !ok {
+			return unsupported(adapter, "viewer")
 		}
-		return qemu.Viewer(name)
+		return viewer.View(name)
 	},
 }
 
@@ -348,18 +349,22 @@ This is the log iso-e2e.sh gates on; corral diagnose bundles it.`,
 		if err != nil {
 			return err
 		}
-		backend, err := requireBackend(name)
+		adapter, err := instanceAdapter(name)
 		if err != nil {
 			return err
 		}
-		if backend == "kubevirt" {
-			ns, _ := resolveNamespace(name)
-			return kubevirt.NewClient(ns).Logs(name)
-		}
 		if logsSerial {
-			return qemu.LogsSerial(name, logsTail)
+			serial, ok := adapter.(backend.SerialLogger)
+			if !ok {
+				return unsupported(adapter, "logs --serial")
+			}
+			return serial.SerialLogs(name, logsTail)
 		}
-		return qemu.Logs(name)
+		logger, ok := adapter.(backend.Logger)
+		if !ok {
+			return unsupported(adapter, "logs")
+		}
+		return logger.Logs(name)
 	},
 }
 
