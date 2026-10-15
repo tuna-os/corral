@@ -177,6 +177,37 @@ type SerialLogger interface {
 	SerialLogs(name string, tail int) error
 }
 
+// Describer returns the backend's own description of a guest, verbatim: the
+// VirtualMachine object, `incus info`, `virsh dominfo`, the QEMU metadata.
+// `corral info` prints it as-is, so it is bytes rather than a parsed shape —
+// unlike Inspector, which extracts the two facts a move needs. Not a Family:
+// it is a diagnostic read, not an operation the matrix gates.
+type Describer interface {
+	Describe(name string) ([]byte, error)
+}
+
+// SSHOptions carries `corral ssh`'s flags to whichever client a backend
+// shells in with. A backend uses what its client understands and ignores the
+// rest: `incus exec` has no user or identity, and only local QEMU has vsock.
+type SSHOptions struct {
+	User          string
+	Identity      string
+	Command       string
+	Port          int
+	Password      string
+	LocalForwards []string
+	// Vsock asks for the AF_VSOCK transport instead of the network. Only
+	// local QEMU has one; other backends ignore it.
+	Vsock bool
+}
+
+// Sheller opens an interactive shell in the guest for the person at this
+// terminal: virtctl ssh through the API server, `incus exec`, ssh to the
+// guest's address. Not a Family, for the same reason as Viewer.
+type Sheller interface {
+	SSH(name string, opts SSHOptions) error
+}
+
 // ── the registry ──────────────────────────────────────────────────
 
 // Adapter is what For returns: a backend bound to one instance's context, which

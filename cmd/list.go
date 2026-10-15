@@ -189,6 +189,21 @@ func instanceAdapter(name string) (backend.Adapter, error) {
 	return backend.For(ref)
 }
 
+// instancePower is instanceAdapter asserted for Power, the family every
+// backend is required to have; the refusal covers a registered backend that
+// somehow lacks it rather than panicking on the assertion.
+func instancePower(name string) (backend.Power, error) {
+	adapter, err := instanceAdapter(name)
+	if err != nil {
+		return nil, err
+	}
+	power, ok := adapter.(backend.Power)
+	if !ok {
+		return nil, unsupported(adapter, "start, stop, and delete")
+	}
+	return power, nil
+}
+
 func instanceRef(name string) (types.InstanceRef, error) {
 	if selectedVM != nil && selectedVM.Name == name {
 		activateVMContext(*selectedVM)

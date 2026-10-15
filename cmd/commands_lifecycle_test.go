@@ -13,6 +13,7 @@ import (
 	"github.com/tuna-os/corral/pkg/kubevirt"
 	"github.com/tuna-os/corral/pkg/shell"
 	"github.com/tuna-os/corral/pkg/types"
+	"github.com/tuna-os/corral/pkg/virtualbox"
 )
 
 // kubevirtVMScratch is remoteVMScratch for a KubeVirt VM: the client, package,
@@ -195,4 +196,49 @@ func TestSSHUsesTheInstanceBackend(t *testing.T) {
 			t.Fatalf("ssh on a libvirt domain = %v, want libvirt's refusal", err)
 		}
 	})
+}
+
+// A backend without a dedicated CLI path reaches its own adapter. VirtualBox
+// VMs used to fall through to local QEMU for start, stop, and delete, which
+// looked for a unit that was never there (#214).
+func TestLifecycleCommandsOnVirtualBoxUseVBoxManage(t *testing.T) {
+	cases := []struct {
+		name string
+		run  func() error
+		want string
+	}{
+		{"start", func() error { return startCmd.RunE(startCmd, []string{"web"}) }, "VBoxManage startvm web --type headless"},
+		{"stop", func() error { return stopCmd.RunE(stopCmd, []string{"web"}) }, "VBoxManage controlvm web acpipowerbutton"},
+		{"delete", func() error { return deleteCmd.RunE(deleteCmd, []string{"web"}) }, "VBoxManage unregistervm web --delete"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := remoteVMScratch(t, "web", types.RegistryEntry{Backend: "virtualbox"})
+			fake.AddPrefixResponse("VBoxManage", "", nil)
+			virtualbox.SetRunner(fake)
+			t.Cleanup(func() { virtualbox.SetRunner(shell.Real{}) })
+			forceDeletes(t)
+			if err := tc.run(); err != nil {
+				t.Fatalf("%s on a VirtualBox VM: %v", tc.name, err)
+			}
+			if !ranCommandLine(fake, tc.want) {
+				t.Errorf("%s did not run %q; calls were %v", tc.name, tc.want, fake.Calls())
+			}
+		})
+	}
+}
+
+// info and ssh on a backend with no Inspector or Sheller refuse by backend
+// name instead of reading local QEMU metadata for a VM that is not local.
+func TestInfoAndSSHOnVirtualBoxAreRefusedByBackend(t *testing.T) {
+	remoteVMScratch(t, "web", types.RegistryEntry{Backend: "virtualbox"})
+	for action, run := range map[string]func() error{
+		"info": func() error { return infoCmd.RunE(infoCmd, []string{"web"}) },
+		"ssh":  func() error { return sshCmd.RunE(sshCmd, []string{"web"}) },
+	} {
+		err := run()
+		if err == nil || !strings.Contains(err.Error(), "virtualbox backend does not support "+action) {
+			t.Errorf("%s on a VirtualBox VM = %v, want a refusal naming virtualbox", action, err)
+		}
+	}
 }

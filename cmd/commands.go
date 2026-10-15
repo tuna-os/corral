@@ -10,10 +10,7 @@ import (
 	"github.com/tuna-os/corral/pkg/backend"
 	"github.com/tuna-os/corral/pkg/config"
 	"github.com/tuna-os/corral/pkg/fleet"
-	"github.com/tuna-os/corral/pkg/incus"
 	"github.com/tuna-os/corral/pkg/kubevirt"
-	"github.com/tuna-os/corral/pkg/libvirt"
-	"github.com/tuna-os/corral/pkg/qemu"
 	"github.com/tuna-os/corral/pkg/types"
 )
 
@@ -44,21 +41,11 @@ var startCmd = &cobra.Command{
 			}
 			return p.action("POST", "start")
 		}
-		backend, err := requireBackend(name)
+		power, err := instancePower(name)
 		if err != nil {
 			return err
 		}
-		if backend == "kubevirt" {
-			ns, _ := resolveNamespace(name)
-			return kubevirt.NewClient(ns).StartVM(name)
-		}
-		if backend == "incus" {
-			return incus.Start(name)
-		}
-		if backend == "libvirt" {
-			return libvirt.NewClient("").Start(name)
-		}
-		return qemu.Start(name)
+		return power.Start(name)
 	},
 }
 
@@ -78,21 +65,11 @@ var stopCmd = &cobra.Command{
 			}
 			return p.action("POST", "stop")
 		}
-		backend, err := requireBackend(name)
+		power, err := instancePower(name)
 		if err != nil {
 			return err
 		}
-		if backend == "kubevirt" {
-			ns, _ := resolveNamespace(name)
-			return kubevirt.NewClient(ns).StopVM(name)
-		}
-		if backend == "incus" {
-			return incus.Stop(name)
-		}
-		if backend == "libvirt" {
-			return libvirt.NewClient("").Stop(name)
-		}
-		return qemu.Stop(name)
+		return power.Stop(name)
 	},
 }
 
@@ -111,9 +88,9 @@ var deleteCmd = &cobra.Command{
 		if peerErr != nil {
 			return peerErr
 		}
-		backend := ""
+		var power backend.Power
 		if !peer {
-			backend, err = requireBackend(name)
+			power, err = instancePower(name)
 			if err != nil {
 				return err
 			}
@@ -129,20 +106,7 @@ var deleteCmd = &cobra.Command{
 		if peer {
 			return p.action("DELETE", "")
 		}
-		if backend == "kubevirt" {
-			ns, _ := resolveNamespace(name)
-			if err := kubevirt.NewClient(ns).DeleteVM(name); err != nil {
-				return err
-			}
-		} else if backend == "incus" {
-			if err := incus.Delete(name); err != nil {
-				return err
-			}
-		} else if backend == "libvirt" {
-			if err := libvirt.NewClient("").Delete(name); err != nil {
-				return err
-			}
-		} else if err := qemu.Delete(name); err != nil {
+		if err := power.Delete(name); err != nil {
 			return err
 		}
 		if registryStore != nil {
@@ -168,36 +132,15 @@ var infoCmd = &cobra.Command{
 			}
 			return p.action("GET", "")
 		}
-		backend, err := requireBackend(name)
+		adapter, err := instanceAdapter(name)
 		if err != nil {
 			return err
 		}
-		if backend == "kubevirt" {
-			ns, _ := resolveNamespace(name)
-			data, err := kubevirt.NewClient(ns).VMInfo(name)
-			if err != nil {
-				return err
-			}
-			fmt.Println(string(data))
-			return nil
+		describer, ok := adapter.(backend.Describer)
+		if !ok {
+			return unsupported(adapter, "info")
 		}
-		if backend == "incus" {
-			data, err := incus.Info(name)
-			if err != nil {
-				return err
-			}
-			fmt.Println(string(data))
-			return nil
-		}
-		if backend == "libvirt" {
-			data, err := libvirt.NewClient("").Info(name)
-			if err != nil {
-				return err
-			}
-			fmt.Println(string(data))
-			return nil
-		}
-		data, err := qemu.Info(name)
+		data, err := describer.Describe(name)
 		if err != nil {
 			return err
 		}
@@ -305,27 +248,23 @@ something the VM has listening on its own port 80.`,
 			}
 			return p.ssh(user, sshCommand)
 		}
-		backend, err := requireBackend(name)
+		ref, err := instanceRef(name)
 		if err != nil {
 			return err
 		}
-
-		user, password := resolveSSHCredentials(name, backend, sshUser, sshPassword)
-
-		if backend == "kubevirt" {
-			ns, _ := resolveNamespace(name)
-			return kubevirt.NewClient(ns).SSH(name, user, sshIdentity, sshCommand, sshPort, password, sshLocalForwards)
+		adapter, err := backend.For(ref)
+		if err != nil {
+			return err
 		}
-		if backend == "incus" {
-			return incus.NewClient("").SSH(name, sshCommand)
+		sheller, ok := adapter.(backend.Sheller)
+		if !ok {
+			return unsupported(adapter, "ssh")
 		}
-		if backend == "libvirt" {
-			return libvirt.NewClient("").SSH(name, sshCommand)
-		}
-		if sshVsock {
-			return qemu.SSHViaVsock(name, user, sshCommand)
-		}
-		return qemu.SSH(name, user, sshIdentity, sshCommand, sshPort, password, sshLocalForwards)
+		user, password := resolveSSHCredentials(name, ref.Backend, sshUser, sshPassword)
+		return sheller.SSH(name, backend.SSHOptions{
+			User: user, Identity: sshIdentity, Command: sshCommand, Port: sshPort,
+			Password: password, LocalForwards: sshLocalForwards, Vsock: sshVsock,
+		})
 	},
 }
 
