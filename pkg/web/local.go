@@ -15,11 +15,17 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/tuna-os/corral/pkg/qemu"
 	"github.com/tuna-os/corral/pkg/types"
 )
+
+// localCreates tracks the download-then-create goroutines that createLocalVM
+// starts. They read qemu.VMHome, which demo mode and tests repoint, so a test
+// must wait for its own goroutine before the next test moves the state dir.
+var localCreates sync.WaitGroup
 
 // dialLocalVNC connects to a local VM's QEMU VNC listener for the browser
 // console bridge (#91 Phase 2).
@@ -121,7 +127,9 @@ func createLocalVM(w http.ResponseWriter, req createRequest) {
 		// Download (cached) then create — async, visible in the task panel and VM inventory.
 		_ = qemu.RecordCreating(req.Name, opts)
 		done := taskBegin(req.user, "create local (download)", localNS+"/"+req.Name)
+		localCreates.Add(1)
 		go func() {
+			defer localCreates.Done()
 			path, err := downloadToCache(src)
 			if err == nil {
 				assign(path)
