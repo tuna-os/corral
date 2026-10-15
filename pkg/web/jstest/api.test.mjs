@@ -4,7 +4,7 @@
 // build step (ADR-0004), so Node imports the shipped files exactly as the
 // browser does. Tests live outside static/ so go:embed does not ship them.
 //
-//   node --test pkg/web/jstest/
+//   just test-js        (node --test pkg/web/jstest/*.test.mjs)
 
 import assert from 'node:assert/strict';
 import { afterEach, describe, test } from 'node:test';
