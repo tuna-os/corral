@@ -49,7 +49,7 @@ backend cannot, or it is meaningless there.
 | Add / remove disks | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | 🔨 | 🔨 | 🔨 |
 | Expand disk | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | 🔨 | 🔨 | 🔨 |
 | GPU passthrough | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | 🔨 | 🔨 | — |
-| Export / backup disk | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 🔨 | ✅ | 🔨 |
+| Export / backup disk | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 🔨 |
 | Events | ✅ | ✅ | — | — | ✅ | — | 🔨 | 🔨 | 🔨 |
 | Tags | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | 🔨 | 🔨 | ✅ |
 | Published ports | ✅ | ✅ | 🔨 | — | — | 🔨 | — | — | — |
@@ -208,7 +208,7 @@ websocket bridge is not. So the capability flags say no, and the matrix says why
 - **tags** — setextradata keys or the registry mark; nothing reads them back yet
 - **ports** — NAT port-forward rules via modifyvm --natpf1. Corral does not manage them yet.
 
-### vsphere — 12 gaps
+### vsphere — 11 gaps
 
 - **create** — CloneVM works natively, and OVF deploy works too. Corral has no creator for them yet.
 - **ssh** — Corral has no address discovery yet. Use the Tools-reported guest address, then plain ssh.
@@ -219,7 +219,6 @@ websocket bridge is not. So the capability flags say no, and the matrix says why
 - **volumes** — reconfig device attach and detach; nothing drives them yet
 - **expand** — virtual disk extend via reconfig; nothing drives it yet
 - **gpu** — PCI passthrough via reconfig device attach; experimental and host-limited
-- **export** — ExportVm serves an OVF/NFC lease natively; pkg/export has no vSphere adapter yet
 - **events** — The event manager keeps per-VM history. Corral wires no reader for it yet.
 - **tags** — vSphere has native tags. Nothing drives them yet.
 

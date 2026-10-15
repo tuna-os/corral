@@ -16,6 +16,7 @@ import (
 	"github.com/tuna-os/corral/pkg/qemu"
 	"github.com/tuna-os/corral/pkg/snapshot"
 	"github.com/tuna-os/corral/pkg/types"
+	"github.com/tuna-os/corral/pkg/vsphere"
 	"github.com/tuna-os/corral/pkg/xen"
 )
 
@@ -758,4 +759,68 @@ func (x Xen) Export(ctx context.Context, req Request, progress ProgressFunc) (Re
 		return Result{}, err
 	}
 	return finish(req.Dest, format, snapshot.Offline)
+}
+
+// ── vSphere ───────────────────────────────────────────────────────
+//
+// vCenter serves the disk as a stream-optimized VMDK over an NFC lease on a
+// temporary snapshot (pkg/vsphere.ExportDisk), and qemu-img converts it. A
+// running guest keeps running: the export is quiesced when VMware Tools is
+// there, crash-consistent when it is not, and says which.
+
+type VSphere struct{}
+
+func (VSphere) Formats() []Format { return []Format{Qcow2, RawGz} }
+
+func (v VSphere) Export(ctx context.Context, req Request, progress ProgressFunc) (Result, error) {
+	format, err := pickFormat("vsphere", req.Format, v.Formats())
+	if err != nil {
+		return Result{}, err
+	}
+	if err := ensureDestDir(req.Dest); err != nil {
+		return Result{}, err
+	}
+	client, err := vsphere.ClientForContext(req.Ref.Context)
+	if err != nil {
+		return Result{}, fmt.Errorf("vsphere: no client for context %q: %w", req.Ref.Context, err)
+	}
+	if err := client.Connect(ctx); err != nil {
+		return Result{}, err
+	}
+
+	vmdk := req.Dest + ".vmdk"
+	defer func() { _ = os.Remove(vmdk) }()
+	progress.report("downloading disk", 0, 0)
+	exported, err := client.ExportDisk(ctx, req.Ref.Name, vmdk)
+	if err != nil {
+		return Result{}, err
+	}
+	consistency := snapshot.Crash
+	switch exported {
+	case vsphere.ExportOffline:
+		consistency = snapshot.Offline
+	case vsphere.ExportQuiesced:
+		consistency = snapshot.Filesystem
+	}
+	if err := cancelled(ctx); err != nil {
+		return Result{}, err
+	}
+
+	progress.report("converting disk", 0, virtualSize(vmdk))
+	if format == RawGz {
+		raw := req.Dest + ".raw"
+		defer func() { _ = os.Remove(raw) }()
+		if out, err := runner.Run(qemuImg(), "convert", "-O", "raw", vmdk, raw); err != nil {
+			return Result{}, fmt.Errorf("qemu-img convert: %s", commandError(out, err))
+		}
+		progress.report("compressing", 0, 0)
+		if err := gzipFile(raw, req.Dest); err != nil {
+			return Result{}, err
+		}
+		return finish(req.Dest, format, consistency)
+	}
+	if out, err := runner.Run(qemuImg(), "convert", "-O", "qcow2", "-c", vmdk, req.Dest); err != nil {
+		return Result{}, fmt.Errorf("qemu-img convert: %s", commandError(out, err))
+	}
+	return finish(req.Dest, format, consistency)
 }

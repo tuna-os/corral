@@ -321,7 +321,7 @@ var Matrix = map[string]map[string]Entry{
 		"libvirt":    {Shipped, "qemu-img convert of the backing volume — pkg/export.Libvirt"},
 		"proxmox":    {Shipped, "vzdump in snapshot mode; the export adapter downloads the backup over the PVE API, extracts the disk via vma, and converts to qcow2 — pkg/proxmoxbe.Export"},
 		"virtualbox": {Shipped, "VBoxManage export to an OVA appliance while powered off or saved; a running VM is refused — pkg/export.VirtualBox"},
-		"vsphere":    {Possible, "ExportVm serves an OVF/NFC lease natively; pkg/export has no vSphere adapter yet"},
+		"vsphere":    {Shipped, "NFC lease on a temporary snapshot (ExportSnapshot), so a running guest keeps running; qemu-img converts the VMDK — quiesced with VMware Tools, crash-consistent without — pkg/export.VSphere"},
 		"xen":        {Shipped, "GET /export streams an XVA archive of a halted or suspended VM; a running VM is refused — pkg/export.Xen"},
 		"nutanix":    {Possible, "vmm recovery points exist but no download path is proven; pkg/export has no Nutanix adapter yet"},
 	},

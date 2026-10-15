@@ -419,7 +419,7 @@ func TestTUIActions_GatingMatrix(t *testing.T) {
 		"incus":    {"export": true},
 		"libvirt":  {"export": true},
 		"proxmox":  {"hardware": true, "clone": true, "export": true, "template": true, "events": true},
-		"vsphere":  {"hardware": true, "clone": true, "template": true},
+		"vsphere":  {"hardware": true, "clone": true, "export": true, "template": true},
 	}
 	for backend, want := range families {
 		vm := running

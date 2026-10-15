@@ -9,10 +9,8 @@ package vsphere
 // surface that fired and forgot would report success for a migration that
 // failed thirty seconds later.
 //
-// What the simulator cannot cover is not here: ExportVm has no simulator
-// handler (the simulator implements HttpNfcLease only for resource-pool
-// import and snapshot export), so export stays a Possible matrix cell with no
-// client method until a fixture-backed slice lands it.
+// Export lives in export.go: ExportVm has no simulator handler, so the disk
+// comes out through a temporary snapshot's NFC lease instead.
 
 import (
 	"context"

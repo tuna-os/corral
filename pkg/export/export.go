@@ -143,6 +143,8 @@ func For(ref types.InstanceRef) (Adapter, error) {
 		return VirtualBox{}, nil
 	case "xen":
 		return Xen{}, nil
+	case "vsphere":
+		return VSphere{}, nil
 	case "":
 		return nil, fmt.Errorf("instance reference has no backend; export needs a fully-scoped instance")
 	default:
@@ -154,7 +156,7 @@ func For(ref types.InstanceRef) (Adapter, error) {
 // touching the instance — for capability reporting and UI gating.
 func Supported(backend string) bool {
 	switch backend {
-	case "kubevirt", "qemu", "libvirt", "incus", "proxmox", "virtualbox", "xen":
+	case "kubevirt", "qemu", "libvirt", "incus", "proxmox", "virtualbox", "vsphere", "xen":
 		return true
 	}
 	return false
