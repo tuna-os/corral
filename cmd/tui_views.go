@@ -53,50 +53,108 @@ type snapshotsState struct {
 	confirm string
 }
 
+// newSnapshotsState opens the tab empty; snapshotsCmd fills it.
 func newSnapshotsState(vm types.VM) snapshotsState {
 	ti := textinput.New()
 	ti.Placeholder = "name (blank = auto)"
 	ti.CharLimit = 63
 	ti.SetWidth(32)
 
-	s := snapshotsState{ref: vm.Ref(), vmName: vm.Name, running: vm.Running, name: ti}
-	s.reload()
-	return s
+	return snapshotsState{ref: vm.Ref(), vmName: vm.Name, running: vm.Running, name: ti}
 }
 
-func (s *snapshotsState) reload() {
-	adapter, err := snapshot.For(s.ref)
-	if err != nil {
-		s.snaps, s.err = nil, err.Error()
+// snapshotOp is one change to an instance's captures. It returns the notice
+// to show when it worked.
+type snapshotOp func(adapter snapshot.Adapter, ref types.InstanceRef) (string, error)
+
+// snapshotsMsg is the result of snapshotsCmd. opErr is set when the change
+// itself failed, in which case nothing was listed again.
+type snapshotsMsg struct {
+	opErr   string
+	notice  string
+	snaps   []snapshot.Snapshot
+	listErr string
+}
+
+// snapshotsCmd runs op (nil only lists) through the instance's snapshot
+// adapter, then lists its captures again.
+func (m *tuiModel) snapshotsCmd(label string, op snapshotOp) tea.Cmd {
+	ref := m.snapshots.ref
+	m.busyWith(label)
+	return func() tea.Msg {
+		adapter, err := snapshot.For(ref)
+		if err != nil {
+			if op != nil {
+				return snapshotsMsg{opErr: err.Error()}
+			}
+			return snapshotsMsg{listErr: err.Error()}
+		}
+		var res snapshotsMsg
+		if op != nil {
+			notice, err := op(adapter, ref)
+			if err != nil {
+				return snapshotsMsg{opErr: err.Error()}
+			}
+			res.notice = notice
+		}
+		snaps, err := adapter.List(ref)
+		if err != nil {
+			res.listErr = err.Error()
+			return res
+		}
+		res.snaps = snaps
+		return res
+	}
+}
+
+// apply shows a snapshotsCmd result.
+func (s *snapshotsState) apply(msg snapshotsMsg) {
+	if msg.opErr != "" {
+		s.err = msg.opErr
 		return
 	}
-	snaps, err := adapter.List(s.ref)
-	if err != nil {
-		s.snaps, s.err = nil, err.Error()
+	if msg.notice != "" {
+		s.notice = msg.notice
+	}
+	if msg.listErr != "" {
+		s.snaps, s.err = nil, msg.listErr
 		return
 	}
-	s.snaps, s.err = snaps, ""
+	s.snaps, s.err = msg.snaps, ""
 	if s.cursor >= len(s.snaps) {
 		s.cursor = max(0, len(s.snaps)-1)
 	}
 }
 
-func (s *snapshotsState) create(name string) {
-	adapter, err := snapshot.For(s.ref)
-	if err != nil {
-		s.err = err.Error()
-		return
+func createSnapshot(name string) snapshotOp {
+	return func(adapter snapshot.Adapter, ref types.InstanceRef) (string, error) {
+		snap, err := adapter.Create(ref, strings.TrimSpace(name))
+		if err != nil {
+			return "", err
+		}
+		// The consistency the adapter actually achieved, not the one that was
+		// hoped for — a crash-consistent capture of a database is worth saying
+		// out loud, and the web UI says it too.
+		return fmt.Sprintf("created %s (%s-consistent)", snap.Name, snap.Consistency), nil
 	}
-	snap, err := adapter.Create(s.ref, strings.TrimSpace(name))
-	if err != nil {
-		s.err = err.Error()
-		return
+}
+
+func restoreSnapshot(name string) snapshotOp {
+	return func(adapter snapshot.Adapter, ref types.InstanceRef) (string, error) {
+		if err := adapter.Restore(ref, name); err != nil {
+			return "", err
+		}
+		return "restoring from " + name, nil
 	}
-	// The consistency the adapter actually achieved, not the one that was
-	// hoped for — a crash-consistent capture of a database is worth saying
-	// out loud, and the web UI says it too.
-	s.notice = fmt.Sprintf("created %s (%s-consistent)", snap.Name, snap.Consistency)
-	s.reload()
+}
+
+func deleteSnapshot(name string) snapshotOp {
+	return func(adapter snapshot.Adapter, ref types.InstanceRef) (string, error) {
+		if err := adapter.Delete(ref, name); err != nil {
+			return "", err
+		}
+		return "deleted " + name, nil
+	}
 }
 
 func (s *snapshotsState) selected() (snapshot.Snapshot, bool) {
@@ -106,45 +164,10 @@ func (s *snapshotsState) selected() (snapshot.Snapshot, bool) {
 	return s.snaps[s.cursor], true
 }
 
-func (s *snapshotsState) restore() {
-	snap, ok := s.selected()
-	if !ok {
-		return
-	}
-	adapter, err := snapshot.For(s.ref)
-	if err != nil {
-		s.err = err.Error()
-		return
-	}
-	if err := adapter.Restore(s.ref, snap.Name); err != nil {
-		s.err = err.Error()
-		return
-	}
-	s.err, s.notice = "", "restoring from "+snap.Name
-	s.reload()
-}
-
-func (s *snapshotsState) delete() {
-	snap, ok := s.selected()
-	if !ok {
-		return
-	}
-	adapter, err := snapshot.For(s.ref)
-	if err != nil {
-		s.err = err.Error()
-		return
-	}
-	if err := adapter.Delete(s.ref, snap.Name); err != nil {
-		s.err = err.Error()
-		return
-	}
-	s.err, s.notice = "", "deleted "+snap.Name
-	s.reload()
-}
-
 // updateSnapshots handles the Snapshots view's keys. It returns false when the
-// view is done and the caller should go back to the actions menu.
-func (m *tuiModel) updateSnapshots(msg tea.KeyPressMsg) bool {
+// view is done and the caller should go back to the actions menu, and the
+// command for a change the key asked for.
+func (m *tuiModel) updateSnapshots(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 	s := &m.snapshots
 
 	if s.naming {
@@ -153,32 +176,36 @@ func (m *tuiModel) updateSnapshots(msg tea.KeyPressMsg) bool {
 			s.naming = false
 			value := s.name.Value()
 			s.name.Reset()
-			s.create(value)
+			return true, m.snapshotsCmd("Creating snapshot", createSnapshot(value))
 		case "esc":
 			s.naming = false
 			s.name.Reset()
 		default:
 			s.name, _ = s.name.Update(msg)
 		}
-		return true
+		return true, nil
 	}
 
 	if s.confirm != "" {
+		confirm := s.confirm
+		s.confirm = ""
+		snap, ok := s.selected()
+		if !ok {
+			return true, nil
+		}
 		switch msg.String() {
 		case "y", "Y":
-			if s.confirm == "delete" {
-				s.delete()
-			} else {
-				s.restore()
+			if confirm == "delete" {
+				return true, m.snapshotsCmd("Deleting "+snap.Name, deleteSnapshot(snap.Name))
 			}
+			return true, m.snapshotsCmd("Restoring "+snap.Name, restoreSnapshot(snap.Name))
 		}
-		s.confirm = ""
-		return true
+		return true, nil
 	}
 
 	switch msg.String() {
 	case "esc", "q":
-		return false
+		return false, nil
 	case "up", "k":
 		if s.cursor > 0 {
 			s.cursor--
@@ -193,7 +220,7 @@ func (m *tuiModel) updateSnapshots(msg tea.KeyPressMsg) bool {
 		s.name.Focus()
 	case "r":
 		s.err, s.notice = "", ""
-		s.reload()
+		return true, m.snapshotsCmd("Loading snapshots", nil)
 	case "enter":
 		if _, ok := s.selected(); ok {
 			s.confirm = "restore"
@@ -203,7 +230,7 @@ func (m *tuiModel) updateSnapshots(msg tea.KeyPressMsg) bool {
 			s.confirm = "delete"
 		}
 	}
-	return true
+	return true, nil
 }
 
 func (m tuiModel) snapshotsView() string {
@@ -315,7 +342,18 @@ type eventsState struct {
 	err    string
 }
 
-func newEventsState(vm types.VM) eventsState {
+// eventsMsg carries freshly loaded events.
+type eventsMsg struct{ state eventsState }
+
+// eventsCmd loads the selected VM's events.
+func (m *tuiModel) eventsCmd() tea.Cmd {
+	vm := m.selected
+	m.busyWith("Loading events")
+	return func() tea.Msg { return eventsMsg{state: loadEvents(vm)} }
+}
+
+// loadEvents fetches recent events for vm and its virt-launcher pod.
+func loadEvents(vm types.VM) eventsState {
 	s := eventsState{vmName: vm.Name}
 	adapter, err := backend.For(vm.Ref())
 	if err != nil {

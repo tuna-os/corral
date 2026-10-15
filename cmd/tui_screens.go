@@ -28,8 +28,8 @@ var screens = [modeCount]screen{
 	ModeConfirmDelete: {tuiModel.updateConfirmDelete, tuiModel.confirmDeleteView},
 	ModeDoctor:        {tuiModel.updateDoctor, tuiModel.doctorView},
 	ModeCloneInput:    {tuiModel.updateCloneInput, tuiModel.cloneInputView},
-	ModeSnapshots:     {tuiModel.updateSnapshotsScreen, tuiModel.snapshotsView},
-	ModeEvents:        {tuiModel.updateEvents, tuiModel.eventsView},
+	ModeSnapshots:     {tuiModel.updateSnapshotsScreen, tuiModel.snapshotsScreenView},
+	ModeEvents:        {tuiModel.updateEvents, tuiModel.eventsScreenView},
 	ModePools:         {tuiModel.updatePoolsScreen, tuiModel.poolsView},
 	ModePlugins:       {tuiModel.updatePlugins, tuiModel.pluginsView},
 	ModeCreate:        {tuiModel.updateCreate, tuiModel.createView},
@@ -284,14 +284,17 @@ func (m tuiModel) updateSnapshotsScreen(msg tea.KeyPressMsg) (tuiModel, tea.Cmd)
 	if msg.String() == "ctrl+c" {
 		return m.quit()
 	}
-	if !m.updateSnapshots(msg) {
+	stay, cmd := m.updateSnapshots(msg)
+	if !stay {
 		m.mode = ModeActions
 		// A restore or a delete changes what the list shows.
 		cmd := m.refreshCmd("")
 		return m, cmd
 	}
-	return m, nil
+	return m, cmd
 }
+
+func (m tuiModel) snapshotsScreenView() string { return m.withProgress(m.snapshotsView()) }
 
 func (m tuiModel) updateEvents(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 	switch msg.String() {
@@ -300,10 +303,13 @@ func (m tuiModel) updateEvents(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 	case "esc", "q", "enter":
 		m.mode = ModeActions
 	case "r":
-		m.events = newEventsState(m.selected)
+		cmd := m.eventsCmd()
+		return m, cmd
 	}
 	return m, nil
 }
+
+func (m tuiModel) eventsScreenView() string { return m.withProgress(m.eventsView()) }
 
 func (m tuiModel) updateDoctor(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 	switch msg.String() {

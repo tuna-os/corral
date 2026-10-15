@@ -184,3 +184,55 @@ func TestTUIOps_HardwareAppliesThroughACommand(t *testing.T) {
 		t.Errorf("the command never scaled the CT, calls: %v", f.Calls())
 	}
 }
+
+// Opening the Snapshots and Events tabs shows them at once and loads them in a
+// command; a snapshot change does the same.
+func TestTUIOps_SnapshotsAndEventsLoadThroughCommands(t *testing.T) {
+	f := fakeCluster(t)
+	f.AddPrefixResponse("kubectl get vmsnapshot", snapshotListJSON(
+		snapshotItem("web-snap", "web-prod", "2026-06-01T00:00:00Z", true)), nil)
+	f.AddPrefixResponse("kubectl get events", `{"items":[]}`, nil)
+	f.AddPrefixResponse("kubectl delete", "", nil)
+
+	for _, tab := range []struct {
+		action string
+		mode   TUIMode
+	}{{"snapshot", ModeSnapshots}, {"events", ModeEvents}} {
+		m := testModel(kubeVM("web-prod"))
+		m.mode = ModeActions
+		m = chooseAction(t, m, tab.action)
+		f.Reset()
+		f.AddPrefixResponse("kubectl get vmsnapshot", snapshotListJSON(
+			snapshotItem("web-snap", "web-prod", "2026-06-01T00:00:00Z", true)), nil)
+		f.AddPrefixResponse("kubectl get events", `{"items":[]}`, nil)
+		f.AddPrefixResponse("kubectl delete", "", nil)
+
+		next, cmd := m.Update(key("enter"))
+		m = next.(tuiModel)
+		if m.mode != tab.mode || !m.busy || cmd == nil || len(f.Calls()) != 0 {
+			t.Fatalf("%s: want the tab open and a load command, got mode %v busy %v calls %v",
+				tab.action, m.mode, m.busy, f.Calls())
+		}
+		m = settle(m, cmd)
+		if len(f.Calls()) == 0 {
+			t.Errorf("%s: the command loaded nothing", tab.action)
+		}
+		if tab.mode != ModeSnapshots {
+			continue
+		}
+		if len(m.snapshots.snaps) != 1 {
+			t.Fatalf("snapshots = %d, want the one capture", len(m.snapshots.snaps))
+		}
+
+		m = press(m, "x")
+		next, cmd = m.Update(key("y"))
+		m = next.(tuiModel)
+		if !m.busy || calledWith(f, "delete") {
+			t.Fatalf("y should hand the delete to a command (busy %v)", m.busy)
+		}
+		m = settle(m, cmd)
+		if !calledWith(f, "delete", "web-snap") || m.snapshots.notice != "deleted web-snap" {
+			t.Errorf("delete: notice %q, calls %v", m.snapshots.notice, f.Calls())
+		}
+	}
+}
