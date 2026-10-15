@@ -2,7 +2,7 @@
 // multi-select click model shared with the inventory grid.
 
 import { ctKey, vmKey } from './api.js';
-import { closeDrawer, markRendered, refresh, renderContent, select } from './app.js';
+import { markRendered, refresh, renderContent, select } from './app.js';
 import { migrateVM } from './content/vm.js';
 import { icon } from './icons.js';
 import {
@@ -14,6 +14,7 @@ import { capabilityTreeRows } from './ui/capabilities.js';
 import { $, esc } from './ui/dom.js';
 import { attachContextMenu } from './ui/menu.js';
 import { keyed, reconcile } from './ui/reconcile.js';
+import { closeDrawer } from './ui/workspace.js';
 
 // ── Tree (sidebar) ────────────────────────────────────────────────
 // Two views over the same VM list, mirroring PVE's Server/Folder view
