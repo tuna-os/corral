@@ -32,6 +32,10 @@ type CreateOpts struct {
 	Init         bool                // run the image's own entrypoint
 	Backend      string              // "kubevirt" (default) or "incus"
 	Mounts       []DevContainerMount // additional volume mounts
+	// Labels are extra labels for the data PVC and the pod. They are kept
+	// in the spec annotation, so a pod recreated by Start carries them too.
+	// They cannot override Corral's own CT labels.
+	Labels map[string]string
 }
 
 // CT describes a running or stopped Container as reported by ListCTs.
@@ -61,6 +65,7 @@ type ctSpec struct {
 	Privileged bool                `json:"privileged"`
 	Init       bool                `json:"init,omitempty"`
 	Mounts     []DevContainerMount `json:"mounts,omitempty"`
+	Labels     map[string]string   `json:"labels,omitempty"`
 }
 
 const (
@@ -156,7 +161,7 @@ func pvcName(name string) string { return name + "-data" }
 // generatePVC builds the CT's persistent data volume, annotated with the
 // spec Start needs to recreate the pod later.
 func generatePVC(opts CreateOpts) (map[string]any, error) {
-	spec := ctSpec{Image: opts.Image, CPU: opts.CPU, Mem: opts.Mem, Privileged: opts.Privileged, Init: opts.Init}
+	spec := ctSpec{Image: opts.Image, CPU: opts.CPU, Mem: opts.Mem, Privileged: opts.Privileged, Init: opts.Init, Labels: opts.Labels}
 	specJSON, err := json.Marshal(spec)
 	if err != nil {
 		return nil, err
@@ -174,7 +179,7 @@ func generatePVC(opts CreateOpts) (map[string]any, error) {
 		"metadata": map[string]any{
 			"name":      pvcName(opts.Name),
 			"namespace": opts.Namespace,
-			"labels":    map[string]any{labelCT: "true", "corral.dev/ct-name": opts.Name},
+			"labels":    ctLabels(opts.Name, opts.Labels),
 			"annotations": map[string]any{
 				specAnnotation: string(specJSON),
 			},
@@ -256,7 +261,7 @@ func generatePod(name, namespace string, spec ctSpec) map[string]any {
 		"metadata": map[string]any{
 			"name":      name,
 			"namespace": namespace,
-			"labels":    map[string]any{labelCT: "true", "corral.dev/ct-name": name},
+			"labels":    ctLabels(name, spec.Labels),
 		},
 		"spec": map[string]any{
 			"restartPolicy": "Always",
@@ -264,6 +269,18 @@ func generatePod(name, namespace string, spec ctSpec) map[string]any {
 			"volumes":       volumes,
 		},
 	}
+}
+
+// ctLabels is the label set of a CT's PVC and pod: the caller's extra
+// labels plus Corral's own, which always win.
+func ctLabels(name string, extra map[string]string) map[string]any {
+	labels := map[string]any{}
+	for k, v := range extra {
+		labels[k] = v
+	}
+	labels[labelCT] = "true"
+	labels["corral.dev/ct-name"] = name
+	return labels
 }
 
 // ConsolePorts are the ports exposed on the CT's tailnet Service by
@@ -358,7 +375,7 @@ func Create(opts CreateOpts) error {
 			return fmt.Errorf("creating mount PVC %s: %w", m.PVCName, err)
 		}
 	}
-	spec := ctSpec{Image: opts.Image, CPU: opts.CPU, Mem: opts.Mem, Privileged: opts.Privileged, Init: opts.Init, Mounts: opts.Mounts}
+	spec := ctSpec{Image: opts.Image, CPU: opts.CPU, Mem: opts.Mem, Privileged: opts.Privileged, Init: opts.Init, Mounts: opts.Mounts, Labels: opts.Labels}
 	if err := apply(generatePod(opts.Name, opts.Namespace, spec)); err != nil {
 		return fmt.Errorf("creating pod: %w", err)
 	}
@@ -523,6 +540,13 @@ func Start(name, namespace string) error {
 	if incusExists(name) {
 		return incusStart(name)
 	}
+	return StartPod(name, namespace)
+}
+
+// StartPod is Start for a Kubernetes CT only: it never looks for an Incus
+// container of the same name. Callers that manage cluster CTs (VDI pools)
+// use it so a local Incus instance can never stand in for a pool member.
+func StartPod(name, namespace string) error {
 	spec, err := specFromPVC(name, namespace)
 	if err != nil {
 		return err
