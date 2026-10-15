@@ -239,3 +239,57 @@ func TestRelease_MissingClaimWithIdentityErrors(t *testing.T) {
 		t.Fatal("expected an error releasing a member with no claim for a named identity")
 	}
 }
+
+func TestDeleteLease_PreconditionsOnResourceVersionViaRawAPI(t *testing.T) {
+	fake := withFake(t)
+	path := "/apis/coordination.k8s.io/v1/namespaces/corral-vms/leases/corral-vdi-devpool-1"
+	fake.AddResponseKV("kubectl", []string{"delete", "--raw", path, "-f", "-"}, "", nil)
+
+	if err := deleteLease("corral-vms", "corral-vdi-devpool-1", "7"); err != nil {
+		t.Fatalf("deleteLease: %v", err)
+	}
+	calls := fake.Calls()
+	if len(calls) != 1 {
+		t.Fatalf("expected one raw delete, got %+v", calls)
+	}
+	var opts struct {
+		Kind          string `json:"kind"`
+		Preconditions struct {
+			ResourceVersion string `json:"resourceVersion"`
+		} `json:"preconditions"`
+	}
+	if err := json.Unmarshal([]byte(calls[0].Stdin), &opts); err != nil {
+		t.Fatalf("DeleteOptions body is not JSON: %v", err)
+	}
+	if opts.Kind != "DeleteOptions" || opts.Preconditions.ResourceVersion != "7" {
+		t.Errorf("DeleteOptions = %+v, want a resourceVersion 7 precondition", opts)
+	}
+}
+
+func TestDeleteLease_GoneIsDeletedConflictIsError(t *testing.T) {
+	fake := withFake(t)
+	path := "/apis/coordination.k8s.io/v1/namespaces/corral-vms/leases/"
+	fake.AddResponseKV("kubectl", []string{"delete", "--raw", path + "gone", "-f", "-"}, `Error from server (NotFound): leases "gone" not found`, &fakeErr{"exit status 1"})
+	fake.AddResponseKV("kubectl", []string{"delete", "--raw", path + "moved", "-f", "-"}, `Error from server (Conflict): precondition failed`, &fakeErr{"exit status 1"})
+
+	if err := deleteLease("corral-vms", "gone", "7"); err != nil {
+		t.Errorf("deleting an absent lease must succeed, got %v", err)
+	}
+	if err := deleteLease("corral-vms", "moved", "7"); err == nil {
+		t.Error("a failed precondition must be reported")
+	}
+}
+
+func TestFindLease_AbsentIsNotAnError(t *testing.T) {
+	fake := withFake(t)
+	fake.AddResponseKV("kubectl", []string{"get", "lease", "corral-vdi-a", "-n", "ns", "--ignore-not-found", "-o", "json"}, "", nil)
+	fake.AddResponseKV("kubectl", []string{"get", "lease", "corral-vdi-b", "-n", "ns", "--ignore-not-found", "-o", "json"}, leaseJSON("bob", "2000-01-01T00:00:00Z", "3"), nil)
+
+	if _, found, err := findLease("ns", "corral-vdi-a"); err != nil || found {
+		t.Errorf("findLease(absent) = found %v, err %v; want false, nil", found, err)
+	}
+	l, found, err := findLease("ns", "corral-vdi-b")
+	if err != nil || !found || l.Spec.HolderIdentity != "bob" || l.Metadata.ResourceVersion != "3" {
+		t.Errorf("findLease(present) = %+v, %v, %v", l, found, err)
+	}
+}
