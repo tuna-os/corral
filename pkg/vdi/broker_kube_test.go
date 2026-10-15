@@ -1,6 +1,7 @@
 package vdi
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -206,6 +207,7 @@ func TestClaim_ErrorsAreTyped(t *testing.T) {
 func TestRelease_StopFailureKeepsTheClaim(t *testing.T) {
 	fake := withFake(t)
 	fake.AddResponse("kubectl "+leaseGetArgs, leaseJSON("alice", time.Now().UTC().Format(time.RFC3339Nano), "7"), nil)
+	fake.AddResponseKV("kubectl", []string{"get", "vm", "devpool-1", "-n", "corral-vms", "--ignore-not-found", "-o", "json"}, vmJSON("devpool-1"), nil)
 	fake.AddResponseKV("/fake/bin/virtctl", []string{"stop", "devpool-1", "-n", "corral-vms"}, "", &fakeErr{"connection refused"})
 	err := Release("corral-vms", "devpool-1", "alice")
 	if err == nil || !strings.Contains(err.Error(), "claim is kept") {
@@ -222,8 +224,7 @@ func TestRelease_AlreadyStoppedMemberStillReleases(t *testing.T) {
 	fake := withFake(t)
 	fake.AddResponse("kubectl "+leaseGetArgs, leaseJSON("alice", time.Now().UTC().Format(time.RFC3339Nano), "7"), nil)
 	fake.AddResponseKV("/fake/bin/virtctl", []string{"stop", "devpool-1", "-n", "corral-vms"}, "", &fakeErr{"VM is not running"})
-	fake.AddResponseKV("kubectl", []string{"get", "vm", "devpool-1", "-n", "corral-vms", "-o",
-		`jsonpath={.metadata.labels.corral\.dev/vdi-pool}`}, "devpool", nil)
+	fake.AddResponseKV("kubectl", []string{"get", "vm", "devpool-1", "-n", "corral-vms", "--ignore-not-found", "-o", "json"}, vmJSON("devpool-1"), nil)
 	fake.AddResponseKV("kubectl", []string{"label", "vm", "devpool-1", "-n", "corral-vms", labelPool + "=devpool", labelAssignedTo + "-", "--overwrite"}, "", nil)
 	fake.AddResponseKV("kubectl", []string{"annotate", "vm", "devpool-1", "-n", "corral-vms", annoClaimedAt + "-", annoAssignedTo + "-", "--overwrite"}, "", nil)
 	fake.AddPrefixResponse("kubectl delete", "", nil)
@@ -244,5 +245,183 @@ func TestLabelSafe(t *testing.T) {
 		if got := labelSafe(in); got != want {
 			t.Errorf("labelSafe(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// vmJSON is a persistent member of devpool.
+func vmJSON(name string) string {
+	return `{"metadata":{"name":"` + name + `","labels":{"corral.dev/vdi-pool":"devpool"}},"status":{"printableStatus":"Running"}}`
+}
+
+func TestKubeCluster_UpdateClaimWritesPresenceUnderTheVersion(t *testing.T) {
+	fake := withFake(t)
+	fake.AddResponseKV("kubectl", []string{"replace", "-f", "-"}, "", nil)
+	at := time.Date(2026, 10, 15, 9, 0, 0, 0, time.UTC)
+	c := MemberClaim{
+		Member: MemberRef{Kind: PoolKindCT, Namespace: "vdi", Name: "lab-1"}, Pool: "lab", Holder: "alice",
+		AcquiredAt: at, RenewedAt: at.Add(time.Hour), Duration: time.Hour, Version: "42",
+		Session: SessionMarks{ConnectedAt: at.Add(time.Minute), DisconnectedAt: at.Add(2 * time.Minute)},
+	}
+	updated, err := KubeCluster().UpdateClaim(c)
+	if err != nil || !updated {
+		t.Fatalf("UpdateClaim = %v, %v", updated, err)
+	}
+	var l lease
+	if err := json.Unmarshal([]byte(fake.LastCall().Stdin), &l); err != nil {
+		t.Fatal(err)
+	}
+	if l.Metadata.Name != "corral-vdi-ct-lab-1" || l.Metadata.ResourceVersion != "42" || l.Metadata.Labels[labelCTPool] != "lab" {
+		t.Fatalf("lease metadata = %+v", l.Metadata)
+	}
+	if l.Spec.HolderIdentity != "alice" || l.Spec.AcquireTime != "2026-10-15T09:00:00Z" || l.Spec.RenewTime != "2026-10-15T10:00:00Z" || l.Spec.LeaseDurationSeconds != 3600 {
+		t.Fatalf("lease spec = %+v", l.Spec)
+	}
+	back := claimOf("vdi", l)
+	if !back.Session.ConnectedAt.Equal(c.Session.ConnectedAt) || !back.Session.DisconnectedAt.Equal(c.Session.DisconnectedAt) || back.Member != c.Member {
+		t.Fatalf("round trip = %+v", back)
+	}
+
+	fake.AddResponseKV("kubectl", []string{"replace", "-f", "-"}, "", &fakeErr{"Conflict"})
+	if updated, err := KubeCluster().UpdateClaim(c); err != nil || updated {
+		t.Fatalf("conflicting UpdateClaim = %v, %v; want false, nil", updated, err)
+	}
+	c.Version = ""
+	if _, err := KubeCluster().UpdateClaim(c); err == nil {
+		t.Fatal("UpdateClaim without a version must fail")
+	}
+}
+
+func TestCreatePool_EphemeralMarksMembers(t *testing.T) {
+	fake := withFake(t)
+	fake.AddResponseKV("kubectl", []string{"get", "vm", "golden", "-n", "corral-vms", "-o", "name"}, "vm/golden", nil)
+	fake.AddResponseKV("kubectl", []string{"apply", "-f", "-"}, "applied", nil)
+	fake.AddResponseKV("kubectl", []string{"get", "vm", "devpool-1", "-n", "corral-vms", "-o", "name"}, "vm/devpool-1", nil)
+	fake.AddPrefixResponse("kubectl label vm devpool-1", "", nil)
+	fake.AddPrefixResponse("kubectl annotate vm devpool-1", "", nil)
+
+	if _, err := CreatePool(CreateOpts{Name: "devpool", Namespace: "corral-vms", From: "golden", Size: 1, Ephemeral: true}); err != nil {
+		t.Fatal(err)
+	}
+	var mode, golden bool
+	for _, c := range fake.Calls() {
+		all := strings.Join(c.Args, " ")
+		mode = mode || strings.Contains(all, labelMode+"="+PoolModeEphemeral)
+		golden = golden || strings.Contains(all, annoGolden+"=golden")
+	}
+	if !mode || !golden {
+		t.Fatalf("ephemeral marks: mode=%v golden=%v", mode, golden)
+	}
+}
+
+func ephemeralVMJSON(name string) string {
+	return `{"metadata":{"name":"` + name + `","labels":{"corral.dev/vdi-pool":"devpool","corral.dev/vdi-mode":"ephemeral"},` +
+		`"annotations":{"corral.dev/vdi-golden":"golden"}},"status":{"printableStatus":"Running"}}`
+}
+
+func scriptRecycle(fake interface {
+	AddResponseKV(string, []string, string, error)
+	AddPrefixResponse(string, string, error)
+}) {
+	fake.AddPrefixResponse("/fake/bin/virtctl stop devpool-1", "", nil)
+	fake.AddPrefixResponse("kubectl delete", "", nil)
+	fake.AddResponseKV("kubectl", []string{"apply", "-f", "-"}, "applied", nil)
+	fake.AddResponseKV("kubectl", []string{"get", "vm", "devpool-1", "-n", "corral-vms", "-o", "name"}, "vm/devpool-1", nil)
+	fake.AddPrefixResponse("kubectl label vm devpool-1", "", nil)
+	fake.AddPrefixResponse("kubectl annotate vm devpool-1", "", nil)
+}
+
+func TestRelease_EphemeralMemberIsRecreatedFromGolden(t *testing.T) {
+	fake := withFake(t)
+	fake.AddResponse("kubectl "+leaseGetArgs, leaseJSON("alice", time.Now().UTC().Format(time.RFC3339Nano), "7"), nil)
+	fake.AddResponseKV("kubectl", []string{"get", "vm", "devpool-1", "-n", "corral-vms", "--ignore-not-found", "-o", "json"}, ephemeralVMJSON("devpool-1"), nil)
+	scriptRecycle(fake)
+
+	if err := Release("corral-vms", "devpool-1", "alice"); err != nil {
+		t.Fatal(err)
+	}
+	var deletedVM, cloned, deletedLease int
+	for _, c := range fake.Calls() {
+		all := strings.Join(c.Args, " ")
+		switch {
+		case strings.HasPrefix(all, "delete vm devpool-1"):
+			deletedVM++
+		case strings.HasPrefix(all, "apply") && strings.Contains(c.Stdin, `"name":"golden"`) && strings.Contains(c.Stdin, "devpool-1"):
+			cloned++
+			if deletedVM == 0 {
+				t.Fatal("cloned before the old member was deleted")
+			}
+		case strings.HasPrefix(all, "delete --raw") && strings.Contains(all, leaseName("devpool-1")):
+			deletedLease++
+			if cloned == 0 {
+				t.Fatal("the claim ended before the member was recreated")
+			}
+		}
+	}
+	if deletedVM != 1 || cloned != 1 || deletedLease != 1 {
+		t.Fatalf("deletedVM=%d cloned=%d deletedLease=%d", deletedVM, cloned, deletedLease)
+	}
+}
+
+func TestRelease_EphemeralRecreateFailureKeepsTheClaim(t *testing.T) {
+	fake := withFake(t)
+	fake.AddResponse("kubectl "+leaseGetArgs, leaseJSON("alice", time.Now().UTC().Format(time.RFC3339Nano), "7"), nil)
+	fake.AddResponseKV("kubectl", []string{"get", "vm", "devpool-1", "-n", "corral-vms", "--ignore-not-found", "-o", "json"}, ephemeralVMJSON("devpool-1"), nil)
+	scriptRecycle(fake)
+	fake.AddResponseKV("kubectl", []string{"apply", "-f", "-"}, "", &fakeErr{"admission webhook denied"})
+
+	if err := Release("corral-vms", "devpool-1", "alice"); err == nil || !strings.Contains(err.Error(), "claim is kept") {
+		t.Fatalf("Release = %v, want a retryable recreate failure", err)
+	}
+	for _, c := range fake.Calls() {
+		if strings.HasPrefix(strings.Join(c.Args, " "), "delete --raw") {
+			t.Fatal("a failed recreate ended the claim")
+		}
+	}
+}
+
+func TestRelease_RetryRecreatesAMemberAFailedRecycleDeleted(t *testing.T) {
+	fake := withFake(t)
+	fake.AddResponse("kubectl "+leaseGetArgs, `{"metadata":{"name":"corral-vdi-devpool-1","resourceVersion":"7","labels":{"corral.dev/vdi-pool":"devpool"}},`+
+		`"spec":{"holderIdentity":"alice","renewTime":"2099-01-01T00:00:00Z","leaseDurationSeconds":3600}}`, nil)
+	fake.AddResponseKV("kubectl", []string{"get", "vm", "devpool-1", "-n", "corral-vms", "--ignore-not-found", "-o", "json"}, "", nil)
+	fake.AddResponseKV("kubectl", []string{"get", "vm", "-n", "corral-vms", "-o", "json", "-l", labelPool + "=devpool"},
+		`{"items":[`+ephemeralVMJSON("devpool-2")+`]}`, nil)
+	scriptRecycle(fake)
+
+	if err := Release("corral-vms", "devpool-1", "alice"); err != nil {
+		t.Fatal(err)
+	}
+	var cloned bool
+	for _, c := range fake.Calls() {
+		cloned = cloned || (c.Args[0] == "apply" && strings.Contains(c.Stdin, `"name":"golden"`))
+		if strings.HasPrefix(strings.Join(c.Args, " "), "delete vm") {
+			t.Fatal("deleted a member that does not exist")
+		}
+	}
+	if !cloned {
+		t.Fatal("the deleted member was not recreated from the golden VM of its siblings")
+	}
+}
+
+func TestRelease_MissingPersistentMemberJustEndsTheClaim(t *testing.T) {
+	fake := withFake(t)
+	fake.AddResponse("kubectl "+leaseGetArgs, `{"metadata":{"name":"corral-vdi-devpool-1","resourceVersion":"7","labels":{"corral.dev/vdi-pool":"devpool"}},`+
+		`"spec":{"holderIdentity":"alice","renewTime":"2099-01-01T00:00:00Z","leaseDurationSeconds":3600}}`, nil)
+	fake.AddResponseKV("kubectl", []string{"get", "vm", "devpool-1", "-n", "corral-vms", "--ignore-not-found", "-o", "json"}, "", nil)
+	fake.AddResponseKV("kubectl", []string{"get", "vm", "-n", "corral-vms", "-o", "json", "-l", labelPool + "=devpool"}, `{"items":[`+vmJSON("devpool-2")+`]}`, nil)
+	fake.AddPrefixResponse("kubectl delete --raw", "", nil)
+	if err := Release("corral-vms", "devpool-1", "alice"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestKubeCluster_PoolsReportsEphemeralVMPools(t *testing.T) {
+	fake := withFake(t)
+	newFakeCT(t)
+	fake.AddResponseKV("kubectl", []string{"get", "vm", "-n", "vdi", "-o", "json", "-l", labelPool}, `{"items":[`+ephemeralVMJSON("devpool-1")+`]}`, nil)
+	fake.AddResponseKV("kubectl", []string{"get", "lease", "-n", "vdi", "-l", labelVDIMember, "-o", "json"}, `{"items":[]}`, nil)
+	pools, err := KubeCluster().Pools("vdi")
+	if err != nil || len(pools) != 1 || pools[0].Mode != PoolModeEphemeral || pools[0].Free != 1 {
+		t.Fatalf("pools = %+v, %v", pools, err)
 	}
 }
