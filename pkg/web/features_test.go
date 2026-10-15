@@ -427,9 +427,9 @@ func TestHandleUploadDataVolume_StartsBackgroundTask(t *testing.T) {
 	// poll the task instead of waiting a fixed duration.
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		v, ok := tasks.Load(respBody["task"])
-		if ok && v.(*buildTask).snapshot()["status"] != "running" {
-			snap := v.(*buildTask).snapshot()
+		task, ok := tasks.get(respBody["task"])
+		if ok && task.snapshot()["status"] != "running" {
+			snap := task.snapshot()
 			if snap["status"] != "error" {
 				t.Errorf("status = %q, want error (no real virtctl in tests)", snap["status"])
 			}

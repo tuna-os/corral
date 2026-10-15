@@ -527,8 +527,7 @@ func handleBootcRebuild(w http.ResponseWriter, r *http.Request) {
 	sshKey := kubevirt.LoadSSHPublicKey()
 
 	id := fmt.Sprintf("bootc-rebuild-%s-%d", name, time.Now().UnixNano())
-	task := newBuildTask()
-	tasks.Store(id, task)
+	task := tasks.start(id)
 	done := taskBegin(requestUser(r), "bootc rebuild", ns+"/"+name)
 	go func() {
 		err := kubevirt.BootcRebuild(name, ns, image, sshKey, "", task)
@@ -694,8 +693,7 @@ func handleUploadDataVolume(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := fmt.Sprintf("upload-%s-%d", name, time.Now().UnixNano())
-	task := newBuildTask()
-	tasks.Store(id, task)
+	task := tasks.start(id)
 	done := taskBegin(requestUser(r), "upload image", ns+"/"+name)
 
 	go func() {

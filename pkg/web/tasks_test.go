@@ -14,8 +14,8 @@ import (
 // task handle that bootc builds, imports and migrations report through, and
 // GET /api/tasks/{id}, which the dashboard polls.
 
-func TestBuildTask_Lifecycle(t *testing.T) {
-	task := newBuildTask()
+func TestAsyncTask_Lifecycle(t *testing.T) {
+	task := newAsyncTask()
 	if got := task.snapshot(); got["status"] != "running" || got["log"] != "" || got["error"] != "" || len(got) != 3 {
 		t.Fatalf("new task snapshot = %v", got)
 	}
@@ -46,8 +46,8 @@ func TestBuildTask_Lifecycle(t *testing.T) {
 	}
 }
 
-func TestBuildTask_FinishWithError(t *testing.T) {
-	task := newBuildTask()
+func TestAsyncTask_FinishWithError(t *testing.T) {
+	task := newAsyncTask()
 	_, _ = fmt.Fprint(task, "pulling\n")
 	task.finish(errors.New("pull failed"))
 	got := task.snapshot()
@@ -56,8 +56,8 @@ func TestBuildTask_FinishWithError(t *testing.T) {
 	}
 }
 
-func TestBuildTask_WaitBlocksUntilFinish(t *testing.T) {
-	task := newBuildTask()
+func TestAsyncTask_WaitBlocksUntilFinish(t *testing.T) {
+	task := newAsyncTask()
 	waited := make(chan struct{})
 	go func() {
 		task.wait()
@@ -76,8 +76,8 @@ func TestBuildTask_WaitBlocksUntilFinish(t *testing.T) {
 	}
 }
 
-func TestBuildTask_ConcurrentWritesAreSafe(t *testing.T) {
-	task := newBuildTask()
+func TestAsyncTask_ConcurrentWritesAreSafe(t *testing.T) {
+	task := newAsyncTask()
 	var wg sync.WaitGroup
 	for range 8 {
 		wg.Add(1)
@@ -95,13 +95,34 @@ func TestBuildTask_ConcurrentWritesAreSafe(t *testing.T) {
 	}
 }
 
+func TestTaskTracker(t *testing.T) {
+	var tr taskTracker
+	if _, ok := tr.get("a"); ok {
+		t.Fatal("empty tracker returned a task")
+	}
+	a := tr.start("a")
+	if got := a.snapshot()["status"]; got != "running" {
+		t.Fatalf("started task status = %q", got)
+	}
+	if got, ok := tr.get("a"); !ok || got != a {
+		t.Fatal("get did not return the started task")
+	}
+	a.finish(nil)
+	if got, ok := tr.get("a"); !ok || got.snapshot()["status"] != "done" {
+		t.Fatal("finished tasks must stay registered")
+	}
+	tr.remove("a")
+	if _, ok := tr.get("a"); ok {
+		t.Fatal("removed task still registered")
+	}
+}
+
 func TestHandleTaskStatus_TracksLifecycle(t *testing.T) {
 	fx := NewTestFixture()
 	defer fx.Close()
 
-	task := newBuildTask()
-	tasks.Store("char-task", task)
-	defer tasks.Delete("char-task")
+	task := tasks.start("char-task")
+	defer tasks.remove("char-task")
 
 	get := func() map[string]string {
 		t.Helper()

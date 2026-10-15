@@ -14,13 +14,13 @@ import (
 // failures (bootc unavailable, no SSH key) return immediately as a
 // *httpError; once the build is actually running, createBootc returns the
 // task id and handle without waiting for it. Callers that need to wait for
-// completion (tests, in particular — see buildTask.wait) can do so on the
+// completion (tests, in particular — see asyncTask.wait) can do so on the
 // returned task instead of racing the goroutine through HTTP.
-func createBootc(req createRequest, ns string) (id string, task *buildTask, err error) {
+func createBootc(req createRequest, ns string) (id string, task *asyncTask, err error) {
 	return createBootcInContext(req, ns, "")
 }
 
-func createBootcInContext(req createRequest, ns, context string) (id string, task *buildTask, err error) {
+func createBootcInContext(req createRequest, ns, context string) (id string, task *asyncTask, err error) {
 	if !kubevirt.BootcAvailable() {
 		return "", nil, badRequest(fmt.Errorf(
 			"bootc support is not enabled on this server (optional plugin — run the corral:bootc image)"))
@@ -39,8 +39,7 @@ func createBootcInContext(req createRequest, ns, context string) (id string, tas
 	}
 
 	id = fmt.Sprintf("bootc-%s-%d", req.Name, time.Now().UnixNano())
-	task = newBuildTask()
-	tasks.Store(id, task)
+	task = tasks.start(id)
 	done := taskBegin(req.user, "bootc build", ns+"/"+req.Name)
 
 	go func() {
