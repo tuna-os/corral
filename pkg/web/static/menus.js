@@ -1,7 +1,7 @@
 // Context menu items for each inventory object (VM, container, node, host,
 // namespace, pool). Item lists only; ui/menu.js draws them.
 
-import { api, ctKey, vmKey, vmURL } from './api.js';
+import { api, ctKey, sendJSON, vmKey, vmURL } from './api.js';
 import { markRendered, refresh, renderContent, select } from './app.js';
 import { ctAction } from './content/ct.js';
 import { cloneVM, exportVM, migrateVM, post, vmAction } from './content/vm.js';
@@ -167,11 +167,7 @@ export function vmMenuItems(vm) {
           await api(`/api/folders/members?ref=${encodeURIComponent(ref)}`, { method: 'DELETE' });
           toast('Removed from its pool');
         } else {
-          await api('/api/folders/members', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path: chosen.trim(), ref }),
-          });
+          await sendJSON('/api/folders/members', { path: chosen.trim(), ref });
           toast(`Added to ${chosen.trim()}`);
         }
         await loadPools();
@@ -199,11 +195,7 @@ export function vmMenuItems(vm) {
       const ref = vm.id || vmKey(vm);
       let plan;
       try {
-        plan = await api('/api/move/preflight', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ref, toBackend: chosen.trim() }),
-        });
+        plan = await sendJSON('/api/move/preflight', { ref, toBackend: chosen.trim() });
       } catch (e) {
         toast(`Could not plan move: ${e.message}`);
         return;
@@ -373,11 +365,7 @@ export function poolMenuItems(folder) {
       action: async () => {
         if (!confirm(`Start every instance in pool ${folder.path}? (${n} instances)`)) return;
         try {
-          const res = await api('/api/folders/action', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path: folder.path, action: 'start' }),
-          });
+          const res = await sendJSON('/api/folders/action', { path: folder.path, action: 'start' });
           toast(summariseOutcomes('start', res.members || []));
           refresh(true);
         } catch (err) { toast(err.message); }
@@ -391,11 +379,7 @@ export function poolMenuItems(folder) {
       action: async () => {
         if (!confirm(`Stop every instance in pool ${folder.path}? (${n} instances)`)) return;
         try {
-          const res = await api('/api/folders/action', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path: folder.path, action: 'stop' }),
-          });
+          const res = await sendJSON('/api/folders/action', { path: folder.path, action: 'stop' });
           toast(summariseOutcomes('stop', res.members || []));
           refresh(true);
         } catch (err) { toast(err.message); }
@@ -409,11 +393,7 @@ export function poolMenuItems(folder) {
       action: async () => {
         if (!confirm(`Restart every instance in pool ${folder.path}? (${n} instances)`)) return;
         try {
-          const res = await api('/api/folders/action', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path: folder.path, action: 'restart' }),
-          });
+          const res = await sendJSON('/api/folders/action', { path: folder.path, action: 'restart' });
           toast(summariseOutcomes('restart', res.members || []));
           refresh(true);
         } catch (err) { toast(err.message); }
@@ -428,11 +408,7 @@ export function poolMenuItems(folder) {
         const p = prompt(`New subpool under ${folder.path} (e.g. ${folder.path}/sub):`, `${folder.path}/`);
         if (!p) return;
         try {
-          await api('/api/folders', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path: p.trim() }),
-          });
+          await sendJSON('/api/folders', { path: p.trim() });
           await loadPools();
           refresh(true);
         } catch (err) { toast(err.message); }
@@ -466,11 +442,7 @@ export function unassignedMenuItems() {
         const path = prompt('Pool path (nest with /, e.g. prod/web):');
         if (!path) return;
         try {
-          await api('/api/folders', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path }),
-          });
+          await sendJSON('/api/folders', { path });
           await loadPools();
           refresh(true);
         } catch (err) { toast(err.message); }

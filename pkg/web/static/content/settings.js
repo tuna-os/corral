@@ -1,6 +1,6 @@
 // Settings screen: theme and branding.
 
-import { api } from '../api.js';
+import { api, sendJSON } from '../api.js';
 import { icon } from '../icons.js';
 import { MODES, setThemeMode, themeMode } from '../ui/theme.js';
 import { $, esc } from '../ui/dom.js';
@@ -131,17 +131,13 @@ export async function renderSettings(main) {
     btn.disabled = true;
     st.textContent = 'Saving…';
     try {
-      await api('/api/theme', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          accent: accent.value,
-          brand_title: title.value,
-          brand_emoji: emoji.value,
-          brand_subtitle: subtitle.value,
-          custom_css: css.value,
-        }),
-      });
+      await sendJSON('/api/theme', {
+        accent: accent.value,
+        brand_title: title.value,
+        brand_emoji: emoji.value,
+        brand_subtitle: subtitle.value,
+        custom_css: css.value,
+      }, 'PUT');
       st.textContent = '✓ Saved';
       st.style.color = 'var(--green)';
       // Remove the preview style — the server will inject the real one on reload.

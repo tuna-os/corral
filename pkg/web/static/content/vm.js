@@ -1,6 +1,6 @@
 // VM screen: the tab strip, every VM tab, and the VM actions.
 
-import { api, vmKey, vmURL } from '../api.js';
+import { api, sendJSON, vmKey, vmURL } from '../api.js';
 import { markRendered, refresh, select } from '../app.js';
 import { connectRDP, connectTTY, connectVNC, consoleGeneration, disconnectConsoles } from '../console.js';
 import { watchBuild } from '../create.js';
@@ -273,10 +273,7 @@ export async function vmAction(vm, act) {
     const ref = prompt('Rebuild from which bootc image?\nLeave blank to pull the latest of the current image, or enter a new image to switch.', '');
     if (ref === null) return; // cancelled
     try {
-      const res = await api(vmURL(vm, '/bootc/rebuild'), {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image: ref.trim() }),
-      });
+      const res = await sendJSON(vmURL(vm, '/bootc/rebuild'), { image: ref.trim() });
       if (res.task) watchBuild(res.task, vm.name);
     } catch (e) { toast(e.message); }
     return;
@@ -288,11 +285,7 @@ export async function vmAction(vm, act) {
 }
 
 export async function post(vm, path, body) {
-  return api(vmURL(vm, path), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body || {}),
-  });
+  return sendJSON(vmURL(vm, path), body || {});
 }
 
 // migrateVM asks for (or, after a drag onto a node, confirms) the target node.
@@ -469,10 +462,7 @@ async function renderPowerSchedule(vm) {
     <p class="muted">5-field cron in the cluster's timezone. e.g. start <code>0 9 * * 1-5</code>, stop <code>0 18 * * 1-5</code> = weekdays 9–6. Leave a field blank to skip that boundary.</p>`;
   $('#pwr-save').onclick = async () => {
     try {
-      await api(vmURL(vm, '/powerschedule'), {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ start: $('#pwr-start').value.trim(), stop: $('#pwr-stop').value.trim() }),
-      });
+      await sendJSON(vmURL(vm, '/powerschedule'), { start: $('#pwr-start').value.trim(), stop: $('#pwr-stop').value.trim() });
       toast('Schedule saved');
     } catch (e) { toast(e.message); }
     renderPowerSchedule(vm);
@@ -909,10 +899,7 @@ async function renderSnapSchedule(vm) {
     const every = $('#snapsched-every').value;
     const keep = parseInt($('#snapsched-keep').value, 10) || 12;
     try {
-      await api(vmURL(vm, '/snapschedule'), {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ every, keep }),
-      });
+      await sendJSON(vmURL(vm, '/snapschedule'), { every, keep });
       toast('Schedule created');
     } catch (e) { toast(e.message); }
     renderSnapSchedule(vm);

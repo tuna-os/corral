@@ -1,7 +1,7 @@
 // Consoles: noVNC, the xterm.js serial terminal and IronRDP, plus console
 // tabs and the pop-out route.
 
-import { findVM, vmKey } from './api.js';
+import { findVM, rdpURL, vmKey, wsURL } from './api.js';
 import { markRendered, renderContent } from './app.js';
 import { icon } from './icons.js';
 import { state } from './state.js';
@@ -13,11 +13,6 @@ let term = null;       // xterm instance
 let ttyWS = null;      // serial console websocket
 
 // ── Consoles ──────────────────────────────────────────────────────
-
-export const wsURL = (kind, vm) => {
-  const base = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/${kind}/${vm.namespace}/${vm.name}`;
-  return base + (vm.context ? `?context=${encodeURIComponent(vm.context)}` : '');
-};
 
 // toggleFullscreen puts el into (or out of) browser fullscreen.
 function toggleFullscreen(el) {
@@ -268,8 +263,6 @@ export function connectRDP(vm, body) {
     </div>`;
 
   const screen = $('#rdp-screen');
-  const wsURL = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/rdp/${vm.namespace}/${vm.name}?rdcleanpath=1`;
-
   // Prompt for credentials.
   const username = prompt('RDP username:', '');
   if (username === null) { screen.innerHTML = '<p class="console-msg">RDP cancelled.</p>'; return; }
@@ -303,7 +296,7 @@ export function connectRDP(vm, body) {
     .withUsername(username)
     .withPassword(password)
     .withDestination(vm.name)
-    .withProxyAddress(wsURL)
+    .withProxyAddress(rdpURL(vm))
     .withAuthToken('corral')
     .build();
 

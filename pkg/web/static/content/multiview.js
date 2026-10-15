@@ -1,8 +1,7 @@
 // Multiview screen: several live VNC consoles in one persisted grid.
 
-import { vmKey } from '../api.js';
+import { vmKey, wsURL } from '../api.js';
 import { renderContent, select } from '../app.js';
-import { wsURL } from '../console.js';
 import { icon } from '../icons.js';
 import { state } from '../state.js';
 import { $, esc } from '../ui/dom.js';

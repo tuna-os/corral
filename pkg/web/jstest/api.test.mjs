@@ -9,7 +9,7 @@
 import assert from 'node:assert/strict';
 import { afterEach, describe, test } from 'node:test';
 
-import { api, ctKey, findCT, findVM, vmKey, vmURL } from '../static/api.js';
+import { api, ctKey, ctURL, findCT, findVM, rdpURL, sendJSON, vmKey, vmURL, wsURL } from '../static/api.js';
 import { state } from '../static/state.js';
 
 const realFetch = globalThis.fetch;
@@ -147,4 +147,58 @@ describe('inventory keys and URLs', () => {
     assert.equal(findCT('pets/db'), state.cts[0]);
     assert.equal(findCT('pets/none'), undefined);
   });
+});
+
+describe('sendJSON', () => {
+  test('POSTs the body as a JSON document by default', async () => {
+    const calls = stubFetch(json({ task: 7 }));
+    const res = await sendJSON('/api/folders', { path: 'lab/a' });
+    assert.deepEqual(res, { task: 7 });
+    assert.equal(calls[0].path, '/api/folders');
+    assert.deepEqual(calls[0].opts, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{"path":"lab/a"}',
+    });
+  });
+
+  test('takes another method', async () => {
+    const calls = stubFetch(json({}));
+    await sendJSON('/api/theme', { accent: '#fff' }, 'PUT');
+    assert.equal(calls[0].opts.method, 'PUT');
+    assert.equal(calls[0].opts.body, '{"accent":"#fff"}');
+  });
+
+  test('fails exactly as api() does', async () => {
+    stubFetch(json({ error: 'pool exists' }, { status: 409 }));
+    await assert.rejects(sendJSON('/api/folders', {}), { message: 'pool exists (409)', status: 409 });
+  });
+});
+
+describe('console WebSocket URLs', () => {
+  const vm = { namespace: 'corral-vms', name: 'web-prod' };
+  const realLocation = globalThis.location;
+  afterEach(() => { globalThis.location = realLocation; });
+
+  test('ws: on an http page, on the page host', () => {
+    globalThis.location = { protocol: 'http:', host: '127.0.0.1:8006' };
+    assert.equal(wsURL('vnc', vm), 'ws://127.0.0.1:8006/api/vnc/corral-vms/web-prod');
+    assert.equal(wsURL('tty', { ...vm, context: 'lab one' }), 'ws://127.0.0.1:8006/api/tty/corral-vms/web-prod?context=lab%20one');
+  });
+
+  test('wss: on an https page', () => {
+    globalThis.location = { protocol: 'https:', host: 'corral.example.ts.net' };
+    assert.equal(wsURL('vnc', vm), 'wss://corral.example.ts.net/api/vnc/corral-vms/web-prod');
+  });
+
+  test('the RDP proxy asks for RDCleanPath and carries no context', () => {
+    globalThis.location = { protocol: 'https:', host: 'corral.example.ts.net' };
+    assert.equal(rdpURL({ ...vm, context: 'lab' }), 'wss://corral.example.ts.net/api/rdp/corral-vms/web-prod?rdcleanpath=1');
+  });
+});
+
+test('ctURL addresses the container, with an optional suffix', () => {
+  const c = { namespace: 'pets', name: 'db' };
+  assert.equal(ctURL(c), '/api/cts/pets/db');
+  assert.equal(ctURL(c, '/scale'), '/api/cts/pets/db/scale');
 });

@@ -1,6 +1,6 @@
 // Extensions screen: installed and available plugins.
 
-import { api } from '../api.js';
+import { api, sendJSON } from '../api.js';
 import { icon } from '../icons.js';
 import { $, esc, toast } from '../ui/dom.js';
 import { openSection, pluginContributions } from './pluginui.js';
@@ -99,10 +99,7 @@ export async function renderExtensions(main) {
       if (permissions && !confirm(`Install ${b.dataset.extAdd} and grant its declared permissions?\n\n${permissions}`)) return;
       b.disabled = true; b.textContent = 'Installing…';
       const source = b.dataset.source ? `?source=${encodeURIComponent(b.dataset.source)}` : '';
-      try { await api(`/api/plugins/${b.dataset.extAdd}/install${source}`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ acceptPermissions: !!permissions }),
-      }); toast('Installed'); }
+      try { await sendJSON(`/api/plugins/${b.dataset.extAdd}/install${source}`, { acceptPermissions: !!permissions }); toast('Installed'); }
       catch (e) { toast(e.message); }
       renderExtensions(main);
     };

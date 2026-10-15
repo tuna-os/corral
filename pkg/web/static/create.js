@@ -1,6 +1,6 @@
 // Create VM and Create CT dialogs, the OS wizard and the build-log viewer.
 
-import { api } from './api.js';
+import { api, sendJSON } from './api.js';
 import { refresh } from './app.js';
 import { icon } from './icons.js';
 import { state } from './state.js';
@@ -41,11 +41,7 @@ $('#ct-create-form').onsubmit = async (e) => {
     privileged: !!f.get('privileged'),
   };
   try {
-    await api('/api/cts', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
+    await sendJSON('/api/cts', body);
     $('#ct-create-dialog').close();
     e.target.reset();
     toast(`Container ${body.name} created`);
@@ -152,10 +148,7 @@ async function addCustomSource() {
   const src = await sourceDialog();
   if (!src) return;
   try {
-    await api('/api/sources', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(src),
-    });
+    await sendJSON('/api/sources', src);
   } catch (e) { toast(e.message); return; }
   toast(`Added source "${src.name}"`);
   wizardLoad();
@@ -253,11 +246,7 @@ $('#wiz-create').onclick = async () => {
   else body.image = wizSelected.name;
   $('#wiz-create').disabled = true;
   try {
-    const res = await api('/api/vms', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
+    const res = await sendJSON('/api/vms', body);
     $('#create-dialog').close();
     $('#wiz-name').value = '';
     if (res.task) watchBuild(res.task, name);
@@ -408,11 +397,7 @@ $('#create-form').onsubmit = async (e) => {
     const local = { name: body.name, target: body.target, cpu: body.cpu, mem: body.mem, disk: body.disk };
     if (type === 'import') local.import = src; else local.iso = src;
     try {
-      const res = await api('/api/vms', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(local),
-      });
+      const res = await sendJSON('/api/vms', local);
       $('#create-dialog').close();
       e.target.reset();
       if (res.status === 'downloading') toast(`Downloading image for ${local.name} — progress in the Tasks panel`);
@@ -432,11 +417,7 @@ $('#create-form').onsubmit = async (e) => {
   else body.pvc = f.get('pvcSource') || src; // pvc: prefer the library dropdown, fall back to free text
 
   try {
-    const res = await api('/api/vms', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
+    const res = await sendJSON('/api/vms', body);
     $('#create-dialog').close();
     e.target.reset();
     if (res.task) watchBuild(res.task, body.name);

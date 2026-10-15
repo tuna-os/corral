@@ -269,11 +269,7 @@ export function dropTargetPool(row, path) {
           await ctx.api(`/api/folders/members?ref=${encodeURIComponent(ref)}`, { method: 'DELETE' });
           ctx.toast('Removed from its pool');
         } else {
-          await ctx.api('/api/folders/members', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path, ref }),
-          });
+          await ctx.sendJSON('/api/folders/members', { path, ref });
           ctx.toast(`Added to ${path}`);
         }
       } catch (e) {
@@ -307,11 +303,7 @@ export function dropTargetBackend(row, d) {
     onDrop: async (vm, ref) => {
       let plan;
       try {
-        plan = await ctx.api('/api/move/preflight', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ref, toBackend: backend }),
-        });
+        plan = await ctx.sendJSON('/api/move/preflight', { ref, toBackend: backend });
       } catch (e) {
         ctx.toast(`Could not plan the move: ${e.message}`);
         return;
@@ -370,13 +362,9 @@ export function showMoveDialog(ref, backend, plan) {
     go.disabled = true;
     go.textContent = 'Moving…';
     try {
-      const result = await ctx.api('/api/move', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ref, toBackend: backend,
-          deleteSource: el.querySelector('#move-delete-source').checked,
-        }),
+      const result = await ctx.sendJSON('/api/move', {
+        ref, toBackend: backend,
+        deleteSource: el.querySelector('#move-delete-source').checked,
       });
       close();
       ctx.toast(`Moved to ${backend}/${result.destination?.name || ''} — created stopped`);
@@ -403,11 +391,7 @@ function newPoolButton() {
     const path = prompt('Pool path (nest with /, e.g. prod/web):');
     if (!path) return;
     try {
-      await ctx.api('/api/folders', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path }),
-      });
+      await ctx.sendJSON('/api/folders', { path });
     } catch (err) {
       ctx.toast(err.message);
       return;
@@ -438,11 +422,7 @@ function poolActions(folder) {
       if (!confirm(`${title}? (${(folder.members || []).length} instances)`)) return;
       let result;
       try {
-        result = await ctx.api('/api/folders/action', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ path: folder.path, action }),
-        });
+        result = await ctx.sendJSON('/api/folders/action', { path: folder.path, action });
       } catch (err) {
         ctx.toast(err.message);
         return;
