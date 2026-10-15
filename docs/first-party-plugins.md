@@ -19,10 +19,14 @@ curated marketplace.
 
 `corral-vdi` provides static desktop pools for Phase 1 and CT-backed ephemeral
 pools. The self-service broker of Phase 2 is part of `corral web`
-([ADR-0013](adr/0013-vdi-broker-placement.md)). VDI is at the Preview stability
-level. RFC-0001 governs them. [docs/vdi.md](vdi.md) and
-[docs/vdi-ct-pools.md](vdi-ct-pools.md) document them. [docs/vdi-epic-status.md](vdi-epic-status.md)
-tracks the dependency gates of the epic.
+([ADR-0013](adr/0013-vdi-broker-placement.md)). On KubeVirt, the broker on
+persistent VM pools is Stable. The `corral vdi` CLI, ephemeral and CT-backed
+pools, USB redirection and device checks are Preview.
+
+[docs/vdi.md](vdi.md) gives the evidence for each level. RFC-0001 governs
+these plugins. [docs/vdi.md](vdi.md) and [docs/vdi-ct-pools.md](vdi-ct-pools.md)
+document them. [docs/vdi-epic-status.md](vdi-epic-status.md) tracks the
+dependency gates of the epic.
 
 `corral-incus` is a compatibility
 binary for older installations. Incus is now a built-in backend, and tuna-os does
