@@ -15,7 +15,12 @@ cmd/              Cobra CLI (root, subcommands, TUI)
 ├── images.go     corral images (list catalog + imported datavolumes)
 ├── config.go     corral config (show, set auth key)
 ├── web.go        corral web (--addr, serve embedded SPA)
-├── tui.go        Bubble Tea TUI (VMs + Containers side by side; VM and CT action menus, clone input state)
+├── tui.go        Bubble Tea TUI root model (state, Update loop, list/doctor/detail views, context filter)
+├── tui_items.go  TUI list items (VMs, CTs, actions) and which actions apply to each
+├── tui_actions.go TUI action dispatch (run selected action, SSH/viewer/export/clone)
+├── tui_delegates.go TUI list delegates (VM rows, action menu rows)
+├── tui_edit.go   TUI port-toggle edit model and port helpers
+├── tui_hwedit.go TUI hardware (CPU/RAM) edit model
 ├── tui_modes.go  TUI screen modes and the legal transitions between them
 ├── tui_screens.go TUI screens: one key handler and one view per mode
 ├── tui_ops.go    TUI backend work run as tea.Cmds off the Update loop, and their result messages
