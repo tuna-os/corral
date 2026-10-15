@@ -3,7 +3,6 @@ package windows
 import (
 	"encoding/xml"
 	"fmt"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -284,7 +283,7 @@ func (i Incus) Define(ref types.InstanceRef, spec Spec) (Result, error) {
 	if spec.InstallerISO == "" {
 		return Result{}, fmt.Errorf("a Windows installation ISO is required")
 	}
-	if _, err := exec.LookPath("distrobuilder"); err != nil {
+	if _, err := runner.LookPath("distrobuilder"); err != nil {
 		return Result{}, unsupported("incus",
 			"an Incus VM gets a single CD-ROM, so the virtio drivers have to be inside the installer image before it boots",
 			"install distrobuilder, which repacks the ISO with the drivers: "+
@@ -339,20 +338,21 @@ func xmlEscape(s string) string {
 	return b.String()
 }
 
-// memoryMiB normalises 8Gi/8G/8192 into the MiB libvirt wants.
+// memoryMiB normalises 8Gi/8G/8GB/8GiB/8192M/8192 into the MiB libvirt wants.
 func memoryMiB(mem string) string {
 	if mem == "" {
 		return "8192"
 	}
-	value := strings.TrimSpace(mem)
+	value := strings.ToLower(strings.TrimSpace(mem))
 	multiplier := 1
-	switch {
-	case strings.HasSuffix(strings.ToLower(value), "gi"), strings.HasSuffix(strings.ToLower(value), "gib"):
-		value, multiplier = strings.TrimRight(value, "GgIiBb"), 1024
-	case strings.HasSuffix(strings.ToUpper(value), "G"):
-		value, multiplier = strings.TrimRight(value, "Gg"), 1024
-	case strings.HasSuffix(strings.ToLower(value), "mi"), strings.HasSuffix(strings.ToUpper(value), "M"):
-		value = strings.TrimRight(value, "MmIiBb")
+	for _, unit := range []struct {
+		suffix string
+		mib    int
+	}{{"gib", 1024}, {"gb", 1024}, {"gi", 1024}, {"g", 1024}, {"mib", 1}, {"mb", 1}, {"mi", 1}, {"m", 1}} {
+		if strings.HasSuffix(value, unit.suffix) {
+			value, multiplier = strings.TrimSpace(strings.TrimSuffix(value, unit.suffix)), unit.mib
+			break
+		}
 	}
 	var n int
 	if _, err := fmt.Sscanf(value, "%d", &n); err != nil || n <= 0 {

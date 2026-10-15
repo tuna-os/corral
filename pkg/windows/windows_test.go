@@ -4,7 +4,6 @@ import (
 	"encoding/xml"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -151,12 +150,19 @@ func TestLibvirt_DefineNeedsAnInstaller(t *testing.T) {
 
 func TestMemoryMiB(t *testing.T) {
 	for input, want := range map[string]string{
-		"8Gi":   "8192",
-		"8G":    "8192",
-		"4096":  "4096",
-		"4096M": "4096",
-		"":      "8192",
-		"junk":  "8192",
+		"8Gi":    "8192",
+		"8G":     "8192",
+		"8g":     "8192",
+		"16GiB":  "16384",
+		"16GB":   "16384", // was "16": a 16 MiB Windows guest
+		"8 GB":   "8192",
+		"4096":   "4096",
+		"4096M":  "4096",
+		"4096MB": "4096",
+		"4096Mi": "4096",
+		"":       "8192",
+		"junk":   "8192",
+		"0G":     "8192",
 	} {
 		if got := memoryMiB(input); got != want {
 			t.Errorf("memoryMiB(%q) = %q, want %q", input, got, want)
@@ -170,10 +176,8 @@ func TestMemoryMiB(t *testing.T) {
 // drivers into a Windows boot image is its entire reason to exist. The
 // refusal has to name it and the command.
 func TestIncus_RefusesWithoutDistrobuilder(t *testing.T) {
-	withFake(t)
-	if _, err := exec.LookPath("distrobuilder"); err == nil {
-		t.Skip("distrobuilder is installed here, so the refusal cannot trigger")
-	}
+	SetRunner(noDistrobuilder{shell.NewFake()})
+	t.Cleanup(func() { SetRunner(shell.Real{}) })
 	_, err := (Incus{}).Define(types.InstanceRef{Backend: "incus", Name: "win11"},
 		Spec{Name: "win11", InstallerISO: "/iso/win.iso", VirtioISO: "/iso/virtio.iso"})
 	var u *Unsupported
