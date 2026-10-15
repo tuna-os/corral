@@ -602,6 +602,10 @@ func newFakePVE(t *testing.T) *fakePVE {
 				"vmid": 100, "name": "web-prod", "node": "pve1", "type": "qemu",
 				"status": "running", "maxcpu": 4, "maxmem": 8589934592,
 			}}
+		case path == "/cluster/nextid":
+			data = "101"
+		case path == "/nodes":
+			data = []map[string]any{{"node": "pve1", "status": "online"}}
 		case strings.HasSuffix(path, "/status"):
 			data = map[string]any{"status": "stopped", "exitstatus": exit, "type": "qmstart", "node": "pve1"}
 		case strings.Contains(path, "/tasks/") && strings.HasSuffix(path, "/log"):
@@ -712,6 +716,54 @@ func TestProxmoxAdapter_UnconfiguredContextFailsLateNotEarly(t *testing.T) {
 	}
 	if err := adapter.(Power).Start("web-prod"); err == nil {
 		t.Error("Start against an unconfigured context must fail")
+	}
+}
+
+// Create is how `corral create --context <pve>` reaches PVE (#493): it must
+// POST the guest and wait for the task, so a nil error means a VM exists.
+func TestProxmoxAdapter_CreatePostsAndWaits(t *testing.T) {
+	f := newFakePVE(t)
+	context := proxmoxSeam(t, f)
+	adapter, err := For(types.InstanceRef{Backend: "proxmox", Context: context, Name: "new-vm"})
+	if err != nil {
+		t.Fatalf("For(proxmox): %v", err)
+	}
+	creator, ok := adapter.(Creator)
+	if !ok {
+		t.Fatal("the proxmox adapter does not implement Creator, so the CLI cannot create on PVE")
+	}
+	if err := creator.Create(types.CreateOpts{Name: "new-vm", CPU: 2, Mem: "4G", ISO: "local:iso/debian.iso"}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if !f.saw("POST /nodes/pve1/qemu") {
+		t.Errorf("Create did not POST the VM; requests were %v", f.requests)
+	}
+	if !f.saw("/tasks/") {
+		t.Errorf("Create returned without waiting for its task; requests were %v", f.requests)
+	}
+}
+
+// PVE boots installers from its own storage. A local path, URL or disk source
+// is refused before anything is sent, with the reason.
+func TestProxmoxAdapter_CreateRefusesSourcesPVECannotBoot(t *testing.T) {
+	for _, opts := range []types.CreateOpts{
+		{Name: "new-vm", ISO: "./debian.iso"},
+		{Name: "new-vm", ISO: "/srv/iso/debian.iso"},
+		{Name: "new-vm", ISO: "https://example.com/debian.iso"},
+		{Name: "new-vm", QCOW: "./template.qcow2"},
+	} {
+		f := newFakePVE(t)
+		context := proxmoxSeam(t, f)
+		adapter, err := For(types.InstanceRef{Backend: "proxmox", Context: context, Name: "new-vm"})
+		if err != nil {
+			t.Fatalf("For(proxmox): %v", err)
+		}
+		if err := adapter.(Creator).Create(opts); err == nil {
+			t.Errorf("Create(%+v) succeeded; PVE cannot boot that source", opts)
+		}
+		if f.saw("POST") {
+			t.Errorf("Create(%+v) sent %v before refusing", opts, f.requests)
+		}
 	}
 }
 
