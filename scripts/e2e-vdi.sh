@@ -11,8 +11,13 @@
 #   connect     the broker resolves a protocol, or says to start the desktop first
 #   release     the explicit release ends the claim and stops the VM
 #   reclaim     the maximum session duration reclaims a claim, and the task log says so
+#   upgrade     an assignment that the previous release's `corral vdi assign`
+#               wrote stays with its user: another claim does not take it, and
+#               the user's claim adopts it as a Lease
 #
 # Usage: scripts/e2e-vdi.sh [path/to/corral]   (default ./corral)
+# VDI_E2E_OLD_REF is the previous release tag (default v0.6.0). The script
+# builds its corral-vdi from a git worktree of that tag.
 set -euo pipefail
 
 CORRAL=${1:-./corral}
@@ -27,13 +32,17 @@ BOB=bob@e2e
 BODY=$(mktemp)
 LOG=${VDI_E2E_LOG:-corral-vdi-web.log}
 PID=
+OLD_REF=${VDI_E2E_OLD_REF:-v0.6.0}
+OLD=$(mktemp -d)
+LEGACY=legacy
 
 cleanup() {
   [ -n "$PID" ] && kill "$PID" 2>/dev/null || true
   # Wait for the VMs to go: the workflow then checks that nothing is left.
   kubectl delete vm -n "$NS" -l "corral.dev/vdi-pool=$POOL" --ignore-not-found --timeout=180s >/dev/null || true
   kubectl delete lease -n "$NS" -l "corral.dev/vdi-pool=$POOL" --ignore-not-found >/dev/null || true
-  rm -f "$BODY"
+  git worktree remove --force "$OLD/src" 2>/dev/null || true
+  rm -rf "$BODY" "$OLD"
 }
 trap cleanup EXIT
 
@@ -60,6 +69,12 @@ expect() { # expect WANT GOT MESSAGE
 holder() {
   kubectl get lease "corral-vdi-$1" -n "$NS" --ignore-not-found -o jsonpath='{.spec.holderIdentity}'
 }
+
+# The previous release's plugin, which wrote assignments as VM labels only.
+git fetch -q --no-tags --depth 1 origin "refs/tags/$OLD_REF:refs/tags/$OLD_REF"
+git worktree add -q --detach "$OLD/src" "$OLD_REF"
+(cd "$OLD/src" && go build -o "$OLD/corral-vdi" ./cmd/corral-vdi)
+ok "built corral-vdi $OLD_REF"
 
 for i in 1 2; do
   kubectl apply -f - >/dev/null <<EOF
@@ -176,3 +191,45 @@ expect 200 "$(call root@e2e GET /api/tasklog)" "the admin reads the task log"
 jq -e --arg t "$bobdesk" 'any(.[]; .action == "vdi reclaim (max-duration)" and .user == "corral-vdi/broker" and (.target | startswith($t)) and .status == "ok")' "$BODY" >/dev/null ||
   fail "the task log has no successful max-duration reclaim of $bobdesk"
 ok "the task log records the reclaim"
+
+# ── upgrade from the previous release ────────────────────────────
+# Both members are free again. The previous release assigns one to $LEGACY
+# with labels and an annotation, and without a Lease.
+"$OLD/corral-vdi" -n "$NS" assign "$POOL" "$LEGACY" || fail "corral-vdi $OLD_REF assign"
+legacymember=$(kubectl get vm -n "$NS" -l "corral.dev/vdi-pool=$POOL,corral.dev/vdi-assigned-to=$LEGACY" -o jsonpath='{.items[0].metadata.name}')
+[ -n "$legacymember" ] || fail "corral-vdi $OLD_REF assign wrote no corral.dev/vdi-assigned-to=$LEGACY label"
+[ -z "$(holder "$legacymember")" ] || fail "corral-vdi $OLD_REF assign wrote a Lease"
+ok "corral-vdi $OLD_REF assigned $legacymember to $LEGACY with labels only"
+
+expect 200 "$(call "$ALICE" GET /api/vdi/pools)" "alice lists the pools after the upgrade"
+free=$(jq -r --arg id "vm/$NS/$POOL" '.[] | select(.id == $id) | .free' "$BODY")
+[ "$free" = 1 ] || fail "pool $POOL has $free free members after the $OLD_REF assignment, want 1"
+ok "the broker does not count the $OLD_REF assignment as free"
+
+expect 200 "$(call carol@e2e POST "/api/vdi/pools/vm/$NS/$POOL/claim")" "carol claims a desktop"
+carolmember=$(jq -r .member "$BODY")
+[ "$carolmember" != "$legacymember" ] || fail "carol got $legacymember, which $OLD_REF assigned to $LEGACY"
+expect 409 "$(call dave@e2e POST "/api/vdi/pools/vm/$NS/$POOL/claim")" "the $OLD_REF assignment is not free for a new user"
+[ "$(kubectl get vm "$legacymember" -n "$NS" -o jsonpath='{.metadata.labels.corral\.dev/vdi-assigned-to}')" = "$LEGACY" ] ||
+  fail "a new claim changed the $OLD_REF assignment of $legacymember"
+ok "new claims do not take $legacymember from $LEGACY"
+
+expect 200 "$(call "$LEGACY" POST "/api/vdi/pools/vm/$NS/$POOL/claim")" "$LEGACY claims a desktop"
+legacydesk=$(jq -r .id "$BODY")
+[ "$(jq -r .member "$BODY")" = "$legacymember" ] || fail "$LEGACY got $(jq -r .member "$BODY"), not the $OLD_REF desktop $legacymember"
+[ "$(holder "$legacymember")" = "$LEGACY" ] || fail "Lease corral-vdi-$legacymember is not held by $LEGACY"
+ok "the claim of $LEGACY adopts $legacymember as a Lease"
+
+expect 202 "$(call "$LEGACY" POST "/api/vdi/desktops/$legacydesk/release")" "$LEGACY releases the adopted desktop"
+task=$(jq -r .task "$BODY")
+for _ in $(seq 1 60); do
+  call "$LEGACY" GET "/api/tasks/$task" >/dev/null
+  status=$(jq -r .status "$BODY")
+  [ "$status" != running ] && break
+  sleep 2
+done
+[ "$status" = "done" ] || fail "the release task ended $status: $(jq -r .error "$BODY")"
+[ -z "$(holder "$legacymember")" ] || fail "the release left Lease corral-vdi-$legacymember"
+[ -z "$(kubectl get vm "$legacymember" -n "$NS" -o jsonpath='{.metadata.labels.corral\.dev/vdi-assigned-to}')" ] ||
+  fail "the release left the $OLD_REF assignment label on $legacymember"
+ok "the release ends the adopted claim and clears the $OLD_REF label"

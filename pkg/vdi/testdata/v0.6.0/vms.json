@@ -1,0 +1,56 @@
+{
+  "apiVersion": "v1",
+  "kind": "List",
+  "items": [
+    {
+      "apiVersion": "kubevirt.io/v1",
+      "kind": "VirtualMachine",
+      "metadata": {
+        "name": "devpool-1",
+        "namespace": "corral-vms",
+        "resourceVersion": "4102",
+        "labels": {
+          "corral.dev/vdi-pool": "devpool",
+          "corral.dev/vdi-assigned-to": "alice"
+        },
+        "annotations": {
+          "corral.dev/vdi-claimed-at": "2026-08-05T09:14:02Z"
+        }
+      },
+      "spec": {"running": true},
+      "status": {"printableStatus": "Running"}
+    },
+    {
+      "apiVersion": "kubevirt.io/v1",
+      "kind": "VirtualMachine",
+      "metadata": {
+        "name": "devpool-2",
+        "namespace": "corral-vms",
+        "resourceVersion": "4108",
+        "labels": {
+          "corral.dev/vdi-pool": "devpool"
+        }
+      },
+      "spec": {"running": false},
+      "status": {"printableStatus": "Stopped"}
+    },
+    {
+      "apiVersion": "kubevirt.io/v1",
+      "kind": "VirtualMachine",
+      "metadata": {
+        "name": "devpool-3",
+        "namespace": "corral-vms",
+        "resourceVersion": "4115",
+        "labels": {
+          "corral.dev/vdi-pool": "devpool",
+          "corral.dev/vdi-assigned-to": "bob"
+        },
+        "annotations": {
+          "corral.dev/vdi-claimed-at": "2026-08-05T10:40:51Z"
+        }
+      },
+      "spec": {"running": false},
+      "status": {"printableStatus": "Stopped"}
+    }
+  ]
+}
