@@ -7,14 +7,16 @@ import (
 	"github.com/tuna-os/corral/pkg/types"
 )
 
+// The planGC tests' VMs carry no namespace, so each one's gcKey is "/<name>".
+
 func TestPlanGC_StopsExpiredRunning(t *testing.T) {
 	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	vms := []types.VM{
 		{Name: "expired", Ephemeral: true, Running: true, ExpiresAt: now.Add(-time.Hour).Format(time.RFC3339)},
 	}
 	plan := planGC(vms, now, GCDefaultDeleteAfter)
-	if plan["expired"] != GCStop {
-		t.Errorf("expired running ephemeral VM should be GCStop, got %v", plan["expired"])
+	if plan["/expired"] != GCStop {
+		t.Errorf("expired running ephemeral VM should be GCStop, got %v", plan["/expired"])
 	}
 }
 
@@ -24,7 +26,7 @@ func TestPlanGC_LeavesNotYetExpiredRunning(t *testing.T) {
 		{Name: "fresh", Ephemeral: true, Running: true, ExpiresAt: now.Add(time.Hour).Format(time.RFC3339)},
 	}
 	plan := planGC(vms, now, GCDefaultDeleteAfter)
-	if action, planned := plan["fresh"]; planned {
+	if action, planned := plan["/fresh"]; planned {
 		t.Errorf("not-yet-expired VM should not be planned, got %v", action)
 	}
 }
@@ -35,7 +37,7 @@ func TestPlanGC_IgnoresNonEphemeral(t *testing.T) {
 		{Name: "permanent", Ephemeral: false, Running: true, ExpiresAt: now.Add(-time.Hour).Format(time.RFC3339)},
 	}
 	plan := planGC(vms, now, GCDefaultDeleteAfter)
-	if _, planned := plan["permanent"]; planned {
+	if _, planned := plan["/permanent"]; planned {
 		t.Error("non-ephemeral VM must never be planned regardless of ExpiresAt")
 	}
 }
@@ -58,8 +60,8 @@ func TestPlanGC_DeletesPastGracePeriod(t *testing.T) {
 		{Name: "long-stopped", Ephemeral: true, Running: false, StoppedAt: now.Add(-73 * time.Hour).Format(time.RFC3339)},
 	}
 	plan := planGC(vms, now, GCDefaultDeleteAfter)
-	if plan["long-stopped"] != GCDelete {
-		t.Errorf("stopped VM past the grace period should be GCDelete, got %v", plan["long-stopped"])
+	if plan["/long-stopped"] != GCDelete {
+		t.Errorf("stopped VM past the grace period should be GCDelete, got %v", plan["/long-stopped"])
 	}
 }
 
@@ -69,7 +71,7 @@ func TestPlanGC_KeepsRecentlyStopped(t *testing.T) {
 		{Name: "recently-stopped", Ephemeral: true, Running: false, StoppedAt: now.Add(-1 * time.Hour).Format(time.RFC3339)},
 	}
 	plan := planGC(vms, now, GCDefaultDeleteAfter)
-	if _, planned := plan["recently-stopped"]; planned {
+	if _, planned := plan["/recently-stopped"]; planned {
 		t.Error("a VM stopped less than deleteAfter ago must not be deleted yet")
 	}
 }
@@ -83,7 +85,7 @@ func TestPlanGC_NeverDeletesUserStopped(t *testing.T) {
 		{Name: "user-stopped", Ephemeral: true, Running: false, StoppedAt: ""},
 	}
 	plan := planGC(vms, now, GCDefaultDeleteAfter)
-	if _, planned := plan["user-stopped"]; planned {
+	if _, planned := plan["/user-stopped"]; planned {
 		t.Error("a VM gc never stopped itself must never be auto-deleted")
 	}
 }
