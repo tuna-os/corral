@@ -671,19 +671,29 @@ func tailscaleOperatorPresent() bool {
 	return err == nil
 }
 
-// DeleteProxy removes all proxy resources for a VM, including the LAN
-// Service ApplyLANService may have created (it shares the same proxy
-// Deployment/RBAC, but is a separate Service that isn't otherwise cleaned
-// up by deleting those).
-func DeleteProxy(name, ns string) error {
+// proxyDeleteArgs are the kubectl argument lists that remove all proxy
+// resources for a VM, including the LAN Service ApplyLANService may have
+// created (it shares the same proxy Deployment/RBAC, but is a separate
+// Service that isn't otherwise cleaned up by deleting those).
+func proxyDeleteArgs(name, ns string) [][]string {
+	var out [][]string
 	for _, kind := range []string{"deploy", "svc", "sa", "role", "rolebinding"} {
 		rname := name + "-proxy"
 		if kind != "deploy" && kind != "svc" {
 			rname = "corral-" + name + "-proxy"
 		}
-		shell.Command("kubectl", "delete", kind, rname, "-n", ns, "--ignore-not-found").Run()
+		out = append(out, []string{"delete", kind, rname, "-n", ns, "--ignore-not-found"})
 	}
-	shell.Command("kubectl", "delete", "svc", name+"-lan", "-n", ns, "--ignore-not-found").Run()
+	return append(out, []string{"delete", "svc", name + "-lan", "-n", ns, "--ignore-not-found"})
+}
+
+// DeleteProxy removes all proxy resources for a VM in the CORRAL_KUBE_CONTEXT
+// cluster. Client.DeleteVM uses the client's own runner instead, so it
+// cleans up in the VM's context.
+func DeleteProxy(name, ns string) error {
+	for _, args := range proxyDeleteArgs(name, ns) {
+		_ = shell.Command("kubectl", args...).Run()
+	}
 	return nil
 }
 

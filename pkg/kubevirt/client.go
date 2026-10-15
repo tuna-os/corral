@@ -558,8 +558,11 @@ func (c *Client) DeleteVM(name string) error {
 	c.runner().Run("kubectl", "delete", "vmsnapshot", "-n", c.Namespace,
 		"-l", "corral.dev/vm="+name, "--ignore-not-found")
 
-	// Delete proxy resources if any
-	DeleteProxy(name, c.Namespace)
+	// Delete proxy resources if any, in this client's context — the package
+	// DeleteProxy targets CORRAL_KUBE_CONTEXT, which may be another cluster.
+	for _, args := range proxyDeleteArgs(name, c.Namespace) {
+		_, _ = c.runner().Run("kubectl", args...) // best effort: absent proxies are fine
+	}
 	return nil
 }
 

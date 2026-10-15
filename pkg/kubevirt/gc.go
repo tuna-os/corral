@@ -85,10 +85,14 @@ const (
 	GCDelete
 )
 
+// gcKey identifies a VM across namespaces. GC lists VMs cluster-wide, so a
+// bare name is ambiguous: two namespaces can each have a VM called "web".
+func gcKey(vm types.VM) string { return vm.Namespace + "/" + vm.Name }
+
 // planGC is the pure decision core (mirrors parseVMList's split from
 // ListVMs): given the current VM list and clock, which ephemeral VMs are due
 // to be stopped (TTL expired) or deleted (gc-stopped past deleteAfter)? No
-// exec, no mutation — unit-testable without a cluster.
+// exec, no mutation — unit-testable without a cluster. Keys are gcKey.
 func planGC(vms []types.VM, now time.Time, deleteAfter time.Duration) map[string]GCAction {
 	plan := make(map[string]GCAction)
 	for _, vm := range vms {
@@ -101,7 +105,7 @@ func planGC(vms []types.VM, now time.Time, deleteAfter time.Duration) map[string
 			if err != nil || now.Before(expiresAt) {
 				continue // no/invalid expiry, or not due yet — leave it alone
 			}
-			plan[vm.Name] = GCStop
+			plan[gcKey(vm)] = GCStop
 			continue
 		}
 
@@ -114,7 +118,7 @@ func planGC(vms []types.VM, now time.Time, deleteAfter time.Duration) map[string
 		if err != nil || now.Before(stoppedAt.Add(deleteAfter)) {
 			continue
 		}
-		plan[vm.Name] = GCDelete
+		plan[gcKey(vm)] = GCDelete
 	}
 	return plan
 }
@@ -183,22 +187,17 @@ func GC(dryRun bool, deleteAfter time.Duration) (GCResult, error) {
 	if err != nil {
 		return result, fmt.Errorf("listing VMs: %w", err)
 	}
-	vmByName := make(map[string]types.VM, len(vms))
-	for _, vm := range vms {
-		vmByName[vm.Name] = vm
-	}
-
+	// Iterate the listed VMs, not plan keys turned back into names: the
+	// action must land on the namespace that earned it, never on a
+	// same-named VM elsewhere.
+	sort.Slice(vms, func(i, j int) bool { return gcKey(vms[i]) < gcKey(vms[j]) })
 	now := time.Now()
 	plan := planGC(vms, now, deleteAfter)
-	names := make([]string, 0, len(plan))
-	for name := range plan {
-		names = append(names, name)
-	}
-	sort.Strings(names)
+	deleted := make(map[string]bool)
 
-	for _, name := range names {
-		vm := vmByName[name]
-		switch plan[name] {
+	for _, vm := range vms {
+		name := vm.Name
+		switch plan[gcKey(vm)] {
 		case GCStop:
 			if dryRun {
 				result.Stopped = append(result.Stopped, name)
@@ -224,19 +223,20 @@ func GC(dryRun bool, deleteAfter time.Duration) (GCResult, error) {
 				result.Errors = append(result.Errors, fmt.Sprintf("%s: delete: %v", name, err))
 				continue
 			}
+			deleted[gcKey(vm)] = true
 			result.Deleted = append(result.Deleted, name)
 		}
 	}
 
 	// Second pass: collect leaked disk PVCs whose owning VM is gone. Build the
-	// live-VM set from the VMs we just listed, minus any this run deleted.
+	// live-VM set from the VMs we just listed, minus any this run deleted. A
+	// deleted VM drops out by namespace, so a same-named VM that is still
+	// alive in another namespace keeps its disks. (dryRun deletes nothing,
+	// so deleted is empty there.)
 	liveVMs := make(map[string]bool, len(vms))
 	for _, vm := range vms {
-		liveVMs[vm.Name] = true
-	}
-	if !dryRun {
-		for _, name := range result.Deleted {
-			delete(liveVMs, name)
+		if !deleted[gcKey(vm)] {
+			liveVMs[vm.Name] = true
 		}
 	}
 	collectOrphanPVCs(dryRun, liveVMs, &result)
