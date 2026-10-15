@@ -181,3 +181,79 @@ func (c Client) Resume(name string) error {
 	_, err := c.run("controlvm", name, "resume")
 	return err
 }
+
+// Running reports whether the VM's VMState is "running". A showvminfo
+// failure is an error, not "stopped": callers gate offline-only edits on it.
+func (c Client) Running(name string) (bool, error) {
+	out, err := c.run("showvminfo", name, "--machinereadable")
+	if err != nil {
+		return false, fmt.Errorf("virtualbox showvminfo %s: %w", name, err)
+	}
+	return parseMachineReadable(string(out))["VMState"] == "running", nil
+}
+
+// Clone makes a full, registered copy of source named target (`clonevm
+// --register`). VirtualBox clones a running VM from its current state.
+func (c Client) Clone(source, target string) error {
+	if _, err := c.run("clonevm", source, "--name", target, "--register"); err != nil {
+		return fmt.Errorf("virtualbox clonevm %s: %w", source, err)
+	}
+	return nil
+}
+
+// Scale sets vCPUs and memory with `modifyvm`, which VirtualBox only accepts
+// on a powered-off VM — so a running VM is refused up front with the remedy,
+// rather than letting VBoxManage fail with a session-lock error. Zero cores
+// and empty mem leave that setting alone.
+func (c Client) Scale(name string, cores int, mem string) error {
+	args := []string{"modifyvm", name}
+	if cores > 0 {
+		args = append(args, "--cpus", strconv.Itoa(cores))
+	}
+	if mem != "" {
+		mib, err := memoryMiB(mem)
+		if err != nil {
+			return err
+		}
+		args = append(args, "--memory", strconv.Itoa(mib))
+	}
+	if len(args) == 2 {
+		return nil
+	}
+	running, err := c.Running(name)
+	if err != nil {
+		return err
+	}
+	if running {
+		return fmt.Errorf("virtualbox: %q is running and VirtualBox changes CPU and memory only while powered off; stop it first", name)
+	}
+	if _, err := c.run(args...); err != nil {
+		return fmt.Errorf("virtualbox modifyvm %s: %w", name, err)
+	}
+	return nil
+}
+
+// memoryMiB reads a Corral memory size (4Gi, 2048Mi, 2G, or a bare MiB
+// count) as whole MiB, the unit modifyvm --memory takes.
+func memoryMiB(mem string) (int, error) {
+	lower := strings.ToLower(strings.TrimSpace(mem))
+	multiplier := 1
+	switch {
+	case strings.HasSuffix(lower, "gi"), strings.HasSuffix(lower, "gb"), strings.HasSuffix(lower, "g"):
+		multiplier = 1024
+	case strings.HasSuffix(lower, "mi"), strings.HasSuffix(lower, "mb"), strings.HasSuffix(lower, "m"):
+	default:
+		if strings.TrimLeft(lower, "0123456789.") != "" {
+			return 0, fmt.Errorf("virtualbox: cannot read memory %q; use e.g. 4Gi, 2048Mi, or 2048", mem)
+		}
+	}
+	value, err := strconv.ParseFloat(strings.TrimRight(lower, "gimb"), 64)
+	if err != nil {
+		return 0, fmt.Errorf("virtualbox: cannot read memory %q: %w", mem, err)
+	}
+	mib := int(value * float64(multiplier))
+	if mib <= 0 {
+		return 0, fmt.Errorf("virtualbox: memory %q is not a positive size", mem)
+	}
+	return mib, nil
+}

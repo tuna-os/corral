@@ -32,6 +32,26 @@ Setup guides for the local and remote backends:
 [Incus](incus-backend-setup.md), [libvirt](libvirt-backend-setup.md), and
 [KubeVirt and Proxmox](kubevirt-proxmox-setup.md).
 
+## Tier 3: enterprise backends
+
+VirtualBox, VMware vSphere, XenServer/XCP-ng, and Nutanix are Tier 3
+backends. CI runs their fixture tests only; no live backend runs in CI. See
+[enterprise-readiness.md](enterprise-readiness.md) for the tiers and
+[RFC-0003](rfc/0003-enterprise-backends.md) for the design.
+
+| Capability | VirtualBox | vSphere | XenServer/XCP-ng | Nutanix |
+|---|---:|---:|---:|---:|
+| Aggregate inventory | yes | yes | yes | yes |
+| Start, stop, restart, delete | yes | yes | yes | yes |
+| Pause, resume | yes | yes | yes | no |
+| Snapshots | yes | yes | yes | yes |
+| Clone | yes | yes | yes | yes |
+| CPU and memory change | powered off only | yes | not yet | not yet |
+| Migration | no, one host | yes | yes | yes |
+| Backend doctor | yes | yes | yes | yes |
+
+[backend-parity.md](backend-parity.md) has the full per-operation matrix.
+
 ## Incus and libvirt: snapshots, migration, and hotplug
 
 An operation is *unified* when Corral reaches it through one shared contract

@@ -43,9 +43,9 @@ backend cannot, or it is meaningless there.
 | Live CPU / memory | ✅ | ✅ | ✅ | ✅ | ✅ | 🔨 | 🔨 | 🔨 | 🔨 |
 | Snapshot / restore | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Migrate | ✅ | — | 🔨 | 🔨 | ✅ | — | ✅ | ✅ | ✅ |
-| Clone | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | ✅ | ✅ | ✅ |
+| Clone | ✅ | 🔨 | 🔨 | 🔨 | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Template mark | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | ✅ | 🔨 | — |
-| CPU / memory edit | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | ✅ | 🔨 | 🔨 |
+| CPU / memory edit | ✅ | 🔨 | 🔨 | 🔨 | ✅ | ✅ | ✅ | 🔨 | 🔨 |
 | Add / remove disks | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | 🔨 | 🔨 | 🔨 |
 | Expand disk | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | 🔨 | 🔨 | 🔨 |
 | GPU passthrough | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | 🔨 | 🔨 | — |
@@ -194,7 +194,7 @@ websocket bridge is not. So the capability flags say no, and the matrix says why
 - **rdp** — same, via the guest address
 - **containers** — pkg/proxmoxbe.Containers lists them and Create makes them; pkg/ct does not yet surface a non-Kubernetes CT
 
-### virtualbox — 15 gaps
+### virtualbox — 13 gaps
 
 - **create** — createvm plus storagectl/storageattach/modifyvm exist natively; Corral has no creator wiring them yet
 - **ssh** — Corral has no address discovery yet. Use the Guest Additions guestproperty or a NAT port-forward for the guest address, then plain ssh.
@@ -202,9 +202,7 @@ websocket bridge is not. So the capability flags say no, and the matrix says why
 - **vnc** — VRDE serves the guest display natively; Corral wires no viewer or bridge to it
 - **rdp** — VRDE is an RDP server already; Corral has no probe or bridge for it
 - **metrics** — VBoxManage reports host CPU and memory counters through its metrics query. Corral has no sampler for them yet.
-- **clone** — clonevm
 - **template** — no native mark; the local registry mark, the same mechanism qemu would use
-- **scale** — modifyvm --cpus/--memory while stopped
 - **volumes** — storageattach/storagectl plus closemedium; nothing drives them yet
 - **expand** — modifymedium --resize while stopped
 - **gpu** — PCI passthrough via modifyvm --pciattach on Linux hosts; experimental and host-limited
