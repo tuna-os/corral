@@ -273,7 +273,7 @@ func TestKubeCluster_UpdateClaimWritesPresenceUnderTheVersion(t *testing.T) {
 	if l.Metadata.Name != "corral-vdi-ct-lab-1" || l.Metadata.ResourceVersion != "42" || l.Metadata.Labels[labelCTPool] != "lab" {
 		t.Fatalf("lease metadata = %+v", l.Metadata)
 	}
-	if l.Spec.HolderIdentity != "alice" || l.Spec.AcquireTime != "2026-10-15T09:00:00Z" || l.Spec.RenewTime != "2026-10-15T10:00:00Z" || l.Spec.LeaseDurationSeconds != 3600 {
+	if l.Spec.HolderIdentity != "alice" || l.Spec.AcquireTime != "2026-10-15T09:00:00.000000Z" || l.Spec.RenewTime != "2026-10-15T10:00:00.000000Z" || l.Spec.LeaseDurationSeconds != 3600 {
 		t.Fatalf("lease spec = %+v", l.Spec)
 	}
 	back := claimOf("vdi", l)

@@ -62,8 +62,8 @@ func claimLease(c MemberClaim) lease {
 	var l lease
 	l.Metadata.Name, l.Metadata.ResourceVersion, l.Metadata.Labels = ref.Name, c.Version, ref.Labels
 	l.Spec.HolderIdentity = c.Holder
-	l.Spec.AcquireTime = c.AcquiredAt.UTC().Format(time.RFC3339Nano)
-	l.Spec.RenewTime = c.RenewedAt.UTC().Format(time.RFC3339Nano)
+	l.Spec.AcquireTime = leaseTime(c.AcquiredAt)
+	l.Spec.RenewTime = leaseTime(c.RenewedAt)
 	l.Spec.LeaseDurationSeconds = int32(c.Duration / time.Second)
 	marks := map[string]string{}
 	if !c.Session.ConnectedAt.IsZero() {
