@@ -21,9 +21,10 @@ import { renderNode } from './content/node.js';
 import { renderSettings } from './content/settings.js';
 import { renderStorage } from './content/storage.js';
 import { renderTopology } from './content/topology.js';
+import { renderIdentityLost, renderOffline } from './content/unavailable.js';
 import { renderVM, vmAction } from './content/vm.js';
 import { applyInventoryGridAddress, inventoryGridAddress } from './content/vm-table.js';
-import { updateSourceFields } from './create.js';
+import { loadCreateTargets, loadInstanceTypes } from './create.js';
 // The task dock registers its Alpine component on load; it exports nothing.
 import './dock.js';
 import { icon } from './icons.js';
@@ -31,6 +32,7 @@ import { poolMenuItems, unassignedMenuItems } from './menus.js';
 import { bindPalette, initKeys, openPalette } from './palette.js';
 import { bindPools, loadPools, poolState } from './pools.js';
 import { singleFlight, startPolling } from './poll.js';
+import { loadCapabilities, loadWhoami } from './session.js';
 import { emit, state } from './state.js';
 import { focusTreeFilter, nextTreeView, renderTree, setTreeView, treeRow, treeView, vmRow } from './tree.js';
 import { capabilityFingerprint, capabilityScreen, loadCapabilityData } from './ui/capabilities.js';
@@ -65,89 +67,6 @@ let renderDeferred = false;
 // failed 5s poll, so it doesn't clobber pages that work offline (Extensions).
 let offlineShown = false;
 
-// First-load failure page: couldn't list any VMs. Tailor the guidance to the
-// configured backends — only nag about connecting a KubeVirt cluster when
-// kubevirt is actually a configured target. A host that only runs local
-// QEMU/Incus/libvirt VMs should never be told to go install KubeVirt.
-// The page lost the identity corral authorises against.
-//
-// corral has no login of its own. The Tailscale ingress in front of it proves
-// who the caller is and passes that on with each request, and with
-// CORRAL_AUTH_REQUIRED set, a request without it is refused with a 401. So
-// this is not a session that ran out and there is no form to fill in: the fix
-// is on the operator's device. Polling continues underneath, so the page
-// recovers by itself when the identity returns.
-function renderIdentityLost() {
-  const content = $('#content');
-  if (!content) return;
-  content.innerHTML = `
-    <div class="empty-state" id="identity-lost">
-      <div class="empty-icon">🔒</div>
-      <h1>corral can no longer tell who you are</h1>
-      <p class="muted">It reads your identity from your tailnet connection, and
-        that stopped arriving with this page's requests.</p>
-      <ul>
-        <li>Check that Tailscale is connected on this device, and that its
-          session has not expired.</li>
-        <li>Open corral by its tailnet address. A port-forward or a local
-          address carries no identity.</li>
-      </ul>
-      <p class="muted">corral keeps checking, and this page comes back by
-        itself once you are reconnected.</p>
-      <button class="btn primary" id="identity-retry">Check now</button>
-    </div>`;
-  content.querySelector('#identity-retry').onclick = () => refresh(true);
-}
-
-async function renderOffline(msg) {
-  const content = $('#content');
-  if (!content) return;
-  let backends = [];
-  try {
-    const r = await api('/api/contexts');
-    backends = (r.contexts || []).map((c) => c.backend);
-  } catch { /* fall through to the cluster-oriented default */ }
-  // Unknown backends (contexts fetch failed) defaults to the cluster message,
-  // which also carries the local-CLI fallback hint.
-  const hasKubevirt = backends.length === 0 || backends.includes('kubevirt');
-
-  if (hasKubevirt) {
-    content.innerHTML = `
-      <div class="empty-state">
-        <div class="empty-icon">🤠</div>
-        <h1>No cluster connected</h1>
-        <p class="muted">Corral couldn't reach a Kubernetes cluster:
-          <code>${esc(msg)}</code></p>
-        <p>This dashboard drives the KubeVirt backend. To get going:</p>
-        <ul>
-          <li>Point <code>kubectl</code> at a cluster (<code>KUBECONFIG</code> or
-            <code>~/.kube/config</code>), then hit Retry.</li>
-          <li>Run <code>corral doctor --fix</code> to install anything the
-            cluster is missing (KubeVirt, CDI, …).</li>
-          <li>No cluster handy? Local QEMU VMs work from the CLI:
-            <code>corral create myvm --image fedora</code></li>
-        </ul>
-        <button class="btn primary" id="offline-retry">Retry</button>
-      </div>`;
-  } else {
-    const names = [...new Set(backends.filter((b) => b !== 'kubevirt'))].join(', ') || 'local';
-    content.innerHTML = `
-      <div class="empty-state">
-        <div class="empty-icon">🤠</div>
-        <h1>No VMs yet</h1>
-        <p class="muted">Couldn't list VMs from the ${esc(names)} backend:
-          <code>${esc(msg)}</code></p>
-        <p>Create your first VM from the CLI, then hit Retry:</p>
-        <ul>
-          <li><code>corral create myvm --image fedora</code></li>
-        </ul>
-        <button class="btn primary" id="offline-retry">Retry</button>
-      </div>`;
-  }
-  const b = $('#offline-retry');
-  if (b) b.onclick = () => { offlineShown = false; refresh(true); };
-}
-
 // The floor between polls. The real wait is this plus twice how long the last
 // poll took; see startPolling() in poll.js.
 const POLL_MS = 5000;
@@ -170,7 +89,7 @@ async function refreshOnce(force = false) {
       if (!identityLost) {
         identityLost = true;
         renderTree();
-        renderIdentityLost();
+        renderIdentityLost(() => refresh(true));
       }
       return;
     }
@@ -180,7 +99,7 @@ async function refreshOnce(force = false) {
     if (!lastRenderFp && !offlineShown) {
       offlineShown = true;
       renderTree();
-      renderOffline(e.message);
+      renderOffline(e.message, () => { offlineShown = false; refresh(true); });
     } else if (lastRenderFp && e.message !== lastRefreshFailure) {
       // Once per distinct failure. A server that is down fails every poll,
       // and a toast each time buries the page under the same sentence.
@@ -283,58 +202,6 @@ async function refreshOnce(force = false) {
   if (contentEl) contentEl.scrollTop = contentScroll;
   const scrollerNow = contentEl?.querySelector('.grid-scroll');
   if (scrollerNow && gridScroll) { scrollerNow.scrollTop = gridScroll.top; scrollerNow.scrollLeft = gridScroll.left; }
-}
-
-async function loadCaps() {
-  try { state.caps = await api('/api/capabilities'); } catch { /* keep defaults */ }
-  // bootc/windows are optional plugins — hide their source options when absent.
-  if (!state.caps.bootc) {
-    document.querySelector('[name=sourceType] option[value=bootc]')?.remove();
-  }
-  await loadCreateContexts();
-  // The Windows create flow is compiled into the web server (manifest gen in
-  // pkg/kubevirt), so it's always available — no plugin install needed.
-  try { state.availableNADs = await api('/api/nads'); } catch { state.availableNADs = []; }
-}
-
-async function loadCreateContexts() {
-  const select = document.querySelector('#create-form [name=target]');
-  if (!select) return;
-  try {
-    const result = await api('/api/contexts');
-    const targets = result.contexts || [];
-    select.innerHTML = targets.map((c) => `<option value="${esc(c.name)}" data-backend="${esc(c.backend)}" ${c.name === result.default ? 'selected' : ''}>${esc(c.name)} · ${esc(c.backend)}${c.context ? ` · ${esc(c.context)}` : ''}</option>`).join('');
-  } catch {
-    select.innerHTML = '<option value="cluster" data-backend="kubevirt">cluster · kubevirt</option>';
-  }
-  updateSourceFields();
-}
-
-// loadWhoami fetches the caller identity and flips the UI into read-only mode
-// for non-admins (the server still enforces this; the UI just hides controls).
-async function loadWhoami() {
-  try { state.me = await api('/api/whoami'); } catch { return; }
-  const el = $('#whoami');
-  if (el) {
-    const badge = state.me.admin ? '' : '<span class="ro-badge">read-only</span>';
-    if (state.me.login) el.innerHTML = `<span class="who-name">${esc(state.me.name || state.me.login)}</span>${badge}`;
-    else if (state.me.enforced) el.innerHTML = badge; // behind the gate but unidentified
-    else el.textContent = '';
-  }
-  document.body.classList.toggle('read-only', !state.me.admin);
-}
-
-async function loadInstanceTypes() {
-  let d;
-  try { d = await api('/api/instancetypes'); } catch { return; }
-  const fill = (sel, items, head) => {
-    const el = document.querySelector(sel);
-    if (!el) return;
-    el.innerHTML = `<option value="">${head}</option>` +
-      (items || []).map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
-  };
-  fill('[name=instancetype]', d.instancetypes, '— manual CPU/mem —');
-  fill('[name=preference]', d.preferences, '(none)');
 }
 
 // Everything the tree and content pane draw from. One definition, because the
@@ -639,7 +506,7 @@ initKeys();
 onRouteChange(applyRoute);
 
 loadWhoami();
-loadCaps();
+loadCapabilities(loadCreateTargets);
 loadInstanceTypes();
 refresh();
 // Nobody looking means nothing fetched; onPageVisible below catches up.
