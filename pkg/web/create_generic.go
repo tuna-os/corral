@@ -67,7 +67,7 @@ func createGenericInContext(req createRequest, ns, context string) error {
 		SSHPublicKey:   sshKey,
 		StorageClass:   req.StorageClass,
 	}
-	done := taskBegin("create", ns+"/"+req.Name)
+	done := taskBegin(req.user, "create", ns+"/"+req.Name)
 	password, err := kubevirt.CreateVMInContext(opts, context)
 	if err != nil {
 		done(err)
@@ -82,7 +82,7 @@ func createGenericInContext(req createRequest, ns, context string) error {
 	// operator proxy. Best-effort and async — ApplyProxy retries for up to a
 	// minute on transient RBAC flakes, which must not block the create response.
 	go func() {
-		dp := taskBegin("tailnet expose", ns+"/"+req.Name)
+		dp := taskBegin(req.user, "tailnet expose", ns+"/"+req.Name)
 		dp(kubevirt.WithContext(context, func() error { return kubevirt.ApplyProxy(req.Name, ns, kubevirt.ConsolePorts) }))
 	}()
 	return nil

@@ -87,7 +87,7 @@ func handleSetSnapSchedule(w http.ResponseWriter, r *http.Request) {
 	if b.Keep < 1 {
 		b.Keep = 12
 	}
-	done := taskBegin("snapshot schedule", ns+"/"+name)
+	done := taskBegin(requestUser(r), "snapshot schedule", ns+"/"+name)
 	// RBAC (idempotent) + the CronJob.
 	for _, obj := range []map[string]any{
 		cronops.ServiceAccount(ns),
@@ -110,7 +110,7 @@ func handleSetSnapSchedule(w http.ResponseWriter, r *http.Request) {
 // DELETE /api/vms/{ns}/{name}/snapschedule — removes the schedule (snapshots kept)
 func handleDeleteSnapSchedule(w http.ResponseWriter, r *http.Request) {
 	ns, name := r.PathValue("ns"), r.PathValue("name")
-	done := taskBegin("remove snapshot schedule", ns+"/"+name)
+	done := taskBegin(requestUser(r), "remove snapshot schedule", ns+"/"+name)
 	_, err := defaultRunner.Run("kubectl", "delete", "cronjob", snapCronName(name),
 		"-n", ns, "--ignore-not-found")
 	done(err)

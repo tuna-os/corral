@@ -49,7 +49,7 @@ func handleCreateCT(w http.ResponseWriter, r *http.Request) {
 		ns = kubevirt.DefaultNamespace
 	}
 
-	done := taskBegin("create ct", ns+"/"+req.Name)
+	done := taskBegin(requestUser(r), "create ct", ns+"/"+req.Name)
 	err := ct.Create(ct.CreateOpts{
 		Name: req.Name, Namespace: ns, Image: req.Image,
 		CPU: req.CPU, Mem: req.Mem, Disk: req.Disk,
@@ -65,7 +65,7 @@ func handleCreateCT(w http.ResponseWriter, r *http.Request) {
 	// Tailnet-by-default, same as VM creation — best-effort and async so a
 	// flaky proxy apply doesn't fail an otherwise-successful create.
 	go func() {
-		dp := taskBegin("tailnet expose", ns+"/"+req.Name)
+		dp := taskBegin(requestUser(r), "tailnet expose", ns+"/"+req.Name)
 		dp(ct.ApplyProxy(req.Name, ns, ct.ConsolePorts))
 	}()
 }
@@ -76,11 +76,11 @@ func handleCTAction(w http.ResponseWriter, r *http.Request) {
 	var err error
 	switch action {
 	case "start":
-		done := taskBegin("start ct", ns+"/"+name)
+		done := taskBegin(requestUser(r), "start ct", ns+"/"+name)
 		err = ct.Start(name, ns)
 		done(err)
 	case "stop":
-		done := taskBegin("stop ct", ns+"/"+name)
+		done := taskBegin(requestUser(r), "stop ct", ns+"/"+name)
 		err = ct.Stop(name, ns)
 		done(err)
 	default:
@@ -97,7 +97,7 @@ func handleCTAction(w http.ResponseWriter, r *http.Request) {
 // DELETE /api/cts/{ns}/{name}
 func handleDeleteCT(w http.ResponseWriter, r *http.Request) {
 	ns, name := r.PathValue("ns"), r.PathValue("name")
-	done := taskBegin("delete ct", ns+"/"+name)
+	done := taskBegin(requestUser(r), "delete ct", ns+"/"+name)
 	if err := ct.Delete(name, ns); err != nil {
 		done(err)
 		errResp(w, http.StatusInternalServerError, err)

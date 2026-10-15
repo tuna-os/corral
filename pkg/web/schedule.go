@@ -62,7 +62,7 @@ func handleSetPowerSchedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	done := taskBegin("power schedule", ns+"/"+name)
+	done := taskBegin(requestUser(r), "power schedule", ns+"/"+name)
 	objs := []map[string]any{cronops.ServiceAccount(ns), cronops.Role(ns), cronops.RoleBinding(ns)}
 	if b.Start != "" {
 		objs = append(objs, cronops.CronJob(startJobName(name), ns, b.Start,
@@ -93,7 +93,7 @@ func handleSetPowerSchedule(w http.ResponseWriter, r *http.Request) {
 // DELETE /api/vms/{ns}/{name}/powerschedule — removes both boundaries.
 func handleDeletePowerSchedule(w http.ResponseWriter, r *http.Request) {
 	ns, name := r.PathValue("ns"), r.PathValue("name")
-	done := taskBegin("remove power schedule", ns+"/"+name)
+	done := taskBegin(requestUser(r), "remove power schedule", ns+"/"+name)
 	defaultRunner.Run("kubectl", "delete", "cronjob", startJobName(name), "-n", ns, "--ignore-not-found")
 	_, err := defaultRunner.Run("kubectl", "delete", "cronjob", stopJobName(name), "-n", ns, "--ignore-not-found")
 	done(err)

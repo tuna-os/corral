@@ -746,6 +746,14 @@ body.tree-collapsed #tree-resizer:focus-visible { background: var(--accent); }
 .dock-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 #task-panel-body { height: var(--dock-h); overflow-y: auto; padding: 0 14px 10px; }
 #task-panel table { width: 100%; font-size: .82rem; }
+/* Running and failed read at a glance, in the table and in the head's counts. */
+#task-panel .pill.mid { color: var(--yellow); border-color: var(--yellow); }
+#task-panel .pill.err { color: var(--red); border-color: var(--red); }
+#task-panel button.pill { font: inherit; font-size: .78rem; cursor: pointer; }
+.task-target { color: var(--accent); text-decoration: none; }
+.task-target:hover { text-decoration: underline; }
+#task-detail { width: min(640px, 94vw); }
+#task-detail pre { max-height: 40vh; overflow: auto; white-space: pre-wrap; }
 
 /* Console workspace: several VM consoles can stay in the in-page tab strip,
    or one can use the same page in distraction-free pop-out mode. */

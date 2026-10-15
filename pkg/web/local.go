@@ -49,8 +49,8 @@ func localVMs() []types.VM {
 // localVMAction handles start/stop/restart/delete for a local VM. Anything
 // hypervisor-cluster-specific (migrate, pause, snapshot, scale…) is not a
 // qemu concept here and 400s with a clear message.
-func localVMAction(w http.ResponseWriter, name, action string) {
-	done := taskBegin(action, localNS+"/"+name)
+func localVMAction(w http.ResponseWriter, user, name, action string) {
+	done := taskBegin(user, action, localNS+"/"+name)
 	var err error
 	switch action {
 	case "start":
@@ -115,7 +115,7 @@ func createLocalVM(w http.ResponseWriter, req createRequest) {
 	if strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://") {
 		// Download (cached) then create — async, visible in the task panel and VM inventory.
 		_ = qemu.RecordCreating(req.Name, opts)
-		done := taskBegin("create local (download)", localNS+"/"+req.Name)
+		done := taskBegin(req.user, "create local (download)", localNS+"/"+req.Name)
 		go func() {
 			path, err := downloadToCache(src)
 			if err == nil {
@@ -133,7 +133,7 @@ func createLocalVM(w http.ResponseWriter, req createRequest) {
 
 	assign(src)
 	_ = qemu.RecordCreating(req.Name, opts)
-	done := taskBegin("create local", localNS+"/"+req.Name)
+	done := taskBegin(req.user, "create local", localNS+"/"+req.Name)
 	err := qemu.Create(opts)
 	if err != nil {
 		_ = os.RemoveAll(filepath.Join(qemu.VMHome(), req.Name))

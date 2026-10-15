@@ -129,7 +129,7 @@ func handleAttachGPU(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	done := taskBegin("attach GPU", ns+"/"+name)
+	done := taskBegin(requestUser(r), "attach GPU", ns+"/"+name)
 	gpus = append(gpus, vmGPU{Name: b.Name, DeviceName: b.Device})
 	if err := patchVMGPUList(ns, name, gpus); err != nil {
 		done(err)
@@ -158,7 +158,7 @@ func handleDetachGPU(w http.ResponseWriter, r *http.Request) {
 		errResp(w, http.StatusNotFound, fmt.Errorf("no GPU named %q on %s", gpu, name))
 		return
 	}
-	done := taskBegin("detach GPU", ns+"/"+name)
+	done := taskBegin(requestUser(r), "detach GPU", ns+"/"+name)
 	if err := patchVMGPUList(ns, name, kept); err != nil {
 		done(err)
 		errResp(w, http.StatusInternalServerError, err)
