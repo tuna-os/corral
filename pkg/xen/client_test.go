@@ -19,6 +19,7 @@ package xen
 // arguments: that is the check that would have caught VM.shutdown.
 
 import (
+	"context"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -650,7 +651,7 @@ func TestExport(t *testing.T) {
 	resolveHandlers(f, "OpaqueRef:vm-running")
 	f.export = "fake-xva-bytes"
 	c := testClient(t, f)
-	rc, err := c.Export("web-1")
+	rc, err := c.Export(context.Background(), "web-1")
 	if err != nil {
 		t.Fatal(err)
 	}

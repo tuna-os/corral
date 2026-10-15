@@ -16,6 +16,7 @@ import (
 	"github.com/tuna-os/corral/pkg/qemu"
 	"github.com/tuna-os/corral/pkg/snapshot"
 	"github.com/tuna-os/corral/pkg/types"
+	"github.com/tuna-os/corral/pkg/xen"
 )
 
 // ── KubeVirt ──────────────────────────────────────────────────────
@@ -696,4 +697,65 @@ func vboxState(info string) string {
 		}
 	}
 	return ""
+}
+
+// ── XenServer/XCP-ng ──────────────────────────────────────────────
+//
+// The pool serves an XVA archive on its /export HTTP endpoint. XenAPI exports
+// only a halted or suspended VM, so a running or paused one is refused with
+// the remedy here rather than as a mid-download failure; what comes out is
+// offline-consistent.
+
+type Xen struct{}
+
+func (Xen) Formats() []Format { return []Format{XVA} }
+
+func (x Xen) Export(ctx context.Context, req Request, progress ProgressFunc) (Result, error) {
+	format, err := pickFormat("xen", req.Format, x.Formats())
+	if err != nil {
+		return Result{}, err
+	}
+	client, err := xen.ClientForContext(req.Ref.Context)
+	if err != nil {
+		return Result{}, fmt.Errorf("xen: no client for context %q: %w", req.Ref.Context, err)
+	}
+	progress.report("resolving guest", 0, 0)
+	ref, err := client.VMRef(req.Ref.Name)
+	if err != nil {
+		return Result{}, err
+	}
+	rec, err := client.VMRecord(ref)
+	if err != nil {
+		return Result{}, err
+	}
+	if rec.PowerState != "Halted" && rec.PowerState != "Suspended" {
+		return Result{}, unsupported("xen",
+			fmt.Sprintf("%s is %s, and the pool exports only a halted or suspended VM", req.Ref.Name, strings.ToLower(rec.PowerState)),
+			fmt.Sprintf("stop it first: corral stop %s", req.Ref.Name))
+	}
+	if err := ensureDestDir(req.Dest); err != nil {
+		return Result{}, err
+	}
+	if err := cancelled(ctx); err != nil {
+		return Result{}, err
+	}
+	progress.report("downloading XVA", 0, 0)
+	body, err := client.Export(ctx, ref)
+	if err != nil {
+		return Result{}, err
+	}
+	defer func() { _ = body.Close() }()
+	out, err := os.Create(req.Dest)
+	if err != nil {
+		return Result{}, err
+	}
+	if _, err := io.Copy(out, body); err != nil {
+		_ = out.Close()
+		_ = os.Remove(req.Dest)
+		return Result{}, fmt.Errorf("xen: downloading %s: %w", req.Ref.Name, err)
+	}
+	if err := out.Close(); err != nil {
+		return Result{}, err
+	}
+	return finish(req.Dest, format, snapshot.Offline)
 }

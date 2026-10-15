@@ -267,6 +267,8 @@ func extensionFor(f export.Format) string {
 		return "tar.gz"
 	case export.OVA:
 		return "ova"
+	case export.XVA:
+		return "xva"
 	default:
 		return "img.gz"
 	}
