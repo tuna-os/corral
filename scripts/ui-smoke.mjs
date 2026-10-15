@@ -3179,6 +3179,37 @@ await page.click('#content [data-tagfilter=""]');
 await page.waitForTimeout(500);
 check(await page.locator('#content td:has-text("dev-fedora")').count() > 0, 'tag filter: all restores the full table');
 
+// ── snapshots off-cluster (#491) ──────────────────────────────────
+// Incus snapshots go through pkg/snapshot, not a Kubernetes
+// VolumeSnapshotClass. With no snapshot-capable cluster the tab must still
+// list them, consistency included, instead of the KubeVirt-only notice.
+await page.route('**/api/capabilities', async (route) => {
+  const res = await route.fetch();
+  await route.fulfill({ response: res, json: { ...(await res.json()), canSnapshot: false } });
+});
+await page.route('**/api/vms/*/incus-demo-vm/snapshots', (route) => (route.request().method() === 'GET'
+  ? route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify([{ name: 'before-upgrade', source: 'incus-demo-vm', ready: true, created: '2026-10-01T00:00:00Z', consistency: 'offline' }]),
+  })
+  : route.continue()));
+await page.goto(BASE);
+await page.waitForSelector('#tree .tree-item:has-text("incus-demo-vm")', { timeout: 30000 }).catch(() => {});
+await page.click('#tree .tree-item:has-text("incus-demo-vm")');
+await page.waitForSelector('#content .tab:has-text("Snapshots")', { timeout: 10000 }).catch(() => {});
+await page.click('#content .tab:has-text("Snapshots")');
+await page.waitForSelector('#snap-rows td:has-text("before-upgrade")', { timeout: 10000 }).catch(() => {});
+check(
+  await page.locator('#content', { hasText: 'VolumeSnapshotClass' }).count() === 0,
+  'snapshots: an Incus VM is not gated on a KubeVirt VolumeSnapshotClass',
+);
+check(await page.locator('#snap-rows td:has-text("before-upgrade")').count() === 1, 'snapshots: an Incus VM lists its snapshots off-cluster');
+check(await page.locator('#snap-rows td:has-text("offline")').count() === 1, 'snapshots: the table shows each snapshot\'s consistency');
+await page.screenshot({ path: `${SHOTS}/snapshots-incus.png` }).catch(() => {});
+await page.unroute('**/api/capabilities');
+await page.unroute('**/api/vms/*/incus-demo-vm/snapshots');
+
 // ── read-only gate ────────────────────────────────────────────
 // The e2e identity-gate spec mocks whoami because kind cannot inject a
 // Tailscale identity; the same mock works here and needs no server flag.
