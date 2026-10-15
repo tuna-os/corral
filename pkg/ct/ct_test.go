@@ -476,3 +476,62 @@ func containsArg(args []string, substr string) bool {
 	}
 	return false
 }
+
+func TestCreate_ExtraLabelsOnPVCAndPodWithoutOverridingCorralLabels(t *testing.T) {
+	r := withFake(t)
+	r.AddResponseKV("kubectl", []string{"apply", "-f", "-"}, "applied", nil)
+
+	err := Create(CreateOpts{
+		Name: "desk-1", Namespace: "corral-ct", Image: "debian:bookworm",
+		Labels: map[string]string{"corral.dev/vdi-ct-pool": "desk", "corral.dev/ct-name": "spoofed"},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	manifests := appliedManifests(t, r)
+	if len(manifests) != 2 {
+		t.Fatalf("applied %d manifests, want 2", len(manifests))
+	}
+	for _, m := range manifests {
+		labels := m["metadata"].(map[string]any)["labels"].(map[string]any)
+		if labels["corral.dev/vdi-ct-pool"] != "desk" {
+			t.Errorf("%v labels = %v, want the extra pool label", m["kind"], labels)
+		}
+		if labels["corral.dev/ct-name"] != "desk-1" || labels[labelCT] != "true" {
+			t.Errorf("%v labels = %v: Corral's own labels must win", m["kind"], labels)
+		}
+	}
+	var spec ctSpec
+	annotations := manifests[0]["metadata"].(map[string]any)["annotations"].(map[string]any)
+	if err := json.Unmarshal([]byte(annotations[specAnnotation].(string)), &spec); err != nil {
+		t.Fatalf("spec annotation: %v", err)
+	}
+	if spec.Labels["corral.dev/vdi-ct-pool"] != "desk" {
+		t.Errorf("persisted spec labels = %v, want them kept for Start", spec.Labels)
+	}
+}
+
+func TestStartPod_RestoresLabelsAndIgnoresIncus(t *testing.T) {
+	r := withFake(t)
+	incusFake := fakeIncus(t, "[]")
+	r.AddResponseKV("kubectl", []string{
+		"get", "pvc", "desk-1-data", "-n", "corral-ct", "-o",
+		`jsonpath={.metadata.annotations.corral\.ct/spec}`,
+	}, `{"image":"debian:bookworm","cpu":1,"mem":"512Mi","privileged":false,"labels":{"corral.dev/vdi-ct-pool":"desk"}}`, nil)
+	r.AddResponseKV("kubectl", []string{"apply", "-f", "-"}, "applied", nil)
+
+	if err := StartPod("desk-1", "corral-ct"); err != nil {
+		t.Fatalf("StartPod: %v", err)
+	}
+	manifests := appliedManifests(t, r)
+	if len(manifests) != 1 {
+		t.Fatalf("applied %d manifests, want 1 (the pod)", len(manifests))
+	}
+	labels := manifests[0]["metadata"].(map[string]any)["labels"].(map[string]any)
+	if labels["corral.dev/vdi-ct-pool"] != "desk" || labels["corral.dev/ct-name"] != "desk-1" {
+		t.Errorf("restarted pod labels = %v", labels)
+	}
+	if calls := incusFake.Calls(); len(calls) != 0 {
+		t.Errorf("StartPod must not consult Incus, got %+v", calls)
+	}
+}
