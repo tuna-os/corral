@@ -74,6 +74,13 @@ This table is the intended end state. **The code today covers less.** It
 refuses every other cell and does not try to approximate it. See *First slice*
 below for exactly which cells are live.
 
+> **Superseded by #164.** The refusal below is history. `pkg/backend` now has
+> an Incus `Ingester`. It publishes the qcow2 with `incus image import` and
+> launches a VM from that image. So `corral move --to incus` works, and the
+> move preflight accepts Incus as a destination. We keep the paragraphs for
+> their argument: a raw disk on an `--empty` VM is still the wrong path. The
+> image-publish route is the "separate feature" that they asked for.
+
 **Incus cannot be a destination.** `bootc.TargetFor` already assessed this and
 refused, and the reason still holds. An Incus VM boots from Incus's own image
 store. `incus import` takes an Incus backup tarball, not a disk image. A raw
@@ -172,6 +179,10 @@ and move share a single ingest path, and a second one does not grow.
 
 ## First slice: what is actually wired
 
+> **Superseded by #164 (Incus destination) and #163 (Proxmox source).** The
+> table below records the first slice. Today Incus is a destination
+> (`incus image import` plus launch, see above) and Proxmox is a move source.
+
 `pkg/move` and `corral move` exist. They now wire every cell that the table
 above promises, except the Incus destination. Corral refuses that one by design:
 
@@ -213,7 +224,8 @@ names the reason:
   network. The archive stays the *native* format, because it is the right
   artifact for a backup (configuration and every volume). The qcow2 is only the
   boot disk. A container archive has no such member. The refusal says so in
-  those words, and does not fail later inside `qemu-img`.
+  those words, and does not fail later inside `qemu-img`. *Superseded by
+  #164: Incus is also a destination now.*
 - **Ingest takes only qcow2.** `raw.gz` is a disk, but a compressed one. The
   ingest path hands the file to `qemu-img convert`, which does not read gzip.
   Every backend that can export offers qcow2. So Corral loses nothing when it

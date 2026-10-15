@@ -310,6 +310,7 @@ The items that you used last show at the top of the list.
 | Key | Action |
 |---|---|
 | `Ctrl+K` | Open the command palette |
+| `Ctrl+B` | Hide or show the sidebar |
 | `?` | Show the list of shortcuts |
 | `/` | Filter the tree by guest name |
 | `c` | Open the console of the selected VM |

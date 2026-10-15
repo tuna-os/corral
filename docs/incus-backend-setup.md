@@ -104,13 +104,11 @@ remote in this order:
 1. The global `--context` flag. A context name selects the remote of that
    context. With `--backend incus`, any other value is the remote name.
 2. The `CORRAL_INCUS_REMOTE` environment variable.
-3. The `incus.remote` key in `~/.config/corral/config.yaml`. The
+3. The remote of the default context, when `corral context use NAME` selected
+   an Incus context.
+4. The `incus.remote` key in `~/.config/corral/config.yaml`. The
    `corral incus set-remote NAME` command writes this key.
-4. The `local` remote.
-
-`corral context use NAME` does not apply the remote of an Incus context to new
-creates ([#490](https://github.com/tuna-os/corral/issues/490)). Pass
-`--context NAME` on the command line, or set `CORRAL_INCUS_REMOTE`.
+5. The `local` remote.
 
 Commands that act on an existing instance find the remote from the inventory.
 For example, `corral start web` goes to the remote where `web` is.

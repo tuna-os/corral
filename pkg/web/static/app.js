@@ -678,6 +678,7 @@ bindPalette({
   focusFilter: focusTreeFilter,
   nextTreeView: () => { const v = nextTreeView(); toast(`${v.charAt(0).toUpperCase()}${v.slice(1)} View`); },
   resetLayout: resetWorkspaceLayout,
+  toggleTree: () => toggleTree(),
   themeMode,
   cycleTheme: () => { cycleThemeMode(); renderContent(); },
 });

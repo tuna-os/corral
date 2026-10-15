@@ -123,12 +123,10 @@ in this order:
 1. The global `--context` flag. A context name selects the URI of that
    context. With `--backend libvirt`, any other value is the URI.
 2. The `CORRAL_LIBVIRT_URI` environment variable.
-3. The `libvirt.uri` key in `~/.config/corral/config.yaml`.
-4. `qemu:///system`.
-
-`corral context use NAME` does not apply the URI of a libvirt context to new
-creates ([#490](https://github.com/tuna-os/corral/issues/490)). Pass
-`--context NAME` on the command line, or set `CORRAL_LIBVIRT_URI`.
+3. The URI of the default context, when `corral context use NAME` selected a
+   libvirt context.
+4. The `libvirt.uri` key in `~/.config/corral/config.yaml`.
+5. `qemu:///system`.
 
 Commands that act on an existing domain find the URI from the inventory.
 For example, `corral stop db` goes to the URI where `db` is.
