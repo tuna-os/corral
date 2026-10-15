@@ -52,8 +52,21 @@ pkg/              Library code (importable)
 ├── vdi/           desktop pools (RFC-0001 phase 1) — clone-based pool create, label-based assignment
 ├── types/         shared types (VM, CreateOpts, RegistryEntry)
 └── web/           Proxmox-style web UI
-    ├── server.go         HTTP server, mux, VM list/create/action/delete/info/export, nodes, tasks, WS bridges (VM VNC/serial + CT exec)
-    ├── server_test.go
+    ├── server.go         Serve: startup, embedded static assets, registry store
+    ├── routes.go         route table (routes/newMux), cluster-only guard, console websockets, themed index
+    ├── middleware.go     request pipeline (peer token → admin gate → activity → peer gate) and host allowlist
+    ├── respond.go        JSON response and error-status helpers
+    ├── tasks.go          async task tracker (asyncTask, taskTracker) behind GET /api/tasks/{id}
+    ├── tasklog.go        task log ring (GET /api/tasklog) and task status handler
+    ├── inventory.go      VM list across backends and peers, /api/v1/inventory, /api/v1/meta
+    ├── health.go         /healthz and /readyz probes
+    ├── create.go         POST /api/vms: dispatch to the bootc/Windows/generic/local/backend create strategies
+    ├── createtarget.go   create-target resolution over the configured contexts, /api/contexts
+    ├── vms.go            VM info, power actions, delete
+    ├── migrate.go        live migration as a tracked task
+    ├── export.go         disk export (raw.gz, qcow2)
+    ├── nodes.go          node list, with this host as a synthetic node
+    ├── console.go        VNC and TTY websocket bridges (VM VNC/serial + CT exec)
     ├── ct.go             CT list/create/start-stop/delete HTTP handlers
     ├── features.go       capabilities, scale, volumes, expand, snapshots, clone, guest-info, events, metrics, templates,
     │                     doctor, plugins, NADs, NICs, images, instancetypes, datavolumes, boot options, ISO upload

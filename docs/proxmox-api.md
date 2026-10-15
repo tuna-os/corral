@@ -13,7 +13,7 @@ ADR: [adr/0001-k8s-rbac-to-proxmox-privileges.md](adr/0001-k8s-rbac-to-proxmox-p
 ## Two ways to run it
 
 1. **Mounted in `corral web`** — the dashboard server mounts the handler at
-   `/api2/json/` automatically (`pkg/web/server.go`). So a single
+   `/api2/json/` automatically (`pkg/web/routes.go`). So a single
    `corral web` (or the on-cluster deployment) speaks both the corral REST
    API and the Proxmox API on one port. That port is 8006 — Proxmox's
    own port, deliberately.
