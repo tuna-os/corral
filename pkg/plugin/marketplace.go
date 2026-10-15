@@ -20,6 +20,7 @@ import (
 	"time"
 
 	semver "github.com/Masterminds/semver/v3"
+	"github.com/tuna-os/corral/pkg/config"
 )
 
 const (
@@ -107,11 +108,7 @@ var validName = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
 var installMu sync.Mutex
 
 func configDir() string {
-	if d := os.Getenv("XDG_CONFIG_HOME"); d != "" {
-		return filepath.Join(d, "corral")
-	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".config", "corral")
+	return config.ConfigDir()
 }
 func sourcesPath() string          { return filepath.Join(configDir(), "marketplaces.json") }
 func stateDir() string             { return filepath.Join(Dir(), ".installed") }

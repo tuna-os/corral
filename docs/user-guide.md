@@ -64,7 +64,7 @@ flowchart TD
 
 ### Web Dashboard
 
-Access the Proxmox-style Web UI at `http://localhost:8006` or via `corral web`.
+Access the Proxmox-style Web UI at `http://localhost:8006` or via `corral web`. For public, local, homelab, and always-on setups see [deployment modes](deployment-modes.md).
 
 ![Automated unified fleet capture](screenshots/generated/web-fleet.png)
 
@@ -78,6 +78,64 @@ Access the Proxmox-style Web UI at `http://localhost:8006` or via `corral web`.
 - **Theme & Brand**: Customize accent colours and the header brand, and inject custom CSS. Use CLI flags, a config file, or the built-in Settings page.
 
 ![Mobile Dashboard](screenshots/dashboard-mobile.png)
+
+#### Several dashboards
+
+A Datacenter or node screen can hold more than one dashboard. Use the picker
+above the widgets to switch, and New to add one. Each dashboard keeps its own
+arrangement and its own density. So you can keep one screen for capacity and
+another for a failure you need to chase.
+
+Rename changes the name of the current dashboard. Delete removes it and its
+arrangement; the widgets stay available under Add widget. A screen always
+keeps at least one dashboard, so the last one does not delete.
+
+Dashboards live in your own browser, like the rest of the layout. corral
+shares them with nobody.
+
+#### Dashboard density
+
+The Density control above a dashboard sets how much room each widget takes:
+Compact, Cosy or Roomy. Compact fits more on one screen. Each dashboard keeps
+its own choice, and Reset layout puts it back with the arrangement.
+
+#### Links to a screen
+
+The address bar follows what you look at. Select a guest and open its console,
+and the address holds both. Send that address to somebody else and they arrive
+on the same screen. The back and forward buttons move through the screens you
+visited.
+
+The address carries the tree view, the selection and the open tab. It does not
+carry how wide you keep the sidebar, which columns you hid, or where you put
+the dashboard widgets. Those stay in your own browser.
+
+#### Web keyboard shortcuts
+
+Press `Ctrl+K` (`⌘K` on macOS) to open the command palette. Type part of a
+name to find a VM, a CT, a node or a pool. Type a verb and a name to find an
+action, for example `stop web-prod`. Press `Enter` to run the first result.
+The items that you used last show at the top of the list.
+
+| Key | Action |
+|---|---|
+| `Ctrl+K` | Open the command palette |
+| `?` | Show the list of shortcuts |
+| `/` | Filter the tree by guest name |
+| `c` | Open the console of the selected VM |
+| `s` | Start or stop the selected VM |
+| `g` then `d` | Go to the datacenter |
+| `v` | Switch the tree to the next view |
+| `t` | Show the Tasks panel, and hide it again |
+| `e` | Show the Events panel for the selection, and hide it again |
+
+You can also narrow the palette by a field. Type `node=corral-1` to see only
+the guests on that node, or `status=stopped` to see the stopped ones. The
+fields are `node`, `namespace`, `status`, `backend` and `tag`. A field and a
+name work together: `node=corral-1 web` searches only that node.
+
+The one-key shortcuts do not operate when you type in a field or in a console.
+A read-only user does not see the actions that change a guest.
 
 #### Theme & Branding
 
@@ -300,3 +358,8 @@ node scripts/capture-docs.mjs docs/screenshots/generated
 
 The same command can target the TunaOS site checkout:
 `node scripts/capture-docs.mjs ../docs/static/img/screenshots/corral`.
+
+The `Screenshots` workflow runs this script when the web UI, the TUI or the
+demo fleet changes, and one time each week. It then opens a PR with the new
+images. When the `TUNAOS_DOCS_TOKEN` secret is set, it also opens a PR in
+tuna-os/docs. That PR updates the images on the TunaOS site.

@@ -14,9 +14,12 @@ import (
 type vendorManifest struct {
 	SchemaVersion string `json:"schemaVersion"`
 	Assets        []struct {
-		Path   string `json:"path"`
-		SHA256 string `json:"sha256"`
-		Bytes  int    `json:"bytes"`
+		Path    string `json:"path"`
+		Package string `json:"package"`
+		Version string `json:"version"`
+		URL     string `json:"url"`
+		SHA256  string `json:"sha256"`
+		Bytes   int    `json:"bytes"`
 	} `json:"assets"`
 }
 
@@ -44,6 +47,21 @@ func TestVendorManifest(t *testing.T) {
 			continue
 		}
 		recorded[asset.Path] = true
+
+		// Provenance, not just integrity: a digest alone only proves the
+		// bytes have not changed since someone committed them. Without a
+		// package, version and URL there is nothing to re-download and
+		// compare against, so "unknown" must not come back once an asset's
+		// upstream has been identified.
+		for field, value := range map[string]string{
+			"package": asset.Package,
+			"version": asset.Version,
+			"url":     asset.URL,
+		} {
+			if value == "" || value == "unknown" {
+				t.Errorf("%s: %s = %q, want recorded provenance", asset.Path, field, value)
+			}
+		}
 
 		data, err := staticFS.ReadFile("static/" + asset.Path)
 		if err != nil {

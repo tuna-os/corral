@@ -81,7 +81,12 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      # Per-package report (RFC-0004 slice 4): informational only, exits 0,
+      # so it never fails the build. Consumes the same cover.out.
+      - name: coverage by package
+        run: scripts/coverage-report.sh cover.out
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: coverage
           path: cover.out
@@ -183,6 +188,21 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
+  web-image-smoke:
+    # Container image build + probe smoke for docs/deployment-modes.md mode 2.
+    # scripts/smoke-web-image.sh builds the image from the Containerfile,
+    # boots it, and curls /healthz + /readyz. No VPN or live cluster needed.
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+
+      - name: Build image and smoke-test probes
+        run: ./scripts/smoke-web-image.sh
+
   release-binaries:
     # Publishes static binaries to a rolling "binaries" release so consumers
     # (e.g. the dotfiles ansible role) can fetch a stable URL:
@@ -229,7 +249,7 @@ jobs:
           (cd dist && sha256sum * > SHA256SUMS)
           ls -lh dist/
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: corral-binaries
           path: dist/

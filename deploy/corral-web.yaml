@@ -118,9 +118,17 @@ rules:
   - apiGroups: [""]
     resources: ["services", "serviceaccounts"]
     verbs: ["get", "list", "create", "update", "patch", "delete"]
+  # Per-VM proxy + schedule RBAC (ApplyProxy/DeleteProxy, cronops): the only
+  # Role/RoleBinding objects corral-web ever creates are namespaced ones named
+  # corral-<vm>-proxy or corral-sched — never ClusterRoles or ClusterRoleBindings,
+  # and the proxy Role it grants holds only vmi get + vnc get (see
+  # GenerateProxyRBAC). Cluster scope (rather than a Role in the corral
+  # namespace) is required because VM namespaces are dynamic per create (-n);
+  # there is no static namespace list to bind to. `list` is deliberately
+  # absent: no code path lists roles/rolebindings (apply + get + delete only).
   - apiGroups: ["rbac.authorization.k8s.io"]
     resources: ["roles", "rolebindings"]
-    verbs: ["get", "list", "create", "update", "patch", "delete"]
+    verbs: ["get", "create", "update", "patch", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

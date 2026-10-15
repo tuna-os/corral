@@ -317,9 +317,10 @@ corral backup unschedule web
 ```
 
 Needs `rclone` configured for your remote (`rclone config`) and `virtctl`.
-Scheduled backups fetch `virtctl`/`rclone` inside the CronJob pod at
-runtime and mirror your local rclone config into a namespaced Secret — no
-bespoke image required.
+Scheduled backups run as non-root in the pinned `rclone/rclone` image.
+An init container copies `kubectl` and downloads `virtctl` into a
+shared volume, so no corral-owned image is necessary. Your local rclone
+config goes into a namespaced Secret that the CronJob mounts.
 
 ### The Windows plugin
 
@@ -611,3 +612,11 @@ your tailnet is the fence. *(Formerly known as `tailvm`.)*
 ## Community
 
 [Discord](https://discord.gg/TeP2kxKQq)
+
+<!-- hive-contribute-plea: donated-compute appeal, keep in sync across repos -->
+## Contribute compute — no code needed
+
+No time to write code? You can still push this project's backlog forward. TunaOS AI-agent hives work on this repository. Lend a hive your AI subscription or API tokens, and your machine runs contributor tasks from this project's backlog.
+
+- 🪸 [Contribute compute to the reef hive](https://reef.tunaos.org/contribute)
+- 🏫 [Contribute compute to the school hive](https://school.tunaos.org/contribute)

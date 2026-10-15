@@ -999,3 +999,39 @@ func TestCTCreate_PortsFlag(t *testing.T) {
 		t.Errorf("ctPorts = %v, want [8080 3000]", ctPorts)
 	}
 }
+
+func TestLocalBootcScript_UsesTempDirMounts(t *testing.T) {
+	script := localBootcScript("/dev/loop7", "")
+
+	if !strings.Contains(script, "DISK=/dev/loop7") {
+		t.Errorf("script missing DISK=/dev/loop7:\n%s", script)
+	}
+	if !strings.Contains(script, "MNT_ESP=$(mktemp -d)") {
+		t.Errorf("script should use mktemp -d for ESP mount:\n%s", script)
+	}
+	if !strings.Contains(script, "MNT_ROOT=$(mktemp -d)") {
+		t.Errorf("script should use mktemp -d for composefs root mount:\n%s", script)
+	}
+	if !strings.Contains(script, "MNT=$(mktemp -d)") {
+		t.Errorf("script should use mktemp -d for post-install mount check:\n%s", script)
+	}
+
+	// Must not contain hardcoded /mnt paths that break on dangling symlinks (#389)
+	for _, forbidden := range []string{"/mnt/esp", "/mnt/root", "mkdir -p /mnt", "mount \"${DISK}p3\" /mnt ", "chroot /mnt"} {
+		if strings.Contains(script, forbidden) {
+			t.Errorf("script contains forbidden hardcoded /mnt path %q (#389):\n%s", forbidden, script)
+		}
+	}
+}
+
+func TestLocalBootcScript_WithProvisionScript(t *testing.T) {
+	script := localBootcScript("/dev/loop7", "echo test-provision")
+
+	wantChroot := `cat /output/provision.sh | chroot "$MNT" /bin/bash`
+	if !strings.Contains(script, wantChroot) {
+		t.Errorf("script missing chroot into temp mount %q:\n%s", wantChroot, script)
+	}
+	if strings.Contains(script, "chroot /mnt") {
+		t.Errorf("script contains forbidden chroot /mnt:\n%s", script)
+	}
+}

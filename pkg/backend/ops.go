@@ -47,8 +47,8 @@ type Restarter interface {
 	Restart(name string) error
 }
 
-// Suspender pauses a guest to memory. Distinct from Power because three of the
-// five backends can do it and Corral only ever wired one.
+// Suspender pauses a guest to memory. Distinct from Power because four of the
+// six backends can do it and Corral only ever wired one.
 type Suspender interface {
 	Pause(name string) error
 	Resume(name string) error

@@ -4,6 +4,7 @@ import (
 	"crypto/subtle"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 )
@@ -53,6 +54,33 @@ func authEnforced() bool { return len(adminLogins()) > 0 }
 func authenticationRequired() bool {
 	v := strings.ToLower(strings.TrimSpace(os.Getenv("CORRAL_AUTH_REQUIRED")))
 	return v == "1" || v == "true" || v == "yes"
+}
+
+// validateWebSocketOrigin prevents a browser on another host from using an
+// unauthenticated Corral deployment as a WebSocket proxy. Native clients often
+// omit Origin, so that remains valid when the optional auth gate is disabled.
+// When auth is enabled, only a verified Corral service identity may omit it.
+func validateWebSocketOrigin(r *http.Request) error {
+	if authenticationRequired() && r.Header.Get("Corral-Service-Identity") != "" {
+		return nil
+	}
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if origin == "" {
+		if authenticationRequired() {
+			return fmt.Errorf("websocket origin is required")
+		}
+		return nil
+	}
+
+	u, err := url.Parse(origin)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" ||
+		u.User != nil || u.Opaque != "" || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+		return fmt.Errorf("websocket origin %q is invalid", origin)
+	}
+	if !strings.EqualFold(u.Host, r.Host) {
+		return fmt.Errorf("websocket origin %q does not match host", origin)
+	}
+	return nil
 }
 
 // isAdmin reports whether the caller may perform mutating actions.

@@ -41,4 +41,4 @@ permissions:
 
 jobs:
   ste:
-    uses: tuna-os/.github/.github/workflows/ste-lint.yml@012ce0232ec9459c0a7b66bdee2529e03dc8a51f # main
+    uses: tuna-os/.github/.github/workflows/ste-lint.yml@eb7ce09bbc1b32937de3ad3a6be37a14a5e4fba2 # main
