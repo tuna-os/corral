@@ -1,6 +1,8 @@
 package plugin
 
 import (
+	"github.com/tuna-os/corral/pkg/plugin/sdk"
+
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
@@ -470,5 +472,19 @@ func TestInstall_UnverifiedEntryStillChecksDeclaredDigest(t *testing.T) {
 	}
 	if err := e.Install(); err == nil {
 		t.Fatal("a digest that is present must be checked even on an unverified entry")
+	}
+}
+
+// A marketplace entry that declares UI corral would refuse at run time is
+// refused before anyone installs it.
+func TestEntryValidateChecksUI(t *testing.T) {
+	e := v2Entry("screens", Build{SHA256: strings.Repeat("a", 64)})
+	e.UI = &sdk.UI{Sections: []sdk.UIItem{{ID: "backups", Title: "Backups", Command: "ui backups"}}}
+	if err := e.Validate(); err != nil {
+		t.Fatalf("a screen-only plugin should validate: %v", err)
+	}
+	e.UI.Sections[0].Command = ""
+	if err := e.Validate(); err == nil || !strings.Contains(err.Error(), "no command") {
+		t.Fatalf("err = %v, want the missing command refused", err)
 	}
 }

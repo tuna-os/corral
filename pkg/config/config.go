@@ -335,15 +335,43 @@ type LibvirtConfig struct {
 	URI string `yaml:"uri"`
 }
 
+// LibvirtURI returns Corral's default libvirt connection URI.
+// Precedence is CORRAL_LIBVIRT_URI, the URI of the libvirt context selected
+// with `corral context use`, config.yaml's libvirt.uri, then qemu:///system.
 func LibvirtURI() string {
 	if v := os.Getenv("CORRAL_LIBVIRT_URI"); v != "" {
 		return v
 	}
-	if cfg, err := Load(""); err == nil && cfg.Libvirt.URI != "" {
+	cfg, err := Load("")
+	if err != nil {
+		return "qemu:///system"
+	}
+	if target, ok := defaultTarget(cfg, "libvirt"); ok {
+		return target
+	}
+	if cfg.Libvirt.URI != "" {
 		return cfg.Libvirt.URI
 	}
 	return "qemu:///system"
 }
+
+// defaultTarget returns the backend-specific target (Incus remote, libvirt
+// URI, kubeconfig context) of the context `corral context use` selected, when
+// that context belongs to backend. It reads cfg.Contexts directly rather than
+// FindContext: Contexts() synthesizes legacy entries by calling the accessors
+// that call this, and going through it would recurse.
+func defaultTarget(cfg *Config, backend string) (string, bool) {
+	if cfg.Default.Context == "" {
+		return "", false
+	}
+	for _, c := range cfg.Contexts {
+		if c.Name == cfg.Default.Context && c.Backend == backend && c.IsEnabled() && c.Context != "" {
+			return c.Context, true
+		}
+	}
+	return "", false
+}
+
 func SetLibvirtURI(uri string) error {
 	return mutate(func(cfg *Config) (*Config, error) {
 		cfg.Libvirt.URI = uri
@@ -436,11 +464,18 @@ func KubeconfigPresent() bool {
 	return err == nil
 }
 
+// KubeContext returns Corral's default kubeconfig context ("" means the
+// kubeconfig's current context). Precedence is CORRAL_KUBE_CONTEXT, the
+// context of the kubevirt context selected with `corral context use`, then
+// config.yaml's kubevirt.context.
 func KubeContext() string {
 	if v := os.Getenv("CORRAL_KUBE_CONTEXT"); v != "" {
 		return v
 	}
 	if cfg, err := Load(""); err == nil {
+		if target, ok := defaultTarget(cfg, "kubevirt"); ok {
+			return target
+		}
 		return cfg.Kubevirt.Context
 	}
 	return ""
@@ -597,12 +632,20 @@ func CTBackend() string {
 }
 
 // IncusRemote returns Corral's default Incus remote.
-// Precedence is CORRAL_INCUS_REMOTE, config.yaml, then "local".
+// Precedence is CORRAL_INCUS_REMOTE, the remote of the Incus context selected
+// with `corral context use`, config.yaml's incus.remote, then "local".
 func IncusRemote() string {
 	if v := os.Getenv("CORRAL_INCUS_REMOTE"); v != "" {
 		return v
 	}
-	if cfg, err := Load(""); err == nil && cfg.Incus.Remote != "" {
+	cfg, err := Load("")
+	if err != nil {
+		return "local"
+	}
+	if target, ok := defaultTarget(cfg, "incus"); ok {
+		return target
+	}
+	if cfg.Incus.Remote != "" {
 		return cfg.Incus.Remote
 	}
 	return "local"

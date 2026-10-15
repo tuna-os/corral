@@ -52,6 +52,55 @@ Test the binary directly, test the metadata handshake, then test dispatch with
 `CORRAL_PLUGIN_DIR=/path/to/bin corral hello`. Plugins should not import
 `cmd`; reusable behavior for a backend belongs in a `pkg/` package.
 
+## Adding a screen or a widget
+
+A plugin can add widgets to the Datacenter dashboard and screens of its own.
+It does not send markup or script. It sends data, and corral draws it. The
+design is in [RFC-0002](rfc/0002-plugin-ui-contributions.md).
+
+Add a `ui` section to the metadata:
+
+```go
+sdk.Metadata{
+    Name: "aws-cost", Version: "1.0.0",
+    SupportedBackends: []string{"all"},
+    UI: &sdk.UI{
+        Widgets:  []sdk.UIItem{{ID: "spend", Title: "AWS spend", Command: "ui spend", Refresh: "60s"}},
+        Sections: []sdk.UIItem{{ID: "hosts", Title: "AWS hosts", Icon: "server", Command: "ui hosts"}},
+    },
+}
+```
+
+For each item, corral runs the plugin with the item's `command` as arguments,
+with no shell. The plugin then writes one document to stdout:
+
+```json
+{ "kind": "rows", "rows": [ { "label": "This month", "value": "$41.20", "state": "ok" } ] }
+{ "kind": "table", "columns": ["Host", "State"], "rows": [["i-0abc", "stopped"]] }
+{ "kind": "message", "text": "No instances carry the corral tag." }
+```
+
+Rules:
+
+- `state` is `ok`, `warn`, `bad` or `muted`, or empty.
+- Corral refuses an unknown kind, an unknown field and output over the limits
+  in `sdk` (`MaxDocumentBytes`, `MaxDocumentRows`, `MaxDocumentCols`,
+  `MaxDocumentString`, `MaxDocumentText`). Test your output with
+  `sdk.ParseDocument`.
+- Corral shows every string as text. Markup in a value appears as written.
+- A call stops after 10 seconds. A failure shows your stderr to the operator,
+  so write a useful line there.
+- Corral asks for a document at most every `sdk.MinUIRefresh` (15 seconds),
+  whatever `refresh` says. All viewers share one answer.
+- A document is read-only. A plugin cannot add a button that acts on the fleet.
+
+Widgets wait in "Add widget" on the Datacenter dashboard. Sections open from
+the Extensions screen and the command palette, not from the sidebar tree.
+
+Put the same `ui` section in the marketplace entry. The Extensions screen then
+shows what the plugin adds before the operator installs it. A plugin whose only
+purpose is a screen is a valid entry: declare `"supportedBackends": ["all"]`.
+
 ## External marketplace
 
 1. Build immutable binaries for each advertised platform.
