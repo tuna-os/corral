@@ -16,7 +16,7 @@ func createBackendVM(w http.ResponseWriter, req createRequest, target config.Con
 		errResp(w, http.StatusBadRequest, fmt.Errorf("%s does not support the selected workflow on backend %s", target.Name, target.Backend))
 		return
 	}
-	done := taskBegin("create", target.Name+"/"+req.Name)
+	done := taskBegin(req.user, "create", target.Name+"/"+req.Name)
 	var err error
 	switch target.Backend {
 	case "incus":

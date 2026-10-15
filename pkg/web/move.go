@@ -127,7 +127,7 @@ func handleMove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	done := taskBegin("move", fmt.Sprintf("%s → %s/%s",
+	done := taskBegin(requestUser(r), "move", fmt.Sprintf("%s → %s/%s",
 		plan.Source.Name, plan.Destination.Backend, plan.Destination.Name))
 	result, err := moveRunner(r.Context(), plan, nil)
 	done(err)

@@ -35,7 +35,7 @@ func handleDoctorFix(w http.ResponseWriter, r *http.Request) {
 	}
 	json.NewDecoder(r.Body).Decode(&b) // empty body = fix all
 	if b.Check != "" {
-		done := taskBegin("doctor fix", b.Check)
+		done := taskBegin(requestUser(r), "doctor fix", b.Check)
 		if err := doctor.FixOne(b.Check); err != nil {
 			done(err)
 			errResp(w, http.StatusInternalServerError, err)
@@ -45,7 +45,7 @@ func handleDoctorFix(w http.ResponseWriter, r *http.Request) {
 		jsonResp(w, http.StatusOK, map[string]any{"fixed": []string{b.Check}})
 		return
 	}
-	done := taskBegin("doctor fix", "all fixable")
+	done := taskBegin(requestUser(r), "doctor fix", "all fixable")
 	fixed, err := doctor.Fix()
 	done(err)
 	if err != nil {
@@ -122,7 +122,7 @@ func handleInstallPlugin(w http.ResponseWriter, r *http.Request) {
 		errResp(w, http.StatusConflict, fmt.Errorf("plugin requests permissions %v; explicit acceptPermissions is required", e.Permissions))
 		return
 	}
-	done := taskBegin("install plugin", name)
+	done := taskBegin(requestUser(r), "install plugin", name)
 	if err := e.Install(); err != nil {
 		done(err)
 		errResp(w, http.StatusInternalServerError, err)
@@ -177,7 +177,7 @@ func handleScale(w http.ResponseWriter, r *http.Request) {
 		errResp(w, http.StatusBadRequest, err)
 		return
 	}
-	done := taskBegin("scale", ns+"/"+name)
+	done := taskBegin(requestUser(r), "scale", ns+"/"+name)
 	if err := kubeClient(r, ns).Scale(name, b.CPU, b.Mem); err != nil {
 		done(err)
 		errResp(w, http.StatusInternalServerError, err)
@@ -202,7 +202,7 @@ func handleSetOptions(w http.ResponseWriter, r *http.Request) {
 		errResp(w, http.StatusBadRequest, err)
 		return
 	}
-	done := taskBegin("set options", ns+"/"+name)
+	done := taskBegin(requestUser(r), "set options", ns+"/"+name)
 	opts := kubevirt.VMOptions{
 		RunStrategy: b.RunStrategy,
 		Firmware:    b.Firmware,
@@ -225,7 +225,7 @@ func handleAddVolume(w http.ResponseWriter, r *http.Request) {
 		Size string `json:"size"`
 	}
 	json.NewDecoder(r.Body).Decode(&b)
-	done := taskBegin("add disk", ns+"/"+name)
+	done := taskBegin(requestUser(r), "add disk", ns+"/"+name)
 	pvc, err := kubeClient(r, ns).AddVolume(name, b.Size)
 	done(err)
 	if err != nil {
@@ -238,7 +238,7 @@ func handleAddVolume(w http.ResponseWriter, r *http.Request) {
 // DELETE /api/vms/{ns}/{name}/volumes/{vol}
 func handleRemoveVolume(w http.ResponseWriter, r *http.Request) {
 	ns, name, vol := r.PathValue("ns"), r.PathValue("name"), r.PathValue("vol")
-	done := taskBegin("detach disk", ns+"/"+name)
+	done := taskBegin(requestUser(r), "detach disk", ns+"/"+name)
 	if err := kubeClient(r, ns).RemoveVolume(name, vol); err != nil {
 		done(err)
 		errResp(w, http.StatusInternalServerError, err)
@@ -259,7 +259,7 @@ func handleExpand(w http.ResponseWriter, r *http.Request) {
 		errResp(w, http.StatusBadRequest, fmt.Errorf("pvc and size are required"))
 		return
 	}
-	done := taskBegin("expand disk", ns+"/"+b.PVC)
+	done := taskBegin(requestUser(r), "expand disk", ns+"/"+b.PVC)
 	if err := kubeClient(r, ns).ExpandDisk(b.PVC, b.Size); err != nil {
 		done(err)
 		errResp(w, http.StatusInternalServerError, err)
@@ -332,7 +332,7 @@ func handleCreateSnapshot(w http.ResponseWriter, r *http.Request) {
 		snapshotError(w, err)
 		return
 	}
-	done := taskBegin("snapshot", ref.Namespace+"/"+ref.Name)
+	done := taskBegin(requestUser(r), "snapshot", ref.Namespace+"/"+ref.Name)
 	snap, err := adapter.Create(ref, b.Name)
 	done(err)
 	if err != nil {
@@ -352,7 +352,7 @@ func handleRestoreSnapshot(w http.ResponseWriter, r *http.Request) {
 		snapshotError(w, err)
 		return
 	}
-	done := taskBegin("restore snapshot", ref.Namespace+"/"+ref.Name)
+	done := taskBegin(requestUser(r), "restore snapshot", ref.Namespace+"/"+ref.Name)
 	if err := adapter.Restore(ref, r.PathValue("snap")); err != nil {
 		done(err)
 		snapshotError(w, err)
@@ -370,7 +370,7 @@ func handleDeleteSnapshot(w http.ResponseWriter, r *http.Request) {
 		snapshotError(w, err)
 		return
 	}
-	done := taskBegin("delete snapshot", ref.Namespace+"/"+snap)
+	done := taskBegin(requestUser(r), "delete snapshot", ref.Namespace+"/"+snap)
 	if err := adapter.Delete(ref, snap); err != nil {
 		done(err)
 		snapshotError(w, err)
@@ -390,7 +390,7 @@ func handleClone(w http.ResponseWriter, r *http.Request) {
 		errResp(w, http.StatusBadRequest, fmt.Errorf("target name is required"))
 		return
 	}
-	done := taskBegin("clone", ns+"/"+name+" → "+b.Target)
+	done := taskBegin(requestUser(r), "clone", ns+"/"+name+" → "+b.Target)
 	if err := kubeClient(r, ns).Clone(name, b.Target); err != nil {
 		done(err)
 		errResp(w, http.StatusInternalServerError, err)
@@ -529,7 +529,7 @@ func handleBootcRebuild(w http.ResponseWriter, r *http.Request) {
 	id := fmt.Sprintf("bootc-rebuild-%s-%d", name, time.Now().UnixNano())
 	task := newBuildTask()
 	tasks.Store(id, task)
-	done := taskBegin("bootc rebuild", ns+"/"+name)
+	done := taskBegin(requestUser(r), "bootc rebuild", ns+"/"+name)
 	go func() {
 		err := kubevirt.BootcRebuild(name, ns, image, sshKey, "", task)
 		if err == nil && store != nil {
@@ -644,7 +644,7 @@ func handleImportDataVolume(w http.ResponseWriter, r *http.Request) {
 		errResp(w, http.StatusBadRequest, fmt.Errorf("name and url are required"))
 		return
 	}
-	done := taskBegin("import image", b.Namespace+"/"+b.Name)
+	done := taskBegin(requestUser(r), "import image", b.Namespace+"/"+b.Name)
 	if err := kubevirt.ImportDataVolume(b.Name, b.Namespace, b.URL, b.Size); err != nil {
 		done(err)
 		errResp(w, http.StatusInternalServerError, err)
@@ -696,7 +696,7 @@ func handleUploadDataVolume(w http.ResponseWriter, r *http.Request) {
 	id := fmt.Sprintf("upload-%s-%d", name, time.Now().UnixNano())
 	task := newBuildTask()
 	tasks.Store(id, task)
-	done := taskBegin("upload image", ns+"/"+name)
+	done := taskBegin(requestUser(r), "upload image", ns+"/"+name)
 
 	go func() {
 		defer os.Remove(tmpPath)
@@ -710,7 +710,7 @@ func handleUploadDataVolume(w http.ResponseWriter, r *http.Request) {
 // DELETE /api/datavolumes/{ns}/{name}
 func handleDeleteDataVolume(w http.ResponseWriter, r *http.Request) {
 	ns, name := r.PathValue("ns"), r.PathValue("name")
-	done := taskBegin("delete image", ns+"/"+name)
+	done := taskBegin(requestUser(r), "delete image", ns+"/"+name)
 	if err := kubevirt.DeleteDataVolume(ns, name); err != nil {
 		done(err)
 		errResp(w, http.StatusInternalServerError, err)

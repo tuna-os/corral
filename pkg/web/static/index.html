@@ -89,6 +89,10 @@
           @click.stop="pick(p.id)" x-text="p.title"></button>
       </template>
     </div>
+    <!-- The counts stay in the head, so a collapsed dock still says that
+         something is running or has failed. -->
+    <span id="dock-running" class="pill mid" x-show="running" x-text="`${running} running`"></span>
+    <span id="dock-failed" class="pill err" x-show="failed" x-text="`${failed} failed`"></span>
     <span id="task-panel-summary" class="muted" x-text="summary"></span>
     <span class="spacer"></span>
     <span id="task-panel-chevron" x-text="collapsed ? '▴' : '▾'"></span>
@@ -96,18 +100,23 @@
   <div id="task-panel-body">
     <div id="dock-panel-tasks" role="tabpanel" aria-labelledby="dock-tab-tasks" x-show="panel === 'tasks'">
     <table>
-      <thead><tr><th>Started</th><th>Action</th><th>Target</th><th>Duration</th><th>Status</th></tr></thead>
+      <thead><tr><th>Started</th><th>User</th><th>Action</th><th>Target</th><th>Duration</th><th>Status</th></tr></thead>
       <tbody id="task-rows">
-        <tr x-show="tasks.length === 0"><td colspan="5" class="muted">No tasks yet.</td></tr>
+        <tr x-show="tasks.length === 0"><td colspan="6" class="muted">No tasks yet.</td></tr>
         <template x-for="t in tasks.slice(0, 50)" :key="t.id">
-          <tr :title="t.status === 'error' ? (t.error || '') : ''">
+          <tr :data-task="t.id">
             <td x-text="new Date(t.started).toLocaleTimeString()"></td>
+            <td x-text="t.user || '—'"></td>
             <td x-text="t.action"></td>
-            <td x-text="t.target"></td>
+            <td>
+              <a href="#" class="task-target" x-show="links[t.id]" @click.prevent="goTo(t)" x-text="t.target"></a>
+              <span x-show="!links[t.id]" x-text="t.target"></span>
+            </td>
             <td x-text="t.duration || '…'"></td>
             <td>
               <span class="pill mid" x-show="t.status === 'running'">running</span>
-              <span class="pill off" x-show="t.status === 'error'" :title="t.error || ''">error</span>
+              <button type="button" class="pill err task-error" x-show="t.status === 'error'"
+                      :title="t.error || ''" @click="showTask(t)">error</button>
               <span class="pill on" x-show="t.status !== 'running' && t.status !== 'error'">OK</span>
             </td>
           </tr>
@@ -140,6 +149,25 @@
       </table>
     </div>
   </div>
+  <!-- A failed task's record. It sits outside the body because a collapsed
+       dock hides the body, and a modal inside a hidden box does not show. -->
+  <dialog id="task-detail" x-ref="taskDetail" aria-labelledby="task-detail-title">
+    <template x-if="detail">
+      <div>
+        <h2 id="task-detail-title" x-text="`${detail.action} ${detail.target}`"></h2>
+        <dl class="props">
+          <dt>Status</dt><dd x-text="detail.status"></dd>
+          <dt>User</dt><dd x-text="detail.user || '—'"></dd>
+          <dt>Started</dt><dd x-text="new Date(detail.started).toLocaleString()"></dd>
+          <dt>Duration</dt><dd x-text="detail.duration || '…'"></dd>
+        </dl>
+        <pre class="yaml" id="task-detail-error" x-text="detail.error || 'No error was recorded.'"></pre>
+      </div>
+    </template>
+    <div class="dialog-actions">
+      <button type="button" class="btn" @click="$refs.taskDetail.close()">Close</button>
+    </div>
+  </dialog>
 </div>
 
 <dialog id="create-dialog">

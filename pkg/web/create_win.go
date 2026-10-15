@@ -17,7 +17,7 @@ func createWindowsInContext(req createRequest, ns, context string) error {
 	if req.ISO == "" {
 		return badRequest(fmt.Errorf("a Windows installer ISO URL is required"))
 	}
-	done := taskBegin("create windows", ns+"/"+req.Name)
+	done := taskBegin(req.user, "create windows", ns+"/"+req.Name)
 	password, err := kubevirt.CreateWindowsVMInContext(req.Name, ns, req.ISO, req.Disk, req.Mem, req.CPU, true, context)
 	if err != nil {
 		done(err)
