@@ -20,6 +20,10 @@ env:
   KUBECTL_VERSION: v1.36.1
   VIRTCTL_VERSION: v1.8.2
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     runs-on: ubuntu-26.04

@@ -32,6 +32,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   # The layer, built in the image it targets. A minute, a container engine, no
   # KVM and no privileges — so this one does run on a pull request.

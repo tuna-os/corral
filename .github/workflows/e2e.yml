@@ -45,6 +45,10 @@ env:
   CDI_VERSION: v1.62.0
   KIND_VERSION: v0.30.0
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   e2e-kind:
     runs-on: ubuntu-26.04
