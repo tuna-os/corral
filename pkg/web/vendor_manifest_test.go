@@ -2,10 +2,12 @@ package web
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"io/fs"
 	"path"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -100,6 +102,33 @@ func TestVendorManifest(t *testing.T) {
 	for _, asset := range embedded {
 		if !recorded[asset] {
 			t.Errorf("embedded vendor asset %q is missing from vendor/MANIFEST.json", asset)
+		}
+	}
+}
+
+// TestIndexSRIMatchesManifest checks every integrity= attribute in index.html
+// against the asset's bytes, so a vendor update that refreshes MANIFEST.json but
+// not the SRI digest fails CI instead of the browser silently refusing the file.
+func TestIndexSRIMatchesManifest(t *testing.T) {
+	html, err := staticFS.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatalf("read index.html: %v", err)
+	}
+	re := regexp.MustCompile(`(?:src|href)="([^"]+)"\s+integrity="sha256-([^"]+)"`)
+	matches := re.FindAllSubmatch(html, -1)
+	if len(matches) == 0 {
+		t.Fatal("index.html has no integrity attributes")
+	}
+	for _, m := range matches {
+		name, want := string(m[1]), string(m[2])
+		data, err := staticFS.ReadFile("static/" + name)
+		if err != nil {
+			t.Errorf("%s: %v", name, err)
+			continue
+		}
+		sum := sha256.Sum256(data)
+		if got := base64.StdEncoding.EncodeToString(sum[:]); got != want {
+			t.Errorf("%s: integrity sha256-%s, file is sha256-%s", name, want, got)
 		}
 	}
 }
