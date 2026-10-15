@@ -68,6 +68,9 @@ func NewTestFixture() *TestFixture {
 // Close shuts down the test server and cleans up the temp registry.
 func (f *TestFixture) Close() {
 	f.Server.Close()
+	// A local create from a URL finishes in the background; let it finish
+	// here so it cannot read qemu's state dir while a later test changes it.
+	localCreates.Wait()
 	f.Runner.Reset()
 	if f.tmpDir != "" {
 		os.RemoveAll(f.tmpDir)
