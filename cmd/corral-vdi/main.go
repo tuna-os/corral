@@ -66,6 +66,7 @@ func poolCmd() *cobra.Command {
 func poolCreateCmd() *cobra.Command {
 	var from string
 	var size int
+	var ephemeral bool
 	c := &cobra.Command{
 		Use:   "create <name>",
 		Short: "Create a pool by cloning an existing VM <size> times",
@@ -74,7 +75,7 @@ func poolCreateCmd() *cobra.Command {
 			name := args[0]
 			ns := nsOrDefault()
 			fmt.Fprintf(os.Stderr, "cloning %q → %d pool members in ns/%s...\n", from, size, ns)
-			p, err := vdi.CreatePool(vdi.CreateOpts{Name: name, Namespace: ns, From: from, Size: size})
+			p, err := vdi.CreatePool(vdi.CreateOpts{Name: name, Namespace: ns, From: from, Size: size, Ephemeral: ephemeral})
 			if err != nil {
 				return err
 			}
@@ -92,6 +93,7 @@ func poolCreateCmd() *cobra.Command {
 	}
 	c.Flags().StringVar(&from, "from", "", "Existing VM to clone as the pool template (required)")
 	c.Flags().IntVar(&size, "size", 1, "Number of pool members")
+	c.Flags().BoolVar(&ephemeral, "ephemeral", false, "Recreate each member from --from when its claim ends (default: keep the member's disks)")
 	c.MarkFlagRequired("from")
 	return c
 }

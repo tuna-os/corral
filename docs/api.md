@@ -382,7 +382,9 @@ A desktop:
 ```
 
 `startError` is set when the claim succeeded and the start failed.
-`claimExpired` is set when the Lease expired. Status codes: 401 without an
+`claimExpired` is set when the Lease expired. The session fields come from
+the reclaim policy (#228): `connected` (the user has a console open), `disconnectedAt`,
+and `reclaimAt` with `reclaimReason` (`disconnect-grace` or `max-duration`). Status codes: 401 without an
 identity, 403 for another user's desktop or a peer service identity, 404 for
 an unknown or unclaimed desktop.
 

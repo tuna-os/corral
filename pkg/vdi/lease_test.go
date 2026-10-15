@@ -200,8 +200,7 @@ func TestClaim_RejectsEmptyIdentity(t *testing.T) {
 func TestRelease_OwnerDeletesLeaseClearsLabelsAndStops(t *testing.T) {
 	fake := withFake(t)
 	fake.AddResponse("kubectl "+leaseGetArgs, leaseJSON("alice", time.Now().UTC().Format(time.RFC3339Nano), "7"), nil)
-	fake.AddResponseKV("kubectl", []string{"get", "vm", "devpool-1", "-n", "corral-vms", "-o",
-		`jsonpath={.metadata.labels.corral\.dev/vdi-pool}`}, "devpool", nil)
+	fake.AddResponseKV("kubectl", []string{"get", "vm", "devpool-1", "-n", "corral-vms", "--ignore-not-found", "-o", "json"}, vmJSON("devpool-1"), nil)
 	fake.AddResponseKV("kubectl", []string{"label", "vm", "devpool-1", "-n", "corral-vms", labelPool + "=devpool", labelAssignedTo + "-", "--overwrite"}, "", nil)
 	fake.AddResponseKV("kubectl", []string{"annotate", "vm", "devpool-1", "-n", "corral-vms", annoClaimedAt + "-", annoAssignedTo + "-", "--overwrite"}, "", nil)
 	fake.AddPrefixResponse("kubectl delete", "", nil)

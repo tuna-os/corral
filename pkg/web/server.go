@@ -59,6 +59,7 @@ func Serve(addr string, allowedHosts ...string) error {
 		}
 	}
 	startMetricSampler()
+	startVDIReclaim(context.Background())
 	if MetricsEnabled {
 		StartMetrics(context.Background())
 		fmt.Fprintln(os.Stderr, "Prometheus metrics on /metrics")

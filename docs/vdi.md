@@ -4,8 +4,9 @@
 gives static desktop pools with admin (CLI-driven) assignment, and it builds
 each pool from clones of an already-built VM. `corral web` adds the Phase 2
 [self-service broker](#self-service-broker): an authenticated user claims,
-starts, and releases their own desktop without an admin. Reclaim and
-one-click connect are later Phase 2 work, which
+starts, and releases their own desktop without an admin. The broker takes
+back a desktop that its user left, with care. One-click connect is later
+Phase 2 work, which
 [issue #69](https://github.com/tuna-os/corral/issues/69) tracks (see also
 [VDI Epic Status](vdi-epic-status.md)). What's here is real and cluster-tested:
 create a pool, hand a member to a user, connect, release it, delete the pool.
@@ -132,6 +133,8 @@ The broker serves pools of VMs and [CT-backed pools](vdi-ct-pools.md).
 | `CORRAL_VDI_NAMESPACES` | Comma-separated namespaces whose pools the broker serves. Default: Corral's default namespace. The broker ignores pool labels in any other namespace. |
 | `CORRAL_ADMINS` | The admin allowlist of [ADR-0003](adr/0003-identity-source.md). Admins may inspect, start, and release any user's desktop. |
 | `CORRAL_AUTH_REQUIRED=1` | Recommended. Refuses every anonymous `/api` call, not only the broker's. |
+| `CORRAL_VDI_DISCONNECT_GRACE` | How long a desktop stays claimed after its last console closes. Default `15m`; `0` turns off disconnect reclaim. See [Sessions and reclaim](#sessions-and-reclaim). |
+| `CORRAL_VDI_MAX_SESSION` | The maximum age of a claim, such as `8h`. Default `0`: no maximum. |
 
 ### Permissions
 
@@ -192,6 +195,67 @@ released another user's desktop).
   console websockets of a claimed member. The one-click connect work (#229)
   adds that gate. Until then, restrict console access with the ingress or the tailnet
   ACLs if desktops must be private.
+
+### Sessions and reclaim
+
+The broker keeps the console sessions separate from the ownership. It counts the open
+noVNC, terminal, and browser RDP consoles of each desktop. It records the
+start and end of each connected period on the desktop's Lease, in the
+`corral.dev/vdi-connected-at` and `corral.dev/vdi-disconnected-at`
+annotations. Every 30 seconds it applies this policy:
+
+1. **Explicit release** reclaims at once.
+2. **Disconnect grace.** When the last console of a desktop closes, the
+   grace period starts (`CORRAL_VDI_DISCONNECT_GRACE`). A reconnect within
+   it cancels the reclaim. The next disconnect starts a new grace period.
+3. **Maximum duration.** When you set `CORRAL_VDI_MAX_SESSION`, the broker
+   reclaims a claim that old, also when the user has a console open.
+
+A reclaim does the same as a release. A persistent VM member stops and
+keeps its disks. The broker destroys an ephemeral member and creates it again
+from its source: a VM from its golden VM, a CT from its image. To make a VM pool
+ephemeral, create it with `corral vdi pool create --ephemeral`. If the stop or
+the recreate fails, the user keeps the desktop, the task log records the
+failure, and the next pass tries again.
+
+A desktop response shows the session: `connected`, `disconnectedAt`, and
+`reclaimAt` with `reclaimReason` (`disconnect-grace` or `max-duration`).
+
+The broker does not do these things:
+
+- **It does not detect idle input.** An open console proves only that a
+  connection exists. It does not prove that somebody types or moves the
+  mouse. The broker never treats the age of a connection as idleness.
+  True input-idle reclaim needs a signal from a guest agent or the display
+  protocol. Corral does not have that signal.
+- **No reclaim without a console.** A user can use a native client, which
+  the broker cannot see. Only an explicit release or the maximum duration
+  ends such a claim.
+
+**Renewal.** While the broker runs, it renews the Lease of every claim in
+its namespaces. A claim then ends only by a release or by this policy.
+Without a broker, a Lease expires if nobody renews it for an hour, as
+before.
+
+**Restarts.** After a restart, the broker reads the session marks from the
+Leases. A desktop that was connected when the old process stopped gets
+a full grace period from the restart, because the restart closed its
+consoles. A desktop that was already disconnected keeps its recorded time.
+A restart therefore never reclaims a desktop at once only because the
+broker restarted. Run one replica of `corral web` with the broker. Each
+process counts only its own consoles.
+
+**Admin release and audit.** An admin can release any desktop, also one
+with an open console; its consoles close when the member stops. The task log
+(`GET /api/tasklog`) records these events:
+
+| Task log action | User | When |
+|---|---|---|
+| `vdi claim` | the caller | a claim, or a failed claim |
+| `vdi start` | the caller | a start through the API |
+| `vdi release` | the holder | the holder released the desktop |
+| `vdi force-release` | the admin | an admin released another user's desktop; the target names the holder |
+| `vdi reclaim (disconnect-grace)`, `vdi reclaim (max-duration)` | `corral-vdi/broker` | the policy reclaimed the desktop; an error status means that the next pass retries |
 
 ### Example
 
@@ -288,9 +352,9 @@ When a golden VM asks for host devices or GPUs (via `gpus` or `hostDevices` in i
 - **Self-service is a web API.** The [broker](#self-service-broker) has no
   "get a desktop" page in the web UI yet. The one-click connect work (#229)
   adds it.
-- **No idle/logout reclaim.** An unassigned member never stays on, because
-  unassign always stops it. But nothing notices "alice hasn't touched
-  devpool-1 in 3 hours" and reclaims it automatically.
+- **No input-idle reclaim.** The broker reclaims after a console disconnect
+  or a maximum duration (see [Sessions and reclaim](#sessions-and-reclaim)).
+  It cannot see whether a connected user types.
 - **No live resize.** To grow or shrink a pool, delete and recreate it. Or
   clone one more member manually and label it by hand.
 - **CT-backed pools are a separate command.** `corral vdi ct-pool` manages

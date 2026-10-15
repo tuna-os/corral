@@ -3,11 +3,14 @@ package web
 import (
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/net/websocket"
 
 	"github.com/tuna-os/corral/pkg/vdi"
 	"github.com/tuna-os/corral/pkg/vdi/vditest"
@@ -281,5 +284,78 @@ func TestSelfServiceMutation(t *testing.T) {
 		if got := selfServiceMutation(r); got != tc.want {
 			t.Errorf("selfServiceMutation(%s %s) = %v, want %v", tc.method, tc.path, got, tc.want)
 		}
+	}
+}
+
+// waitDesktop polls the desktop until cond holds.
+func (f *vdiFixture) waitDesktop(t *testing.T, login string, cond func(vdi.Desktop) bool) vdi.Desktop {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		var d vdi.Desktop
+		f.do(t, "GET", "/api/vdi/desktops/"+vdiDesk1.ID(), login, nil, &d)
+		if cond(d) {
+			return d
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("desktop never reached the expected state: %+v", d)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestVDI_ConsoleSessionIsTracked(t *testing.T) {
+	f := newVDIFixture(t)
+	serverSide, _ := net.Pipe()
+	orig := consoleDialer
+	consoleDialer = &fakeConsoleDialer{conn: serverSide}
+	t.Cleanup(func() { consoleDialer = orig })
+	f.claim(t, "alice@example.com")
+
+	cfg, err := websocket.NewConfig(wsURL(f.Server.URL)+"/api/vnc/vdi/desk-1", f.Server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Header.Set("Tailscale-User-Login", "alice@example.com")
+	ws, err := websocket.DialConfig(cfg)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	f.waitDesktop(t, "alice@example.com", func(d vdi.Desktop) bool { return d.Connected })
+	_ = ws.Close()
+	d := f.waitDesktop(t, "alice@example.com", func(d vdi.Desktop) bool { return !d.Connected })
+	if d.DisconnectedAt == nil || d.ReclaimReason != vdi.ReclaimDisconnected || d.ReclaimAt == nil || !d.ReclaimAt.Equal(d.DisconnectedAt.Add(15*time.Minute)) {
+		t.Fatalf("after disconnect: %+v", d)
+	}
+}
+
+func TestVDI_ReclaimPolicyFromEnvironment(t *testing.T) {
+	t.Setenv("CORRAL_VDI_BROKER", "1")
+	t.Setenv("CORRAL_VDI_DISCONNECT_GRACE", "soon")
+	if _, err := newVDIBroker(); err == nil || !strings.Contains(err.Error(), "CORRAL_VDI_DISCONNECT_GRACE") {
+		t.Fatalf("bad grace: %v", err)
+	}
+	t.Setenv("CORRAL_VDI_DISCONNECT_GRACE", "0")
+	t.Setenv("CORRAL_VDI_MAX_SESSION", "-1h")
+	if _, err := newVDIBroker(); err == nil || !strings.Contains(err.Error(), "CORRAL_VDI_MAX_SESSION") {
+		t.Fatalf("negative max session: %v", err)
+	}
+	t.Setenv("CORRAL_VDI_MAX_SESSION", "8h")
+	if b, err := newVDIBroker(); err != nil || b == nil {
+		t.Fatalf("valid policy: %v", err)
+	}
+	t.Setenv("CORRAL_VDI_BROKER", "")
+	if b, err := newVDIBroker(); err != nil || b != nil {
+		t.Fatalf("broker off: %v, %v", b, err)
+	}
+}
+
+func TestVDI_ReclaimIsAuditedInTheTaskLog(t *testing.T) {
+	resetActivity()
+	auditVDI(vdi.AuditEvent{Action: "reclaim", Actor: vdi.ReclaimActor, Target: vdiDesk1.ID(), Holder: "alice@example.com", Reason: vdi.ReclaimDisconnected})
+	activity.mu.Lock()
+	defer activity.mu.Unlock()
+	if len(activity.entries) != 1 || activity.entries[0].Action != "vdi reclaim (disconnect-grace)" || activity.entries[0].User != vdi.ReclaimActor {
+		t.Fatalf("task log = %+v", activity.entries)
 	}
 }

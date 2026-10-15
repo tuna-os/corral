@@ -48,7 +48,34 @@ func claimOf(namespace string, l lease) MemberClaim {
 	}
 	c.AcquiredAt, _ = time.Parse(time.RFC3339Nano, l.Spec.AcquireTime)
 	c.RenewedAt, _ = time.Parse(time.RFC3339Nano, l.Spec.RenewTime)
+	c.Session.ConnectedAt, _ = time.Parse(time.RFC3339Nano, l.Metadata.Annotations[annoConnectedAt])
+	c.Session.DisconnectedAt, _ = time.Parse(time.RFC3339Nano, l.Metadata.Annotations[annoDisconnectedAt])
 	return c
+}
+
+// claimLease renders c as its Lease, the inverse of claimOf.
+func claimLease(c MemberClaim) lease {
+	ref := vmLeaseRef(c.Member.Namespace, c.Pool, c.Member.Name)
+	if c.Member.Kind == PoolKindCT {
+		ref = ctLeaseRef(c.Member.Namespace, c.Pool, c.Member.Name)
+	}
+	var l lease
+	l.Metadata.Name, l.Metadata.ResourceVersion, l.Metadata.Labels = ref.Name, c.Version, ref.Labels
+	l.Spec.HolderIdentity = c.Holder
+	l.Spec.AcquireTime = c.AcquiredAt.UTC().Format(time.RFC3339Nano)
+	l.Spec.RenewTime = c.RenewedAt.UTC().Format(time.RFC3339Nano)
+	l.Spec.LeaseDurationSeconds = int32(c.Duration / time.Second)
+	marks := map[string]string{}
+	if !c.Session.ConnectedAt.IsZero() {
+		marks[annoConnectedAt] = c.Session.ConnectedAt.UTC().Format(time.RFC3339Nano)
+	}
+	if !c.Session.DisconnectedAt.IsZero() {
+		marks[annoDisconnectedAt] = c.Session.DisconnectedAt.UTC().Format(time.RFC3339Nano)
+	}
+	if len(marks) > 0 {
+		l.Metadata.Annotations = marks
+	}
+	return l
 }
 
 func (kubeBrokerCluster) Pools(namespace string) ([]PoolStatus, error) {
@@ -75,6 +102,9 @@ func (kubeBrokerCluster) Pools(namespace string) ([]PoolStatus, error) {
 			ref := PoolRef{Kind: PoolKindVM, Namespace: namespace, Name: name}
 			p = &PoolStatus{ID: ref.ID(), PoolRef: ref, Mode: PoolModePersistent}
 			byPool[name] = p
+		}
+		if v.Metadata.Labels[labelMode] == PoolModeEphemeral {
+			p.Mode = PoolModeEphemeral
 		}
 		p.Members++
 		switch {
@@ -181,6 +211,13 @@ func (kubeBrokerCluster) StartMember(c MemberClaim) error {
 		return ctc.StartMember(c.Member.Namespace, c.Member.Name)
 	}
 	return kubevirt.NewClient(c.Member.Namespace).StartVM(c.Member.Name)
+}
+
+func (kubeBrokerCluster) UpdateClaim(c MemberClaim) (bool, error) {
+	if c.Version == "" {
+		return false, fmt.Errorf("claim of %s has no resourceVersion", c.Member.ID())
+	}
+	return updateLease(c.Member.Namespace, claimLease(c)), nil
 }
 
 func (kubeBrokerCluster) ReleaseMember(c MemberClaim) error {

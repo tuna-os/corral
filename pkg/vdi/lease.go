@@ -20,6 +20,7 @@ type lease struct {
 		Name            string            `json:"name"`
 		ResourceVersion string            `json:"resourceVersion"`
 		Labels          map[string]string `json:"labels,omitempty"`
+		Annotations     map[string]string `json:"annotations,omitempty"`
 	} `json:"metadata"`
 	Spec struct {
 		HolderIdentity       string `json:"holderIdentity"`
@@ -88,6 +89,24 @@ func createLease(ref leaseRef, holder string, duration time.Duration, now time.T
 // reported as a lost race (false), never as success.
 func replaceLease(ref leaseRef, holder string, duration time.Duration, now time.Time, resourceVersion string) bool {
 	_, err := runner.RunStdin(string(leaseManifest(ref, holder, duration, now, resourceVersion)), "kubectl", "replace", "-f", "-")
+	return err == nil
+}
+
+// updateLease writes l back with its labels and annotations, preconditioned
+// on its resourceVersion. A lost race returns false, never success.
+func updateLease(namespace string, l lease) bool {
+	data, err := json.Marshal(map[string]any{
+		"apiVersion": "coordination.k8s.io/v1", "kind": "Lease",
+		"metadata": map[string]any{
+			"name": l.Metadata.Name, "namespace": namespace, "resourceVersion": l.Metadata.ResourceVersion,
+			"labels": l.Metadata.Labels, "annotations": l.Metadata.Annotations,
+		},
+		"spec": l.Spec,
+	})
+	if err != nil {
+		panic(err)
+	}
+	_, err = runner.RunStdin(string(data), "kubectl", "replace", "-f", "-")
 	return err == nil
 }
 
