@@ -245,9 +245,10 @@ type tuiModel struct {
 	list        list.Model
 	actionsList list.Model
 	quitting    bool
-	state       string // "list", "actions", "edit", "hwedit", "confirmDelete", "doctor", "cloneInput", "snapshots", "events", "pools"
-	// snapshots and events are the web UI's per-VM tabs as states of this
-	// model — see cmd/tui_views.go.
+	// mode is the screen on show; screens (cmd/tui_screens.go) routes keys
+	// and drawing for it. Snapshots and events are the web UI's per-VM tabs as
+	// screens of this model — see cmd/tui_views.go.
+	mode        TUIMode
 	snapshots   snapshotsState
 	events      eventsState
 	pools       poolsState
@@ -308,7 +309,7 @@ func newTUIModel() tuiModel {
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(th.p.primary)
 
-	m := tuiModel{list: l, state: "list", allItems: items, errors: errs,
+	m := tuiModel{list: l, mode: ModeList, allItems: items, errors: errs,
 		refreshedAt: time.Now(), width: 80, height: 40, spin: sp, th: th}
 	m.actionsList = m.newActionsList()
 	return m
@@ -443,237 +444,11 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.showHelp = false
 			return m, nil
 		}
-		if m.state == "edit" {
-			em, cmd := m.edit.Update(msg)
-			m.edit = em.(editModel)
-			if m.edit.done {
-				m.state = "list"
-				m.refreshList()
-				return m, nil
-			}
-			return m, cmd
-		}
-
-		if m.state == "hwedit" {
-			hm, cmd := m.hwEdit.Update(msg)
-			m.hwEdit = hm.(hwEditModel)
-			if m.hwEdit.done {
-				m.state = "list"
-				m.refreshList()
-				return m, nil
-			}
-			return m, cmd
-		}
-
-		if m.state == "create" {
-			cm, cmd, action := m.create.Update(msg)
-			m.create = cm
-			switch action {
-			case crCancel:
-				if msg.String() == "ctrl+c" {
-					m.quitting = true
-					return m, tea.Quit
-				}
-				m.state = "list"
-				return m, nil
-			case crSubmit:
-				name := strings.TrimSpace(m.create.name.Value())
-				m.busy, m.busyLabel = true, "Creating "+name
-				if err := applyCreate(m.create); err != nil {
-					m.busy = false
-					m.create.err = err.Error()
-					return m, nil
-				}
-				m.busy = false
-				m.refreshList()
-				m.state = "list"
-				m.notice, m.noticeKind = "Created "+name, "ok"
-				return m, nil
-			}
-			return m, cmd
-		}
-
-		if m.state == "plugins" {
-			pm, cmd, back := m.plugins.Update(msg)
-			m.plugins = pm
-			if back && msg.String() == "ctrl+c" {
-				m.quitting = true
-				return m, tea.Quit
-			}
-			if back {
-				m.state = "list"
-				return m, nil
-			}
-			return m, cmd
-		}
-
-		if m.state == "cloneInput" {
-			switch msg.String() {
-			case "esc":
-				m.state = "actions"
-				return m, nil
-			case "ctrl+c":
-				m.quitting = true
-				return m, tea.Quit
-			case "enter":
-				dst := strings.TrimSpace(m.cloneInput.Value())
-				if dst == "" {
-					m.cloneErr = "name can't be empty"
-					return m, nil
-				}
-				if err := runClone(m.selected, dst); err != nil {
-					m.cloneErr = err.Error()
-					return m, nil
-				}
-				m.refreshList()
-				m.state = "list"
-				return m, nil
-			}
-			var cmd tea.Cmd
-			m.cloneInput, cmd = m.cloneInput.Update(msg)
-			return m, cmd
-		}
-
-		if m.state == "confirmDelete" {
-			switch msg.String() {
-			case "y", "Y":
-				m.performAction("delete")
-				m.refreshList()
-				m.state = "list"
-			case "ctrl+c":
-				m.quitting = true
-				return m, tea.Quit
-			default:
-				m.state = "actions"
-			}
-			return m, nil
-		}
-
-		if m.state == "pools" {
-			if msg.String() == "ctrl+c" {
-				m.quitting = true
-				return m, tea.Quit
-			}
-			if !m.updatePools(msg) {
-				if m.pools.notice != "" {
-					m.notice, m.noticeKind = m.pools.notice, "ok"
-				}
-				m.refreshList()
-				m.state = "list"
-			}
-			return m, nil
-		}
-
-		if m.state == "snapshots" {
-			if msg.String() == "ctrl+c" {
-				m.quitting = true
-				return m, tea.Quit
-			}
-			if !m.updateSnapshots(msg) {
-				m.state = "actions"
-				// A restore or a delete changes what the list shows.
-				m.refreshList()
-			}
-			return m, nil
-		}
-
-		if m.state == "events" {
-			switch msg.String() {
-			case "ctrl+c":
-				m.quitting = true
-				return m, tea.Quit
-			case "esc", "q", "enter":
-				m.state = "actions"
-			case "r":
-				m.events = newEventsState(m.selected)
-			}
-			return m, nil
-		}
-
-		if m.state == "actions" {
-			switch msg.String() {
-			case "esc":
-				m.state = "list"
-				return m, nil
-			case "q", "ctrl+c":
-				m.quitting = true
-				return m, tea.Quit
-			case "enter":
-				return m, m.runSelectedAction()
-			}
-			var cmd tea.Cmd
-			m.actionsList, cmd = m.actionsList.Update(msg)
-			return m, cmd
-		}
-
-		if m.state == "doctor" {
-			switch msg.String() {
-			case "f":
-				doctor.Fix()
-				m.doctorRows = fleetDiagnosis()
-			case "esc", "q", "enter":
-				m.state = "list"
-			case "ctrl+c":
-				m.quitting = true
-				return m, tea.Quit
-			}
-			return m, nil
-		}
-
-		// VM list state
-		switch msg.String() {
-		case "ctrl+c", "q":
-			m.quitting = true
-			return m, tea.Quit
-		case "c":
-			m.create = newCreateModel()
-			m.state = "create"
-			return m, m.create.syncFocus()
-		case "p":
-			m.plugins = newPluginsModel()
-			m.state = "plugins"
-			return m, fetchPluginsCmd()
-		case "d":
-			m.doctorRows = fleetDiagnosis()
-			m.state = "doctor"
-			return m, nil
-		case "?":
-			m.showHelp = true
-			return m, nil
-		case "r":
-			m.refreshList()
-			m.notice = "Fleet refreshed"
-			return m, nil
-		case "tab", "]":
-			m.cycleContext(1)
-			return m, nil
-		case "shift+tab", "[":
-			m.cycleContext(-1)
-			return m, nil
-		case "s":
-			if item, ok := m.list.SelectedItem().(vmItem); ok && actionApplies("start", item.vm) {
-				m.selected, m.isCT = item.vm, false
-				m.performAction("start")
-				m.refreshList()
-			}
-			return m, nil
-		case "x":
-			if item, ok := m.list.SelectedItem().(vmItem); ok && actionApplies("stop", item.vm) {
-				m.selected, m.isCT = item.vm, false
-				m.performAction("stop")
-				m.refreshList()
-			}
-			return m, nil
-		case "enter":
-			// Anything that is not an instance row (an empty list, or the
-			// filter prompt) falls through to the list itself.
-			if m.openActionsForSelection() {
-				return m, nil
-			}
-		}
+		next, cmd := screens[m.mode].update(m, msg)
+		return next, cmd
 	}
 
-	if m.state == "list" {
+	if m.mode == ModeList {
 		var cmd tea.Cmd
 		m.list, cmd = m.list.Update(msg)
 		return m, cmd
@@ -692,11 +467,11 @@ func (m *tuiModel) runSelectedAction() tea.Cmd {
 	}
 	switch item.id {
 	case "ports":
-		m.state = "edit"
+		m.mode = ModeEdit
 		m.edit = newEditModel(m.selected)
 		return m.edit.Init()
 	case "hardware":
-		m.state = "hwedit"
+		m.mode = ModeHWEdit
 		if m.isCT {
 			m.hwEdit = newCTHWEditModel(m.selectedCT)
 		} else {
@@ -704,7 +479,7 @@ func (m *tuiModel) runSelectedAction() tea.Cmd {
 		}
 		return m.hwEdit.Init()
 	case "clone":
-		m.state = "cloneInput"
+		m.mode = ModeCloneInput
 		m.cloneErr = ""
 		m.cloneInput = newCloneInput(m.selected.Name)
 		return m.cloneInput.Focus()
@@ -712,26 +487,26 @@ func (m *tuiModel) runSelectedAction() tea.Cmd {
 		// Parity with the web UI's Snapshots tab: the action opens the captures
 		// the VM already has rather than silently taking one more.
 		m.snapshots = newSnapshotsState(m.selected)
-		m.state = "snapshots"
+		m.mode = ModeSnapshots
 	case "events":
 		m.events = newEventsState(m.selected)
-		m.state = "events"
+		m.mode = ModeEvents
 	case "pool":
 		m.pools = newPoolAssignState(m.selected)
-		m.state = "pools"
+		m.mode = ModePools
 	case "move":
 		// Deliberately not "migrate": that verb is the live, same-backend one,
 		// and the two must not be confusable in a menu (ADR-0010).
 		m.pools = newMoveDestinationState(m.selected)
-		m.state = "pools"
+		m.mode = ModePools
 	case "template":
 		m.toggleTemplate()
 		m.refreshList()
-		m.state = "list"
+		m.mode = ModeList
 	case "start", "stop", "restart", "pause", "unpause", "migrate":
 		m.performAction(item.id)
 		m.refreshList()
-		m.state = "list"
+		m.mode = ModeList
 	case "ssh", "viewer", "export":
 		actionID := item.id
 		postQuitAction = func() { m.performAction(actionID) }
@@ -743,7 +518,7 @@ func (m *tuiModel) runSelectedAction() tea.Cmd {
 		m.quitting = true
 		return tea.Quit
 	case "delete":
-		m.state = "confirmDelete"
+		m.mode = ModeConfirmDelete
 	}
 	return nil
 }
@@ -829,7 +604,7 @@ func viewSelected(ref types.InstanceRef) error {
 // performCTAction is performAction's CT counterpart — a much smaller
 // surface (no backend split, no migrate/snapshot/pause) since a CT is
 // always a plain pod, never a hypervisor guest. "console" isn't handled
-// here — it's a quit-then-exec action (see the "actions" state's enter
+// here — it's a quit-then-exec action (see the actions screen's enter
 // handler), same as ssh/viewer/export, since it needs the real terminal
 // back after Bubble Tea releases it.
 func (m *tuiModel) performCTAction(action string) {
@@ -979,66 +754,11 @@ func (m tuiModel) render() string {
 	if m.showHelp {
 		return tuiHelpView()
 	}
+	return screens[m.mode].view(m)
+}
 
-	if m.state == "edit" {
-		return m.edit.render()
-	}
-
-	if m.state == "hwedit" {
-		return m.hwEdit.render()
-	}
-
-	if m.state == "create" {
-		return m.create.render(m.th, m.width)
-	}
-
-	if m.state == "plugins" {
-		return m.plugins.render(m.th, m.width)
-	}
-
-	if m.state == "cloneInput" {
-		var sb strings.Builder
-		sb.WriteString(tuiTitle.Render(fmt.Sprintf(" Clone %s ", m.selected.Name)))
-		sb.WriteString("\n\n  Target name: ")
-		sb.WriteString(m.cloneInput.View())
-		sb.WriteString("\n")
-		if m.cloneErr != "" {
-			sb.WriteString("\n  " + tuiStopped.Render(m.cloneErr) + "\n")
-		}
-		sb.WriteString("\n" + tuiHelp.Render("  enter clone · esc cancel"))
-		return sb.String()
-	}
-
-	if m.state == "doctor" {
-		return m.doctorView()
-	}
-
-	if m.state == "pools" {
-		return m.poolsView()
-	}
-
-	if m.state == "snapshots" {
-		return m.snapshotsView()
-	}
-
-	if m.state == "events" {
-		return m.eventsView()
-	}
-
-	if m.state == "confirmDelete" {
-		name, what := m.selected.Name, "and its disks"
-		if m.isCT {
-			name, what = m.selectedCT.Name, "and its data volume"
-		}
-		return fmt.Sprintf("\n  %s\n\n  %s\n",
-			tuiTitle.Render(fmt.Sprintf(" Delete %s %s? ", name, what)),
-			tuiHelp.Render("y confirm  any other key cancel"))
-	}
-
-	if m.state == "actions" {
-		return m.actionsList.View()
-	}
-
+// listView is the fleet list screen: header, list, detail pane, status bar.
+func (m tuiModel) listView() string {
 	// Header: brand, selected context, live counts. Always on screen, so
 	// "where am I and how much is here" never needs a keystroke.
 	rows := make([]listRow, 0, len(m.list.Items()))

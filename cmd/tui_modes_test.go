@@ -21,6 +21,7 @@ func TestTUIModeString(t *testing.T) {
 		{ModePools, "pools"},
 		{ModePlugins, "plugins"},
 		{ModeCreate, "create"},
+		{modeCount, "unknown"},
 	}
 
 	for _, tt := range tests {
@@ -32,55 +33,28 @@ func TestTUIModeString(t *testing.T) {
 	}
 }
 
-func TestFromString(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected TUIMode
-	}{
-		{"list", ModeList},
-		{"actions", ModeActions},
-		{"edit", ModeEdit},
-		{"hwedit", ModeHWEdit},
-		{"confirmDelete", ModeConfirmDelete},
-		{"doctor", ModeDoctor},
-		{"cloneInput", ModeCloneInput},
-		{"snapshots", ModeSnapshots},
-		{"events", ModeEvents},
-		{"pools", ModePools},
-		{"plugins", ModePlugins},
-		{"create", ModeCreate},
-		{"unknown", ModeList}, // fallback case
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			got := FromString(tt.input)
-			if got != tt.expected {
-				t.Errorf("FromString(%q) = %v, want %v", tt.input, got, tt.expected)
-			}
-		})
-	}
-}
-
 func TestCanTransition(t *testing.T) {
 	tests := []struct {
 		from     TUIMode
 		to       TUIMode
 		expected bool
 	}{
-		// Valid transitions
 		{ModeList, ModeActions, true},
 		{ModeList, ModeDoctor, true},
-		{ModeList, ModePools, true},
 		{ModeActions, ModeList, true},
 		{ModeActions, ModeEdit, true},
-		{ModeEdit, ModeActions, true},
+		{ModeEdit, ModeList, true},
+		{ModeConfirmDelete, ModeActions, true},
+		{ModeSnapshots, ModeActions, true},
 
-		// Invalid transitions
-		{ModeEdit, ModeEdit, false},
-		{ModeConfirmDelete, ModeActions, false},
-		{ModeDoctor, ModeActions, false},
+		// The pool screen has no list key, and the forms that close to the
+		// list never go back to the menu.
+		{ModeList, ModePools, false},
+		{ModeEdit, ModeActions, false},
+		{ModeHWEdit, ModeActions, false},
 		{ModePools, ModeActions, false},
+		{ModeDoctor, ModeActions, false},
+		{ModeEdit, ModeEdit, false},
 	}
 
 	for _, tt := range tests {
@@ -93,34 +67,29 @@ func TestCanTransition(t *testing.T) {
 	}
 }
 
-func TestValidTransitionsComplete(t *testing.T) {
-	// Verify that all defined modes have at least one valid transition
-	// (except for terminal modes that are expected to not transition).
-	modesWithTransitions := make(map[TUIMode]bool)
+// Every screen but the list is entered from somewhere and left to somewhere,
+// so no mode is a dead end or unreachable.
+func TestValidTransitionsReachEveryMode(t *testing.T) {
+	in, out := map[TUIMode]bool{}, map[TUIMode]bool{}
 	for _, trans := range ValidTransitions {
-		modesWithTransitions[trans.From] = true
-		modesWithTransitions[trans.To] = true
+		out[trans.From] = true
+		in[trans.To] = true
 	}
-
-	// Check that key modes have transitions
-	expectedModes := []TUIMode{
-		ModeList,
-		ModeActions,
-		ModeEdit,
-		ModeHWEdit,
-		ModeConfirmDelete,
-		ModeDoctor,
-		ModeCloneInput,
-		ModeSnapshots,
-		ModeEvents,
-		ModePools,
-		ModePlugins,
-		ModeCreate,
+	for mode := ModeList; mode < modeCount; mode++ {
+		if !in[mode] {
+			t.Errorf("mode %v is never entered", mode)
+		}
+		if !out[mode] {
+			t.Errorf("mode %v is never left", mode)
+		}
 	}
+}
 
-	for _, mode := range expectedModes {
-		if !modesWithTransitions[mode] {
-			t.Errorf("mode %v has no transitions defined", mode)
+func TestTUIScreens_EveryModeIsWired(t *testing.T) {
+	for mode := ModeList; mode < modeCount; mode++ {
+		s := screens[mode]
+		if s.update == nil || s.view == nil {
+			t.Errorf("mode %v has no screen (update %v, view %v)", mode, s.update != nil, s.view != nil)
 		}
 	}
 }

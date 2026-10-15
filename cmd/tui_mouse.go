@@ -106,20 +106,20 @@ func (m *tuiModel) handleWheel(msg tea.MouseWheelMsg) bool {
 		return false
 	}
 
-	switch m.state {
-	case "list":
+	switch m.mode {
+	case ModeList:
 		if up {
 			m.list.CursorUp()
 		} else {
 			m.list.CursorDown()
 		}
-	case "actions":
+	case ModeActions:
 		if up {
 			m.actionsList.CursorUp()
 		} else {
 			m.actionsList.CursorDown()
 		}
-	case "snapshots":
+	case ModeSnapshots:
 		// The snapshots table is drawn by lipgloss/table, whose row offsets are
 		// border-dependent; the wheel moves the cursor without needing to know
 		// where a row sits on screen.
@@ -128,7 +128,7 @@ func (m *tuiModel) handleWheel(msg tea.MouseWheelMsg) bool {
 		} else if down && m.snapshots.cursor < len(m.snapshots.snaps)-1 {
 			m.snapshots.cursor++
 		}
-	case "edit":
+	case ModeEdit:
 		if up && m.edit.cursor > 0 {
 			m.edit.cursor--
 		} else if down && m.edit.cursor < len(m.edit.ports)+1 {
@@ -145,8 +145,8 @@ func (m *tuiModel) handleClick(msg tea.MouseClickMsg) bool {
 		return false
 	}
 
-	switch m.state {
-	case "list":
+	switch m.mode {
+	case ModeList:
 		index, ok := rowAt(geomOf(m.list, vmItemDelegate{}.Height()+vmItemDelegate{}.Spacing()), msg.X, msg.Y, headerHeight)
 		if !ok {
 			return false
@@ -158,7 +158,7 @@ func (m *tuiModel) handleClick(msg tea.MouseClickMsg) bool {
 		}
 		return true
 
-	case "actions":
+	case ModeActions:
 		index, ok := rowAt(geomOf(m.actionsList, actionItemDelegate{}.Height()+actionItemDelegate{}.Spacing()), msg.X, msg.Y, 0)
 		if !ok {
 			return false
@@ -173,7 +173,7 @@ func (m *tuiModel) handleClick(msg tea.MouseClickMsg) bool {
 		}
 		return true
 
-	case "edit":
+	case ModeEdit:
 		// The ports form draws its own lines: the title, a blank, then one row
 		// per port followed by the add and clear rows.
 		const portsFirstRow = 2
@@ -215,6 +215,6 @@ func (m *tuiModel) openActionsForSelection() bool {
 		return false
 	}
 	m.actionsList = m.newActionsList()
-	m.state = "actions"
+	m.mode = ModeActions
 	return true
 }

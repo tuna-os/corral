@@ -86,7 +86,7 @@ func testModel(vm types.VM) tuiModel {
 // twice in the fleet list does.
 func modelWithSnapshots(vm types.VM) tuiModel {
 	m := testModel(vm)
-	m.state = "snapshots"
+	m.mode = ModeSnapshots
 	m.snapshots = newSnapshotsState(vm)
 	return m
 }
@@ -298,8 +298,8 @@ func TestTUISnapshots_CreateCancelledByEsc(t *testing.T) {
 	if m.snapshots.naming {
 		t.Error("esc should close the name prompt")
 	}
-	if m.state != "snapshots" {
-		t.Errorf("state = %q, want to stay in the snapshots view", m.state)
+	if m.mode != ModeSnapshots {
+		t.Errorf("state = %q, want to stay in the snapshots view", m.mode)
 	}
 	if calledWith(f, "apply") {
 		t.Error("esc must not create a snapshot")
@@ -493,7 +493,7 @@ func TestTUISnapshots_OpenedFromActionsAndEscapesBack(t *testing.T) {
 	f.AddPrefixResponse("incus", "[]", nil)
 
 	m := testModel(kubeVM("web-prod"))
-	m.state = "actions"
+	m.mode = ModeActions
 	// Walk the actions list to Snapshots and open it.
 	for {
 		item, ok := m.actionsList.SelectedItem().(actionItem)
@@ -506,16 +506,16 @@ func TestTUISnapshots_OpenedFromActionsAndEscapesBack(t *testing.T) {
 		m = press(m, "down")
 	}
 	m = press(m, "enter")
-	if m.state != "snapshots" {
-		t.Fatalf("state = %q, want 'snapshots'", m.state)
+	if m.mode != ModeSnapshots {
+		t.Fatalf("state = %q, want 'snapshots'", m.mode)
 	}
 	if m.snapshots.vmName != "web-prod" {
 		t.Errorf("snapshots view opened on %q", m.snapshots.vmName)
 	}
 
 	m = press(m, "esc")
-	if m.state != "actions" {
-		t.Errorf("state = %q after esc, want 'actions'", m.state)
+	if m.mode != ModeActions {
+		t.Errorf("state = %q after esc, want 'actions'", m.mode)
 	}
 }
 
@@ -552,7 +552,7 @@ func TestTUIEvents_RendersWarningsAndFiltersOtherObjects(t *testing.T) {
 	), nil)
 
 	m := testModel(kubeVM("web-prod"))
-	m.state = "events"
+	m.mode = ModeEvents
 	m.events = newEventsState(m.selected)
 	if m.events.err != "" {
 		t.Fatalf("events error: %s", m.events.err)
@@ -602,7 +602,7 @@ func TestTUIEvents_ReloadAndBackNavigation(t *testing.T) {
 	f.AddPrefixResponse("kubectl get events", `{"items":[]}`, nil)
 
 	m := testModel(kubeVM("web-prod"))
-	m.state = "events"
+	m.mode = ModeEvents
 	m.events = newEventsState(m.selected)
 	before := len(f.Calls())
 
@@ -613,8 +613,8 @@ func TestTUIEvents_ReloadAndBackNavigation(t *testing.T) {
 
 	for _, k := range []string{"esc", "q", "enter"} {
 		back := press(m, k)
-		if back.state != "actions" {
-			t.Errorf("state after %q = %q, want 'actions'", k, back.state)
+		if back.mode != ModeActions {
+			t.Errorf("state after %q = %q, want 'actions'", k, back.mode)
 		}
 	}
 
@@ -628,7 +628,7 @@ func TestTUIEvents_OpenedFromActions(t *testing.T) {
 	f.AddPrefixResponse("kubectl get events", `{"items":[]}`, nil)
 
 	m := testModel(kubeVM("web-prod"))
-	m.state = "actions"
+	m.mode = ModeActions
 	for {
 		item := m.actionsList.SelectedItem().(actionItem)
 		if item.id == "events" {
@@ -637,8 +637,8 @@ func TestTUIEvents_OpenedFromActions(t *testing.T) {
 		m = press(m, "down")
 	}
 	m = press(m, "enter")
-	if m.state != "events" {
-		t.Fatalf("state = %q, want 'events'", m.state)
+	if m.mode != ModeEvents {
+		t.Fatalf("state = %q, want 'events'", m.mode)
 	}
 	if m.events.vmName != "web-prod" {
 		t.Errorf("events opened on %q", m.events.vmName)
@@ -659,7 +659,7 @@ func TestTUITemplate_LabelFollowsTheMark(t *testing.T) {
 	}
 
 	m := testModel(marked)
-	m.state = "actions"
+	m.mode = ModeActions
 	found := false
 	for _, item := range m.actionsList.Items() {
 		if a := item.(actionItem); a.id == "template" {
@@ -786,7 +786,7 @@ func TestTUICTHardware_OpenedFromCTActions(t *testing.T) {
 
 	c := ct.CT{Name: "dev-shell", Namespace: "corral-vms", CPU: 1, Mem: "512Mi", Phase: "Running", Ready: true}
 	m := testModel(types.VM{})
-	m.state, m.isCT, m.selectedCT = "actions", true, c
+	m.mode, m.isCT, m.selectedCT = ModeActions, true, c
 	m.actionsList = m.newActionsList()
 
 	ids := map[string]bool{}
@@ -810,8 +810,8 @@ func TestTUICTHardware_OpenedFromCTActions(t *testing.T) {
 		m = press(m, "down")
 	}
 	m = press(m, "enter")
-	if m.state != "hwedit" {
-		t.Fatalf("state = %q, want 'hwedit'", m.state)
+	if m.mode != ModeHWEdit {
+		t.Fatalf("state = %q, want 'hwedit'", m.mode)
 	}
 	if !m.hwEdit.isCT || m.hwEdit.ct.Name != "dev-shell" {
 		t.Errorf("hardware editor opened on the wrong target: %+v", m.hwEdit.ct)

@@ -328,8 +328,8 @@ func TestTUIActions_OpensForVMsAndCTs(t *testing.T) {
 
 	m = selectVM(t, m, "web-prod")
 	m = press(m, "enter")
-	if m.state != "actions" || m.isCT {
-		t.Fatalf("state = %q isCT = %v, want a VM actions menu", m.state, m.isCT)
+	if m.mode != ModeActions || m.isCT {
+		t.Fatalf("state = %q isCT = %v, want a VM actions menu", m.mode, m.isCT)
 	}
 	if m.selected.Name != "web-prod" {
 		t.Errorf("actions menu opened on %q", m.selected.Name)
@@ -342,14 +342,14 @@ func TestTUIActions_OpensForVMsAndCTs(t *testing.T) {
 	}
 
 	m = press(m, "esc")
-	if m.state != "list" {
-		t.Fatalf("esc from actions = %q, want 'list'", m.state)
+	if m.mode != ModeList {
+		t.Fatalf("esc from actions = %q, want 'list'", m.mode)
 	}
 
 	m = selectCT(t, m, "dev-shell")
 	m = press(m, "enter")
-	if m.state != "actions" || !m.isCT {
-		t.Fatalf("state = %q isCT = %v, want a CT actions menu", m.state, m.isCT)
+	if m.mode != ModeActions || !m.isCT {
+		t.Fatalf("state = %q isCT = %v, want a CT actions menu", m.mode, m.isCT)
 	}
 	if !strings.Contains(m.actionsList.Title, "dev-shell") {
 		t.Errorf("CT actions title = %q", m.actionsList.Title)
@@ -491,7 +491,7 @@ func TestTUIActions_CTGating(t *testing.T) {
 
 func TestTUIActions_MenuNavigationMovesTheSelection(t *testing.T) {
 	m := testModel(kubeVM("web-prod"))
-	m.state = "actions"
+	m.mode = ModeActions
 
 	first := m.actionsList.SelectedItem().(actionItem).id
 	m = press(m, "down")
@@ -514,7 +514,7 @@ func TestTUIActions_TerminalHandoffQuitsFirst(t *testing.T) {
 		t.Run(id, func(t *testing.T) {
 			postQuitAction = nil
 			m := testModel(kubeVM("web-prod"))
-			m.state = "actions"
+			m.mode = ModeActions
 			for {
 				if m.actionsList.SelectedItem().(actionItem).id == id {
 					break
@@ -534,7 +534,7 @@ func TestTUIActions_TerminalHandoffQuitsFirst(t *testing.T) {
 	t.Run("console", func(t *testing.T) {
 		postQuitAction = nil
 		m := testModel(types.VM{})
-		m.state, m.isCT = "actions", true
+		m.mode, m.isCT = ModeActions, true
 		m.selectedCT = ct.CT{Name: "dev-shell", Namespace: "corral-vms", Phase: "Running", Ready: true}
 		m.actionsList = m.newActionsList()
 		for {
@@ -565,8 +565,8 @@ func TestTUIActions_PowerActionsRunAndReturnToTheList(t *testing.T) {
 		m = press(m, "down")
 	}
 	m = press(m, "enter")
-	if m.state != "list" {
-		t.Fatalf("state after a power action = %q, want 'list'", m.state)
+	if m.mode != ModeList {
+		t.Fatalf("state after a power action = %q, want 'list'", m.mode)
 	}
 	if vm := vmByName(t, m, "dev-fedora"); !vm.Running {
 		t.Errorf("Start did not start the VM (status %q)", vm.Status)
@@ -612,8 +612,8 @@ func TestTUIDelete_ConfirmAndCancel(t *testing.T) {
 		m = press(m, "down")
 	}
 	m = press(m, "enter")
-	if m.state != "confirmDelete" {
-		t.Fatalf("state = %q, want 'confirmDelete'", m.state)
+	if m.mode != ModeConfirmDelete {
+		t.Fatalf("state = %q, want 'confirmDelete'", m.mode)
 	}
 	view := m.render()
 	if !strings.Contains(view, "scratch") || !strings.Contains(view, "disks") {
@@ -622,16 +622,16 @@ func TestTUIDelete_ConfirmAndCancel(t *testing.T) {
 
 	// Any key other than y goes back to the menu, and nothing is deleted.
 	cancelled := press(m, "n")
-	if cancelled.state != "actions" {
-		t.Errorf("state after cancelling = %q, want 'actions'", cancelled.state)
+	if cancelled.mode != ModeActions {
+		t.Errorf("state after cancelling = %q, want 'actions'", cancelled.mode)
 	}
 	if _, err := findDemoVM(cancelled, "scratch"); err != nil {
 		t.Error("cancelling the confirmation deleted the VM anyway")
 	}
 
 	confirmed := press(m, "y")
-	if confirmed.state != "list" {
-		t.Errorf("state after confirming = %q, want 'list'", confirmed.state)
+	if confirmed.mode != ModeList {
+		t.Errorf("state after confirming = %q, want 'list'", confirmed.mode)
 	}
 	if _, err := findDemoVM(confirmed, "scratch"); err == nil {
 		t.Error("confirming delete left the VM in the fleet")
@@ -686,8 +686,8 @@ func TestTUIClone_PrefillsAndValidates(t *testing.T) {
 		m = press(m, "down")
 	}
 	m = press(m, "enter")
-	if m.state != "cloneInput" {
-		t.Fatalf("state = %q, want 'cloneInput'", m.state)
+	if m.mode != ModeCloneInput {
+		t.Fatalf("state = %q, want 'cloneInput'", m.mode)
 	}
 	if got := m.cloneInput.Value(); got != "golden-ubuntu-clone" {
 		t.Errorf("clone name prefilled with %q", got)
@@ -700,8 +700,8 @@ func TestTUIClone_PrefillsAndValidates(t *testing.T) {
 	empty := m
 	empty.cloneInput.SetValue("")
 	empty = press(empty, "enter")
-	if empty.state != "cloneInput" {
-		t.Errorf("state = %q, want the form to stay open", empty.state)
+	if empty.mode != ModeCloneInput {
+		t.Errorf("state = %q, want the form to stay open", empty.mode)
 	}
 	if !strings.Contains(empty.cloneErr, "empty") {
 		t.Errorf("cloneErr = %q, want an empty-name complaint", empty.cloneErr)
@@ -711,8 +711,8 @@ func TestTUIClone_PrefillsAndValidates(t *testing.T) {
 	}
 
 	// esc backs out to the menu; ctrl+c quits.
-	if back := press(m, "esc"); back.state != "actions" {
-		t.Errorf("esc from the clone form = %q, want 'actions'", back.state)
+	if back := press(m, "esc"); back.mode != ModeActions {
+		t.Errorf("esc from the clone form = %q, want 'actions'", back.mode)
 	}
 	if quit := press(m, "ctrl+c"); !quit.quitting {
 		t.Error("ctrl+c should quit from the clone form")
@@ -723,7 +723,7 @@ func TestTUIClone_Succeeds(t *testing.T) {
 	m := demoModel(t)
 	m = selectVM(t, m, "golden-ubuntu")
 	m.selected = vmByName(t, m, "golden-ubuntu")
-	m.state = "cloneInput"
+	m.mode = ModeCloneInput
 	m.cloneInput = newCloneInput("golden-ubuntu")
 	m.cloneInput.SetValue("from-golden")
 
@@ -731,8 +731,8 @@ func TestTUIClone_Succeeds(t *testing.T) {
 	if m.cloneErr != "" {
 		t.Fatalf("clone failed: %s", m.cloneErr)
 	}
-	if m.state != "list" {
-		t.Errorf("state after a successful clone = %q, want 'list'", m.state)
+	if m.mode != ModeList {
+		t.Errorf("state after a successful clone = %q, want 'list'", m.mode)
 	}
 }
 
@@ -864,12 +864,12 @@ func TestTUIPorts_OpenedFromActionsAndClosesBackToList(t *testing.T) {
 		m = press(m, "down")
 	}
 	m = press(m, "enter")
-	if m.state != "edit" {
-		t.Fatalf("state = %q, want 'edit'", m.state)
+	if m.mode != ModeEdit {
+		t.Fatalf("state = %q, want 'edit'", m.mode)
 	}
 	m = press(m, "esc")
-	if m.state != "list" {
-		t.Errorf("state after closing the ports form = %q, want 'list'", m.state)
+	if m.mode != ModeList {
+		t.Errorf("state after closing the ports form = %q, want 'list'", m.mode)
 	}
 }
 
@@ -925,8 +925,8 @@ func TestTUIHardware_OpenedFromActions(t *testing.T) {
 		m = press(m, "down")
 	}
 	m = press(m, "enter")
-	if m.state != "hwedit" {
-		t.Fatalf("state = %q, want 'hwedit'", m.state)
+	if m.mode != ModeHWEdit {
+		t.Fatalf("state = %q, want 'hwedit'", m.mode)
 	}
 	if m.hwEdit.isCT {
 		t.Error("a VM opened the CT hardware editor")
@@ -935,8 +935,8 @@ func TestTUIHardware_OpenedFromActions(t *testing.T) {
 		t.Errorf("hardware editor opened on %q", m.hwEdit.vm.Name)
 	}
 	m = press(m, "esc")
-	if m.state != "list" {
-		t.Errorf("state after closing = %q, want 'list'", m.state)
+	if m.mode != ModeList {
+		t.Errorf("state after closing = %q, want 'list'", m.mode)
 	}
 }
 
@@ -945,8 +945,8 @@ func TestTUIHardware_OpenedFromActions(t *testing.T) {
 func TestTUIDoctor_RendersChecksAndReconciles(t *testing.T) {
 	m := demoModel(t)
 	m = press(m, "d")
-	if m.state != "doctor" {
-		t.Fatalf("state = %q, want 'doctor'", m.state)
+	if m.mode != ModeDoctor {
+		t.Fatalf("state = %q, want 'doctor'", m.mode)
 	}
 	if len(m.doctorRows) == 0 {
 		t.Fatal("doctor view has no checks")
@@ -963,8 +963,8 @@ func TestTUIDoctor_RendersChecksAndReconciles(t *testing.T) {
 		t.Error("checks disappeared after reconciling")
 	}
 	for _, k := range []string{"esc", "q", "enter"} {
-		if back := press(m, k); back.state != "list" {
-			t.Errorf("%q from the doctor view = %q, want 'list'", k, back.state)
+		if back := press(m, k); back.mode != ModeList {
+			t.Errorf("%q from the doctor view = %q, want 'list'", k, back.mode)
 		}
 	}
 	if quit := press(m, "ctrl+c"); !quit.quitting {
@@ -974,7 +974,7 @@ func TestTUIDoctor_RendersChecksAndReconciles(t *testing.T) {
 
 func TestTUIDoctor_FixHintOnlyWhenFixable(t *testing.T) {
 	m := testModel(types.VM{})
-	m.state = "doctor"
+	m.mode = ModeDoctor
 
 	m.doctorRows = []doctor.Check{{Name: "ok-check", Context: "local", Backend: "qemu", OK: true}}
 	if strings.Contains(m.doctorView(), "reconcile") {
@@ -1059,7 +1059,7 @@ func TestTUIDetail_VMCTEmptyAndPartialFleet(t *testing.T) {
 
 func TestTUIRender_PartialFleetNoticeInStatusBar(t *testing.T) {
 	m := testModel(types.VM{})
-	m.state = "list"
+	m.mode = ModeList
 	m.errors = map[string]string{"talos": "unreachable"}
 	view := m.render()
 	if !strings.Contains(view, "context(s) unavailable") {
@@ -1070,7 +1070,7 @@ func TestTUIRender_PartialFleetNoticeInStatusBar(t *testing.T) {
 func TestTUIRender_NoticeKindsColourTheStatusBar(t *testing.T) {
 	for _, kind := range []string{"", "ok", "warn", "error"} {
 		m := testModel(types.VM{})
-		m.state, m.notice, m.noticeKind = "list", "something happened", kind
+		m.mode, m.notice, m.noticeKind = ModeList, "something happened", kind
 		if !strings.Contains(m.render(), "something happened") {
 			t.Errorf("notice of kind %q not rendered", kind)
 		}
@@ -1237,10 +1237,10 @@ func TestTUIRender_EveryStateDrawsSomething(t *testing.T) {
 	m.snapshots = snapshotsState{vmName: m.selected.Name}
 	m.events = eventsState{vmName: m.selected.Name}
 
-	for _, state := range []string{"list", "actions", "edit", "hwedit", "cloneInput", "confirmDelete", "doctor", "snapshots", "events"} {
-		m.state = state
+	for _, mode := range []TUIMode{ModeList, ModeActions, ModeEdit, ModeHWEdit, ModeCloneInput, ModeConfirmDelete, ModeDoctor, ModeSnapshots, ModeEvents} {
+		m.mode = mode
 		if got := m.render(); strings.TrimSpace(got) == "" {
-			t.Errorf("state %q rendered nothing", state)
+			t.Errorf("mode %v rendered nothing", mode)
 		}
 	}
 }

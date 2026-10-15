@@ -39,7 +39,7 @@ func TestPoolAssign_PutsTheInstanceInTheChosenPool(t *testing.T) {
 	vm := poolVM()
 	m := testModel(vm)
 	m.pools = newPoolAssignState(vm)
-	m.state = "pools"
+	m.mode = ModePools
 
 	// row 0 is "(unassigned)", row 1 is "prod".
 	if !m.updatePools(key("down")) {
