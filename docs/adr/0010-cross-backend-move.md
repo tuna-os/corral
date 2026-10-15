@@ -75,11 +75,11 @@ refuses every other cell and does not try to approximate it. See *First slice*
 below for exactly which cells are live.
 
 > **Superseded by #164.** The refusal below is history. `pkg/backend` now has
-> an Incus `Ingester` that publishes the qcow2 with `incus image import` and
-> launches a VM from that image, so `corral move --to incus` works and the move
-> preflight accepts Incus as a destination. The paragraphs are kept for the
-> reasoning: a raw disk on an `--empty` VM is still the wrong path, and the
-> image-publish route is the "separate feature" they called for.
+> an Incus `Ingester`. It publishes the qcow2 with `incus image import` and
+> launches a VM from that image. So `corral move --to incus` works, and the
+> move preflight accepts Incus as a destination. We keep the paragraphs for
+> their argument: a raw disk on an `--empty` VM is still the wrong path. The
+> image-publish route is the "separate feature" that they asked for.
 
 **Incus cannot be a destination.** `bootc.TargetFor` already assessed this and
 refused, and the reason still holds. An Incus VM boots from Incus's own image
