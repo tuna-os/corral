@@ -7,6 +7,8 @@
 # Options (env vars):
 #   CORRAL_INSTALL_DIR   install target (default: ~/.local/bin, /usr/local/bin if root)
 #   CORRAL_VERSION       reserved for future tagged releases (currently rolling only)
+#   CORRAL_REQUIRE_SIGNATURE=1  fail when cosign is not installed (default: the
+#                        Sigstore check runs only when cosign is on PATH)
 set -eu
 
 REPO="tuna-os/corral"
@@ -36,7 +38,8 @@ asset="corral-${os}-${arch}"
 echo "Downloading corral (${os}/${arch})..."
 tmp="$(mktemp)"
 sums="$(mktemp)"
-trap 'rm -f "$tmp" "$sums"' EXIT
+bundle="$(mktemp)"
+trap 'rm -f "$tmp" "$sums" "$bundle"' EXIT
 curl -fSL --progress-bar -o "$tmp" "${base}/${asset}"
 
 # Verify against the SHA256SUMS published beside the binary. This is a
@@ -72,6 +75,37 @@ verify_checksum() {
 }
 
 if ! verify_checksum; then
+  echo "refusing to install an unverified binary" >&2
+  exit 1
+fi
+
+# Keyless Sigstore signature from CI (docs/enterprise-readiness.md). The
+# checksum above stays mandatory; this adds "CI on tuna-os/corral main signed
+# it" whenever cosign is available. The identity is exact, never a regex.
+verify_signature() {
+  if ! command -v cosign >/dev/null 2>&1; then
+    if [ "${CORRAL_REQUIRE_SIGNATURE:-0}" = "1" ]; then
+      echo "CORRAL_REQUIRE_SIGNATURE=1 but cosign is not installed" >&2
+      return 1
+    fi
+    echo "note: cosign not found — skipping signature verification (checksum verified)" >&2
+    return 0
+  fi
+  curl -fsSL -o "$bundle" "${base}/${asset}.sigstore.json" || {
+    echo "could not download ${asset}.sigstore.json from ${base}" >&2
+    return 1
+  }
+  cosign verify-blob --bundle "$bundle" \
+    --certificate-identity "https://github.com/${REPO}/.github/workflows/ci.yml@refs/heads/main" \
+    --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+    "$tmp" >/dev/null 2>&1 || {
+    echo "Sigstore signature verification failed for ${asset}" >&2
+    return 1
+  }
+  echo "Signature verified (tuna-os/corral CI, main)"
+}
+
+if ! verify_signature; then
   echo "refusing to install an unverified binary" >&2
   exit 1
 fi

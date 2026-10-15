@@ -140,7 +140,7 @@ Rules:
 | Corral refuses an index that is not `corral.marketplace/v2` | `pkg/plugin` | Enforced. The operator can opt out for each source with `--allow-unverified`. |
 | Core binaries have a `SHA256SUMS` file | `release-binaries` job | Enforced |
 | Signed plugin artifacts and SBOMs, verified at install time | `publish-plugins` job, `pkg/plugin` (#505) | Enforced |
-| Signed core binaries and container images | Not tracked yet | Not done |
+| Signed core binaries and container image, with SBOMs | `release-binaries` and `publish-image` jobs, [release.yml](../.github/workflows/release.yml), `scripts/install.sh` (#584) | Enforced |
 
 ### Requirements
 
