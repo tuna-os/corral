@@ -20,7 +20,7 @@ func TestBuildTask_Lifecycle(t *testing.T) {
 		t.Fatalf("new task snapshot = %v", got)
 	}
 
-	fmt.Fprintf(task, "step %d\n", 1)
+	_, _ = fmt.Fprintf(task, "step %d\n", 1)
 	if _, err := task.Write([]byte("step 2\n")); err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +40,7 @@ func TestBuildTask_Lifecycle(t *testing.T) {
 	}
 
 	// The log stays writable after finish; the status does not change.
-	fmt.Fprint(task, "late\n")
+	_, _ = fmt.Fprint(task, "late\n")
 	if got := task.snapshot(); got["log"] != "step 1\nstep 2\nlate\n" || got["status"] != "done" {
 		t.Fatalf("after late write = %v", got)
 	}
@@ -48,7 +48,7 @@ func TestBuildTask_Lifecycle(t *testing.T) {
 
 func TestBuildTask_FinishWithError(t *testing.T) {
 	task := newBuildTask()
-	fmt.Fprint(task, "pulling\n")
+	_, _ = fmt.Fprint(task, "pulling\n")
 	task.finish(errors.New("pull failed"))
 	got := task.snapshot()
 	if got["status"] != "error" || got["error"] != "pull failed" || got["log"] != "pulling\n" {
@@ -84,7 +84,7 @@ func TestBuildTask_ConcurrentWritesAreSafe(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for range 100 {
-				fmt.Fprint(task, "x")
+				_, _ = fmt.Fprint(task, "x")
 				_ = task.snapshot()
 			}
 		}()
@@ -106,7 +106,7 @@ func TestHandleTaskStatus_TracksLifecycle(t *testing.T) {
 	get := func() map[string]string {
 		t.Helper()
 		resp := mustGet(t, fx.Server.URL+"/api/tasks/char-task")
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("status code = %d, want 200", resp.StatusCode)
 		}
@@ -123,7 +123,7 @@ func TestHandleTaskStatus_TracksLifecycle(t *testing.T) {
 	if got := get(); got["status"] != "running" || got["log"] != "" || got["error"] != "" {
 		t.Fatalf("running: %v", got)
 	}
-	fmt.Fprint(task, "building\n")
+	_, _ = fmt.Fprint(task, "building\n")
 	if got := get(); got["log"] != "building\n" {
 		t.Fatalf("log tail: %v", got)
 	}

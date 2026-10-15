@@ -74,7 +74,7 @@ func TestRoutes_IndexIsThemed(t *testing.T) {
 	}
 
 	resp := mustGet(t, fx.Server.URL+"/no-such-asset.js")
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("unknown asset: status %d, want 404", resp.StatusCode)
 	}

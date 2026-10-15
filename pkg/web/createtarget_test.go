@@ -125,7 +125,7 @@ func TestHandleContexts(t *testing.T) {
 	defer fx.Close()
 
 	resp := mustGet(t, fx.Server.URL+"/api/contexts")
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d", resp.StatusCode)
 	}

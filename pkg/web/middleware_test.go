@@ -113,7 +113,7 @@ func TestPipeline_SpoofedServiceIdentityIsStripped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("spoofed identity: status = %d, want 403", resp.StatusCode)
 	}
@@ -132,7 +132,7 @@ func TestPipeline_PeerTokenPassesAdminGate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	// handleCreateVM ran: an empty body fails its own validation.
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("peer-token request: status = %d, want 400 from the handler", resp.StatusCode)
@@ -153,7 +153,7 @@ func TestPipeline_AuthenticationRequired(t *testing.T) {
 		"/":           http.StatusOK,
 	} {
 		resp := mustGet(t, fx.Server.URL+path)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if resp.StatusCode != want {
 			t.Errorf("GET %s: status = %d, want %d", path, resp.StatusCode, want)
 		}
@@ -170,7 +170,7 @@ func TestPipeline_RejectedRequestsAreNotActivity(t *testing.T) {
 	old := time.Now().Add(-5 * time.Hour).UnixNano()
 	lastActivity.Store(old)
 	resp := mustPost(t, fx.Server.URL+"/api/vms", "{}")
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403", resp.StatusCode)
 	}
@@ -179,7 +179,7 @@ func TestPipeline_RejectedRequestsAreNotActivity(t *testing.T) {
 	}
 
 	resp = mustGet(t, fx.Server.URL+"/api/whoami")
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if lastActivity.Load() == old {
 		t.Error("an accepted request did not count as activity")
 	}
@@ -193,7 +193,7 @@ func TestPipeline_PeerGateOrdering(t *testing.T) {
 		fx := NewTestFixture()
 		defer fx.Close()
 		resp := mustPost(t, fx.Server.URL+"/api/vms/peer-bm9wZQ/vm/start", "{}")
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if resp.StatusCode != http.StatusForbidden {
 			t.Fatalf("status = %d, want 403", resp.StatusCode)
 		}
@@ -216,7 +216,7 @@ func TestPipeline_PeerGateOrdering(t *testing.T) {
 
 func readBody(t *testing.T, resp *http.Response) string {
 	t.Helper()
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	b, err := io.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatal(err)
