@@ -53,7 +53,8 @@ func newStub(t *testing.T) *stub {
 			// An OVA appliance exports, but it is not a disk image.
 			"virtualbox": {export.OVA},
 			// An XVA archive exports, but it is not a disk image.
-			"xen": {export.XVA},
+			"xen":     {export.XVA},
+			"vsphere": {export.Qcow2, export.RawGz},
 		},
 		free: 1 << 40,
 	}
