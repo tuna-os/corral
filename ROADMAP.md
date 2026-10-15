@@ -50,7 +50,6 @@ flowchart TD
   P1A["#339 v0.7.0 release"] --> P1B["#210 close"]
   P1H["#264 purge binaries from history"] --> P5
   P1A --> P5
-  P0["#404 enterprise criteria"] --> P3
   T["#506 test backfill"] --> R1["#214 backend adapters"]
   T --> R2["#503 split server.go"]
   T --> R3["#288 / #406 split app.js"]
@@ -63,7 +62,7 @@ flowchart TD
   R3 --> V3
   V4["#230 CT-backed pools"]
   V2 & V3 & V4 --> VGA["#69 VDI GA"]
-  P0 --> S1["#505 plugin signing + SBOM"]
+  S1["#505 plugin signing + SBOM"]
   BG["#431 tunaOS boot gate"]
   subgraph P3["Phase 3: enterprise readiness"]
     E1
@@ -89,7 +88,6 @@ flowchart TD
 | Push the `v0.7.0` tag and publish the Release from `docs/releases/v0.7.0.md` | #339 | — | maintainer |
 | Close the release-channel finding after v0.7.0 shows on the Releases page | #210 | #339 | maintainer |
 | Remove the 25 MB of binaries from git history (history rewrite) | #264 | — | maintainer (`needs-human`) |
-| Define what "enterprise ready" means: support, upgrade and signing policy | #404 | — | strategist |
 | tunaOS CI boot gate: move `reusable-build-image.yml` from `iso-e2e.sh` to Corral | #431 | — (cross-repo) | ci-maintainer |
 
 ### Phase 2: Foundations (tests first, then refactors)
@@ -107,6 +105,9 @@ backfill first so that each refactor has a safety net.
 
 ### Phase 3: Enterprise readiness (Q4)
 
+[docs/enterprise-readiness.md](docs/enterprise-readiness.md) defines the
+criteria for this phase (#404).
+
 | Item | Issue | Depends on |
 |------|-------|------------|
 | VDI self-service broker API | #227 | #503 |
@@ -114,7 +115,7 @@ backfill first so that each refactor has a safety net.
 | VDI one-click connect | #229 | #227, #288 |
 | VDI CT-backed ephemeral pools | #230 | — |
 | VDI GA | #69 | #228, #229, #230 |
-| Plugin signing and SBOM verification | #505 | #404 |
+| Plugin signing and SBOM verification | #505 | — |
 | Structured logs and request tracing for CLI/TUI | #419 | #503 |
 | Enterprise backends (RFC-0003) | #507 | #214 |
 
@@ -141,6 +142,8 @@ Show HN brings many first-time clones and installs.
 - Path traversal in local VM names: #497, #502.
 - Incus and libvirt commands, contexts and snapshots, and Proxmox create: #489–#493.
 - Config cache and cross-process lock: #359.
+- Enterprise readiness criteria
+  ([docs/enterprise-readiness.md](docs/enterprise-readiness.md)): #404.
 
 ---
 
