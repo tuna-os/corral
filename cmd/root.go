@@ -3,12 +3,15 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/spf13/cobra"
 	"github.com/tuna-os/corral/pkg/config"
 	"github.com/tuna-os/corral/pkg/demo"
+	"github.com/tuna-os/corral/pkg/logging"
 	"github.com/tuna-os/corral/pkg/plugin"
 	"github.com/tuna-os/corral/pkg/registry"
 )
@@ -18,6 +21,36 @@ var rootDemo bool
 var rootContext string
 var rootBackend string
 var jsonOutput bool
+var logOptions logging.Options
+var logFile io.Closer // the open --log-file, if any
+
+// configureLogging installs the slog default from --log-level, --log-format,
+// and --log-file, each falling back to its CORRAL_LOG_* variable. The TUI
+// draws on the terminal, so it logs to a file even when none is named.
+func configureLogging(tui bool) error {
+	opts := logOptions
+	if opts.Level == "" {
+		opts.Level = os.Getenv(logging.EnvLevel)
+	}
+	if opts.Format == "" {
+		opts.Format = os.Getenv(logging.EnvFormat)
+	}
+	if opts.File == "" {
+		opts.File = os.Getenv(logging.EnvFile)
+	}
+	if tui && opts.File == "" {
+		opts.File = logging.DefaultTUIFile()
+	}
+	closer, err := logging.Configure(opts, os.Stderr)
+	if err != nil {
+		return err
+	}
+	if logFile != nil {
+		_ = logFile.Close()
+	}
+	logFile = closer
+	return nil
+}
 
 func printJSON(value any) error {
 	encoder := json.NewEncoder(os.Stdout)
@@ -34,6 +67,9 @@ first-class option for VNC, SSH, RDP, and custom ports, not a requirement.
 
 Run without arguments to launch the interactive TUI.`,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		if err := configureLogging(false); err != nil {
+			return err
+		}
 		backend := rootBackend
 		if backend == "" {
 			backend = config.DefaultBackend()
@@ -64,9 +100,14 @@ Run without arguments to launch the interactive TUI.`,
 		return nil
 	},
 	Run: func(cmd *cobra.Command, args []string) {
+		if err := configureLogging(true); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 		// The alt screen is declared on the View in v2, not passed here.
 		p := tea.NewProgram(newTUIModel())
 		if _, err := p.Run(); err != nil {
+			slog.Error("tui exited", "err", err)
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
@@ -82,6 +123,12 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&rootContext, "context", "", "One-shot backend context (Incus remote or kubeconfig context)")
 	rootCmd.PersistentFlags().StringVarP(&rootBackend, "backend", "b", "", "One-shot backend (qemu, kubevirt, incus, or libvirt)")
 	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Format machine-readable output as JSON")
+	rootCmd.PersistentFlags().StringVar(&logOptions.Level, "log-level", "",
+		"Log level: debug, info, warn, or error (default info; env "+logging.EnvLevel+")")
+	rootCmd.PersistentFlags().StringVar(&logOptions.Format, "log-format", "",
+		"Log format: text or json (default text; env "+logging.EnvFormat+")")
+	rootCmd.PersistentFlags().StringVar(&logOptions.File, "log-file", "",
+		"Append logs to this file instead of stderr; the TUI always logs to a file (env "+logging.EnvFile+")")
 
 	// A runtime failure ("VM not found", cluster unreachable) is not a syntax
 	// error — dumping the whole usage block after it buries the message.

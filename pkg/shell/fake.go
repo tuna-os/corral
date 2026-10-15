@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/tuna-os/corral/pkg/logging"
 )
 
 // Runner executes external commands and returns their output.
@@ -25,18 +27,30 @@ type Runner interface {
 	LookPath(name string) (string, error)
 }
 
-// Real is the production Runner that delegates to os/exec.
-type Real struct{}
-
-func (Real) Run(name string, args ...string) ([]byte, error) {
-	return exec.Command(name, args...).CombinedOutput()
+// Real is the production Runner that delegates to os/exec. It logs every
+// command at debug level, with secrets redacted. Bind gives it a request
+// context, whose ID then appears on each of those records.
+type Real struct {
+	ctx context.Context
 }
 
-func (Real) RunStdin(stdin string, name string, args ...string) ([]byte, error) {
+func (r Real) Run(name string, args ...string) ([]byte, error) {
+	start := time.Now()
+	out, err := exec.Command(name, args...).CombinedOutput()
+	logCommand(r.ctx, name, args, 0, start, out, err)
+	return out, err
+}
+
+func (r Real) RunStdin(stdin string, name string, args ...string) ([]byte, error) {
+	start := time.Now()
 	cmd := exec.Command(name, args...)
 	cmd.Stdin = strings.NewReader(stdin)
-	return cmd.CombinedOutput()
+	out, err := cmd.CombinedOutput()
+	logCommand(r.ctx, name, args, len(stdin), start, out, err)
+	return out, err
 }
+
+func (r Real) bind(ctx context.Context) Runner { return Real{ctx: ctx} }
 
 func (Real) LookPath(name string) (string, error) {
 	return exec.LookPath(name)
@@ -76,12 +90,16 @@ func (r *contextRunner) RunStdin(stdin, name string, args ...string) ([]byte, er
 	return r.next.RunStdin(stdin, name, r.args(name, args)...)
 }
 func (r *contextRunner) LookPath(name string) (string, error) { return r.next.LookPath(name) }
+func (r *contextRunner) bind(ctx context.Context) Runner {
+	return &contextRunner{next: Bind(ctx, r.next), context: r.context}
+}
 
 // Call records a single command invocation for test assertions.
 type Call struct {
-	Name  string
-	Args  []string
-	Stdin string // input passed via RunStdin ("" for plain Run)
+	Name      string
+	Args      []string
+	Stdin     string // input passed via RunStdin ("" for plain Run)
+	RequestID string // request ID of the context the runner was bound to
 }
 
 // FakeResponse defines the canned response for a command match.
@@ -133,17 +151,37 @@ func (f *Fake) AddPrefixResponse(prefix string, stdout string, err error) {
 // Run records the call and returns the matching response. Returns an error
 // if no response was registered for this command.
 func (f *Fake) Run(name string, args ...string) ([]byte, error) {
-	return f.recordAndRespond("", name, args)
+	return f.recordAndRespond("", "", name, args)
 }
 
 // RunStdin records the call (stdin included) and returns the matching response.
 func (f *Fake) RunStdin(stdin string, name string, args ...string) ([]byte, error) {
-	return f.recordAndRespond(stdin, name, args)
+	return f.recordAndRespond("", stdin, name, args)
 }
 
-func (f *Fake) recordAndRespond(stdin, name string, args []string) ([]byte, error) {
+// bind returns a view of f that records the request ID of ctx on each Call,
+// so tests can assert that a request's context reached its commands.
+func (f *Fake) bind(ctx context.Context) Runner {
+	return boundFake{fake: f, requestID: logging.RequestID(ctx)}
+}
+
+type boundFake struct {
+	fake      *Fake
+	requestID string
+}
+
+func (b boundFake) Run(name string, args ...string) ([]byte, error) {
+	return b.fake.recordAndRespond(b.requestID, "", name, args)
+}
+func (b boundFake) RunStdin(stdin string, name string, args ...string) ([]byte, error) {
+	return b.fake.recordAndRespond(b.requestID, stdin, name, args)
+}
+func (b boundFake) LookPath(name string) (string, error) { return b.fake.LookPath(name) }
+func (b boundFake) bind(ctx context.Context) Runner      { return b.fake.bind(ctx) }
+
+func (f *Fake) recordAndRespond(requestID, stdin, name string, args []string) ([]byte, error) {
 	f.mu.Lock()
-	f.calls = append(f.calls, Call{Name: name, Args: args, Stdin: stdin})
+	f.calls = append(f.calls, Call{Name: name, Args: args, Stdin: stdin, RequestID: requestID})
 	f.mu.Unlock()
 
 	key := commandKey(name, args)
@@ -221,7 +259,7 @@ func commandKey(name string, args []string) string {
 // test Fakes match exact argument lists.
 func WithKubectlTimeout(r Runner, timeout string) Runner {
 	d, _ := time.ParseDuration(timeout)
-	return &kubectlTimeoutRunner{next: r, timeout: timeout, timeoutDur: d}
+	return &kubectlTimeoutRunner{next: r, timeout: timeout, timeoutDur: d, breaker: &breaker{}}
 }
 
 // DefaultKubectl is the shared production kubectl runner: Real wrapped with
@@ -276,8 +314,20 @@ type kubectlTimeoutRunner struct {
 	timeout    string
 	timeoutDur time.Duration
 
+	*breaker
+}
+
+// breaker is the circuit-breaker state. A pointer, so that every runner
+// Bind derives from DefaultKubectl trips and clears the same breaker.
+type breaker struct {
 	mu        sync.Mutex
 	deadUntil time.Time
+}
+
+func (k *kubectlTimeoutRunner) bind(ctx context.Context) Runner {
+	bound := *k
+	bound.next = Bind(ctx, k.next)
+	return &bound
 }
 
 func (k *kubectlTimeoutRunner) inject(name string, args []string) []string {
@@ -426,10 +476,13 @@ func (k *kubectlTimeoutRunner) hardRun(stdin, name string, args []string) ([]byt
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
 	}
+	start := time.Now()
 	out, err := cmd.CombinedOutput()
 	if ctx.Err() != nil {
-		return out, fmt.Errorf("kubectl killed after %s: context deadline exceeded", deadline)
+		err = fmt.Errorf("kubectl killed after %s: context deadline exceeded", deadline)
 	}
+	r, _ := k.next.(Real) // hardRun is only reached with a Real next
+	logCommand(r.ctx, name, args, len(stdin), start, out, err)
 	return out, err
 }
 
