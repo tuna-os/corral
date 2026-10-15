@@ -59,10 +59,6 @@ that is not a letter or a digit to `_`.
 Do each step on the test VM. Write down the result. Compare the result with
 the platform's own console, not only with the Corral output.
 
-Some operations have a CLI command for every backend. For the others, use
-the action in the TUI (`corral tui`). The CLI commands for those operations
-support only KubeVirt.
-
 | Step | Where | VirtualBox | vSphere | Xen | Nutanix |
 |---|---|---|---|---|---|
 | Inventory | `corral list` | yes | yes | yes | yes |
@@ -71,10 +67,11 @@ support only KubeVirt.
 | Snapshot | `corral snapshot create VM`, then `ls`, `restore`, `rm` | yes | yes | yes | yes |
 | Clone | `corral clone VM VM-copy` | yes | yes | yes | yes |
 | SSH | `corral ssh VM` | yes | no | no | no |
-| Pause, resume | TUI action | yes | yes | yes | no |
-| Scale | TUI hardware action | stopped VM only | yes | no | no |
-| Migrate | TUI action | no | yes | yes | yes |
-| Export | TUI export action, or the backup plugin | stopped VM only | yes | stopped VM only | with apiVersion v4.1 or later |
+| Tags | `corral tag VM env=prod` | no | no | no | an existing category only |
+| Pause, resume | `corral pause VM`, `corral unpause VM` | yes | yes | yes | no |
+| Scale | `corral scale VM --cpu 2 --mem 2G` | stopped VM only | yes | no | no |
+| Migrate | `corral migrate VM` | no | yes | yes | yes |
+| Export | `corral export VM` | stopped VM only | yes | stopped VM only | with apiVersion v4.1 or later |
 
 Expected results for the backend-specific rules:
 
