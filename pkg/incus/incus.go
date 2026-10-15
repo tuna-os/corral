@@ -357,10 +357,29 @@ func (Backend) StartVM(name string) error          { return Start(name) }
 func (Backend) StopVM(name string) error           { return Stop(name) }
 func (Backend) DeleteVM(name string) error         { return Delete(name) }
 func (Backend) VMInfo(name string) ([]byte, error) { return Info(name) }
-func (Backend) Viewer(name string) error {
-	return fmt.Errorf("viewer not supported directly for incus")
+func (Backend) Viewer(name string) error           { return NewClient("").Viewer(name) }
+func (Backend) Logs(name string) error             { return NewClient("").ConsoleLog(name) }
+
+// Viewer opens the VM's VGA console in a SPICE client, which is Incus's own
+// graphical console: `incus console --type=vga` starts remote-viewer (or spicy)
+// itself and reports plainly when neither is installed.
+func (c Client) Viewer(name string) error {
+	cmd := exec.Command("incus", "console", c.target(name), "--type=vga")
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	return cmd.Run()
 }
-func (Backend) Logs(name string) error { return fmt.Errorf("logs command not supported for incus") }
+
+// ConsoleLog prints the instance's console log, which Incus keeps for both VMs
+// and containers: what the guest wrote to its console, boot messages included.
+func (c Client) ConsoleLog(name string) error {
+	out, err := defaultRunner.Run("incus", "console", c.target(name), "--show-log")
+	if err != nil {
+		return fmt.Errorf("incus console --show-log %s: %s (%w)", name, strings.TrimSpace(string(out)), err)
+	}
+	_, err = os.Stdout.Write(out)
+	return err
+}
+
 func (Backend) SSH(name, username, identityFile, command string, port int, password string, localForwards []string) error {
 	return NewClient("").SSH(name, command)
 }

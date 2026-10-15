@@ -23,9 +23,9 @@ Corral gives the URI to `virsh -c URI` without a change. If
 |---|---|
 | Inventory in `corral list`, the TUI and the web UI | yes, including domains that Corral did not create |
 | Start, stop, delete | yes (CLI, TUI, web). Stop sends an ACPI shutdown |
-| Restart | TUI and web. The CLI `corral restart` does not support libvirt today ([#489](https://github.com/tuna-os/corral/issues/489)) |
+| Restart | yes (CLI, TUI, web), with `virsh reboot` |
 | Create | yes, from an ISO or a qcow2 disk, through `virt-install` |
-| Console | web VNC (also through SSH), TUI `virt-viewer` |
+| Console | web VNC (also through SSH), `corral viewer` and the TUI run `virt-viewer` |
 | SSH | no, `corral ssh` refuses libvirt domains. Use `ssh` to the guest address |
 | Snapshots | TUI only today, see [backend support](backend-support.md#incus-and-libvirt-snapshots-migration-and-hotplug) |
 | Cold move to or from another backend | yes, `corral move`. As a source, only from a local URI |
@@ -197,9 +197,9 @@ command does not support libvirt today.
   VNC display. For a `qemu+ssh://` URI with a display on the loopback address
   of the hypervisor, Corral opens the connection through SSH.
 - **TUI.** The viewer action runs `virt-viewer --connect URI NAME`.
-- **CLI.** `corral viewer` does not support libvirt domains today
-  ([#489](https://github.com/tuna-os/corral/issues/489)). Run
-  `virt-viewer --connect URI NAME` yourself.
+- **CLI.** `corral viewer NAME` runs `virt-viewer --connect URI NAME` with
+  the URI of the domain. `corral logs` refuses libvirt domains: libvirt keeps
+  no guest log that Corral can read. Use `virsh -c URI console NAME`.
 - **SSH.** `corral ssh` stops with
   `libvirt domain "NAME" has no discovered SSH address`. Corral does not
   find guest addresses on libvirt. Get the address with

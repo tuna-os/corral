@@ -121,7 +121,5 @@ table from `pkg/backend.Matrix`, and conformance tests keep it correct.
   contract. This is the root cause of the CLI and web gaps above.
 - [#491](https://github.com/tuna-os/corral/issues/491): Incus and libvirt
   snapshots in the CLI and the web tab.
-- [#489](https://github.com/tuna-os/corral/issues/489): `corral viewer`,
-  `logs` and `restart` on Incus and libvirt.
 - [#492](https://github.com/tuna-os/corral/issues/492): `corral move --to`
   help text does not list `incus`.

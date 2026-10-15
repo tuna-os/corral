@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
+	"github.com/tuna-os/corral/pkg/backend"
 	"github.com/tuna-os/corral/pkg/kubevirt"
 	"github.com/tuna-os/corral/pkg/qemu"
 )
@@ -170,18 +171,15 @@ var restartCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		backend, err := requireBackend(name)
+		adapter, err := instanceAdapter(name)
 		if err != nil {
 			return err
 		}
-		if backend == "kubevirt" {
-			ns, _ := resolveNamespace(name)
-			return kubevirt.NewClient(ns).RestartVM(name)
+		restarter, ok := adapter.(backend.Restarter)
+		if !ok {
+			return unsupported(adapter, "restart")
 		}
-		if err := qemu.Stop(name); err != nil {
-			return err
-		}
-		return qemu.Start(name)
+		return restarter.Restart(name)
 	},
 }
 
