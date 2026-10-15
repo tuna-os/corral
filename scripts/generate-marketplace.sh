@@ -39,7 +39,9 @@ jq --arg tag "$tag" --arg repo "$repo" '
 # keeping this script readable, so populate immutable URLs and digests in one
 # deterministic pass.
 cp "$tmp" "$output"
-for artifact in "$dist"/corral-*-linux-*; do
+# Exact arch suffixes, not corral-*-linux-*: the dist directory also holds
+# the .sigstore.json / .spdx.json sidecars of each binary.
+for artifact in "$dist"/corral-*-linux-amd64 "$dist"/corral-*-linux-arm64; do
   [[ -f "$artifact" ]] || continue
   filename=$(basename "$artifact")
   plugin=${filename#corral-}; plugin=${plugin%-linux-*}
