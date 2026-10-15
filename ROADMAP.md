@@ -100,7 +100,7 @@ backfill first so that each refactor has a safety net.
 | Backfill tests, cheapest gaps first (RFC-0004) | #506 | — |
 | Route all backend-specific code through `pkg/backend` (46 branches left; ratchet in `pkg/backend/matrix_test.go`) | #214 | #506 |
 | Split `pkg/web/server.go`: routing, auth, task tracker, create logic | #503 | #506 |
-| Split `app.js`: API adapter module first | #288, #406 | #506 |
+| ✅ Split `app.js` into ES modules with node unit tests (`pkg/web/jstest`): API adapter #517, poll #523, session #525, console transports #531, workspace layout | #288, #406 | #506 |
 | Make the TUI state machine its own type | #305 | #506 |
 
 ### Phase 3: Enterprise readiness (Q4)
