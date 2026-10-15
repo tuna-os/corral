@@ -500,7 +500,7 @@ func TestKubeVirtBranchesRatchet(t *testing.T) {
 	// KubeVirt-specific operations move behind the adapter interface. If this
 	// test fails because the count went up, a new kubevirt branch was added
 	// without removing one elsewhere: route it through the adapter instead.
-	const maxAllowedBranches = 46
+	const maxAllowedBranches = 41
 
 	// go test runs in the package directory, so walk from the module root.
 	root := filepath.Join("..", "..")
