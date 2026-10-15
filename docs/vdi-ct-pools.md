@@ -57,7 +57,7 @@ corral vdi ct-pool delete desk
 
 All commands use the `-n` namespace flag. The default is the Corral namespace.
 The `--context` flag selects a Corral context of the `kubevirt` backend. Without
-it, the commands use the default Corral context if it is a `kubevirt` context.
+it, kubectl uses its current context.
 
 ## Reconciliation
 

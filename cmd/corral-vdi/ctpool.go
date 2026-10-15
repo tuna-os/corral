@@ -45,14 +45,11 @@ it from the image. See docs/vdi-ct-pools.md.`,
 	return c
 }
 
-// ctPoolKubeContext is the kubeconfig context the ct-pool commands talk to:
-// the --context Corral context, or the default one, when it is a KubeVirt
-// cluster. "" leaves kubectl on its current context.
+// ctPoolKubeContext is the kubeconfig context of the --context Corral
+// context. Without --context it returns "", which leaves kubectl on its
+// current context, as the VM pool commands do.
 func ctPoolKubeContext() (string, error) {
 	if contextName == "" {
-		if def := config.DefaultContext(); def.Backend == "kubevirt" {
-			return def.Context, nil
-		}
 		return "", nil
 	}
 	cfg, ok := config.FindContext(contextName)
