@@ -70,6 +70,29 @@ func TestApplyVMTestFlags_FlagsOverrideTheFile(t *testing.T) {
 	}
 }
 
+func TestApplyVMTestFlags_ConsoleGateAndInstallFlags(t *testing.T) {
+	spec := &vmtest.Spec{Bootc: "example.com/os:1", Kargs: []string{"from.file=1"}, Filesystem: "xfs"}
+	cmd, o := newVMTestCommandForTest(t)
+	if err := cmd.Flags().Parse([]string{
+		"--fail-marker", "CONTRACT_FAIL",
+		"--karg", "tunaos.countme=0",
+		"--karg", "systemd.unit=graphical.target",
+	}); err != nil {
+		t.Fatalf("parsing flags: %v", err)
+	}
+	o.apply(cmd, spec, nil)
+	if spec.FailMarker != "CONTRACT_FAIL" {
+		t.Errorf("failMarker = %q", spec.FailMarker)
+	}
+	// Kernel arguments accumulate: the file's, then the flags'.
+	if got := strings.Join(spec.Kargs, " "); got != "from.file=1 tunaos.countme=0 systemd.unit=graphical.target" {
+		t.Errorf("kargs = %q", got)
+	}
+	if spec.Filesystem != "xfs" {
+		t.Errorf("filesystem = %q, want the file's value — an unset flag must not override", spec.Filesystem)
+	}
+}
+
 func TestApplyVMTestFlags_KeptByDefault(t *testing.T) {
 	// The command exists to hand over a system to test, so the VM stays unless
 	// the caller asks for a pure gate.

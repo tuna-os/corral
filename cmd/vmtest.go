@@ -29,6 +29,9 @@ type vmtestOptions struct {
 	timeout     time.Duration
 	sshUser     string
 	readyMarker string
+	failMarker  string
+	kargs       []string
+	filesystem  string
 	user        string
 	password    string
 	sudoUser    bool
@@ -95,6 +98,12 @@ failed, 4 disk build failed, 5 VM would not start, 6 never became ready,
   # A desktop image, which must actually paint something.
   corral vmtest desk --bootc "$IMAGE" --require-paint --timeout 20m
 
+  # A gate on the guest's own verdict: ready when it prints its pass line,
+  # failed the moment it prints a failure, with a kernel argument set before
+  # the first boot.
+  corral vmtest gate --bootc "$IMAGE" --rm --karg example.telemetry=0 \
+    --ready-marker 'CONTRACT_OK' --fail-marker 'CONTRACT_FAIL|emergency mode'
+
   # Everything in a file (Lima-shaped).
   corral vmtest gate -f verify.yaml`,
 		Args: cobra.MaximumNArgs(1),
@@ -159,6 +168,13 @@ func (o *vmtestOptions) apply(cmd *cobra.Command, spec *vmtest.Spec, args []stri
 	}
 	if changed("ready-marker") {
 		spec.ReadyMarker = o.readyMarker
+	}
+	if changed("fail-marker") {
+		spec.FailMarker = o.failMarker
+	}
+	spec.Kargs = append(spec.Kargs, o.kargs...)
+	if changed("filesystem") {
+		spec.Filesystem = o.filesystem
 	}
 	if changed("root-password") {
 		spec.RootPassword = o.rootPass
@@ -270,6 +286,9 @@ func (o *vmtestOptions) bind(cmd *cobra.Command) {
 	f.DurationVar(&o.timeout, "timeout", vmtest.DefaultTimeout, "How long the guest gets to become ready")
 	f.StringVar(&o.sshUser, "ssh-user", vmtest.DefaultSSHUser, "Account the readiness probe and the checks log in as")
 	f.StringVar(&o.readyMarker, "ready-marker", "", "Gate readiness on this regular expression appearing on the guest console, instead of on SSH")
+	f.StringVar(&o.failMarker, "fail-marker", "", "Fail at once when this regular expression appears on the guest console while waiting for ready")
+	f.StringArrayVar(&o.kargs, "karg", nil, "Kernel argument to install into the boot entry, there from the first boot (repeatable)")
+	f.StringVar(&o.filesystem, "filesystem", "", "Root filesystem (xfs, ext4, btrfs) instead of the one the image's bootc backend implies")
 	f.StringVar(&o.user, "user", "", "Create this account in the derived image")
 	f.StringVar(&o.password, "password", "", "Password for --user")
 	f.BoolVar(&o.sudoUser, "sudo-user", false, "Give --user passwordless sudo")

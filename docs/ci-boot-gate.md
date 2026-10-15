@@ -131,6 +131,20 @@ deviation of its luminance is at or under 0.02. A guest that boots and never
 draws is the failure an SSH probe hides. Without this flag, no exit code
 catches it and somebody has to look at a picture.
 
+An image that checks itself on boot can report a failure as well as a pass.
+Give that line to `--fail-marker`, and the run fails (exit 6) when the line
+appears. It does not wait for the timeout. corral checks the failure marker
+first, so a console that shows both lines fails:
+
+```bash
+corral vmtest desk --bootc "$IMAGE" --rm \
+  --ready-marker '(?s)BASE_CONTRACT_OK.*DESKTOP_CONTRACT_OK|DESKTOP_CONTRACT_OK.*BASE_CONTRACT_OK' \
+  --fail-marker 'CONTRACT_FAIL|Entering emergency mode|Kernel panic'
+```
+
+corral matches the markers against the whole console, not one line at a
+time. Thus one `(?s)` pattern can require two lines in either order.
+
 You can also drive the console keyboard directly, which is the only way into a
 LUKS passphrase prompt or a greeter:
 
@@ -139,6 +153,19 @@ corral screenshot desk -o greeter.png
 corral type desk 'correct horse battery staple' --enter
 corral key desk ctrl alt f2
 ```
+
+### Kernel arguments and the root filesystem
+
+`--karg` (repeatable, `kargs:` in the file) puts a kernel argument into the
+installed boot entry. The argument is there from the first boot, which a
+command that runs over SSH later cannot do. Use it to turn off telemetry in
+test guests, or to pick the boot target. corral always adds
+`console=ttyS0,115200n8` first, so that the console log exists.
+
+`--filesystem` (`filesystem:`) replaces the root filesystem that the image's
+bootc backend implies. Without it, ostree images get xfs, and composefs images
+get ext4 (or btrfs when the image has no `mkfs.ext4`). Use it for an image
+whose bootloader cannot read the default.
 
 ### The spec file (Lima-shaped)
 

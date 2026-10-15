@@ -1,11 +1,13 @@
 package vmtest
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -257,13 +259,14 @@ func buildAndImport(spec *Spec, layered Layered, keys Keypair, progress func(str
 	workDir := filepath.Join(qemu.VMHome(), "cache", "vmtest")
 	dest := filepath.Join(workDir, spec.Name+".raw")
 	built, err := builder.Build(bootc.BuildRequest{
-		Image:  layered.Image,
-		Dest:   dest,
-		Size:   spec.Disk,
-		SSHKey: keys.AuthorizedKeys(),
+		Image:      layered.Image,
+		Dest:       dest,
+		Size:       spec.Disk,
+		SSHKey:     keys.AuthorizedKeys(),
+		Filesystem: spec.Filesystem,
 		// Without a serial console the boot log goes nowhere, and a guest that
 		// fails before sshd has no way to say so.
-		Kargs: []string{SerialKarg},
+		Kargs: spec.kargs(),
 	}, progress)
 	if err != nil {
 		return err
@@ -305,16 +308,29 @@ func recordInRegistry(spec *Spec, out io.Writer) {
 }
 
 // waitReady blocks until the guest says it is up, by whichever gate the spec
-// chose.
+// chose, or until the console shows the spec's failure marker.
 func waitReady(spec *Spec, keys Keypair, result *Result, progress func(string)) error {
 	timeout := spec.Timeout.Duration()
-	pattern, err := spec.readyPattern()
+	ready, err := spec.readyPattern()
 	if err != nil {
 		return err
 	}
-	if pattern != nil {
+	failed, err := spec.failPattern()
+	if err != nil {
+		return err
+	}
+	switch {
+	case failed != nil:
+		if ready != nil {
+			report(progress, "waiting up to %s for /%s/ on the console", timeout, spec.ReadyMarker)
+		} else {
+			report(progress, "waiting up to %s for SSH as %s", timeout, spec.SSHUser)
+		}
+		report(progress, "failing at once on /%s/ on the console", spec.FailMarker)
+		return pollReady(spec, keys, result, ready, failed, timeout)
+	case ready != nil:
 		report(progress, "waiting up to %s for /%s/ on the console", timeout, spec.ReadyMarker)
-		line, err := qemu.WaitSerial(spec.Name, pattern, timeout)
+		line, err := qemu.WaitSerial(spec.Name, ready, timeout)
 		if err != nil {
 			return err
 		}
@@ -329,6 +345,51 @@ func waitReady(spec *Spec, keys Keypair, result *Result, progress func(string)) 
 	result.ReadyBy = readyBySSH
 	return nil
 }
+
+// pollReady is the gate when a failure marker can end the wait early. The
+// console is read every round and the failure checked before readiness, so a
+// guest that printed both is not called ready. Without a ready marker, the
+// SSH probe gets one attempt per round.
+func pollReady(spec *Spec, keys Keypair, result *Result, ready, failed *regexp.Regexp, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	var lastSSH error
+	for {
+		console, err := qemu.SerialLog(spec.Name)
+		if err != nil && !errors.Is(err, qemu.ErrNoSerialLog) {
+			return err
+		}
+		if failed != nil {
+			if line := failed.Find(console); line != nil {
+				return fmt.Errorf("the console showed the failure marker: %s\n%s",
+					strings.TrimSpace(string(line)), consoleTail(spec.Name, 25))
+			}
+		}
+		if ready != nil {
+			if line := ready.Find(console); line != nil {
+				result.ReadyBy = readyByMarker
+				result.ReadyEvidence = strings.TrimSpace(string(line))
+				return nil
+			}
+		} else if lastSSH = qemu.WaitSSHKey(spec.Name, spec.SSHUser, keys.PrivatePath, 0); lastSSH == nil {
+			result.ReadyBy = readyBySSH
+			return nil
+		}
+		if time.Now().After(deadline) {
+			if ready != nil {
+				if errors.Is(err, qemu.ErrNoSerialLog) {
+					return qemu.ErrNoSerialLog
+				}
+				return fmt.Errorf("%q did not appear on %s's console within %s", ready, spec.Name, timeout)
+			}
+			return fmt.Errorf("%w\n%s", lastSSH, consoleTail(spec.Name, 25))
+		}
+		time.Sleep(pollInterval)
+	}
+}
+
+// pollInterval is how often pollReady reads the console. A variable so a test
+// need not sleep.
+var pollInterval = 2 * time.Second
 
 // consoleTail is the last lines of the guest console, for the error message of
 // a boot that never answered. The whole log is in the artifacts; this is the
