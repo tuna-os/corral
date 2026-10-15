@@ -501,6 +501,34 @@ Remove an installed plugin.
 
 **Response**: `{"status": "removed"}`
 
+### `GET /api/plugins/ui`
+
+The widgets and screens that installed plugins add to the web UI. The response
+does not include commands. `errors` names each plugin with a declaration that
+corral refused.
+
+**Response**:
+
+```json
+{"plugins": [{"name": "aws-cost",
+  "widgets": [{"id": "spend", "title": "AWS spend", "refresh_ms": 60000}],
+  "sections": [{"id": "hosts", "title": "AWS hosts", "icon": "server"}]}],
+ "errors": {"broken": "ui widget id \"Bad\" must be lower case letters, digits and dashes"}}
+```
+
+### `GET /api/plugins/{plugin}/ui/{id}`
+
+Runs the item's command and returns the checked document. All callers share
+the document for 15 seconds.
+
+**Response**: `{"document": {"kind": "rows", "rows": [...]}}`
+
+**Errors**:
+
+- `404`: no plugin declares the item.
+- `502`: the plugin failed, or its document breaks the contract.
+- `504`: the plugin did not answer within 10 seconds.
+
 ---
 
 ## Console & export (WebSocket)
@@ -602,7 +630,9 @@ The server serves the embedded SPA at the root:
 |---|---|
 | `/` | `index.html` |
 | `/style.css` | `style.css` |
-| `/app.js` | `app.js` |
+| `/app.js` | `app.js` (the entry module) |
+| `/<module>.js` | the other ES modules, such as `state.js`, `api.js` and `tree.js` |
+| `/content/*.js`, `/ui/*.js` | the screen modules and the UI primitives |
 | `/icons.js` | `icons.js` |
 
 All other paths fall through to the Go 1.22 `http.ServeMux` 404.

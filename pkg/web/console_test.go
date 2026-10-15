@@ -34,7 +34,7 @@ func TestVNCBridge_RelaysBytesBothWays(t *testing.T) {
 	consoleDialer = fake
 	defer func() { consoleDialer = orig }()
 
-	ws, err := websocket.Dial(wsURL(fx.Server.URL)+"/api/vnc/tailvm/testvm", "", "http://localhost")
+	ws, err := websocket.Dial(wsURL(fx.Server.URL)+"/api/vnc/tailvm/testvm", "", fx.Server.URL)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -80,7 +80,7 @@ func TestRDPBridge_RelaysBytesBothWays(t *testing.T) {
 	consoleDialer = fake
 	defer func() { consoleDialer = orig }()
 
-	ws, err := websocket.Dial(wsURL(fx.Server.URL)+"/api/rdp/tailvm/winvm", "", "http://localhost")
+	ws, err := websocket.Dial(wsURL(fx.Server.URL)+"/api/rdp/tailvm/winvm", "", fx.Server.URL)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -113,7 +113,7 @@ func TestConsoleBridges_DialErrorClosesCleanly(t *testing.T) {
 	consoleDialer = fake
 	defer func() { consoleDialer = orig }()
 
-	ws, err := websocket.Dial(wsURL(fx.Server.URL)+"/api/vnc/tailvm/testvm", "", "http://localhost")
+	ws, err := websocket.Dial(wsURL(fx.Server.URL)+"/api/vnc/tailvm/testvm", "", fx.Server.URL)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}

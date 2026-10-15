@@ -21,13 +21,21 @@ const write = (key, v) => { try { localStorage.setItem(key, v); } catch { /* pri
  * @param {() => number} o.max     evaluated on every change (viewport-relative limits)
  * @param {(e: PointerEvent) => number} o.sizeFromPointer  pointer position → new size
  * @param {() => number} o.current current rendered size
+ * @param {{toggle(force?:boolean):boolean, collapsed():boolean}} [o.collapsible]
+ *        the panel this separator collapses, if it has one
  * @returns {{ set(px:number, remember?:boolean):number, reset():void }}
  */
 export function makeSplitter(o) {
   const set = (px, remember = true) => {
-    const size = Math.min(o.max(), Math.max(o.min, Math.round(px)));
+    const max = o.max();
+    const size = Math.min(max, Math.max(o.min, Math.round(px)));
     document.documentElement.style.setProperty(o.cssVar, `${size}px`);
+    // valuemin/valuemax are re-published on every change because the maximum
+    // is viewport-relative: a value written once in the HTML would be a lie
+    // the moment the window is resized.
     o.handle.setAttribute('aria-valuenow', String(size));
+    o.handle.setAttribute('aria-valuemin', String(o.min));
+    o.handle.setAttribute('aria-valuemax', String(max));
     if (remember) write(o.storageKey, String(size));
     return size;
   };
@@ -67,6 +75,12 @@ export function makeSplitter(o) {
     if (e.key === grow) { set(o.current() + step); e.preventDefault(); }
     if (e.key === shrink) { set(o.current() - step); e.preventDefault(); }
     if (e.key === 'Home') { reset(); e.preventDefault(); }
+    if (e.key === 'End') { set(o.max()); e.preventDefault(); }
+    // Enter collapses the pane and restores it, which the ARIA window-splitter
+    // pattern lists as required rather than optional: without it a
+    // keyboard-only operator can shrink the pane to its minimum but never get
+    // the space back.
+    if (e.key === 'Enter' && o.collapsible) { o.collapsible.toggle(); e.preventDefault(); }
   });
 
   return { set, reset };

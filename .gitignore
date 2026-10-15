@@ -45,3 +45,14 @@ cover.out
 
 # UI smoke screenshots (scripts/ui-smoke.mjs)
 ui-smoke-screenshots/
+
+# Playwright installed at the repo root for scripts/ui-smoke.mjs
+/node_modules/
+
+# Local copy of the smoke suite, patched to point at this machine's browser
+.ui-smoke-local.mjs
+
+# Throwaway Playwright probes. These live in the session scratchpad; the
+# pattern is here so a stray `git add -A` cannot sweep one into a commit.
+.p.mjs
+.capture-*.mjs

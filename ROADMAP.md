@@ -1,6 +1,6 @@
 # Corral Roadmap
 
-**Last updated**: 2026-09-17 | **Maintainer**: tuna-os (hanthor) / architect agent
+**Last updated**: 2026-10-15 | **Maintainer**: tuna-os (hanthor) / architect agent
 
 ---
 
@@ -9,13 +9,12 @@
 Corral herds VMs — and containers — into your tailnet. A single Go binary with
 a CLI, TUI, and web dashboard, it manages VMs across five backends (qemu,
 kubevirt, incus, libvirt, proxmox) and exposes every guest over the Tailscale
-network your devices already share. It is also the org's emerging CI boot-gate
-tool: [tunaos#1273](https://github.com/tuna-os/tunaos/pull/1273) adopts Corral
-to gate ISO builds on boot evidence.
+network your devices already share. Developers also use it to boot-gate tunaOS
+images on a KubeVirt cluster (`scripts/boot-gate.sh` in tunaOS).
 
 ---
 
-## Current Status (2026-09-17)
+## Current Status (2026-10-15)
 
 - Go rewrite of the legacy Python `tailvm`; on-disk/`tailvm-` prefixes retained
   during the transition ([SPEC.md](SPEC.md)).
@@ -28,7 +27,13 @@ to gate ISO builds on boot evidence.
 - ✅ **Distribution and release infrastructure repaired (September 2026)**:
   - macOS release binary builds published and installer checksum verification added (#315).
   - Release workflow updated to stamp release tags properly without crowding product releases under plugin artifacts (#316).
-- 🟡 **Org CI adoption blocked on rebase**: tunaos#1273 remains open (`CONFLICTING`), needing a rebase to gate ISO builds on boot evidence.
+- 🟡 **Org CI adoption not complete**: tunaos#1273 closed without a merge. The
+  tunaOS CI boot gate (`reusable-build-image.yml`) boots images in QEMU with
+  `scripts/iso-e2e.sh`, not with Corral. Corral runs the local gate
+  (`scripts/boot-gate.sh`) and the KubeVirt builds (`scripts/corral-build.sh`).
+- 🟡 **v0.7.0 release notes merged**
+  ([docs/releases/v0.7.0.md](docs/releases/v0.7.0.md)). A maintainer must
+  push the tag and publish the GitHub Release.
 - **No milestones on the repo**; work is tracked through issues and labels
   (`needs-triage`, `ready-for-agent`, …) plus this file.
 
@@ -36,10 +41,10 @@ to gate ISO builds on boot evidence.
 
 | Priority | Item | Tracking | Status |
 |----------|------|----------|--------|
-| P0 | Fix advertised install path & macOS release publishing | #210, #315, #316 | ✅ Done |
-| P1 | Unblock the tunaOS boot-gate adoption — rebase the conflicting PR | tunaos#1273 | 🔴 Blocked on conflicts |
+| P0 | Fix advertised install path & macOS release publishing | #210, #315, #316 (install path and checksum check done; v0.7.0 notes ready, tag not published) | 🟡 Partially done |
+| P1 | tunaOS CI boot-gate adoption | #431, tunaos#1273 (closed, not merged) | 🔴 Open |
 | P1 | VDI plugin epic — Windows/Linux desktop pools | #69, [docs/vdi-epic-status.md](docs/vdi-epic-status.md) | 🟡 In progress |
-| P2 | Programmatic output — `--json` across commands | #205 | 🔴 Open |
+| P2 | Programmatic output — `--json` across commands | #205 | ✅ Done |
 | P2 | Stable plugin API contract + marketplace schema v2 | [docs/plugin-marketplace.md](docs/plugin-marketplace.md) | 🟡 In progress |
 | P3 | Dependency dashboard / renovate hygiene | #97 | 🔴 Open |
 
@@ -57,8 +62,8 @@ to gate ISO builds on boot evidence.
 | Incus image publishing (move destination parity) | architect | #164 | ✅ Done — closed 08-11 |
 | Incus E2E suite | quality | #123 | ✅ Done — closed 08-11 |
 | Install path works on every OS the installer claims to support | — | #210, #315 | ✅ Done |
-| One visible product release channel, separate from plugin artifacts | — | #210, #316 | ✅ Done |
-| Merge tunaOS boot-gate adoption | ci-maintainer | tunaos#1273 | 🔴 Conflicting — rebase needed |
+| One visible product release channel, separate from plugin artifacts | — | #210, #316 | 🟡 v0.7.0 notes merged; tag and GitHub Release not published |
+| Merge tunaOS boot-gate adoption | ci-maintainer | tunaos#1273 | 🔴 Closed without a merge; CI gate still uses `iso-e2e.sh` |
 | Document stable plugin API + marketplace schema v2 | guide | docs/plugin-marketplace.md | 🟡 In progress |
 
 ### Next Quarter (2026 Q4 — October–December)
@@ -84,8 +89,8 @@ to gate ISO builds on boot evidence.
 ## How to Contribute
 
 Issues are triaged with `needs-triage` / `ready-for-agent` / `ready-for-human`
-labels (see `docs/agents/issue-tracker.md`). The open surface is small right
-now — #205 (`--json` output) is the most self-contained pick, and #69 is the large VDI epic.
+labels (see `docs/agents/issue-tracker.md`). #69 is the large VDI epic; #97
+(dependency dashboard hygiene) is a smaller, self-contained pick.
 
 ## Roadmap Governance
 

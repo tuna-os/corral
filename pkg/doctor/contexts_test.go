@@ -15,10 +15,12 @@ func TestRunContexts_BackendSpecificProbes(t *testing.T) {
 	fake.AddResponse("virsh -c qemu+ssh://hv/system nodeinfo", "CPU model: x86_64", nil)
 	fake.AddResponse("virsh -c qemu+ssh://hv/system pool-list --all", "default active", nil)
 	fake.AddResponse("virsh -c qemu+ssh://hv/system net-list --all", "default active", nil)
+	fake.AddResponse("VBoxManage list vms", "\"web\" {11111111-2222-3333-4444-555555555555}\n", nil)
 
 	checks := RunContexts([]config.ContextConfig{
 		{Name: "containers", Backend: "incus", Context: "lab"},
 		{Name: "hypervisor", Backend: "libvirt", Context: "qemu+ssh://hv/system"},
+		{Name: "vbox", Backend: "virtualbox"},
 	})
 	for _, c := range checks {
 		if !c.OK {
