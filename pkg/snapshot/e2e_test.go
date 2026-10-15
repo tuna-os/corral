@@ -13,6 +13,7 @@
 package snapshot
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -58,7 +59,7 @@ func TestE2E_QEMU(t *testing.T) {
 	stoppedVM(t)
 
 	ref := types.InstanceRef{Backend: "qemu", Name: "snape2e"}
-	assertSnapshotLifecycle(t, QEMU{}, ref, Offline)
+	assertSnapshotLifecycle(t, QEMU{}, ref, Offline, nil)
 
 	// The safety refusal, against the same real image: qemu-img writing into a
 	// disk a live guest has open corrupts it, so a running VM is refused.
@@ -151,7 +152,7 @@ func TestE2E_Libvirt(t *testing.T) {
 
 	ref := types.InstanceRef{Backend: "libvirt", Context: uri, Name: domain}
 	// The domain is defined but never started, so libvirt captures it offline.
-	assertSnapshotLifecycle(t, Libvirt{}, ref, Offline)
+	assertSnapshotLifecycle(t, Libvirt{}, ref, Offline, nil)
 }
 
 // ── Incus ─────────────────────────────────────────────────────────
@@ -175,7 +176,14 @@ func TestE2E_Incus(t *testing.T) {
 	ref := types.InstanceRef{Backend: "incus", Context: "local", Name: instance}
 	// Launched, so running: Incus snapshots are stateless by default, which is
 	// crash consistency and must be reported as such rather than overclaimed.
-	assertSnapshotLifecycle(t, Incus{}, ref, Crash)
+	// Restore refuses a running instance, so the lifecycle stops it first.
+	assertSnapshotLifecycle(t, Incus{}, ref, Crash, func() {
+		var unsupported *Unsupported
+		if err := (Incus{}).Restore(ref, AutoName(ref.Name, 100)); !errors.As(err, &unsupported) {
+			t.Errorf("Restore of a running instance = %v, want *Unsupported", err)
+		}
+		mustRun(t, "incus", "stop", "--force", instance)
+	})
 }
 
 // ── shared lifecycle assertion ────────────────────────────────────
@@ -184,7 +192,9 @@ func TestE2E_Incus(t *testing.T) {
 // against a real backend: create (twice scheduled, once manual), list, restore,
 // retention, and an idempotent delete. Every backend has to behave the same
 // way here — that identical behaviour is what the abstraction is claiming.
-func assertSnapshotLifecycle(t *testing.T, adapter Adapter, ref types.InstanceRef, want Consistency) {
+// beforeRestore, when set, runs between list and restore: a backend whose
+// instance is running uses it to check the refusal and then stop it.
+func assertSnapshotLifecycle(t *testing.T, adapter Adapter, ref types.InstanceRef, want Consistency, beforeRestore func()) {
 	t.Helper()
 
 	first, err := adapter.Create(ref, AutoName(ref.Name, 100))
@@ -212,6 +222,9 @@ func assertSnapshotLifecycle(t *testing.T, adapter Adapter, ref types.InstanceRe
 		t.Fatalf("want 3 snapshots, got %d", len(snaps))
 	}
 
+	if beforeRestore != nil {
+		beforeRestore()
+	}
 	if err := adapter.Restore(ref, AutoName(ref.Name, 100)); err != nil {
 		t.Fatalf("Restore: %v", err)
 	}

@@ -7,6 +7,8 @@ import (
 	"github.com/tuna-os/corral/pkg/backend"
 	"github.com/tuna-os/corral/pkg/kubevirt"
 	"github.com/tuna-os/corral/pkg/qemu"
+	"github.com/tuna-os/corral/pkg/snapshot"
+	"github.com/tuna-os/corral/pkg/types"
 )
 
 // Advanced KubeVirt operations mirrored from the web UI: restart, pause,
@@ -467,14 +469,42 @@ var templateNewCmd = &cobra.Command{
 
 // ── snapshot subcommands ──────────────────────────────────────────
 
+// snapshotTarget resolves the VM a snapshot command names to its pkg/snapshot
+// adapter, the same contract the TUI and the web API use. A backend that
+// cannot snapshot answers with *snapshot.Unsupported and its reason, rather
+// than every non-KubeVirt VM being refused by name (#491).
+func snapshotTarget(args []string) (snapshot.Adapter, types.InstanceRef, error) {
+	name, err := requireOrPrompt(args, "snapshot")
+	if err != nil {
+		return nil, types.InstanceRef{}, err
+	}
+	ref, err := instanceRef(name)
+	if err != nil {
+		return nil, types.InstanceRef{}, err
+	}
+	adapter, err := snapshot.For(ref)
+	if err != nil {
+		return nil, types.InstanceRef{}, err
+	}
+	return adapter, ref, nil
+}
+
 var snapshotCmd = &cobra.Command{
 	Use:   "snapshot",
-	Short: "Manage VM snapshots (KubeVirt)",
+	Short: "Manage VM snapshots",
+	Long: `Take, list, restore and delete snapshots through each backend's own
+mechanism: KubeVirt VirtualMachineSnapshots, incus snapshot, virsh
+snapshot-*, qcow2 internal snapshots for local QEMU, and the remote APIs.
+Each snapshot reports its consistency: offline (taken stopped), filesystem
+(guest frozen) or crash (taken live with nothing quiesced).`,
 	Example: `  corral snapshot create myvm
+  corral snapshot create myvm --name before-upgrade
   corral snapshot ls myvm
-  corral snapshot restore myvm myvm-20260704-1200
-  corral snapshot rm myvm myvm-20260704-1200`,
+  corral snapshot restore myvm before-upgrade
+  corral snapshot rm myvm before-upgrade`,
 }
+
+var snapshotName string
 
 var snapshotCreateCmd = &cobra.Command{
 	Use:     "create [name]",
@@ -482,15 +512,15 @@ var snapshotCreateCmd = &cobra.Command{
 	Example: `  corral snapshot create myvm`,
 	Args:    cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		c, name, err := kubevirtOnly(args, "snapshot")
+		adapter, ref, err := snapshotTarget(args)
 		if err != nil {
 			return err
 		}
-		snap, err := c.Snapshot(name, "")
+		snap, err := adapter.Create(ref, snapshotName)
 		if err != nil {
 			return err
 		}
-		fmt.Println(snap)
+		fmt.Printf("%s (%s)\n", snap.Name, snap.Consistency)
 		return nil
 	},
 }
@@ -500,11 +530,11 @@ var snapshotListCmd = &cobra.Command{
 	Short: "List snapshots for a VM",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		c, name, err := kubevirtOnly(args, "snapshot")
+		adapter, ref, err := snapshotTarget(args)
 		if err != nil {
 			return err
 		}
-		snaps, err := c.ListSnapshots(name)
+		snaps, err := adapter.List(ref)
 		if err != nil {
 			return err
 		}
@@ -517,7 +547,7 @@ var snapshotListCmd = &cobra.Command{
 			if s.Ready {
 				ready = "ready"
 			}
-			fmt.Printf("%-40s  %-6s  %s\n", s.Name, ready, s.Created)
+			fmt.Printf("%-40s  %-6s  %-10s  %s\n", s.Name, ready, s.Consistency, s.Created)
 		}
 		return nil
 	},
@@ -528,14 +558,14 @@ var snapshotRestoreCmd = &cobra.Command{
 	Short: "Restore a VM from a snapshot (VM must be stopped)",
 	Args:  cobra.RangeArgs(1, 2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		c, name, err := kubevirtOnly(args[:1], "snapshot")
+		adapter, ref, err := snapshotTarget(args[:1])
 		if err != nil {
 			return err
 		}
 		if len(args) < 2 {
-			return fmt.Errorf("specify the snapshot name (corral snapshot ls %s)", name)
+			return fmt.Errorf("specify the snapshot name (corral snapshot ls %s)", ref.Name)
 		}
-		return c.RestoreSnapshot(name, args[1])
+		return adapter.Restore(ref, args[1])
 	},
 }
 
@@ -544,14 +574,14 @@ var snapshotDeleteCmd = &cobra.Command{
 	Short: "Delete a snapshot",
 	Args:  cobra.RangeArgs(1, 2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		c, _, err := kubevirtOnly(args[:1], "snapshot")
+		adapter, ref, err := snapshotTarget(args[:1])
 		if err != nil {
 			return err
 		}
 		if len(args) < 2 {
 			return fmt.Errorf("specify the snapshot name")
 		}
-		return c.DeleteSnapshot(args[1])
+		return adapter.Delete(ref, args[1])
 	},
 }
 
@@ -573,4 +603,5 @@ func init() {
 	addNicCmd.Flags().StringVar(&addNicIface, "iface", "", "Guest interface name for the new NIC (default: net1)")
 
 	snapshotCmd.AddCommand(snapshotCreateCmd, snapshotListCmd, snapshotRestoreCmd, snapshotDeleteCmd)
+	snapshotCreateCmd.Flags().StringVar(&snapshotName, "name", "", "Snapshot name (default: generated)")
 }

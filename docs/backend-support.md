@@ -63,21 +63,18 @@ libvirt ([#134](https://github.com/tuna-os/corral/issues/134)):
 - **libvirt** runs `virsh snapshot-create-as --atomic`,
   `virsh snapshot-revert` and `virsh snapshot-delete`.
 
-Each new snapshot records its consistency. A snapshot of a stopped instance
-is `offline`. A snapshot of an instance that runs is `crash`, because nothing in
-the guest stops writes. The list view shows `crash` for every Incus and
-libvirt snapshot, also for an offline snapshot.
+Each snapshot records its consistency. A snapshot of a stopped instance is
+`offline`. A snapshot of an instance that runs is `crash`, because nothing in
+the guest stops writes. The list reads this back from the backend: libvirt
+records the domain state in `virsh snapshot-info`, and Incus keeps
+`volatile.last_state.power` in the snapshot config.
 
-Today the TUI is the full path. Open the action menu of an instance, then
-select **Snapshots**. The CLI and the web tab have gaps
-([#491](https://github.com/tuna-os/corral/issues/491)):
+The CLI (`corral snapshot create|ls|restore|rm`), the TUI Snapshots view and
+the web Snapshots tab all use the same adapters. The web tab needs no
+Kubernetes cluster for Incus and libvirt; only KubeVirt snapshots need a
+VolumeSnapshotClass, and only KubeVirt VMs get a snapshot schedule.
 
-- `corral snapshot` stops with `snapshot is only supported for KubeVirt VMs`.
-- The web Snapshots tab shows `Snapshots need a snapshot-capable StorageClass`
-  when there is no Kubernetes cluster with a VolumeSnapshotClass. The REST
-  endpoints under `/api/vms/{ns}/{name}/snapshots` work without one.
-
-Corral does not stop the instance before a restore. Stop it yourself first.
+A restore refuses an instance that runs, with `stop it first: corral stop NAME`.
 
 ### Migration
 
@@ -119,7 +116,5 @@ table from `pkg/backend.Matrix`, and conformance tests keep it correct.
 - [#214](https://github.com/tuna-os/corral/issues/214): CLI and web
   commands that check for `kubevirt` directly instead of the backend
   contract. This is the root cause of the CLI and web gaps above.
-- [#491](https://github.com/tuna-os/corral/issues/491): Incus and libvirt
-  snapshots in the CLI and the web tab.
 - [#492](https://github.com/tuna-os/corral/issues/492): `corral move --to`
   help text does not list `incus`.

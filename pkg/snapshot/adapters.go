@@ -139,33 +139,53 @@ func (l Libvirt) List(ref types.InstanceRef) ([]Snapshot, error) {
 		if name == "" {
 			continue
 		}
+		created, consistency := l.info(ref, name)
 		snaps = append(snaps, Snapshot{
 			Name: name, Source: ref.Name, Ready: true,
-			Created:     l.creationTime(ref, name),
-			Consistency: Crash,
+			Created: created, Consistency: consistency,
 		})
 	}
 	sortNewestFirst(snaps)
 	return snaps, nil
 }
 
-// creationTime reads one snapshot's timestamp. Empty when virsh won't say —
-// Prune falls back to name ordering, and auto names carry their own timestamp.
-func (l Libvirt) creationTime(ref types.InstanceRef, name string) string {
+// info reads one snapshot's timestamp and the domain state libvirt recorded
+// when it was taken. A snapshot of a shut-off domain is offline; any other
+// state, or a virsh that won't say, is reported crash-consistent — the weaker
+// claim. An empty time means virsh won't say: Prune falls back to name
+// ordering, and auto names carry their own timestamp.
+func (l Libvirt) info(ref types.InstanceRef, name string) (string, Consistency) {
 	out, err := l.virsh(ref, "snapshot-info", "--domain", ref.Name, "--snapshotname", name)
 	if err != nil {
-		return ""
+		return "", Crash
 	}
+	created, consistency := "", Crash
 	for _, line := range strings.Split(string(out), "\n") {
 		key, value, found := strings.Cut(line, ":")
-		if found && strings.EqualFold(strings.TrimSpace(key), "Creation time") {
-			return strings.TrimSpace(value)
+		if !found {
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(key)) {
+		case "creation time":
+			created = strings.TrimSpace(value)
+		case "state":
+			if strings.EqualFold(strings.TrimSpace(value), "shutoff") {
+				consistency = Offline
+			}
 		}
 	}
-	return ""
+	return created, consistency
 }
 
+// Restore refuses a running domain. snapshot-revert would discard the guest's
+// live state without asking, and every surface promises the VM is stopped
+// first rather than silently rolling back a running guest.
 func (l Libvirt) Restore(ref types.InstanceRef, name string) error {
+	if l.running(ref) {
+		return unsupported("libvirt",
+			fmt.Sprintf("%s is running, and reverting it would discard its live state", ref.Name),
+			fmt.Sprintf("stop it first: corral stop %s", ref.Name))
+	}
 	out, err := l.virsh(ref, "snapshot-revert", "--domain", ref.Name, "--snapshotname", name)
 	if err != nil {
 		return fmt.Errorf("virsh snapshot-revert: %s", commandError(out, err))
@@ -241,9 +261,13 @@ func (i Incus) List(ref types.InstanceRef) ([]Snapshot, error) {
 	if err != nil {
 		return nil, fmt.Errorf("incus query snapshots: %s", commandError(out, err))
 	}
+	// Incus copies the instance's config into the snapshot, volatile keys
+	// included, so volatile.last_state.power says whether the instance was
+	// running when the snapshot was taken. Absent, the weaker claim stands.
 	var raw []struct {
-		Name      string `json:"name"`
-		CreatedAt string `json:"created_at"`
+		Name      string            `json:"name"`
+		CreatedAt string            `json:"created_at"`
+		Config    map[string]string `json:"config"`
 	}
 	if err := json.Unmarshal(out, &raw); err != nil {
 		return nil, fmt.Errorf("unreadable snapshot listing: %w", err)
@@ -255,9 +279,13 @@ func (i Incus) List(ref types.InstanceRef) ([]Snapshot, error) {
 		if _, short, found := strings.Cut(name, "/"); found {
 			name = short
 		}
+		consistency := Crash
+		if strings.EqualFold(s.Config["volatile.last_state.power"], "STOPPED") {
+			consistency = Offline
+		}
 		snaps = append(snaps, Snapshot{
 			Name: name, Source: ref.Name, Ready: true,
-			Created: s.CreatedAt, Consistency: Crash,
+			Created: s.CreatedAt, Consistency: consistency,
 		})
 	}
 	sortNewestFirst(snaps)
@@ -272,7 +300,15 @@ func (i Incus) queryPath(ref types.InstanceRef) string {
 	return fmt.Sprintf("%s:/1.0/instances/%s/snapshots?recursion=1", remote, ref.Name)
 }
 
+// Restore refuses a running instance, the same promise every surface makes:
+// a restore replaces the guest's disk, and doing that under a running guest
+// is not something to do without the operator stopping it first.
 func (i Incus) Restore(ref types.InstanceRef, name string) error {
+	if i.running(ref) {
+		return unsupported("incus",
+			fmt.Sprintf("%s is running, and restoring would replace its disk under it", ref.Name),
+			fmt.Sprintf("stop it first: corral stop %s", ref.Name))
+	}
 	out, err := runner.Run("incus", "snapshot", "restore", i.target(ref), name)
 	if err != nil {
 		return fmt.Errorf("incus snapshot restore: %s", commandError(out, err))
