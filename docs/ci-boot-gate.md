@@ -143,7 +143,7 @@ corral vmtest desk --bootc "$IMAGE" --rm \
 ```
 
 corral matches the markers against the whole console, not one line at a
-time. Thus one `(?s)` pattern can require two lines in either order.
+time. Thus one `(?s)` pattern can need two lines in either order.
 
 You can also drive the console keyboard directly, which is the only way into a
 LUKS passphrase prompt or a greeter:
