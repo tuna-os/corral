@@ -189,10 +189,14 @@ Optional: `corral completion fish | source` (bash/zsh/fish, via Cobra).
 `corral web` starts at boot and restarts on failure:
 
 ```bash
-corral web service install                  # per-user unit (no root)
-corral web service install --system \        # or machine-wide (run under sudo)
-  --addr "$(tailscale ip -4):8006"
-corral web service status                    # / uninstall / print
+# Per-user unit (no root).
+corral web service install
+
+# Machine-wide unit; run under sudo.
+corral web service install --system --addr "$(tailscale ip -4):8006"
+
+# Show the unit status. The other subcommands are uninstall and print.
+corral web service status
 ```
 
 For a per-user unit to run after you log out, enable linger:
@@ -585,12 +589,16 @@ Full design document: [SPEC.md](SPEC.md).
 
 - **[`CONTRIBUTING.md`](CONTRIBUTING.md)** — how to build and test (`just ci`, the `-tags bootc` set), code style, and how to submit a change
 - **[`SPEC.md`](SPEC.md)** — full specification (commands, flags, types, backends, registry)
+- **[`docs/user-guide.md`](docs/user-guide.md)** — first commands for each backend, and common workflows: create, connect, clone, move, snapshots, plugins
+- **[`docs/troubleshooting.md`](docs/troubleshooting.md)** — what each `corral doctor` check means, error messages with their fixes, and how to collect evidence
 - **[`docs/api.md`](docs/api.md)** — the complete reference for the REST API
 - **[`docs/architecture.md`](docs/architecture.md)** — package map, design decisions, data flow, build system
 - **[`docs/backend-support.md`](docs/backend-support.md)** — what each backend context can do (local QEMU, KubeVirt, Incus, libvirt, Proxmox VE, Corral peer)
 - **[`docs/backend-parity.md`](docs/backend-parity.md)** — per-operation parity matrix, generated from `pkg/backend.Matrix` and enforced by conformance tests
 - **[`docs/ci-boot-gate.md`](docs/ci-boot-gate.md)** — how to gate CI publishes on bootc images that boot (QEMU + KubeVirt), with field-tested fixes for failures
 - **[`docs/kubevirt-proxmox-setup.md`](docs/kubevirt-proxmox-setup.md)** — from-scratch KubeVirt + Longhorn + Corral setup guide
+- **[`docs/incus-backend-setup.md`](docs/incus-backend-setup.md)** — Incus remotes, trust, contexts, and checks
+- **[`docs/libvirt-backend-setup.md`](docs/libvirt-backend-setup.md)** — libvirt URIs (local and `qemu+ssh://`), permissions, contexts, and checks
 - **[`docs/testing.md`](docs/testing.md)** — test strategy & plan (unit, integration, E2E)
 - **[`docs/vdi.md`](docs/vdi.md)** — setup guide for the VDI plugin (desktop pools)
 - **[`docs/vdi-epic-status.md`](docs/vdi-epic-status.md)** — status of the VDI epic: dependency chain & hardware gates (#69)
