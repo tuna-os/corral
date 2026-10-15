@@ -14,6 +14,7 @@ package backend
 // in a constructor may dial anything.
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -21,9 +22,13 @@ import (
 	"github.com/tuna-os/corral/pkg/incus"
 	"github.com/tuna-os/corral/pkg/kubevirt"
 	"github.com/tuna-os/corral/pkg/libvirt"
+	"github.com/tuna-os/corral/pkg/nutanix"
 	"github.com/tuna-os/corral/pkg/proxmoxbe"
 	"github.com/tuna-os/corral/pkg/qemu"
 	"github.com/tuna-os/corral/pkg/types"
+	"github.com/tuna-os/corral/pkg/virtualbox"
+	"github.com/tuna-os/corral/pkg/vsphere"
+	"github.com/tuna-os/corral/pkg/xen"
 )
 
 func init() {
@@ -46,6 +51,30 @@ func init() {
 		// for a backend that is merely unconfigured — the families a backend
 		// implements are a property of its type.
 		return proxmoxAdapter{context: ref.Context}, nil
+	})
+	Register("virtualbox", func(ref types.InstanceRef) (Adapter, error) {
+		// No dial: NewClient only records the local context label, so
+		// probe() stays offline like every other factory here.
+		return virtualboxAdapter{client: virtualbox.NewClient(ref.Context)}, nil
+	})
+	Register("vsphere", func(ref types.InstanceRef) (Adapter, error) {
+		// Deferred: the client needs configuration and a session, and
+		// probe() must not fail for an estate that is merely unconfigured —
+		// the families a backend implements are a property of its type.
+		return vsphereAdapter{context: ref.Context}, nil
+	})
+	Register("xen", func(ref types.InstanceRef) (Adapter, error) {
+		// Deferred: the client needs configuration and a session, and
+		// probe() must not fail for a pool that is merely unconfigured —
+		// the families a backend implements are a property of its type.
+		return xenAdapter{context: ref.Context}, nil
+	})
+	Register("nutanix", func(ref types.InstanceRef) (Adapter, error) {
+		// Deferred: the client needs configuration, and probe() must not
+		// fail for a Prism Central that is merely unconfigured — v4
+		// authenticates per request, so resolving alone never dials, and
+		// the families a backend implements are a property of its type.
+		return nutanixAdapter{context: ref.Context}, nil
 	})
 }
 
@@ -232,6 +261,25 @@ func (a libvirtAdapter) Metrics(name string) (map[string]string, error) {
 	return a.client.Metrics(name)
 }
 func (a libvirtAdapter) Resume(name string) error { return a.client.Resume(name) }
+
+// ── VirtualBox ────────────────────────────────────────────────────
+//
+// Local VBoxManage only: Power plus the backend's own reset and pause. No
+// Addresser — a NAT guest has no stable address of its own, and a bridged
+// one's would need Guest Additions guestproperty reads nothing else uses yet.
+
+type virtualboxAdapter struct{ client virtualbox.Client }
+
+func (virtualboxAdapter) Backend() string { return "virtualbox" }
+
+func (a virtualboxAdapter) Start(name string) error  { return a.client.Start(name) }
+func (a virtualboxAdapter) Stop(name string) error   { return a.client.Stop(name) }
+func (a virtualboxAdapter) Delete(name string) error { return a.client.Delete(name) }
+
+func (a virtualboxAdapter) Restart(name string) error { return a.client.Reset(name) }
+
+func (a virtualboxAdapter) Pause(name string) error  { return a.client.Pause(name) }
+func (a virtualboxAdapter) Resume(name string) error { return a.client.Resume(name) }
 
 // ── Proxmox ───────────────────────────────────────────────────────
 //
@@ -425,6 +473,313 @@ func (a proxmoxAdapter) Address(name string) (string, error) {
 		return "", err
 	}
 	return client.Address(name)
+}
+
+// ── vSphere ─────────────────────────────────────────────────────────
+//
+// Power, the backend's own reset and suspend, live-or-offline scale,
+// vMotion, full clones, and one-way template marks. The govmomi tasks wait
+// inside the client methods, so — like the Proxmox adapter — every call here
+// means completion, not acceptance. No Addresser: a guest address needs
+// VMware Tools reads nothing else uses yet. No consoles: MKS/webmks tickets
+// exist, but Corral wires no viewer or bridge to them.
+
+type vsphereAdapter struct{ context string }
+
+func (vsphereAdapter) Backend() string { return "vsphere" }
+
+func (a vsphereAdapter) client() (*vsphere.Client, error) {
+	return vsphere.ClientForContext(a.context)
+}
+
+// ctx bounds one operation. The client waits its govmomi tasks against this
+// deadline the way the Proxmox adapter waits UPIDs against DefaultTimeout.
+func (a vsphereAdapter) ctx() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), vsphere.DefaultTimeout)
+}
+
+func (a vsphereAdapter) Start(name string) error {
+	client, err := a.client()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := a.ctx()
+	defer cancel()
+	return client.Start(ctx, name)
+}
+
+func (a vsphereAdapter) Stop(name string) error {
+	client, err := a.client()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := a.ctx()
+	defer cancel()
+	return client.Stop(ctx, name)
+}
+
+func (a vsphereAdapter) Delete(name string) error {
+	client, err := a.client()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := a.ctx()
+	defer cancel()
+	return client.Delete(ctx, name)
+}
+
+func (a vsphereAdapter) Restart(name string) error {
+	client, err := a.client()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := a.ctx()
+	defer cancel()
+	return client.Restart(ctx, name)
+}
+
+func (a vsphereAdapter) Pause(name string) error {
+	client, err := a.client()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := a.ctx()
+	defer cancel()
+	return client.Suspend(ctx, name)
+}
+
+func (a vsphereAdapter) Resume(name string) error {
+	client, err := a.client()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := a.ctx()
+	defer cancel()
+	return client.Resume(ctx, name)
+}
+
+func (a vsphereAdapter) Scale(name string, cores int, mem string) error {
+	client, err := a.client()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := a.ctx()
+	defer cancel()
+	return client.Scale(ctx, name, cores, mem)
+}
+
+// HotplugsLive asks vCenter rather than guessing: the guest's own config
+// says whether CPU and memory apply live.
+func (a vsphereAdapter) HotplugsLive(name string) bool {
+	client, err := a.client()
+	if err != nil {
+		return false
+	}
+	ctx, cancel := a.ctx()
+	defer cancel()
+	live, err := client.HotplugsLive(ctx, name)
+	if err != nil {
+		return false
+	}
+	return live
+}
+
+func (a vsphereAdapter) Migrate(name, target string) error {
+	client, err := a.client()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := a.ctx()
+	defer cancel()
+	return client.Migrate(ctx, name, target)
+}
+
+func (a vsphereAdapter) CanMigrate(name string) (bool, string) {
+	client, err := a.client()
+	if err != nil {
+		return false, err.Error()
+	}
+	ctx, cancel := a.ctx()
+	defer cancel()
+	return client.CanMigrate(ctx, name)
+}
+
+func (a vsphereAdapter) Clone(source, target string) error {
+	client, err := a.client()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := a.ctx()
+	defer cancel()
+	return client.Clone(ctx, source, target)
+}
+
+func (a vsphereAdapter) MarkTemplate(name string, on bool) error {
+	client, err := a.client()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := a.ctx()
+	defer cancel()
+	return client.MarkTemplate(ctx, name, on)
+}
+
+// ── XenServer / XCP-ng ──────────────────────────────────────────────
+//
+// Power, the backend's own reboot and suspend, pool migration, and clones.
+// XenAPI calls are synchronous, so — like the Proxmox adapter — every call
+// here means completion, not acceptance. No Addresser: a guest address needs
+// guest-metrics reads nothing else uses yet. No consoles: console objects
+// hand out VNC locations, but Corral wires no viewer or bridge to them.
+
+type xenAdapter struct{ context string }
+
+func (xenAdapter) Backend() string { return "xen" }
+
+func (a xenAdapter) client() (*xen.Client, error) {
+	return xen.ClientForContext(a.context)
+}
+
+func (a xenAdapter) Start(name string) error {
+	client, err := a.client()
+	if err != nil {
+		return err
+	}
+	return client.Start(name)
+}
+
+func (a xenAdapter) Stop(name string) error {
+	client, err := a.client()
+	if err != nil {
+		return err
+	}
+	return client.Stop(name)
+}
+
+func (a xenAdapter) Delete(name string) error {
+	client, err := a.client()
+	if err != nil {
+		return err
+	}
+	return client.Destroy(name)
+}
+
+func (a xenAdapter) Restart(name string) error {
+	client, err := a.client()
+	if err != nil {
+		return err
+	}
+	return client.Reboot(name)
+}
+
+func (a xenAdapter) Pause(name string) error {
+	client, err := a.client()
+	if err != nil {
+		return err
+	}
+	return client.Suspend(name)
+}
+
+func (a xenAdapter) Resume(name string) error {
+	client, err := a.client()
+	if err != nil {
+		return err
+	}
+	return client.Resume(name)
+}
+
+func (a xenAdapter) Migrate(name, target string) error {
+	client, err := a.client()
+	if err != nil {
+		return err
+	}
+	return client.Migrate(name, target)
+}
+
+// CanMigrate asks the pool rather than guessing: the guest's own record says
+// whether it is running, and the host list says whether a second host exists.
+func (a xenAdapter) CanMigrate(name string) (bool, string) {
+	client, err := a.client()
+	if err != nil {
+		return false, err.Error()
+	}
+	return client.CanMigrate(name)
+}
+
+func (a xenAdapter) Clone(source, target string) error {
+	client, err := a.client()
+	if err != nil {
+		return err
+	}
+	_, err = client.Clone(source, target)
+	return err
+}
+
+// ── Nutanix Prism Central (AHV) ─────────────────────────────────────
+//
+// Power, the backend's own reboot, same-cluster migration, and clones. v4
+// mutations are async tasks, so — unlike the XenAPI adapter — every call
+// here waits its task to completion: a surface that fired and forgot would
+// report success for a migration that failed thirty seconds later. No
+// Suspender: vmm has no suspend action, so pause stays Unsupported. No
+// Tagger: category values need an extId resolution no reference proves. No
+// Addresser: the NIC address sits in inventory but no address discovery is
+// wired. No consoles: a token endpoint exists but Corral wires no viewer.
+
+type nutanixAdapter struct{ context string }
+
+func (nutanixAdapter) Backend() string { return "nutanix" }
+
+func (a nutanixAdapter) client() (*nutanix.Client, error) {
+	return nutanix.ClientForContext(a.context)
+}
+
+// complete waits a task-returning client op to completion.
+func (a nutanixAdapter) complete(op func(*nutanix.Client) (nutanix.Task, error)) error {
+	client, err := a.client()
+	if err != nil {
+		return err
+	}
+	task, err := op(client)
+	if err != nil {
+		return err
+	}
+	return client.WaitTask(task, nutanix.DefaultTimeout)
+}
+
+func (a nutanixAdapter) Start(name string) error {
+	return a.complete(func(c *nutanix.Client) (nutanix.Task, error) { return c.Start(name) })
+}
+
+func (a nutanixAdapter) Stop(name string) error {
+	return a.complete(func(c *nutanix.Client) (nutanix.Task, error) { return c.Stop(name) })
+}
+
+func (a nutanixAdapter) Delete(name string) error {
+	return a.complete(func(c *nutanix.Client) (nutanix.Task, error) { return c.Destroy(name) })
+}
+
+func (a nutanixAdapter) Restart(name string) error {
+	return a.complete(func(c *nutanix.Client) (nutanix.Task, error) { return c.Restart(name) })
+}
+
+func (a nutanixAdapter) Migrate(name, target string) error {
+	return a.complete(func(c *nutanix.Client) (nutanix.Task, error) { return c.Migrate(name, target) })
+}
+
+// CanMigrate asks the guest record rather than guessing: the power-state
+// approximation lives in the client, and an unconfigured context refuses
+// with its reason instead of failing open.
+func (a nutanixAdapter) CanMigrate(name string) (bool, string) {
+	client, err := a.client()
+	if err != nil {
+		return false, err.Error()
+	}
+	return client.CanMigrate(name)
+}
+
+func (a nutanixAdapter) Clone(source, target string) error {
+	return a.complete(func(c *nutanix.Client) (nutanix.Task, error) { return c.Clone(source, target) })
 }
 
 // firstImageStorage picks a storage that accepts disk images, so AddDisk works

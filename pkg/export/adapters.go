@@ -523,7 +523,7 @@ func (p PVE) Export(ctx context.Context, req Request, progress ProgressFunc) (Re
 func extractVMADisk(archive, dest string) error {
 	// Check for the vma tool first, so a user on a non-PVE host gets a clear
 	// message rather than a generic "not found".
-	vmaBin := vmaBinary()
+	vmaBin := vmaBinaryFn()
 	if vmaBin == "" {
 		return unsupported("proxmox",
 			"the vma tool is not installed (pve-qemu-kvm package)",
@@ -575,6 +575,10 @@ func extractVMADisk(archive, dest string) error {
 	}
 	return fmt.Errorf("no disk image found in the backup archive (expected drive-*.img)")
 }
+
+// TEST SEAM (no behavior change): lets tests simulate a host without the vma
+// tool; production keeps the default lookup.
+var vmaBinaryFn = vmaBinary
 
 // vmaBinary looks for the vma tool the same way qemuImg looks for qemu-img.
 func vmaBinary() string {
