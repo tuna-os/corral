@@ -16,6 +16,18 @@ Every error response has shape `{"error": "<message>"}` with a 4xx or 5xx
 status code. `5xx` means the server couldn't reach the cluster (kubectl failed);
 `4xx` means invalid input.
 
+## Request IDs
+
+Each response has an `X-Request-ID` header. When the request has an
+`X-Request-ID` header of 1 to 64 characters from `A-Z`, `a-z`, `0-9`, `.`,
+`_` and `-`, Corral uses that value. If not, Corral makes a new ID.
+
+Corral writes the ID in each log record of the request. These records
+include the backend commands, the Proxmox API calls, the requests to peers,
+and the tasks that the request starts. Corral also sends the ID to its
+peers. Give the ID in a bug report. See
+[Collect evidence](troubleshooting.md#collect-evidence).
+
 ---
 
 ## VM lifecycle

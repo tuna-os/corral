@@ -2,6 +2,7 @@
 package libvirt
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net"
@@ -21,7 +22,10 @@ var runner shell.Runner = shell.Real{}
 
 func SetRunner(r shell.Runner) { runner = r }
 
-type Client struct{ URI string }
+type Client struct {
+	URI string
+	ctx context.Context // request context for command logs; nil outside a request
+}
 
 func NewClient(uri string) Client {
 	if uri == "" {
@@ -29,8 +33,23 @@ func NewClient(uri string) Client {
 	}
 	return Client{URI: uri}
 }
+
+// WithContext returns c with its commands bound to ctx, so their log records
+// carry the request ID that ctx carries.
+func (c Client) WithContext(ctx context.Context) Client {
+	c.ctx = ctx
+	return c
+}
+
+func (c Client) runner() shell.Runner {
+	if c.ctx == nil {
+		return runner
+	}
+	return shell.Bind(c.ctx, runner)
+}
+
 func (c Client) run(args ...string) ([]byte, error) {
-	return runner.Run("virsh", append([]string{"-c", c.URI}, args...)...)
+	return c.runner().Run("virsh", append([]string{"-c", c.URI}, args...)...)
 }
 
 // DumpXML returns a domain's definition, which is where libvirt records the
@@ -192,7 +211,7 @@ func (c Client) Create(opts types.CreateOpts) error {
 	// Routed through the package runner (not os/exec directly) so tests can
 	// assert the virt-install argv with shell.Fake; Real.Run is
 	// exec.Command(...).CombinedOutput(), so production behavior is unchanged.
-	out, err := runner.Run("virt-install", args...)
+	out, err := c.runner().Run("virt-install", args...)
 	if err != nil {
 		return fmt.Errorf("virt-install: %s: %w", strings.TrimSpace(string(out)), err)
 	}

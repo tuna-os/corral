@@ -39,7 +39,7 @@ func createBootcInContext(req createRequest, ns, context string) (id string, tas
 	}
 
 	id = fmt.Sprintf("bootc-%s-%d", req.Name, time.Now().UnixNano())
-	task = tasks.start(id)
+	task = tasks.start(req.ctx, id)
 	done := taskBegin(req.user, "bootc build", ns+"/"+req.Name)
 
 	go func() {

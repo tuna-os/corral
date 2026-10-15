@@ -2,6 +2,7 @@
 package incus
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -75,13 +76,30 @@ var defaultRunner shell.Runner = shell.Real{}
 
 // Client operates on one Incus remote without changing the Incus CLI's
 // global active remote.
-type Client struct{ Remote string }
+type Client struct {
+	Remote string
+	ctx    context.Context // request context for command logs; nil outside a request
+}
 
 func NewClient(remote string) Client {
 	if remote == "" {
 		remote = config.IncusRemote()
 	}
 	return Client{Remote: remote}
+}
+
+// WithContext returns c with its commands bound to ctx, so their log records
+// carry the request ID that ctx carries.
+func (c Client) WithContext(ctx context.Context) Client {
+	c.ctx = ctx
+	return c
+}
+
+func (c Client) runner() shell.Runner {
+	if c.ctx == nil {
+		return defaultRunner
+	}
+	return shell.Bind(c.ctx, defaultRunner)
 }
 
 func (c Client) target(name string) string { return c.Remote + ":" + name }
@@ -97,7 +115,7 @@ func ListInstances() ([]Instance, error) {
 }
 
 func (c Client) ListInstances() ([]Instance, error) {
-	out, err := defaultRunner.Run("incus", "list", c.Remote+":", "--format=json")
+	out, err := c.runner().Run("incus", "list", c.Remote+":", "--format=json")
 	if err != nil {
 		return nil, fmt.Errorf("incus list failed: %w", err)
 	}
@@ -175,7 +193,7 @@ func Exists(name string) bool {
 	return NewClient("").Exists(name)
 }
 func (c Client) Exists(name string) bool {
-	_, err := defaultRunner.Run("incus", "info", c.target(name))
+	_, err := c.runner().Run("incus", "info", c.target(name))
 	return err == nil
 }
 
@@ -189,7 +207,7 @@ func Start(name string) error {
 // stop signal and waits, where two separate calls can start the instance again
 // before it has finished going down.
 func (c Client) Restart(name string) error {
-	if out, err := defaultRunner.Run("incus", "restart", c.target(name)); err != nil {
+	if out, err := c.runner().Run("incus", "restart", c.target(name)); err != nil {
 		return fmt.Errorf("incus restart %s: %s (%w)", name, string(out), err)
 	}
 	return nil
@@ -200,7 +218,7 @@ func (c Client) Restart(name string) error {
 // instance it resumes rather than boots, which is why this wraps it under a
 // name that says which of the two is happening.
 func (c Client) Pause(name string) error {
-	if out, err := defaultRunner.Run("incus", "pause", c.target(name)); err != nil {
+	if out, err := c.runner().Run("incus", "pause", c.target(name)); err != nil {
 		return fmt.Errorf("incus pause %s: %s (%w)", name, string(out), err)
 	}
 	return nil
@@ -210,7 +228,7 @@ func (c Client) Pause(name string) error {
 func (c Client) Resume(name string) error { return c.Start(name) }
 
 func (c Client) Start(name string) error {
-	if out, err := defaultRunner.Run("incus", "start", c.target(name)); err != nil {
+	if out, err := c.runner().Run("incus", "start", c.target(name)); err != nil {
 		if strings.Contains(string(out), "already running") {
 			return nil
 		}
@@ -224,12 +242,12 @@ func Stop(name string) error {
 	return NewClient("").Stop(name)
 }
 func (c Client) Stop(name string) error {
-	if out, err := defaultRunner.Run("incus", "stop", c.target(name)); err != nil {
+	if out, err := c.runner().Run("incus", "stop", c.target(name)); err != nil {
 		if strings.Contains(string(out), "already stopped") || strings.Contains(string(out), "not running") {
 			return nil
 		}
 		// ACPI guest agent shutdown might time out on uninitialized OS VMs; fallback to forced stop.
-		if forceOut, forceErr := defaultRunner.Run("incus", "stop", c.target(name), "--force"); forceErr == nil {
+		if forceOut, forceErr := c.runner().Run("incus", "stop", c.target(name), "--force"); forceErr == nil {
 			return nil
 		} else {
 			_ = forceOut
@@ -244,7 +262,7 @@ func Delete(name string) error {
 	return NewClient("").Delete(name)
 }
 func (c Client) Delete(name string) error {
-	if out, err := defaultRunner.Run("incus", "delete", c.target(name), "--force"); err != nil {
+	if out, err := c.runner().Run("incus", "delete", c.target(name), "--force"); err != nil {
 		return fmt.Errorf("incus delete %s: %s (%w)", name, string(out), err)
 	}
 	return nil
@@ -255,7 +273,7 @@ func Info(name string) ([]byte, error) {
 	return NewClient("").Info(name)
 }
 func (c Client) Info(name string) ([]byte, error) {
-	return defaultRunner.Run("incus", "info", c.target(name))
+	return c.runner().Run("incus", "info", c.target(name))
 }
 
 // CreateOpts options for creating an Incus instance.
@@ -293,7 +311,7 @@ func (c Client) Create(opts CreateOpts) error {
 		args = append(args, "-c", fmt.Sprintf("limits.memory=%s", mem))
 	}
 
-	if out, err := defaultRunner.Run("incus", args...); err != nil {
+	if out, err := c.runner().Run("incus", args...); err != nil {
 		return fmt.Errorf("incus launch failed: %s (%w)", string(out), err)
 	}
 	return nil
@@ -372,7 +390,7 @@ func (c Client) Viewer(name string) error {
 // ConsoleLog prints the instance's console log, which Incus keeps for both VMs
 // and containers: what the guest wrote to its console, boot messages included.
 func (c Client) ConsoleLog(name string) error {
-	out, err := defaultRunner.Run("incus", "console", c.target(name), "--show-log")
+	out, err := c.runner().Run("incus", "console", c.target(name), "--show-log")
 	if err != nil {
 		return fmt.Errorf("incus console --show-log %s: %s (%w)", name, strings.TrimSpace(string(out)), err)
 	}
@@ -407,7 +425,7 @@ func (c Client) Metrics(name string) (map[string]string, error) {
 	if c.Remote != "" && c.Remote != "local" {
 		path = fmt.Sprintf("/1.0/instances/%s/state?project=default", name)
 	}
-	out, err := defaultRunner.Run("incus", "query", c.queryTarget(path))
+	out, err := c.runner().Run("incus", "query", c.queryTarget(path))
 	if err != nil {
 		return res, fmt.Errorf("incus query %s: %s (%w)", name, string(out), err)
 	}
@@ -451,7 +469,7 @@ func (c Client) queryTarget(path string) string {
 // The alias is returned so the caller can launch from it and later delete it.
 func (c Client) ImageImport(diskPath, alias string) (string, error) {
 	args := []string{"image", "import", diskPath, "--alias", alias}
-	if out, err := defaultRunner.Run("incus", args...); err != nil {
+	if out, err := c.runner().Run("incus", args...); err != nil {
 		return "", fmt.Errorf("incus image import: %s (%w)", string(out), err)
 	}
 	return alias, nil
@@ -459,7 +477,7 @@ func (c Client) ImageImport(diskPath, alias string) (string, error) {
 
 // DeleteImage removes an image by its fingerprint or alias.
 func (c Client) DeleteImage(alias string) error {
-	if out, err := defaultRunner.Run("incus", "image", "delete", alias); err != nil {
+	if out, err := c.runner().Run("incus", "image", "delete", alias); err != nil {
 		return fmt.Errorf("incus image delete %s: %s (%w)", alias, string(out), err)
 	}
 	return nil

@@ -8,6 +8,7 @@ package web
 // per-member outcomes with skipped distinguished from failed.
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -429,7 +430,7 @@ func TestFolderAction_ReportsAnUnreachableBackend(t *testing.T) {
 		ref.String(): {Name: "legacy", Backend: "vmware", Running: true},
 	}
 
-	outcome := runFolderAction(ref, "pause", live)
+	outcome := runFolderAction(context.Background(), ref, "pause", live)
 	if outcome.OK {
 		t.Fatal("an unregistered backend reported success")
 	}

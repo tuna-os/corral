@@ -12,8 +12,19 @@ import (
 	"github.com/tuna-os/corral/pkg/qemu"
 )
 
+// kubeClient, incusClient, and libvirtClient bind a backend client to the
+// context the request names and to the request itself, so the commands they
+// run log the request ID.
 func kubeClient(r *http.Request, ns string) *kubevirt.Client {
-	return kubevirt.NewClientForContext(ns, r.URL.Query().Get("context"))
+	return kubevirt.NewClientForContext(ns, r.URL.Query().Get("context")).WithContext(r.Context())
+}
+
+func incusClient(r *http.Request) incus.Client {
+	return incus.NewClient(r.URL.Query().Get("context")).WithContext(r.Context())
+}
+
+func libvirtClient(r *http.Request) libvirt.Client {
+	return libvirt.NewClient(r.URL.Query().Get("context")).WithContext(r.Context())
 }
 
 func handleVMInfo(w http.ResponseWriter, r *http.Request) {
@@ -23,7 +34,7 @@ func handleVMInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if ns == "incus" {
-		data, err := incus.NewClient(r.URL.Query().Get("context")).Info(name)
+		data, err := incusClient(r).Info(name)
 		if err != nil {
 			errResp(w, 404, err)
 			return
@@ -33,7 +44,7 @@ func handleVMInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if ns == "libvirt" {
-		data, err := libvirt.NewClient(r.URL.Query().Get("context")).Info(name)
+		data, err := libvirtClient(r).Info(name)
 		if err != nil {
 			errResp(w, 404, err)
 			return
@@ -69,7 +80,7 @@ func handleVMAction(w http.ResponseWriter, r *http.Request) {
 	}
 	action := r.PathValue("action")
 	if ns == "incus" {
-		c := incus.NewClient(r.URL.Query().Get("context"))
+		c := incusClient(r)
 		var err error
 		switch action {
 		case "start":
@@ -92,7 +103,7 @@ func handleVMAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if ns == "libvirt" {
-		c := libvirt.NewClient(r.URL.Query().Get("context"))
+		c := libvirtClient(r)
 		var err error
 		switch action {
 		case "start":
@@ -159,7 +170,7 @@ func handleDeleteVM(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if ns == "incus" {
-		if err := incus.NewClient(r.URL.Query().Get("context")).Delete(name); err != nil {
+		if err := incusClient(r).Delete(name); err != nil {
 			errResp(w, 500, err)
 			return
 		}
@@ -171,7 +182,7 @@ func handleDeleteVM(w http.ResponseWriter, r *http.Request) {
 			errResp(w, http.StatusBadRequest, fmt.Errorf("libvirt deletion requires destroyStorage=true because it permanently removes domain disks"))
 			return
 		}
-		if err := libvirt.NewClient(r.URL.Query().Get("context")).Delete(name); err != nil {
+		if err := libvirtClient(r).Delete(name); err != nil {
 			errResp(w, 500, err)
 			return
 		}

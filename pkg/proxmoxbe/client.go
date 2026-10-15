@@ -15,6 +15,7 @@ package proxmoxbe
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
@@ -22,10 +23,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/tuna-os/corral/pkg/logging"
 )
 
 // Config is one PVE cluster endpoint, as a Corral context carries it.
@@ -54,6 +58,41 @@ type Client struct {
 	cfg  Config
 	base string
 	http *http.Client
+	ctx  context.Context // request context for API-call logs; nil outside a request
+}
+
+// WithContext returns a copy of c whose API calls log the request ID that ctx
+// carries. Only the values of ctx travel: a request whose client goes away
+// does not abort an operation, which PVE would leave half-applied.
+func (c *Client) WithContext(ctx context.Context) *Client {
+	bound := *c
+	bound.ctx = context.WithoutCancel(ctx)
+	return &bound
+}
+
+// logCall records one API call at debug level. Never the parameters: a
+// create carries the cloud-init password, and every request carries the
+// token in its Authorization header.
+func (c *Client) logCall(method, path string, status int, start time.Time, err error) {
+	ctx := c.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if !slog.Default().Enabled(ctx, slog.LevelDebug) {
+		return
+	}
+	attrs := []slog.Attr{
+		slog.String("method", method),
+		slog.String("path", path),
+		slog.Duration("duration", time.Since(start)),
+	}
+	if status != 0 {
+		attrs = append(attrs, slog.Int("status", status))
+	}
+	if err != nil {
+		attrs = append(attrs, slog.String("error", logging.Redact(err.Error())))
+	}
+	slog.Default().LogAttrs(ctx, slog.LevelDebug, "proxmox api", attrs...)
 }
 
 // Timeout bounds every request. A PVE that is up but wedged should fail a list,
@@ -202,7 +241,9 @@ func (c *Client) delete(path string, params url.Values) (json.RawMessage, error)
 	return raw, nil
 }
 
-func (c *Client) do(method, path string, params url.Values, out any) error {
+func (c *Client) do(method, path string, params url.Values, out any) (err error) {
+	start, status := time.Now(), 0
+	defer func() { c.logCall(method, path, status, start, err) }()
 	var body io.Reader
 	if params != nil {
 		body = strings.NewReader(params.Encode())
@@ -221,6 +262,7 @@ func (c *Client) do(method, path string, params url.Values, out any) error {
 		return fmt.Errorf("proxmox: %s %s: %w", method, path, err)
 	}
 	defer resp.Body.Close()
+	status = resp.StatusCode
 
 	payload, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if err != nil {

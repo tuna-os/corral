@@ -22,6 +22,12 @@ import (
 // (vmiIndex, handleNodes, handleExport). Defaults to shell.Real; set in tests.
 var defaultRunner shell.Runner = shell.DefaultKubectl
 
+// requestRunner is defaultRunner bound to r, so the commands a handler runs
+// log the request ID.
+func requestRunner(r *http.Request) shell.Runner {
+	return shell.Bind(r.Context(), defaultRunner)
+}
+
 //go:embed static
 var staticFS embed.FS
 

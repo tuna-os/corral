@@ -1,20 +1,35 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strings"
 
 	"github.com/tuna-os/corral/pkg/config"
 	"github.com/tuna-os/corral/pkg/fleet"
+	"github.com/tuna-os/corral/pkg/logging"
 	"github.com/tuna-os/corral/pkg/types"
 )
 
+// listFleet is the fleet as a request sees it: every configured context, then
+// every peer. A context that failed is a partial result for the client and a
+// warning in the server log, under the ID of the request.
+func listFleet(ctx context.Context) fleet.Result {
+	result := fleet.List(ctx)
+	for name, msg := range result.Errors {
+		slog.WarnContext(ctx, "fleet context unavailable", "context", name, "error", logging.Redact(msg))
+	}
+	result.VMs = append(result.VMs, fetchPeerVMs(ctx)...)
+	return result
+}
+
 func handleListVMs(w http.ResponseWriter, r *http.Request) {
-	result := fleet.List(r.Context())
-	vms := append(result.VMs, peerVMs()...)
+	result := listFleet(r.Context())
+	vms := result.VMs
 	// The full-page "No cluster connected" state is only appropriate when the
 	// user's PRIMARY backend is the one that failed and there is nothing to
 	// show. A qemu-default host with a stray kubeconfig (which makes KubeVirt a
@@ -60,8 +75,7 @@ func remoteErrors(errs map[string]string) string {
 }
 
 func handleInventory(w http.ResponseWriter, r *http.Request) {
-	result := fleet.List(r.Context())
-	result.VMs = append(result.VMs, peerVMs()...)
+	result := listFleet(r.Context())
 	jsonResp(w, http.StatusOK, result)
 }
 

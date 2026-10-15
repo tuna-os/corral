@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -31,9 +32,11 @@ type createRequest struct {
 	Target        string `json:"target"`       // named Corral context; legacy "cluster" and "local" remain accepted
 	Firmware      string `json:"firmware"`     // "uefi" or "bios"
 	UEFI          bool   `json:"uefi"`         // UEFI boot
-	// user is the caller's login, for the task log. It is set by the handler
-	// and never read from the request body.
+	// user is the caller's login, for the task log, and ctx the request, for
+	// the request ID of the task it starts. The handler sets both; neither is
+	// read from the request body.
 	user string
+	ctx  context.Context
 }
 
 // handleCreateVM dispatches to the strategy matching the request shape —
@@ -50,7 +53,7 @@ func handleCreateVM(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Name = strings.TrimSpace(req.Name)
-	req.user = requestUser(r)
+	req.user, req.ctx = requestUser(r), r.Context()
 	if req.Name == "" {
 		errResp(w, http.StatusBadRequest, fmt.Errorf("name is required"))
 		return

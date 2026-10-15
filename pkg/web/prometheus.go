@@ -32,6 +32,7 @@ import (
 
 	"github.com/tuna-os/corral/pkg/doctor"
 	"github.com/tuna-os/corral/pkg/fleet"
+	"github.com/tuna-os/corral/pkg/logging"
 	"github.com/tuna-os/corral/pkg/promtext"
 	"github.com/tuna-os/corral/pkg/types"
 )
@@ -97,8 +98,10 @@ func StartMetrics(ctx context.Context) {
 
 // collectMetrics takes one snapshot. It keeps the previous doctor checks: they
 // are on their own timer, and dropping them between doctor runs would make
-// corral_check flap in and out of existence.
+// corral_check flap in and out of existence. Each collection has its own
+// request ID, prefixed "collect-", so the commands of one run log together.
 func collectMetrics(ctx context.Context) {
+	ctx = logging.WithRequestID(ctx, "collect-"+logging.NewRequestID())
 	started := time.Now()
 	result := metricsFleet(ctx)
 	result.VMs = append(result.VMs, fetchPeerVMs(backgroundPoll(ctx))...)

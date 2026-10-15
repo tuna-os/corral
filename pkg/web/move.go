@@ -26,7 +26,6 @@ import (
 
 	"github.com/tuna-os/corral/pkg/backend"
 	"github.com/tuna-os/corral/pkg/config"
-	"github.com/tuna-os/corral/pkg/fleet"
 	"github.com/tuna-os/corral/pkg/folder"
 	"github.com/tuna-os/corral/pkg/move"
 	"github.com/tuna-os/corral/pkg/types"
@@ -38,8 +37,7 @@ var moveRunner = move.Execute
 // moveResolver finds the source instance in the live fleet. Separate seam
 // because a test that wants to exercise a refusal should not need a fleet.
 var moveResolver = func(r *http.Request, ref types.InstanceRef) (types.VM, error) {
-	result := fleet.List(r.Context())
-	result.VMs = append(result.VMs, peerVMs()...)
+	result := listFleet(r.Context())
 	for _, vm := range result.VMs {
 		if vm.Ref().String() == ref.String() {
 			return vm, nil

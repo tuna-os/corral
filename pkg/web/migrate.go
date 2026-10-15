@@ -28,7 +28,7 @@ func handleMigrate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := fmt.Sprintf("migrate-%s-%d", name, time.Now().UnixNano())
-	task := tasks.start(id)
+	task := tasks.start(r.Context(), id)
 	done := taskBegin(requestUser(r), "migrate", ns+"/"+name)
 	if b.TargetNode != "" {
 		_, _ = fmt.Fprintf(task, "Live migration of %s requested → %s\n", name, b.TargetNode)
