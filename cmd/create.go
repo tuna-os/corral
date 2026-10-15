@@ -11,6 +11,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/spf13/cobra"
+	"github.com/tuna-os/corral/pkg/backend"
 	"github.com/tuna-os/corral/pkg/catalog"
 	"github.com/tuna-os/corral/pkg/config"
 	"github.com/tuna-os/corral/pkg/incus"
@@ -307,10 +308,10 @@ func executeCreate(name string, kubevirtExplicit bool) error {
 	if backend == "qemu" && !createIncus && (createImage != "" || createImport != "" || createContainerDisk != "" || createPVC != "") {
 		backend = "kubevirt"
 	}
-	if backend == "incus" {
+	switch backend {
+	case "incus":
 		return runIncusCreate(name)
-	}
-	if backend == "libvirt" {
+	case "libvirt":
 		if err := libvirt.NewClient("").Create(types.CreateOpts{Name: name, CPU: createCPU, Mem: createMem, Disk: createDisk, ISO: createISO, QCOW: createQCOW}); err != nil {
 			return err
 		}
@@ -318,15 +319,70 @@ func executeCreate(name string, kubevirtExplicit bool) error {
 			return registryStore.Set(name, types.RegistryEntry{Backend: "libvirt"})
 		}
 		return nil
-	}
-
-	if backend == "kubevirt" {
+	case "kubevirt":
 		return runKubevirtCreate(name)
+	case "qemu":
+		if err := runQemuCreate(name); err != nil {
+			return err
+		}
+		return maybeStartAndWait(name)
 	}
-	if err := runQemuCreate(name); err != nil {
+	return runAdapterCreate(name, backend, createContext(backend))
+}
+
+// createContext names the context a create on backend lands in: the --context
+// flag, else the default context when it belongs to that backend.
+func createContext(backend string) string {
+	if rootContext != "" {
+		return rootContext
+	}
+	if def := config.DefaultContext(); def.Backend == backend {
+		return def.Name
+	}
+	return ""
+}
+
+// runAdapterCreate creates on a backend the dedicated paths above do not
+// cover, through its pkg/backend Creator. A backend without one is refused by
+// name: falling through to local QEMU made a VM on the workstation, not where
+// the operator asked, and reported success (#493).
+func runAdapterCreate(name, backendName, context string) error {
+	adapter, err := backend.For(types.InstanceRef{Backend: backendName, Context: context, Name: name})
+	if err != nil {
+		return fmt.Errorf("create is not supported on backend %q from the CLI: %w", backendName, err)
+	}
+	creator, ok := adapter.(backend.Creator)
+	if !ok {
+		return fmt.Errorf("create is not supported on backend %s from the CLI (see docs/backend-support.md)", backendName)
+	}
+	if createImage != "" {
+		return fmt.Errorf("--image names a KubeVirt or Incus image; it is not supported on backend %s", backendName)
+	}
+	if createWaitSSH {
+		return fmt.Errorf("--wait-ssh is supported for QEMU and KubeVirt VMs, not backend %s", backendName)
+	}
+	if err := creator.Create(types.CreateOpts{
+		Name: name, Backend: backendName,
+		CPU: createCPU, Mem: createMem, Disk: createDisk,
+		ISO: createISO, QCOW: createQCOW, ContainerDisk: createContainerDisk,
+		ImportURL: createImport, PVC: createPVC,
+		UEFI: createFirmware == "uefi",
+	}); err != nil {
 		return err
 	}
-	return maybeStartAndWait(name)
+	if registryStore != nil {
+		if err := registryStore.Set(name, types.RegistryEntry{Backend: backendName, Context: context}); err != nil {
+			return err
+		}
+	}
+	if !createStart {
+		return nil
+	}
+	power, ok := adapter.(backend.Power)
+	if !ok {
+		return fmt.Errorf("created %s, but backend %s cannot start it", name, backendName)
+	}
+	return power.Start(name)
 }
 
 func init() {
@@ -337,7 +393,7 @@ func init() {
 	createCmd.Flags().StringVar(&createMem, "mem", "4G", "Memory allocation")
 	createCmd.Flags().IntVar(&createCPU, "cpu", 2, "CPU cores")
 	createCmd.Flags().StringVar(&createDisk, "disk", "", "Disk size (default: 20G)")
-	createCmd.Flags().StringVar(&createISO, "iso", "", "ISO path/URL (QEMU: local file, KubeVirt: CDI imports from URL)")
+	createCmd.Flags().StringVar(&createISO, "iso", "", "ISO path/URL (QEMU: local file, KubeVirt: CDI imports from URL, Proxmox: PVE volume id such as local:iso/x.iso)")
 	createCmd.Flags().StringVar(&createQCOW, "qcow", "", "[qemu] QCOW2 template")
 	createCmd.Flags().BoolVar(&createForce, "force", false, "Overwrite existing VM")
 	createCmd.Flags().StringVar(&createContainerDisk, "container-disk", "", "[kubevirt] Container disk image")

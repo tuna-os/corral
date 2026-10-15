@@ -87,8 +87,11 @@ corral list
 
 Corral reads the Proxmox token from `CORRAL_PROXMOX_TOKEN`, or from
 `proxmox.token` in the context entry of `~/.config/corral/config.yaml`.
-The CLI `corral create` cannot create on Proxmox yet
-([#493](https://github.com/tuna-os/corral/issues/493)).
+`corral create NAME --context pve --iso local:iso/debian.iso` creates a VM on
+Proxmox. The ISO must already be on a PVE storage, named by its volume id.
+A backend that the CLI cannot create on (VirtualBox, vSphere, Xen, Nutanix)
+stops with `create is not supported on backend NAME from the CLI`; Corral
+never creates the VM on a different backend instead.
 
 ## Common workflows
 

@@ -407,6 +407,42 @@ func (a proxmoxAdapter) CanMigrate(name string) (bool, string) {
 	return pre.CanLiveMigrate()
 }
 
+// Create makes a VM through POST /nodes/{node}/qemu and waits for the task, so
+// a create that returns nil left a guest behind, not a queued request. PVE
+// boots an installer from its own storage: the ISO must already be a volume id
+// ("local:iso/debian.iso"). A local path or URL would need an upload the
+// create API does not do, so it is refused with that reason rather than
+// handed to PVE to fail on.
+func (a proxmoxAdapter) Create(opts types.CreateOpts) error {
+	if opts.QCOW != "" || opts.ImportURL != "" || opts.ContainerDisk != "" || opts.PVC != "" {
+		return fmt.Errorf("proxmox: create boots an installer ISO from PVE storage; " +
+			"a qcow2, disk import, container disk or PVC has no PVE create equivalent " +
+			"(to bring an existing disk, use `corral move --to proxmox`)")
+	}
+	if opts.ISO != "" && !isPVEVolume(opts.ISO) {
+		return fmt.Errorf("proxmox: the ISO must be a PVE volume id such as local:iso/debian.iso, not %q; "+
+			"upload it to a PVE storage first", opts.ISO)
+	}
+	return a.wait(func(c *proxmoxbe.Client) (proxmoxbe.Task, error) {
+		return c.Create(proxmoxbe.CreateOpts{
+			Name: opts.Name, Node: opts.Node,
+			Cores: opts.CPU, Mem: opts.Mem, Disk: opts.Disk,
+			ISO: opts.ISO, SSHKeys: opts.SSHPublicKey, Password: opts.CloudInitPassword,
+			UEFI: opts.UEFI,
+		})
+	})
+}
+
+// isPVEVolume reports whether s names a volume on PVE storage
+// ("storage:content/file") rather than a local path or a URL.
+func isPVEVolume(s string) bool {
+	if strings.Contains(s, "://") {
+		return false
+	}
+	storage, volume, ok := strings.Cut(s, ":")
+	return ok && storage != "" && volume != "" && !strings.ContainsAny(storage, `/\.`)
+}
+
 func (a proxmoxAdapter) Clone(source, target string) error {
 	return a.wait(func(c *proxmoxbe.Client) (proxmoxbe.Task, error) {
 		return c.Clone(source, target, true)
