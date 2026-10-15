@@ -143,7 +143,7 @@ func handleRemovePlugin(w http.ResponseWriter, r *http.Request) {
 
 // This file holds the HTTP handlers for the advanced VM operations
 // (scale, volumes, expand, snapshots, clone, guest info, capabilities).
-// Registered in server.go alongside the basic lifecycle routes.
+// Registered in routes.go alongside the basic lifecycle routes.
 
 // handleCapabilities reports cluster storage capabilities so the UI can
 // enable/disable expand and snapshot controls.

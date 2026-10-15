@@ -185,7 +185,7 @@ var Matrix = map[string]map[string]Entry{
 	"tty": {
 		"kubevirt":   {Shipped, "virtctl console, web ttyBridge"},
 		"qemu":       {Possible, "the serial socket the generated unit already defines"},
-		"incus":      {Shipped, "incus exec through the web ttyBridge (pkg/web/server.go); the TUI has no TTY view for any backend yet"},
+		"incus":      {Shipped, "incus exec through the web ttyBridge (pkg/web/console.go); the TUI has no TTY view for any backend yet"},
 		"libvirt":    {Possible, "virsh console"},
 		"proxmox":    {Possible, "termproxy tickets are implemented (pkg/proxmoxbe.TermTicket); the web websocket bridge is not wired yet"},
 		"virtualbox": {Possible, "the UART is redirectable to a host pipe via modifyvm --uartmode1; Corral has no console bridge for it"},
