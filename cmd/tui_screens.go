@@ -303,7 +303,8 @@ func (m tuiModel) updateEvents(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 func (m tuiModel) updateDoctor(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 	switch msg.String() {
 	case "f":
-		doctor.Fix()
+		// A fix that fails shows up in the checks that follow it.
+		_, _ = doctor.Fix()
 		m.doctorRows = fleetDiagnosis()
 	case "esc", "q", "enter":
 		m.mode = ModeList
