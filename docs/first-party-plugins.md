@@ -24,9 +24,11 @@ tracks the dependency gates of the epic. `corral-incus` is a compatibility
 binary for older installations. Incus is now a built-in backend, and tuna-os does
 not publish it as a marketplace plugin.
 
-At runtime, Corral does not trust the first-party source automatically. Marketplace v2
-still needs immutable URLs and SHA-256 checksums. It validates Ed25519
-signatures, which are optional, displays permissions, and records installed provenance.
+Marketplace v2 needs immutable URLs and SHA-256 checksums. Corral also
+verifies the Sigstore signature and the signed SPDX SBOM of each first-party
+plugin against an identity in its code
+([plugin-marketplace.md](plugin-marketplace.md#signed-plugins-and-sboms)). It
+shows permissions and records the installed provenance.
 
 The matrix is deliberately honest: core inventory and lifecycle support for a
 backend does not imply that every workflow plugin supports it. The extension

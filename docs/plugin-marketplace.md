@@ -133,7 +133,7 @@ the index, and publish both artifacts and index in one immutable release. The
 repository's `scripts/generate-marketplace.sh` and `publish-plugins` workflow
 are a reference that works.
 
-## Verify a first-party plugin
+## Signed plugins and SBOMs
 
 CI signs each first-party plugin binary with Sigstore. It uses the GitHub
 OIDC token of the `publish-plugins` job, so it stores no private key. CI also
@@ -147,8 +147,51 @@ binary:
 | `corral-NAME-linux-ARCH.spdx.json` | SPDX JSON SBOM |
 | `corral-NAME-linux-ARCH.sbom.sigstore.json` | Signed attestation of the SBOM |
 
-To verify a binary by hand, download it and its bundles. Then run these
-commands with [Cosign](https://docs.sigstore.dev/cosign/) 3.0 or later:
+### What Corral checks at install time
+
+Corral has the first-party signer identity in its code. When you install a
+plugin from the built-in marketplace, Corral does these checks after the
+SHA-256 check:
+
+1. It verifies the `.sigstore.json` bundle. The certificate must have the
+   exact identity and issuer. The bundle must agree with the digest of the
+   downloaded binary.
+2. It verifies the `.sbom.sigstore.json` attestation. The signer must be the
+   same. The attestation must name the digest of the binary, and its
+   predicate must be an SPDX document.
+
+If a check fails, or if a bundle is missing, Corral does not install the
+plugin. If the checks pass, Corral writes the signer and the SBOM digest to
+the install record. It keeps the SBOM at
+`<plugin dir>/.installed/NAME.spdx.json`. `corral plugin info NAME` shows
+the signer.
+
+Corral gets the Sigstore trusted root through TUF, and it keeps a cache in
+the user cache directory. A host without access to the internet can use a
+local copy: set `CORRAL_SIGSTORE_TRUSTED_ROOT` to the path of a
+`trusted_root.json` file.
+
+### Signatures from your own marketplace
+
+To make Corral need signatures from a different marketplace, give the
+identity of the signer when you add the source:
+
+```sh
+corral marketplace add acme https://plugins.example.com/index.json \
+  --signer-identity https://github.com/acme/plugins/.github/workflows/release.yml@refs/heads/main \
+  --signer-issuer https://token.actions.githubusercontent.com
+```
+
+Publish the two bundles next to each artifact URL, with the suffixes in the
+table above. The `publish-plugins` job in `.github/workflows/ci.yml` shows
+the `cosign` commands. `corral marketplace list` shows a source with a
+signer as `signed`. The identity in the index has no effect. Only the
+operator and the code of Corral can set the signer.
+
+### Verify by hand
+
+To verify a binary without Corral, download it and its bundles. Then run
+these commands with [Cosign](https://docs.sigstore.dev/cosign/) 3.0 or later:
 
 ```sh
 f=corral-bootc-linux-amd64

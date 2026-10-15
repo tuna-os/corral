@@ -35,7 +35,6 @@ images on a KubeVirt cluster (`scripts/boot-gate.sh` in tunaOS).
 | P0 | Publish v0.7.0 (tag + GitHub Release) | #339, #210 | 🟡 Notes merged; tag not pushed |
 | P1 | tunaOS CI boot-gate adoption | #431 | 🟡 tunaOS#3249 in review (Corral side merged: #512, #514, #546) |
 | P1 | VDI plugin GA | #69 | 🟡 Phase 1 done; Phase 2 open |
-| P2 | Plugin signing and SBOM | #505 | 🔴 Open |
 | P3 | Dependency hygiene | #97 | 🟢 Ongoing (Renovate) |
 
 ---
@@ -61,12 +60,10 @@ flowchart TD
   V1 --> V3["#229 one-click connect"]
   R3 --> V3
   V2 & V3 --> VGA["#69 VDI GA"]
-  S1["#505 plugin signing + SBOM"]
   BG["#431 tunaOS boot gate"]
   subgraph P3["Phase 3: enterprise readiness"]
     E1
     VGA
-    S1
     O1
   end
   subgraph P5["Phase 4: launch"]
@@ -111,7 +108,6 @@ criteria for this phase (#404).
 | VDI session tracking and reclaim | #228 | #227 |
 | VDI one-click connect | #229 | #227, #288 |
 | VDI GA | #69 | #228, #229 |
-| Plugin signing and SBOM verification | #505 | — |
 | Structured logs and request tracing for CLI/TUI | #419 | #503 |
 | Enterprise backends (RFC-0003) | #507 | #214 |
 
@@ -148,6 +144,7 @@ Show HN brings many first-time clones and installs.
   (#529, #559, #563).
 - VDI pools of ephemeral CT desktops
   ([docs/vdi-ct-pools.md](docs/vdi-ct-pools.md)): #230.
+- Signed plugins with SBOMs, verified at install time: #505.
 
 ---
 

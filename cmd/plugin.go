@@ -111,6 +111,9 @@ var pluginInfoCmd = &cobra.Command{Use: "info <name>", Short: "Show marketplace 
 	}
 	if state.Name != "" {
 		fmt.Printf("Installed: %s (pinned: %v, sha256: %s)\n", state.Version, state.Pinned, state.SHA256)
+		if state.Signer != nil {
+			fmt.Printf("Signed by: %s (issuer %s)\nSBOM sha256: %s\n", state.Signer.Identity, state.Signer.Issuer, state.SBOMSHA256)
+		}
 		if meta, err := plugin.Inspect(args[0]); err == nil {
 			fmt.Printf("Runtime API: %s\nRuntime capabilities: %v\n", meta.API, meta.Capabilities)
 		}
@@ -175,8 +178,11 @@ var marketplaceCmd = &cobra.Command{Use: "marketplace", Aliases: []string{"sourc
 var marketplaceListCmd = &cobra.Command{Use: "list", Args: cobra.NoArgs, Run: func(*cobra.Command, []string) {
 	for _, s := range plugin.Sources() {
 		verification := "verified"
-		if s.AllowUnverified {
+		switch {
+		case s.AllowUnverified:
 			verification = "unverified"
+		case s.TrustAnchor() != nil:
+			verification = "signed"
 		}
 		fmt.Printf("%-16s %-7v %-10s %s\n", s.Name, s.Enabled, verification, s.URL)
 	}
@@ -186,7 +192,13 @@ var marketplaceAddCmd = &cobra.Command{Use: "add <name> <https-url>", Args: cobr
 	if allowUnverified {
 		fmt.Fprintf(os.Stderr, "warning: %s may serve a pre-v2 index — plugins from it install with no publisher, license or checksum verification\n", args[0])
 	}
-	return plugin.AddSource(plugin.Source{Name: args[0], URL: args[1], Enabled: true, AllowUnverified: allowUnverified})
+	source := plugin.Source{Name: args[0], URL: args[1], Enabled: true, AllowUnverified: allowUnverified}
+	identity, _ := cmd.Flags().GetString("signer-identity")
+	issuer, _ := cmd.Flags().GetString("signer-issuer")
+	if identity != "" || issuer != "" {
+		source.Signer = &plugin.Signer{Identity: identity, Issuer: issuer}
+	}
+	return plugin.AddSource(source)
 }}
 var marketplaceRemoveCmd = &cobra.Command{Use: "remove <name>", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, args []string) error { return plugin.RemoveSource(args[0]) }}
 var marketplaceValidateCmd = &cobra.Command{Use: "validate <index.json>", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, args []string) error {
@@ -224,6 +236,8 @@ func init() {
 	pluginInstallCmd.Flags().Bool("pin", false, "Pin this version and exclude it from updates")
 	pluginInstallCmd.Flags().Bool("accept-permissions", false, "Accept the permissions declared by this plugin")
 	marketplaceAddCmd.Flags().Bool("allow-unverified", false, "Accept a pre-v2 index from this source: no publisher, license or artifact checksums")
+	marketplaceAddCmd.Flags().String("signer-identity", "", "Require artifacts keylessly signed (Sigstore) by this exact certificate identity, with an attested SPDX SBOM")
+	marketplaceAddCmd.Flags().String("signer-issuer", "", "OIDC issuer of --signer-identity, e.g. https://token.actions.githubusercontent.com")
 	marketplaceCmd.AddCommand(marketplaceListCmd, marketplaceAddCmd, marketplaceRemoveCmd, marketplaceValidateCmd, marketplaceToggle(true), marketplaceToggle(false))
 	pluginCmd.AddCommand(pluginListCmd, pluginSearchCmd, pluginInstallCmd, pluginRemoveCmd, pluginInfoCmd, pluginUpdateCmd, pinCmd(true), pinCmd(false))
 	rootCmd.AddCommand(marketplaceCmd)

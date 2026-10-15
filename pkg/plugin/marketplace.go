@@ -74,6 +74,11 @@ type Entry struct {
 	// AllowUnverified. Zero value means "verify everything", so an Entry
 	// built anywhere else is checked.
 	Unverified bool `json:"-"`
+	// Signer is the identity the artifact must be keylessly signed by, with
+	// an SBOM attested by the same identity. Like Unverified it is never read
+	// from index JSON: only fetchSource sets it, from the source's trust
+	// anchor (Source.TrustAnchor).
+	Signer *Signer `json:"-"`
 }
 
 type Index struct {
@@ -92,6 +97,24 @@ type Source struct {
 	// recorded per source (`corral marketplace add --allow-unverified`),
 	// never something the index publisher can assert about itself.
 	AllowUnverified bool `json:"allowUnverified,omitempty"`
+	// Signer pins the Sigstore identity this source's artifacts must be
+	// signed by (`corral marketplace add --signer-identity --signer-issuer`).
+	Signer *Signer `json:"signer,omitempty"`
+}
+
+// TrustAnchor returns the signer a source's artifacts must carry: the
+// operator's pin, else the compiled-in first-party identity for the built-in
+// marketplace URL, else nil (SHA-256 from the index only).
+func (s Source) TrustAnchor() *Signer {
+	if s.Signer != nil {
+		signer := *s.Signer
+		return &signer
+	}
+	if s.URL == DefaultMarketplaceURL {
+		signer := FirstPartySigner
+		return &signer
+	}
+	return nil
 }
 
 type InstalledState struct {
@@ -107,6 +130,10 @@ type InstalledState struct {
 	Permissions       []string  `json:"permissions,omitempty"`
 	SupportedBackends []string  `json:"supportedBackends,omitempty"`
 	Publisher         Publisher `json:"publisher,omitempty"`
+	// Signer and SBOMSHA256 record what was verified at install time; the
+	// SBOM itself is kept at sbomPath(name).
+	Signer     *Signer `json:"signer,omitempty"`
+	SBOMSHA256 string  `json:"sbomSha256,omitempty"`
 }
 
 var validName = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
@@ -118,6 +145,7 @@ func configDir() string {
 func sourcesPath() string          { return filepath.Join(configDir(), "marketplaces.json") }
 func stateDir() string             { return filepath.Join(Dir(), ".installed") }
 func statePath(name string) string { return filepath.Join(stateDir(), name+".json") }
+func sbomPath(name string) string  { return filepath.Join(stateDir(), name+".spdx.json") }
 
 func Sources() []Source {
 	if raw := strings.TrimSpace(os.Getenv("CORRAL_MARKETPLACE_URLS")); raw != "" {
@@ -167,6 +195,9 @@ func AddSource(source Source) error {
 	}
 	if err := validateSourceURL(source.URL); err != nil {
 		return err
+	}
+	if source.Signer != nil && !source.Signer.Valid() {
+		return fmt.Errorf("a signer needs both an identity and an issuer")
 	}
 	source.Enabled = true
 	var custom []Source
@@ -331,6 +362,7 @@ func fetchSource(source Source) (*Index, error) {
 		idx.Plugins[i].SourceURL = source.URL
 		idx.Plugins[i].SchemaVersion = idx.SchemaVersion
 		idx.Plugins[i].Unverified = idx.SchemaVersion != MarketplaceAPIV2
+		idx.Plugins[i].Signer = source.TrustAnchor()
 		if err := idx.Plugins[i].Validate(); err != nil {
 			return nil, fmt.Errorf("plugin %d: %w", i, err)
 		}
@@ -521,6 +553,15 @@ func (e *Entry) InstallPinned(pin bool) error {
 		tmp.Close()
 		return fmt.Errorf("checksum mismatch for %s (got %s)", e.Name, sum)
 	}
+	var sbom []byte
+	if e.Signer != nil {
+		// Verify the digest of the bytes on disk, not the index's claim:
+		// they are equal here unless the index declared none.
+		if sbom, err = verifySigstore(client, b.URL, sum, *e.Signer); err != nil {
+			_ = tmp.Close()
+			return fmt.Errorf("refusing %s: %w", e.Name, err)
+		}
+	}
 	if err := tmp.Chmod(0755); err != nil {
 		tmp.Close()
 		return err
@@ -544,8 +585,12 @@ func (e *Entry) InstallPinned(pin bool) error {
 		_ = os.Rename(backup, dst)
 		return fmt.Errorf("installing %s: %w", e.Name, err)
 	}
-	state := InstalledState{Name: e.Name, Version: e.Version, Source: e.Source, SourceURL: e.SourceURL, SHA256: sum, InstalledAt: time.Now().UTC(), Pinned: pin, PluginAPI: e.PluginAPI, Capabilities: e.Capabilities, Permissions: e.Permissions, SupportedBackends: e.SupportedBackends, Publisher: e.Publisher}
-	if err := writeState(state); err != nil {
+	state := InstalledState{Name: e.Name, Version: e.Version, Source: e.Source, SourceURL: e.SourceURL, SHA256: sum, InstalledAt: time.Now().UTC(), Pinned: pin, PluginAPI: e.PluginAPI, Capabilities: e.Capabilities, Permissions: e.Permissions, SupportedBackends: e.SupportedBackends, Publisher: e.Publisher, Signer: e.Signer}
+	if sbom != nil {
+		sbomSum := sha256.Sum256(sbom)
+		state.SBOMSHA256 = hex.EncodeToString(sbomSum[:])
+	}
+	if err := writeInstallRecord(state, sbom); err != nil {
 		_ = os.Remove(dst)
 		_ = os.Rename(backup, dst)
 		return fmt.Errorf("recording installed state (rolled back plugin): %w", err)
@@ -573,6 +618,27 @@ func writeState(state InstalledState) error {
 	}
 	return atomicWrite(statePath(state.Name), data, 0600)
 }
+
+// writeInstallRecord writes the state of a fresh install and its SBOM, or
+// removes the SBOM of an earlier install when this one has none, so the SBOM
+// on disk always belongs to the installed binary.
+func writeInstallRecord(state InstalledState, sbom []byte) error {
+	if err := os.MkdirAll(stateDir(), 0700); err != nil {
+		return err
+	}
+	if sbom == nil {
+		if err := os.Remove(sbomPath(state.Name)); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	} else if err := atomicWrite(sbomPath(state.Name), sbom, 0600); err != nil {
+		return err
+	}
+	if err := writeState(state); err != nil {
+		_ = os.Remove(sbomPath(state.Name))
+		return err
+	}
+	return nil
+}
 func SetPinned(name string, pinned bool) error {
 	state, err := ReadState(name)
 	if err != nil {
@@ -593,6 +659,7 @@ func Remove(name string) error {
 		return err
 	}
 	_ = os.Remove(statePath(name))
+	_ = os.Remove(sbomPath(name))
 	return nil
 }
 
