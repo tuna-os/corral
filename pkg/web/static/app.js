@@ -5,7 +5,7 @@
 // boot. Each screen, the tree, the menus and the consoles live in their own
 // native ES module (#340); shared state and events go through state.js.
 
-import { api, findCT, findVM, vmKey } from './api.js';
+import { api, findCT, findVM, sendJSON, vmKey } from './api.js';
 import { disconnectConsoles } from './console.js';
 import { ctAction, renderCT } from './content/ct.js';
 import { renderDatacenter } from './content/datacenter.js';
@@ -654,7 +654,7 @@ $('#btn-palette').onclick = () => openPalette();
 // pool row and a node row stay visually identical — the difference is what a
 // drop onto one means, not how it looks.
 bindPools({
-  api, toast, esc, icon, refresh, treeRow, vmRow, vmKey, findVM,
+  api, sendJSON, toast, esc, icon, refresh, treeRow, vmRow, vmKey, findVM,
   attachContextMenu, poolMenuItems, unassignedMenuItems,
 });
 

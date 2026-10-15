@@ -1,7 +1,7 @@
 // Datacenter screen: dashboard widgets, the fleet grid with tag filter, and
 // the image library.
 
-import { api, vmKey } from '../api.js';
+import { api, sendJSON, vmKey } from '../api.js';
 import { markRendered, refresh, select } from '../app.js';
 import { watchBuild } from '../create.js';
 import { fmtBytes, fmtCPU, mountDashboard, timeChart } from '../dashboard.js';
@@ -254,11 +254,7 @@ async function importImage() {
   if (!name) return;
   const size = prompt('Disk size for the import (e.g. 10Gi):', '10Gi') || '10Gi';
   try {
-    await api('/api/datavolumes', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, namespace: '', url, size }),
-    });
+    await sendJSON('/api/datavolumes', { name, namespace: '', url, size });
     toast('Import started');
     setTimeout(loadImages, 800);
   } catch (e) { toast(e.message); }

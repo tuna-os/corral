@@ -1,5 +1,7 @@
-// API transport and inventory keys: the fetch wrapper and the helpers that
-// turn a VM or container into its API URL and its canonical selection key.
+// The API adapter: the one place the web client talks to the server. The
+// fetch wrapper and its error messages, JSON requests, and the helpers that
+// turn a VM or container into its API URL, its console WebSocket URL and its
+// canonical selection key. Unit tests: pkg/web/jstest/api.test.mjs.
 
 import { state } from './state.js';
 
@@ -44,8 +46,32 @@ export async function api(path, opts = {}) {
   return r.headers.get('content-type')?.includes('json') ? r.json() : r.text();
 }
 
+// sendJSON sends `body` as a JSON document, POST unless told otherwise. Every
+// JSON write the client makes goes through here, so the request shape is
+// defined once. (The disk upload streams raw bytes and calls api() itself.)
+export const sendJSON = (path, body, method = 'POST') => api(path, {
+  method,
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(body),
+});
+
 export const vmKey = (vm) => `${vm.peer || ''}/${vm.context || ''}/${vm.namespace}/${vm.name}`;
 export const vmURL = (vm, suffix = '') => `/api/vms/${vm.namespace}/${vm.name}${suffix}${vm.context ? `?context=${encodeURIComponent(vm.context)}` : ''}`;
 export const findVM = (key) => state.vms.find((v) => vmKey(v) === key);
 export const ctKey = (c) => `${c.namespace}/${c.name}`;
+export const ctURL = (c, suffix = '') => `/api/cts/${c.namespace}/${c.name}${suffix}`;
 export const findCT = (key) => state.cts.find((c) => ctKey(c) === key);
+
+// ── Console WebSockets ────────────────────────────────────────────
+
+// The socket is on the page's own host, wss: when the page came over https.
+const wsBase = () => `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`;
+
+// The VNC and serial consoles, scoped to the VM's context like vmURL.
+export const wsURL = (kind, vm) => {
+  const base = `${wsBase()}/api/${kind}/${vm.namespace}/${vm.name}`;
+  return base + (vm.context ? `?context=${encodeURIComponent(vm.context)}` : '');
+};
+
+// The RDCleanPath proxy IronRDP connects through (ADR-0002).
+export const rdpURL = (vm) => `${wsBase()}/api/rdp/${vm.namespace}/${vm.name}?rdcleanpath=1`;

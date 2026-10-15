@@ -1,6 +1,6 @@
 // Container (CT) screen and actions.
 
-import { api, ctKey, findCT } from '../api.js';
+import { api, ctKey, ctURL, findCT, sendJSON } from '../api.js';
 import { markRendered, refresh, select } from '../app.js';
 import { connectTTY, disconnectConsoles } from '../console.js';
 import { icon } from '../icons.js';
@@ -103,10 +103,7 @@ export function renderCT(main, c) {
       const cpu = parseInt($('#ct-hw-cpu').value, 10) || 0;
       const mem = $('#ct-hw-mem').value.trim();
       try {
-        await api(`/api/cts/${c.namespace}/${c.name}/scale`, {
-          method: 'PUT', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ cpu, mem }),
-        });
+        await sendJSON(ctURL(c, '/scale'), { cpu, mem }, 'PUT');
         toast('Scaled — stop/start to apply if the pod rejects in-place resize');
         refresh(true);
       } catch (e) { toast(e.message); }
@@ -123,14 +120,14 @@ export async function ctAction(c, act) {
       note: 'This removes its data volume too. There is no undo.',
     })) return;
     try {
-      await api(`/api/cts/${c.namespace}/${c.name}`, { method: 'DELETE' });
+      await api(ctURL(c), { method: 'DELETE' });
       toast('Deleted');
       select({ type: 'dc' });
     } catch (e) { toast(e.message); }
     return refresh(true);
   }
   try {
-    await api(`/api/cts/${c.namespace}/${c.name}/${act}`, { method: 'POST' });
+    await api(ctURL(c, `/${act}`), { method: 'POST' });
     toast(act === 'start' ? 'Starting…' : 'Stopped');
   } catch (e) { toast(e.message); }
   setTimeout(() => refresh(true), 600);

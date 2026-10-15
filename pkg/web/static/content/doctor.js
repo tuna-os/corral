@@ -1,6 +1,6 @@
 // Doctor screen: cluster and local readiness checks.
 
-import { api } from '../api.js';
+import { api, sendJSON } from '../api.js';
 import { icon } from '../icons.js';
 import { $, esc, toast } from '../ui/dom.js';
 
@@ -34,11 +34,7 @@ export async function renderDoctor(main) {
     b.onclick = async () => {
       b.disabled = true; b.textContent = 'Fixing…';
       try {
-        await api('/api/doctor/fix', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ check: b.dataset.fix }),
-        });
+        await sendJSON('/api/doctor/fix', { check: b.dataset.fix });
         toast(`Fixed: ${b.dataset.fix}`);
       } catch (e) { toast(e.message); }
       renderDoctor(main);
