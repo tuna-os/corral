@@ -1,6 +1,7 @@
 package web
 
 import (
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -216,9 +217,9 @@ func TestPipeline_PeerGateOrdering(t *testing.T) {
 func readBody(t *testing.T, resp *http.Response) string {
 	t.Helper()
 	defer resp.Body.Close()
-	var b strings.Builder
-	if _, err := b.ReadFrom(resp.Body); err != nil {
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
 		t.Fatal(err)
 	}
-	return b.String()
+	return string(b)
 }
