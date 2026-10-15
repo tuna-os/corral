@@ -6,6 +6,7 @@ package web
 // and group under a synthetic "local" node in the Server View tree.
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -68,7 +69,7 @@ func localVMAction(w http.ResponseWriter, name, action string) {
 	}
 	done(err)
 	if err != nil {
-		errResp(w, http.StatusInternalServerError, err)
+		errResp(w, localErrStatus(err), err)
 		return
 	}
 	jsonResp(w, http.StatusOK, map[string]string{"status": action})
@@ -79,6 +80,16 @@ func localVMAction(w http.ResponseWriter, name, action string) {
 // prepared qcow2 — a path on this host, or a URL downloaded once into
 // VMHome/cache. qemu has no cloud-init path, so no key/user-data fields.
 func createLocalVM(w http.ResponseWriter, req createRequest) {
+	// The failure paths below remove VMHome/<name>: the name must be a
+	// plain new VM name, and must not be a VM this request did not create.
+	if err := qemu.ValidateVMName(req.Name); err != nil {
+		errResp(w, http.StatusBadRequest, err)
+		return
+	}
+	if qemu.Exists(req.Name) {
+		errResp(w, http.StatusConflict, fmt.Errorf("local VM %q already exists", req.Name))
+		return
+	}
 	src, qcow := req.ISO, false
 	if src == "" {
 		src, qcow = req.Import, true
@@ -133,6 +144,15 @@ func createLocalVM(w http.ResponseWriter, req createRequest) {
 		return
 	}
 	jsonResp(w, http.StatusCreated, map[string]string{"name": req.Name, "namespace": localNS})
+}
+
+// localErrStatus is the HTTP status for a failed local VM operation: a name
+// the qemu package refused is the client's error, anything else the host's.
+func localErrStatus(err error) int {
+	if errors.Is(err, qemu.ErrInvalidVMName) {
+		return http.StatusBadRequest
+	}
+	return http.StatusInternalServerError
 }
 
 // downloadToCache fetches url into VMHome/cache once; later creates from the
