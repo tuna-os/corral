@@ -10,6 +10,7 @@ package vdi
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -24,12 +25,36 @@ import (
 )
 
 const (
-	labelPool       = "corral.dev/vdi-pool"
+	labelPool = "corral.dev/vdi-pool"
+	// labelAssignedTo is a label-safe rendering of the claim holder, for
+	// `kubectl get -l` views. annoAssignedTo holds the exact identity:
+	// identities such as e-mail addresses are not valid label values.
+	// Both are presentation state; the Lease is authoritative.
 	labelAssignedTo = "corral.dev/vdi-assigned-to"
+	annoAssignedTo  = "corral.dev/vdi-assigned-to"
 	annoClaimedAt   = "corral.dev/vdi-claimed-at"
 	leasePrefix     = "corral-vdi-"
 	claimDuration   = time.Hour
 )
+
+// ErrPoolNotFound is returned for a pool that has no definition or members.
+var ErrPoolNotFound = errors.New("pool not found")
+
+// ErrPoolExhausted is returned when a claim finds no free member.
+var ErrPoolExhausted = errors.New("pool has no free members")
+
+// StartError reports a claim that succeeded on a member that then failed
+// to start. The claim is still held; starting the member again is safe.
+type StartError struct {
+	Member string
+	Err    error
+}
+
+func (e *StartError) Error() string {
+	return fmt.Sprintf("claimed %s but failed to start it (the claim is kept; retry the start): %v", e.Member, e.Err)
+}
+
+func (e *StartError) Unwrap() error { return e.Err }
 
 // cloneWaitTimeout and clonePollInterval are vars (not consts) so tests can
 // shrink them instead of waiting out a real 2-minute timeout.
@@ -435,26 +460,49 @@ func waitForVM(ns, name string, timeout time.Duration) error {
 	}
 }
 
+// labelMember writes a member's presentation state: the pool label and, for
+// a claimed member, the holder (exact in an annotation, label-safe in a
+// label) and the claim time. An empty assignedTo clears the claim fields.
 func labelMember(ns, name, pool, assignedTo string) error {
-	args := []string{"label", "vm", name, "-n", ns,
-		labelPool + "=" + pool, "--overwrite"}
-	if _, err := run("kubectl", args...); err != nil {
-		return err
-	}
 	if assignedTo == "" {
-		_, err := run("kubectl", "label", "vm", name, "-n", ns, labelAssignedTo+"-", "--overwrite")
-		if err != nil {
+		if _, err := run("kubectl", "label", "vm", name, "-n", ns, labelPool+"="+pool, labelAssignedTo+"-", "--overwrite"); err != nil {
 			return err
 		}
-		_, err = run("kubectl", "annotate", "vm", name, "-n", ns, annoClaimedAt+"-", "--overwrite")
+		_, err := run("kubectl", "annotate", "vm", name, "-n", ns, annoClaimedAt+"-", annoAssignedTo+"-", "--overwrite")
 		return err
 	}
-	if _, err := run("kubectl", "label", "vm", name, "-n", ns, labelAssignedTo+"="+assignedTo, "--overwrite"); err != nil {
+	if _, err := run("kubectl", "label", "vm", name, "-n", ns, labelPool+"="+pool, labelAssignedTo+"="+labelSafe(assignedTo), "--overwrite"); err != nil {
 		return err
 	}
 	_, err := run("kubectl", "annotate", "vm", name, "-n", ns,
-		annoClaimedAt+"="+time.Now().UTC().Format(time.RFC3339), "--overwrite")
+		annoClaimedAt+"="+time.Now().UTC().Format(time.RFC3339), annoAssignedTo+"="+assignedTo, "--overwrite")
 	return err
+}
+
+// labelSafe renders an identity as a Kubernetes label value: at most 63
+// characters from [A-Za-z0-9-_.], starting and ending alphanumeric.
+// "alice@example.com" becomes "alice_example.com".
+func labelSafe(identity string) string {
+	b := []byte(identity)
+	for i, c := range b {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_' || c == '.') {
+			b[i] = '_'
+		}
+	}
+	if len(b) > 63 {
+		b = b[:63]
+	}
+	alnum := func(c byte) bool { return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' }
+	for len(b) > 0 && !alnum(b[0]) {
+		b = b[1:]
+	}
+	for len(b) > 0 && !alnum(b[len(b)-1]) {
+		b = b[:len(b)-1]
+	}
+	if len(b) == 0 {
+		return "claimed"
+	}
+	return string(b)
 }
 
 type vmListItem struct {
@@ -473,8 +521,13 @@ type vmListItem struct {
 	} `json:"status"`
 }
 
-func listPoolVMs(pool string) ([]vmListItem, error) {
+// listPoolVMs lists the members of pool in namespace. An empty pool lists
+// every pool member; an empty namespace lists all namespaces.
+func listPoolVMs(namespace, pool string) ([]vmListItem, error) {
 	args := []string{"get", "vm", "-A", "-o", "json"}
+	if namespace != "" {
+		args = []string{"get", "vm", "-n", namespace, "-o", "json"}
+	}
 	if pool != "" {
 		args = append(args, "-l", labelPool+"="+pool)
 	} else {
@@ -493,10 +546,19 @@ func listPoolVMs(pool string) ([]vmListItem, error) {
 	return res.Items, nil
 }
 
+// assignedIdentity is the presentation holder of a member: the exact
+// annotation, or the label that Phase 1 wrote before the annotation existed.
+func assignedIdentity(v vmListItem) string {
+	if who := v.Metadata.Annotations[annoAssignedTo]; who != "" {
+		return who
+	}
+	return v.Metadata.Labels[labelAssignedTo]
+}
+
 func toMember(v vmListItem) Member {
 	return Member{
 		Name:       v.Metadata.Name,
-		AssignedTo: v.Metadata.Labels[labelAssignedTo],
+		AssignedTo: assignedIdentity(v),
 		ClaimedAt:  v.Metadata.Annotations[annoClaimedAt],
 		Running:    v.Status.PrintableStatus == "Running",
 	}
@@ -507,7 +569,7 @@ func toMember(v vmListItem) Member {
 // of truth (same "no extra state to go stale" reasoning as CT's PVC
 // annotation).
 func ListPools() ([]Pool, error) {
-	items, err := listPoolVMs("")
+	items, err := listPoolVMs("", "")
 	if err != nil {
 		return nil, err
 	}
@@ -534,23 +596,44 @@ func ListPools() ([]Pool, error) {
 	return pools, nil
 }
 
-// Claim atomically acquires one pool member for identity using a Kubernetes
-// Lease. Labels and annotations are updated only after the Lease is held and
-// remain presentation state for Phase 1 clients.
+// Claim atomically acquires one pool member for identity and starts it if
+// it is stopped. A start failure returns the member with a *StartError:
+// the claim is held and a later start may succeed.
 func Claim(namespace, pool, identity string) (string, error) {
-	if strings.TrimSpace(identity) == "" {
-		return "", fmt.Errorf("claim identity must not be empty")
+	name, running, err := claimVM(namespace, pool, identity)
+	if err != nil || running {
+		return name, err
 	}
-	items, err := listPoolVMs(pool)
+	if err := kubevirt.NewClient(namespace).StartVM(name); err != nil {
+		return name, &StartError{Member: name, Err: err}
+	}
+	return name, nil
+}
+
+// claimVM acquires one member of pool for identity through the member's
+// Lease (#226) and records the presentation labels. A member identity
+// already holds is returned first, so a retried claim never takes a second
+// desktop. It reports whether the member is running.
+func claimVM(namespace, pool, identity string) (string, bool, error) {
+	identity = strings.TrimSpace(identity)
+	if identity == "" {
+		return "", false, fmt.Errorf("claim identity must not be empty")
+	}
+	if identity == CTReconcilerHolder {
+		return "", false, fmt.Errorf("claim identity %q is reserved for the reconciler", identity)
+	}
+	items, err := listPoolVMs(namespace, pool)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	if len(items) == 0 {
-		return "", fmt.Errorf("pool %q not found (or has no members) in ns/%s", pool, namespace)
+		return "", false, fmt.Errorf("%w: %q has no members in ns/%s", ErrPoolNotFound, pool, namespace)
 	}
+	sort.SliceStable(items, func(a, b int) bool {
+		return assignedIdentity(items[a]) == identity && assignedIdentity(items[b]) != identity
+	})
 	for _, v := range items {
-		assignedTo := v.Metadata.Labels[labelAssignedTo]
-		if assignedTo != "" && assignedTo != identity {
+		if assignedTo := assignedIdentity(v); assignedTo != "" && assignedTo != identity {
 			// Legacy Phase 1 labels have no ownership primitive and must not
 			// be stolen. A member with an expired Lease, however, is reclaimable.
 			current, leaseErr := readLease(namespace, leaseName(v.Metadata.Name))
@@ -561,51 +644,57 @@ func Claim(namespace, pool, identity string) (string, error) {
 		name := v.Metadata.Name
 		acquired, claimErr := acquireLease(namespace, pool, name, identity)
 		if claimErr != nil {
-			return "", claimErr
+			return "", false, claimErr
 		}
 		if !acquired {
 			continue
 		}
 		if err := labelMember(namespace, name, pool, identity); err != nil {
-			return "", fmt.Errorf("claimed %s but failed to update presentation labels; release lease %s: %w", name, leaseName(name), err)
+			return "", false, fmt.Errorf("claimed %s but failed to update presentation labels; release lease %s: %w", name, leaseName(name), err)
 		}
-		if v.Status.PrintableStatus != "Running" {
-			if err := kubevirt.NewClient(namespace).StartVM(name); err != nil {
-				return "", fmt.Errorf("claimed %s but failed to start it: %w", name, err)
-			}
-		}
-		return name, nil
+		return name, v.Status.PrintableStatus == "Running", nil
 	}
-	return "", fmt.Errorf("pool %q has no free members (all %d claimed or contended)", pool, len(items))
+	return "", false, fmt.Errorf("%w: %q in ns/%s (all %d members claimed or contended)", ErrPoolExhausted, pool, namespace, len(items))
 }
 
 // Assign is the Phase 1 compatibility name for Claim.
 func Assign(namespace, pool, user string) (string, error) { return Claim(namespace, pool, user) }
 
-// Release releases a member only when identity owns its Lease. Deleting the
-// Lease is the atomic ownership transition; labels are then cleared as
-// presentation state. An empty identity is accepted for an administrative
-// compatibility release of legacy label-only assignments.
+// Release releases a member only when identity owns its Lease, and stops
+// it. The member stops before the claim ends: when the stop fails, the
+// holder keeps the claim and the release can be retried. Deleting the Lease
+// is the atomic ownership transition; labels are cleared as presentation
+// state. An empty identity is an administrative release, which also clears
+// legacy label-only assignments.
 func Release(namespace, member, identity string) error {
 	l, err := readLease(namespace, leaseName(member))
-	if err != nil && identity != "" {
+	held := err == nil
+	switch {
+	case err != nil && !isNotFound(nil, err):
 		return fmt.Errorf("read claim for %s: %w", member, err)
-	}
-	if err == nil && identity != "" && l.Spec.HolderIdentity != identity {
+	case !held && identity != "":
+		return fmt.Errorf("member %s has no claim for %q", member, identity)
+	case held && identity != "" && l.Spec.HolderIdentity != identity:
 		return fmt.Errorf("member %s is claimed by %q, not %q", member, l.Spec.HolderIdentity, identity)
+	}
+	if err := kubevirt.NewClient(namespace).StopVM(member); err != nil && !isNotRunning(err) {
+		return fmt.Errorf("release %s: stop: %w (the claim is kept; retry the release)", member, err)
 	}
 	if err := labelMember(namespace, member, poolOf(namespace, member), ""); err != nil {
 		return fmt.Errorf("release %s: clear presentation labels: %w", member, err)
 	}
-	if err == nil {
-		if deleteErr := deleteLease(namespace, leaseName(member), l.Metadata.ResourceVersion); deleteErr != nil {
-			return fmt.Errorf("release %s: delete claim lease: %w", member, deleteErr)
+	if held {
+		if err := deleteLease(namespace, leaseName(member), l.Metadata.ResourceVersion); err != nil {
+			return fmt.Errorf("release %s: delete claim lease: %w", member, err)
 		}
 	}
-	if err := kubevirt.NewClient(namespace).StopVM(member); err != nil {
-		return err
-	}
 	return nil
+}
+
+// isNotRunning reports virtctl refusing to stop a VM that already stopped,
+// which a retried release must treat as done.
+func isNotRunning(err error) bool {
+	return strings.Contains(strings.ToLower(err.Error()), "not running")
 }
 
 // Unassign preserves the original administrative API.
@@ -622,7 +711,7 @@ func poolOf(namespace, member string) string {
 
 // DeletePool deletes every member of pool.
 func DeletePool(namespace, pool string) error {
-	items, err := listPoolVMs(pool)
+	items, err := listPoolVMs(namespace, pool)
 	if err != nil {
 		return err
 	}
@@ -768,7 +857,7 @@ func ValidateUSBRedir(opts USBRedirOpts) (Member, error) {
 		return Member{}, fmt.Errorf("member %q is not part of a VDI pool in ns/%s", member, ns)
 	}
 
-	items, err := listPoolVMs(pool)
+	items, err := listPoolVMs(ns, pool)
 	if err != nil {
 		return Member{}, fmt.Errorf("querying pool %q: %w", pool, err)
 	}

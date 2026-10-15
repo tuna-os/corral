@@ -95,7 +95,7 @@ pod, Corral starts it.
 
 A free member has no Lease, an index in the pool size, and a current source.
 Its state is `Ready`, `Starting`, or `Stopped`. If no member is free, the
-claim fails with "CT pool has no free members". The error shows the desired,
+claim fails with "pool has no free members". The error shows the desired,
 claimed, and unschedulable counts.
 
 A release by the claim holder first changes the Lease holder to the

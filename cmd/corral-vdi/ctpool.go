@@ -87,7 +87,7 @@ func ctPoolApplyCmd() *cobra.Command {
 	f := c.Flags()
 	f.StringVar(&spec.Source.Image, "image", "", "Container image every member is created from (required)")
 	f.IntVar(&spec.Size, "size", 1, "Number of members")
-	f.StringVar(&spec.Mode, "mode", vdi.CTPoolModeEphemeral, "Pool mode; only \"ephemeral\" is supported")
+	f.StringVar(&spec.Mode, "mode", vdi.PoolModeEphemeral, "Pool mode; only \"ephemeral\" is supported")
 	f.IntVar(&spec.Source.CPU, "cpu", 0, "vCPU cores per member (default 1)")
 	f.StringVar(&spec.Source.Mem, "mem", "", "Memory per member, e.g. 2Gi (default 512Mi)")
 	f.StringVar(&spec.Source.Disk, "disk", "", "Data volume size per member, e.g. 5Gi (default 5Gi)")

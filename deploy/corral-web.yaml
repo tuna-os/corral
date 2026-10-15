@@ -90,6 +90,11 @@ rules:
   - apiGroups: [""]
     resources: ["nodes"]
     verbs: ["get", "list"]
+  # VDI claims (#226, #227): one Lease per desktop pool member. The opt-in
+  # broker (CORRAL_VDI_BROKER) claims, renews, and releases them.
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "create", "update", "delete"]
   # Events tab (Proxmox-style task log) + live metrics on the summary
   - apiGroups: [""]
     resources: ["events"]

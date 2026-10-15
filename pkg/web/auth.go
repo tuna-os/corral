@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"strings"
 )
 
@@ -127,6 +128,10 @@ func adminGate(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		if selfServiceMutation(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
 		if !isAdmin(r) {
 			who := login
 			if who == "" {
@@ -138,6 +143,17 @@ func adminGate(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// selfServiceMutation reports a mutation that a non-admin may send because
+// its handler authorizes against the owner of the resource instead of the
+// admin allowlist. Only the VDI broker routes qualify (#227): each resolves
+// the caller through vdiRoute, which refuses anonymous callers, and the
+// broker checks that the caller holds the desktop. The path must be clean
+// so that a dot-segment cannot smuggle another route past the gate.
+func selfServiceMutation(r *http.Request) bool {
+	p := r.URL.Path
+	return r.Method == http.MethodPost && strings.HasPrefix(p, "/api/vdi/") && path.Clean(p) == p
 }
 
 func errReadOnly(who string) error {

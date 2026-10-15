@@ -69,7 +69,7 @@ func TestUsbRedirCmd_RequiresMemberArg(t *testing.T) {
 func TestUsbRedirCmd_ValidationFailure(t *testing.T) {
 	fake := shell.NewFake()
 	fake.AddResponseKV("kubectl", []string{"get", "vm", "devpool-1", "-n", "corral-vms", "-o", `jsonpath={.metadata.labels.corral\.dev/vdi-pool}`}, "devpool", nil)
-	fake.AddResponseKV("kubectl", []string{"get", "vm", "-A", "-o", "json", "-l", "corral.dev/vdi-pool=devpool"}, `{"items":[
+	fake.AddResponseKV("kubectl", []string{"get", "vm", "-n", "corral-vms", "-o", "json", "-l", "corral.dev/vdi-pool=devpool"}, `{"items":[
 		{"metadata":{"name":"devpool-1","namespace":"corral-vms","labels":{"corral.dev/vdi-pool":"devpool","corral.dev/vdi-assigned-to":"bob"}},
 			"status":{"printableStatus":"Running"}}
 	]}`, nil)
@@ -105,7 +105,7 @@ func TestUsbRedirCmd_ValidationFailure(t *testing.T) {
 func TestUsbRedirCmd_DeviceNotFound(t *testing.T) {
 	fake := shell.NewFake()
 	fake.AddResponseKV("kubectl", []string{"get", "vm", "devpool-1", "-n", "corral-vms", "-o", `jsonpath={.metadata.labels.corral\.dev/vdi-pool}`}, "devpool", nil)
-	fake.AddResponseKV("kubectl", []string{"get", "vm", "-A", "-o", "json", "-l", "corral.dev/vdi-pool=devpool"}, `{"items":[
+	fake.AddResponseKV("kubectl", []string{"get", "vm", "-n", "corral-vms", "-o", "json", "-l", "corral.dev/vdi-pool=devpool"}, `{"items":[
 		{"metadata":{"name":"devpool-1","namespace":"corral-vms","labels":{"corral.dev/vdi-pool":"devpool","corral.dev/vdi-assigned-to":"alice"}},
 			"status":{"printableStatus":"Running"}}
 	]}`, nil)
@@ -133,7 +133,7 @@ func TestUsbRedirCmd_DeviceNotFound(t *testing.T) {
 func TestUsbRedirCmd_BusyDevice(t *testing.T) {
 	fake := shell.NewFake()
 	fake.AddResponseKV("kubectl", []string{"get", "vm", "devpool-1", "-n", "corral-vms", "-o", `jsonpath={.metadata.labels.corral\.dev/vdi-pool}`}, "devpool", nil)
-	fake.AddResponseKV("kubectl", []string{"get", "vm", "-A", "-o", "json", "-l", "corral.dev/vdi-pool=devpool"}, `{"items":[
+	fake.AddResponseKV("kubectl", []string{"get", "vm", "-n", "corral-vms", "-o", "json", "-l", "corral.dev/vdi-pool=devpool"}, `{"items":[
 		{"metadata":{"name":"devpool-1","namespace":"corral-vms","labels":{"corral.dev/vdi-pool":"devpool","corral.dev/vdi-assigned-to":"alice"}},
 			"status":{"printableStatus":"Running"}}
 	]}`, nil)

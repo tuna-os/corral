@@ -23,7 +23,7 @@ func TestKubeCTCluster_PoolDefinitionRoundTrip(t *testing.T) {
 	fake := withCTFake(t)
 	fake.AddResponseKV("kubectl", []string{"apply", "-f", "-"}, "", nil)
 	spec := deskSpec(2)
-	spec.Mode = CTPoolModeEphemeral
+	spec.Mode = PoolModeEphemeral
 	if err := (kubeCTCluster{}).PutPoolSpec(spec); err != nil {
 		t.Fatalf("PutPoolSpec: %v", err)
 	}

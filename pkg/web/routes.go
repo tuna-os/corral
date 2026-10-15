@@ -106,6 +106,8 @@ func routes(useDemoConsole bool) (*http.ServeMux, error) {
 	mux.HandleFunc("GET /api/tasklog", handleTaskLog)
 	registerFolderRoutes(mux)
 	registerMoveRoutes(mux)
+	vdiBroker = newVDIBroker()
+	registerVDIRoutes(mux)
 	mux.HandleFunc("GET /api/vms/{ns}/{name}", handleVMInfo)
 	mux.HandleFunc("POST /api/vms/{ns}/{name}/{action}", handleVMAction)
 	mux.HandleFunc("DELETE /api/vms/{ns}/{name}", handleDeleteVM)
