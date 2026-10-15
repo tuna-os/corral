@@ -105,10 +105,11 @@ func (a *softAuthenticator) create(t *testing.T, publicKey map[string]any) []byt
 	if a.userID, err = b64.DecodeString(uid); err != nil {
 		t.Fatalf("user.id %q: %v", uid, err)
 	}
-	pub := a.key.PublicKey
-	x, y := make([]byte, 32), make([]byte, 32)
-	pub.X.FillBytes(x)
-	pub.Y.FillBytes(y)
+	raw, err := a.key.PublicKey.Bytes() // 0x04 || X || Y
+	if err != nil {
+		t.Fatal(err)
+	}
+	x, y := raw[1:33], raw[33:65]
 	cose := cborMap(cborInt(1), cborInt(2), cborInt(3), cborInt(-7), cborInt(-1), cborInt(1), cborInt(-2), cborBytes(x), cborInt(-3), cborBytes(y))
 	attested := append(make([]byte, 16), byte(len(a.credID)>>8), byte(len(a.credID)))
 	attested = append(append(attested, a.credID...), cose...)
