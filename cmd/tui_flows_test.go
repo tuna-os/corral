@@ -411,31 +411,20 @@ func TestTUIActions_GatingMatrix(t *testing.T) {
 		}
 	}
 
-	// KubeVirt-only actions must not be offered on other backends.
-	for _, backend := range []string{"qemu", "incus", "libvirt"} {
-		vm := running
-		vm.Backend = backend
-		for _, id := range []string{"ports", "export"} {
-			if actionApplies(id, vm) {
-				t.Errorf("actionApplies(%q) on backend %q, want KubeVirt-only", id, backend)
-			}
-		}
-	}
-
-	// Hardware, clone, template, and events follow the backend's adapter
-	// families: each is offered exactly where its family is implemented (#214).
+	// Every per-VM action beyond power follows the backend: an adapter family,
+	// or pkg/export's registry for export (#214).
 	families := map[string]map[string]bool{
-		"kubevirt": {"hardware": true, "clone": true, "template": true, "events": true},
-		"qemu":     {"events": true},
-		"incus":    {},
-		"libvirt":  {},
-		"proxmox":  {"hardware": true, "clone": true, "template": true, "events": true},
+		"kubevirt": {"hardware": true, "ports": true, "clone": true, "export": true, "template": true, "events": true},
+		"qemu":     {"export": true, "events": true},
+		"incus":    {"export": true},
+		"libvirt":  {"export": true},
+		"proxmox":  {"hardware": true, "clone": true, "export": true, "template": true, "events": true},
 		"vsphere":  {"hardware": true, "clone": true, "template": true},
 	}
 	for backend, want := range families {
 		vm := running
 		vm.Backend = backend
-		for _, id := range []string{"hardware", "clone", "template", "events"} {
+		for _, id := range []string{"hardware", "ports", "clone", "export", "template", "events"} {
 			if got := actionApplies(id, vm); got != want[id] {
 				t.Errorf("actionApplies(%q) on backend %q = %v, want %v", id, backend, got, want[id])
 			}
