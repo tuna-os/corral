@@ -101,7 +101,7 @@ func StartMetrics(ctx context.Context) {
 func collectMetrics(ctx context.Context) {
 	started := time.Now()
 	result := metricsFleet(ctx)
-	result.VMs = append(result.VMs, peerVMs()...)
+	result.VMs = append(result.VMs, fetchPeerVMs(backgroundPoll(ctx))...)
 
 	pools := map[string]string{}
 	if tree, err := folderStore.Tree(); err == nil {

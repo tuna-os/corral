@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -17,7 +18,10 @@ import (
 // Only requests the auth gate accepted count, and machinery never does:
 // kubelet probes, /healthz, /readyz and /metrics scrapes would otherwise keep
 // the timestamp fresh forever and make "idle" unobservable. An open browser
-// tab does count, because the UI polls the API: someone is looking.
+// tab does count, because the UI polls the API: someone is looking. A peer
+// Corral's request counts when a user drove it (a dashboard listing the
+// fleet), but not when its --metrics collector polls on a timer: a hub's
+// collector would otherwise keep every peer host awake forever.
 
 var lastActivity atomic.Int64 // unix nanoseconds
 
@@ -31,7 +35,25 @@ func isMachineryRequest(r *http.Request) bool {
 	case "/healthz", "/readyz", "/metrics":
 		return true
 	}
-	return strings.HasPrefix(r.UserAgent(), "kube-probe/")
+	ua := r.UserAgent()
+	return strings.HasPrefix(ua, "kube-probe/") || strings.HasPrefix(ua, collectorUserAgent)
+}
+
+// collectorUserAgent identifies peer requests made by the background metrics
+// collector, so the peer does not count them as activity.
+const collectorUserAgent = "corral-collector"
+
+type backgroundPollKey struct{}
+
+// backgroundPoll marks ctx as belonging to timer-driven collection rather
+// than a user request.
+func backgroundPoll(ctx context.Context) context.Context {
+	return context.WithValue(ctx, backgroundPollKey{}, true)
+}
+
+func isBackgroundPoll(ctx context.Context) bool {
+	v, _ := ctx.Value(backgroundPollKey{}).(bool)
+	return v
 }
 
 func activityTracker(next http.Handler) http.Handler {

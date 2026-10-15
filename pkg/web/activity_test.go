@@ -1,12 +1,15 @@
 package web
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/tuna-os/corral/pkg/config"
 )
 
 func TestActivityTrackerIgnoresMachinery(t *testing.T) {
@@ -21,6 +24,8 @@ func TestActivityTrackerIgnoresMachinery(t *testing.T) {
 		{"/readyz", "", false},
 		{"/metrics", "Prometheus/2", false},
 		{"/", "kube-probe/1.36", false},
+		{"/api/v1/inventory", collectorUserAgent, false},
+		{"/api/v1/inventory", "Go-http-client/1.1", true},
 		{"/api/vms", "Mozilla/5.0", true},
 		{"/", "Mozilla/5.0", true},
 	} {
@@ -54,4 +59,26 @@ func TestActivityMetricIsExposed(t *testing.T) {
 		}
 	}
 	t.Fatalf("activity gauge has no sample:\n%s", body)
+}
+
+// A hub's --metrics collector polls every peer on a timer; those polls must
+// reach the peer marked as machinery, or no peer host would ever look idle.
+func TestCollectorPeerPollsAreNotActivity(t *testing.T) {
+	var counted []bool
+	peer := httptest.NewServer(activityTracker(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		counted = append(counted, !isMachineryRequest(r))
+		_, _ = w.Write([]byte(`{"vms":[]}`))
+	})))
+	defer peer.Close()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
+	if err := config.SetPeer("p", peer.URL); err != nil {
+		t.Fatal(err)
+	}
+
+	fetchPeerVMs(backgroundPoll(context.Background()))
+	peerVMs()
+	if len(counted) != 2 || counted[0] || !counted[1] {
+		t.Fatalf("counted = %v, want [false true] (collector poll, then user-driven fetch)", counted)
+	}
 }
