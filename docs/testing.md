@@ -92,6 +92,18 @@ weakest packages. It always exits 0, so it never fails the build. The gate stays
 the only enforcer. CI appends the table to the step summary, so the weakest
 package is visible on every run.
 
+## Web client unit tests
+
+`pkg/web/jstest/*.test.mjs` tests the web client's ES modules one at a time,
+with no browser and no server. Each test imports the file that
+`pkg/web/static/` ships, so the test and the browser run the same code. The
+tests use `node:test` and stub `fetch`, so there is nothing to install. The
+files are outside `static/`, so `go:embed` does not ship them.
+
+Run them with `just test-js` (Node 22 or newer). CI runs them first in
+`.github/workflows/ui-smoke.yml`. Put the API request shape, error messages,
+and state transitions here. Keep the rendered page in UI smoke.
+
 ## Mid-tier frontend flows
 
 Two suites sit between unit tests and the live cluster. Both drive the real
