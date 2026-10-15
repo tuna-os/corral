@@ -2,12 +2,128 @@ package web
 
 import (
 	"net/http"
+	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 )
 
 // Characterization tests for the route table (#503) beyond the per-route
 // registration check in server_test.go.
+
+// TestRoutes_PatternTable pins the complete route table: every pattern below
+// must be registered and must be the one a matching request resolves to, so a
+// dropped route or a new pattern shadowing an existing one fails here.
+func TestRoutes_PatternTable(t *testing.T) {
+	mux, err := routes(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	patterns := []string{
+		"/",
+		"/api2/json/",
+		"GET /metrics",
+		"GET /healthz",
+		"GET /readyz",
+		"GET /api/whoami",
+		"GET /api/theme",
+		"PUT /api/theme",
+		"GET /api/vms",
+		"GET /api/v1/inventory",
+		"GET /api/v1/meta",
+		"GET /api/contexts",
+		"POST /api/vms",
+		"GET /api/cts",
+		"POST /api/cts",
+		"POST /api/cts/{ns}/{name}/{action}",
+		"DELETE /api/cts/{ns}/{name}",
+		"PUT /api/cts/{ns}/{name}/scale",
+		"GET /api/nodes",
+		"GET /api/nodes/{name}/metrics/history",
+		"GET /api/metrics/history",
+		"GET /api/metrics/top",
+		"GET /api/hostpower",
+		"POST /api/hostpower/{plugin}/{action}",
+		"GET /api/capabilities",
+		"GET /api/images",
+		"GET /api/sources",
+		"POST /api/sources",
+		"DELETE /api/sources/{name}",
+		"GET /api/instancetypes",
+		"GET /api/nads",
+		"GET /api/gpus",
+		"GET /api/vms/{ns}/{name}/gpus",
+		"POST /api/vms/{ns}/{name}/gpus",
+		"DELETE /api/vms/{ns}/{name}/gpus/{gpu}",
+		"GET /api/doctor",
+		"POST /api/doctor/fix",
+		"GET /api/plugins",
+		"POST /api/plugins/{name}/install",
+		"DELETE /api/plugins/{name}",
+		"GET /api/plugins/ui",
+		"GET /api/plugins/{plugin}/ui/{id}",
+		"POST /api/vms/{ns}/{name}/nics",
+		"GET /api/datavolumes",
+		"POST /api/datavolumes",
+		"POST /api/datavolumes/upload",
+		"DELETE /api/datavolumes/{ns}/{name}",
+		"GET /api/tasks/{id}",
+		"GET /api/tasklog",
+		"GET /api/folders",
+		"POST /api/folders",
+		"DELETE /api/folders",
+		"POST /api/folders/move",
+		"POST /api/folders/members",
+		"DELETE /api/folders/members",
+		"POST /api/folders/action",
+		"POST /api/move/preflight",
+		"POST /api/move",
+		"GET /api/move/destinations",
+		"GET /api/vms/{ns}/{name}",
+		"POST /api/vms/{ns}/{name}/{action}",
+		"DELETE /api/vms/{ns}/{name}",
+		"POST /api/vms/{ns}/{name}/migrate",
+		"POST /api/vms/{ns}/{name}/scale",
+		"POST /api/vms/{ns}/{name}/expand",
+		"POST /api/vms/{ns}/{name}/clone",
+		"POST /api/vms/{ns}/{name}/template",
+		"POST /api/vms/{ns}/{name}/tags",
+		"POST /api/vms/{ns}/{name}/options",
+		"GET /api/vms/{ns}/{name}/guestinfo",
+		"GET /api/vms/{ns}/{name}/rdp",
+		"POST /api/vms/{ns}/{name}/bootc/rebuild",
+		"GET /api/vms/{ns}/{name}/events",
+		"GET /api/vms/{ns}/{name}/metrics",
+		"GET /api/vms/{ns}/{name}/metrics/history",
+		"GET /api/vms/{ns}/{name}/export",
+		"POST /api/vms/{ns}/{name}/volumes",
+		"DELETE /api/vms/{ns}/{name}/volumes/{vol}",
+		"GET /api/vms/{ns}/{name}/snapschedule",
+		"POST /api/vms/{ns}/{name}/snapschedule",
+		"DELETE /api/vms/{ns}/{name}/snapschedule",
+		"GET /api/vms/{ns}/{name}/powerschedule",
+		"POST /api/vms/{ns}/{name}/powerschedule",
+		"DELETE /api/vms/{ns}/{name}/powerschedule",
+		"GET /api/vms/{ns}/{name}/snapshots",
+		"POST /api/vms/{ns}/{name}/snapshots",
+		"DELETE /api/vms/{ns}/{name}/snapshots/{snap}",
+		"POST /api/vms/{ns}/{name}/snapshots/{snap}/restore",
+		"GET /api/vnc/{ns}/{name}",
+		"GET /api/tty/{ns}/{name}",
+		"GET /api/rdp/{ns}/{name}",
+	}
+	wildcard := regexp.MustCompile(`\{[a-z]+\}`)
+	for _, pattern := range patterns {
+		method, path, ok := strings.Cut(pattern, " ")
+		if !ok {
+			method, path = http.MethodGet, pattern
+		}
+		req := httptest.NewRequest(method, wildcard.ReplaceAllString(path, "x"), nil)
+		if _, got := mux.Handler(req); got != pattern {
+			t.Errorf("%s %s resolves to %q, want %q", method, req.URL.Path, got, pattern)
+		}
+	}
+}
 
 // Cluster-only operations answer the reserved local namespace with one
 // uniform 400 before any handler runs.
