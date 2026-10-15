@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-	"github.com/tuna-os/corral/pkg/kubevirt"
+	"github.com/tuna-os/corral/pkg/backend"
 	"github.com/tuna-os/corral/pkg/types"
 )
 
@@ -15,8 +15,8 @@ var (
 var cloneCmd = &cobra.Command{
 	Use:   "clone <source-vm> <target-vm>",
 	Short: "Clone an existing VM to a new VM",
-	Long: `Clone a VM's disk and configuration to a new VM name.
-Only supported on the KubeVirt backend.`,
+	Long: `Clone a VM's disk and configuration to a new VM name, through the
+backend's own clone mechanism. Backends without one refuse by name.`,
 	Example: `  corral clone myvm myvm-clone
   corral clone myvm myvm-clone -n other-namespace`,
 	Args: cobra.ExactArgs(2),
@@ -24,32 +24,38 @@ Only supported on the KubeVirt backend.`,
 		src := args[0]
 		dst := args[1]
 
-		ns := cloneNamespace
-		if ns == "" {
-			ns = kubevirt.DefaultNamespace
-		}
-
-		backend := resolveBackend(src)
-		if backend == "" {
+		ref, err := instanceRef(src)
+		if err != nil {
 			return fmt.Errorf("source VM %q not found", src)
 		}
-		if backend != "kubevirt" {
-			return fmt.Errorf("cloning is only supported on KubeVirt VMs (VM %q uses backend %q)", src, backend)
+		// -n names the namespace the source lives in, where the backend has
+		// namespaces at all; the clone lands beside it.
+		if cloneNamespace != "" && backend.Namespaced(ref.Backend) {
+			ref.Namespace = cloneNamespace
+		}
+		adapter, err := backend.For(ref)
+		if err != nil {
+			return err
+		}
+		cloner, ok := adapter.(backend.Cloner)
+		if !ok {
+			return unsupported(adapter, "clone")
 		}
 
 		if existing := resolveBackend(dst); existing != "" {
 			return fmt.Errorf("target VM %q already exists (backend: %s)", dst, existing)
 		}
 
-		fmt.Printf("Cloning VM %q to %q in ns/%s...\n", src, dst, ns)
-		if err := kubevirt.NewClient(ns).Clone(src, dst); err != nil {
+		fmt.Printf("Cloning VM %q to %q...\n", src, dst)
+		if err := cloner.Clone(ref.Name, dst); err != nil {
 			return err
 		}
 
 		if registryStore != nil {
 			if err := registryStore.Set(dst, types.RegistryEntry{
-				Backend:   "kubevirt",
-				Namespace: ns,
+				Backend:   ref.Backend,
+				Context:   ref.Context,
+				Namespace: ref.Namespace,
 			}); err != nil {
 				return fmt.Errorf("saving registry entry: %w", err)
 			}
