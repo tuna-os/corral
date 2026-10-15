@@ -93,7 +93,6 @@ backfill first so that each refactor has a safety net.
 
 | Item | Issue | Depends on |
 |------|-------|------------|
-| Route all backend-specific code through `pkg/backend` (46 branches left; ratchet in `pkg/backend/matrix_test.go`) | #214 | #506 |
 | ✅ Split `app.js` into ES modules with node unit tests (`pkg/web/jstest`): API adapter #517, poll #523, session #525, console transports #531, workspace layout | #288, #406 | #506 |
 
 ### Phase 3: Enterprise readiness (Q4)
@@ -150,6 +149,11 @@ Show HN brings many first-time clones and installs.
   key handler, and a view. Backend work runs in commands, not in `Update`.
 - Structured logs with `log/slog` and request IDs, from the web request to
   the backend commands: #419 (#578, #579).
+- Backend-specific code goes through `pkg/backend` adapters: #214
+  (#550, #521, #524, #553, #562, #564, #552, #576).
+  27 branches on a backend name remain. Each has a reason in
+  [docs/backend-parity.md](docs/backend-parity.md), and the ratchet in
+  `pkg/backend/matrix_test.go` holds the count.
 
 ---
 

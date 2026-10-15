@@ -20,11 +20,10 @@ import (
 	"github.com/tuna-os/corral/pkg/config"
 	"github.com/tuna-os/corral/pkg/ct"
 	"github.com/tuna-os/corral/pkg/doctor"
+	"github.com/tuna-os/corral/pkg/export"
 	"github.com/tuna-os/corral/pkg/fleet"
 	"github.com/tuna-os/corral/pkg/incus"
-	"github.com/tuna-os/corral/pkg/kubevirt"
 	"github.com/tuna-os/corral/pkg/plugin"
-	"github.com/tuna-os/corral/pkg/qemu"
 	"github.com/tuna-os/corral/pkg/types"
 )
 
@@ -174,8 +173,10 @@ func actionApplies(id string, vm types.VM) bool {
 		return vmProvides[backend.Eventer](vm)
 	case "hardware":
 		return vmProvides[backend.Sizer](vm)
-	case "ports", "export":
-		return vm.Backend == "kubevirt"
+	case "ports":
+		return vmProvides[backend.Publisher](vm)
+	case "export":
+		return export.Supported(vm.Backend)
 	case "ssh", "viewer":
 		if id == "ssh" {
 			return vm.Capabilities.SSH && vm.Running && !paused
@@ -544,14 +545,6 @@ func (t actionTarget) run(action string) (notice, kind string) {
 		ctAction(t.ct, action)
 		return "", ""
 	}
-	name := t.vm.Name
-	backend := t.vm.Backend
-	contextName := t.vm.Context
-	ns := t.vm.Namespace
-	if ns == "" {
-		ns = "default"
-	}
-
 	// Power, pause, and migrate go through the operation contract
 	// (pkg/backend): one adapter per backend, asserted for the family the
 	// action needs. This replaced a per-backend if/else ladder per action —
@@ -572,40 +565,81 @@ func (t actionTarget) run(action string) (notice, kind string) {
 	case "template":
 		return toggleTemplate(t.vm)
 	case "export":
-		if backend == "kubevirt" {
-			out, err := kubevirt.NewClientForContext(ns, contextName).Export(name, "", "")
-			if err != nil {
-				fmt.Fprintln(os.Stderr, "export failed:", err)
-			} else {
-				fmt.Println("Exported to", out)
-			}
+		if path, err := exportVM(t.vm); err != nil {
+			fmt.Fprintln(os.Stderr, "export failed:", err)
+		} else {
+			fmt.Println("Exported to", path)
 		}
 	case "viewer":
 		if err := viewSelected(t.vm.Ref()); err != nil {
 			fmt.Fprintln(os.Stderr, "viewer failed:", err)
 		}
 	case "ssh":
-		user, password := "", ""
-		if registryStore != nil {
-			if entry, ok := registryStore.GetRef(t.vm.Ref()); ok {
-				user, password = entry.Username, entry.Password
-			}
-		}
-		if user == "" {
-			user = os.Getenv("USER")
-		}
-		if user == "" {
-			user = "root"
-		}
-		if backend == "kubevirt" {
-			kubevirt.NewClientForContext(ns, contextName).SSH(name, user, "", "", 22, password, nil)
-		} else if backend == "incus" {
-			incus.NewClient(contextName).SSH(name, "")
-		} else {
-			qemu.SSH(name, user, "", "", 22, password, nil)
+		if err := sshSelected(t.vm); err != nil {
+			fmt.Fprintln(os.Stderr, "ssh failed:", err)
 		}
 	}
 	return "", ""
+}
+
+// sshSelected opens a shell in the VM through its backend's Sheller, the same
+// path `corral ssh` takes, with the credentials the registry remembers.
+func sshSelected(vm types.VM) error {
+	user, password := "", ""
+	if registryStore != nil {
+		if entry, ok := registryStore.GetRef(vm.Ref()); ok {
+			user, password = entry.Username, entry.Password
+		}
+	}
+	if user == "" {
+		user = os.Getenv("USER")
+	}
+	if user == "" {
+		user = "root"
+	}
+	adapter, err := backend.For(vm.Ref())
+	if err != nil {
+		return err
+	}
+	sheller, ok := adapter.(backend.Sheller)
+	if !ok {
+		return unsupported(adapter, "ssh")
+	}
+	return sheller.SSH(vm.Name, backend.SSHOptions{User: user, Port: 22, Password: password})
+}
+
+// exportVM writes the VM's disk to the working directory in its backend's
+// native export format, through pkg/export — the adapter `corral backup`
+// uses.
+func exportVM(vm types.VM) (string, error) {
+	adapter, err := export.For(vm.Ref())
+	if err != nil {
+		return "", err
+	}
+	formats := adapter.Formats()
+	if len(formats) == 0 {
+		return "", fmt.Errorf("the %s backend has no export format", vm.Backend)
+	}
+	res, err := adapter.Export(context.Background(), export.Request{
+		Ref: vm.Ref(), Dest: vm.Name + exportSuffix(formats[0]),
+	}, nil)
+	if err != nil {
+		return "", err
+	}
+	return res.Path, nil
+}
+
+// exportSuffix names the file for a format the way the old KubeVirt-only
+// export did (<name>.img.gz for a gzip image).
+func exportSuffix(f export.Format) string {
+	switch f {
+	case export.RawGz:
+		return ".img.gz"
+	case export.IncusTar:
+		return ".tar.gz"
+	default:
+		return "." + string(f)
+	}
 }
 
 // viewSelected opens the graphical console of the instance through its
@@ -722,7 +756,9 @@ func (m *tuiModel) applyContextFilter() {
 						items = append(items, item)
 					}
 				case ctItem:
-					if target.Backend == "kubevirt" {
+					// A CT belongs to the contexts of the backend that runs it:
+					// KubeVirt pet pods or Incus LXC containers.
+					if value.ct.Backend == target.Backend {
 						items = append(items, item)
 					}
 				}
@@ -999,7 +1035,7 @@ type editModel struct {
 }
 
 func newEditModel(vm types.VM) editModel {
-	current := exposedPorts(vm.Name, vm.Namespace)
+	current := exposedPorts(vm)
 	toggled := make(map[int]bool)
 	for _, p := range current {
 		toggled[p] = true
@@ -1130,13 +1166,14 @@ func (m editModel) enabledPorts() []int {
 	return enabled
 }
 
-// applyPorts exposes exactly the enabled ports of vm, removing the proxy when
-// there are none.
+// applyPorts publishes exactly the enabled ports of vm through its backend's
+// Publisher; none unpublishes.
 func applyPorts(vm types.VM, enabled []int) error {
-	if len(enabled) == 0 {
-		return kubevirt.DeleteProxy(vm.Name, vm.Namespace)
+	publisher, err := vmPublisher(vm)
+	if err != nil {
+		return err
 	}
-	return kubevirt.ApplyProxy(vm.Name, vm.Namespace, enabled)
+	return publisher.Publish(vm.Name, enabled)
 }
 
 func (m editModel) render() string {
@@ -1336,10 +1373,29 @@ func (m hwEditModel) render() string {
 	return sb.String()
 }
 
-// ── Proxy helpers ─────────────────────────────────────────────────
+// ── Port helpers ──────────────────────────────────────────────────
 
-func exposedPorts(name, ns string) []int {
-	return kubevirt.ExposedPorts(name, ns)
+// vmPublisher is the VM's backend Publisher, or a refusal naming the backend.
+func vmPublisher(vm types.VM) (backend.Publisher, error) {
+	adapter, err := backend.For(vm.Ref())
+	if err != nil {
+		return nil, err
+	}
+	publisher, ok := adapter.(backend.Publisher)
+	if !ok {
+		return nil, unsupported(adapter, "ports")
+	}
+	return publisher, nil
+}
+
+// exposedPorts lists the VM's published ports; none when its backend has no
+// Publisher (the menu does not offer the editor there).
+func exposedPorts(vm types.VM) []int {
+	publisher, err := vmPublisher(vm)
+	if err != nil {
+		return nil
+	}
+	return publisher.PublishedPorts(vm.Name)
 }
 
 // ── List delegates ────────────────────────────────────────────────
