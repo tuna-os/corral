@@ -47,6 +47,11 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
+      # The serve() bridge between sw.js and the Go dashboard only builds for
+      # js/wasm, so the main test job never runs it. Node (preinstalled on
+      # the runner) executes the test binary.
+      - name: Test the wasm bridge
+        run: GOOS=js GOARCH=wasm go test -count=1 -exec="$(go env GOROOT)/lib/wasm/go_js_wasm_exec" ./cmd/corral-wasm/
       - name: Build the site
         run: scripts/build-web-demo.sh dist/web-demo
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
