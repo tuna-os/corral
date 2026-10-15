@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -159,6 +160,61 @@ func TestInstallArgs_InjectsTheSSHKey(t *testing.T) {
 	}
 	if !strings.Contains(args, "/tmp/key.pub:/buildkey.pub:ro") {
 		t.Errorf("the key file is not mounted into the build container:\n%s", args)
+	}
+}
+
+// A composefs disk needs a second pass after bootc install: the real kernel
+// and initrd back on the ESP, and the root key where /var/roothome lives.
+// The pass runs in the image under test, with the disk and the key mounted.
+func TestComposefsFixupArgs_RunsInTheImageWithTheDiskAndKey(t *testing.T) {
+	args := LocalBuilder{}.composefsFixupArgs(BuildRequest{Image: "ghcr.io/x/desk:1", Dest: "/tmp/d.raw"}, "/tmp/key.pub")
+	joined := strings.Join(args, " ")
+	for _, want := range []string{
+		"--privileged",
+		"-v /dev:/dev",
+		"-v /tmp/d.raw:/target.img",
+		"-v /tmp/key.pub:/buildkey.pub:ro",
+		"ghcr.io/x/desk:1 sh -c",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("fixup args are missing %q:\n%s", want, joined)
+		}
+	}
+	if args[len(args)-1] != composefsFixupScript {
+		t.Errorf("the script should be the last argument")
+	}
+	noKey := strings.Join(LocalBuilder{}.composefsFixupArgs(BuildRequest{Image: "img", Dest: "/tmp/d.raw"}, ""), " ")
+	if strings.Contains(noKey, "buildkey.pub") {
+		t.Errorf("no key means no key mount:\n%s", noKey)
+	}
+}
+
+// The script restores both boot files and installs the key under
+// state/os/default/var, finds partitions by content, and refuses a disk
+// where it found no ESP entry or no root.
+func TestComposefsFixupScript(t *testing.T) {
+	for _, want := range []string{
+		`cp -f "${KDIR}vmlinuz" "$entry/vmlinuz"`,
+		`cp -f "${KDIR}initramfs.img" "$entry/initrd"`,
+		`EFI/Linux/bootc_composefs-*`,
+		`state/os/default/var/roothome/.ssh`,
+		`losetup --find --show --partscan /target.img`,
+		`[ "$ESP" = 1 ] ||`,
+		`[ "$ROOT" = 1 ] ||`,
+	} {
+		if !strings.Contains(composefsFixupScript, want) {
+			t.Errorf("fixup script is missing %q", want)
+		}
+	}
+	if strings.Contains(composefsFixupScript, "p3") {
+		t.Error("the root partition must be found by content, not assumed to be the third")
+	}
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("no sh to parse the script with")
+	}
+	if out, err := exec.Command(sh, "-n", "-c", composefsFixupScript).CombinedOutput(); err != nil {
+		t.Errorf("the fixup script does not parse: %v\n%s", err, out)
 	}
 }
 

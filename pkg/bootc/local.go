@@ -93,18 +93,6 @@ func (b LocalBuilder) Build(req BuildRequest, progress func(string)) (BuildResul
 		backend.Filesystem = req.Filesystem
 	}
 	report(fmt.Sprintf("image uses the %s backend (%s)", backend.Kind, backend.Filesystem))
-	if backend.Kind == "composefs" {
-		// The cluster builder does real work after bootc install for these:
-		// re-extracting the kernel and initrd over bootc's EROFS zero-filled
-		// ESP copies, and injecting the root key into
-		// state/os/default/var/roothome/.ssh because
-		// --root-ssh-authorized-keys is a no-op on composefs. Shipping half of
-		// that would produce a desktop image that builds and then does not
-		// boot, which is the failure this whole package tries to avoid.
-		return BuildResult{}, unsupported("composefs images in a local build",
-			"they need kernel/initrd re-extraction and root-key injection after install, which only the cluster builder implements",
-			"build this image with the KubeVirt context, or use an ostree image (one shipping bootupd) locally")
-	}
 
 	keyPath, cleanupKey, err := writeKey(req.SSHKey)
 	if err != nil {
@@ -130,6 +118,14 @@ func (b LocalBuilder) Build(req BuildRequest, progress func(string)) (BuildResul
 		// is worse than no disk.
 		os.Remove(req.Dest)
 		return BuildResult{}, installError(out, err)
+	}
+	if backend.Kind == "composefs" {
+		report("composefs: restoring the kernel and initrd on the ESP")
+		name, args := b.podman(b.composefsFixupArgs(req, keyPath)...)
+		if out, err := runner.Run(name, args...); err != nil {
+			os.Remove(req.Dest)
+			return BuildResult{}, fmt.Errorf("finishing the composefs disk: %s", commandError(out, err))
+		}
 	}
 
 	info, err := os.Stat(req.Dest)
@@ -374,6 +370,82 @@ func (b LocalBuilder) installArgs(req BuildRequest, backend Backend, keyPath str
 	args = append(args, "/target.img")
 	return args
 }
+
+// composefsFixupArgs builds the second container run a composefs disk needs
+// after `bootc install`, which the cluster builder (pkg/kubevirt/bootc.go)
+// does in its builder VM:
+//
+//   - bootc writes the ESP's kernel and initrd out of its EROFS store, which
+//     zero-fills files past the inline threshold. The 70 MB+ initrd on the ESP
+//     is then not the one in the image, the boot runs a garbled initramfs, and
+//     it ends in a dracut emergency shell. The real bytes are copied back from
+//     the image's own /usr/lib/modules.
+//   - --root-ssh-authorized-keys does nothing on composefs. /root is
+//     /var/roothome, and /var comes from state/os/default/var on the root
+//     partition, so the key is written there.
+//
+// Partitions are found by what they hold, not by number: the ESP is the one
+// with bootc_composefs-* entries, the root the one with state/os/default. The
+// script fails when either is missing, because a disk without them does not
+// boot, or cannot be reached.
+func (b LocalBuilder) composefsFixupArgs(req BuildRequest, keyPath string) []string {
+	dest, _ := filepath.Abs(req.Dest)
+	args := []string{
+		"run", "--rm",
+		// losetup and mount on the disk file, as the install itself did.
+		"--privileged",
+		"-v", "/dev:/dev",
+		"-v", dest + ":/target.img",
+		"--security-opt", "label=type:unconfined_t",
+	}
+	if keyPath != "" {
+		args = append(args, "-v", keyPath+":/buildkey.pub:ro")
+	}
+	return append(args, req.Image, "sh", "-c", composefsFixupScript)
+}
+
+// composefsFixupScript runs inside the image under test, so the kernel it
+// copies is the image's own.
+const composefsFixupScript = `set -eu
+KDIR=
+for d in /usr/lib/modules/*/; do
+  if [ -f "${d}vmlinuz" ] && [ -f "${d}initramfs.img" ]; then KDIR=$d; break; fi
+done
+[ -n "$KDIR" ] || { echo "corral: no kernel with an initramfs under /usr/lib/modules" >&2; exit 1; }
+LOOP=$(losetup --find --show --partscan /target.img)
+MNT=$(mktemp -d)
+trap 'umount "$MNT" 2>/dev/null || true; losetup -d "$LOOP" 2>/dev/null || true' EXIT
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  ls "${LOOP}"p* >/dev/null 2>&1 && break
+  sleep 1
+done
+ESP=0; ROOT=0
+for part in "${LOOP}"p*; do
+  mount "$part" "$MNT" 2>/dev/null || continue
+  for entry in "$MNT"/EFI/Linux/bootc_composefs-*; do
+    [ -d "$entry" ] || continue
+    cp -f "${KDIR}vmlinuz" "$entry/vmlinuz"
+    cp -f "${KDIR}initramfs.img" "$entry/initrd"
+    ESP=1
+  done
+  if [ -d "$MNT/state/os/default" ]; then
+    ROOT=1
+    if [ -f /buildkey.pub ]; then
+      SSHDIR="$MNT/state/os/default/var/roothome/.ssh"
+      mkdir -p "$SSHDIR"
+      chmod 700 "$SSHDIR"
+      cp /buildkey.pub "$SSHDIR/authorized_keys"
+      chmod 600 "$SSHDIR/authorized_keys"
+      chown -R 0:0 "$SSHDIR"
+    fi
+  fi
+  sync
+  umount "$MNT"
+done
+[ "$ESP" = 1 ] || { echo "corral: no bootc_composefs-* entry on any partition, so there is no kernel to restore" >&2; exit 1; }
+[ "$ROOT" = 1 ] || { echo "corral: no partition holds state/os/default, so the root SSH key has nowhere to go" >&2; exit 1; }
+echo "corral: restored $(basename "$KDIR") on the ESP"
+`
 
 func lastLine(s string) string {
 	lines := strings.Split(strings.TrimSpace(s), "\n")
