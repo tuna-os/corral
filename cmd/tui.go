@@ -166,7 +166,15 @@ func actionApplies(id string, vm types.VM) bool {
 		return vm.Capabilities.Migrate && vm.Running && !paused
 	case "snapshot":
 		return vm.Capabilities.Snapshots
-	case "hardware", "ports", "clone", "export", "template", "events":
+	case "clone":
+		return vmProvides[backend.Cloner](vm)
+	case "template":
+		return vmProvides[backend.Templater](vm)
+	case "events":
+		return vmProvides[backend.Eventer](vm)
+	case "hardware":
+		return vmProvides[backend.Sizer](vm)
+	case "ports", "export":
 		return vm.Backend == "kubevirt"
 	case "ssh", "viewer":
 		if id == "ssh" {
@@ -183,6 +191,19 @@ func actionApplies(id string, vm types.VM) bool {
 	default:
 		return true
 	}
+}
+
+// vmProvides reports whether the VM's backend adapter implements family T, so
+// the menu offers an action exactly where the operation behind it exists.
+// Building an adapter never dials anything (see backend.probe), which keeps
+// this cheap enough to ask per menu entry.
+func vmProvides[T any](vm types.VM) bool {
+	adapter, err := backend.For(vm.Ref())
+	if err != nil {
+		return false
+	}
+	_, ok := adapter.(T)
+	return ok
 }
 
 func ctActionApplies(id string, c ct.CT) bool {
@@ -835,27 +856,29 @@ func newCloneInput(sourceName string) textinput.Model {
 	return ti
 }
 
-// runClone mirrors cmd/clone.go's logic (kubevirt-only, registers the clone
-// in the local registry) so the TUI's Clone action behaves identically to
+// runClone mirrors cmd/clone.go's logic (the backend's Cloner, registers the
+// clone in the local registry) so the TUI's Clone action behaves identically to
 // `corral clone` — same checks, same errors, just driven by a text input
 // instead of positional args.
 func runClone(src types.VM, dst string) error {
-	if src.Backend != "kubevirt" {
-		return fmt.Errorf("cloning is only supported on KubeVirt VMs (VM %q uses backend %q)", src.Name, src.Backend)
+	adapter, err := backend.For(src.Ref())
+	if err != nil {
+		return err
+	}
+	cloner, ok := adapter.(backend.Cloner)
+	if !ok {
+		return unsupported(adapter, "clone")
 	}
 	if existing := resolveBackend(dst); existing != "" {
 		return fmt.Errorf("target VM %q already exists (backend: %s)", dst, existing)
 	}
-	ns := src.Namespace
-	if ns == "" {
-		ns = kubevirt.DefaultNamespace
-	}
-	if err := kubevirt.NewClientForContext(ns, src.Context).Clone(src.Name, dst); err != nil {
+	if err := cloner.Clone(src.Name, dst); err != nil {
 		return err
 	}
 	if registryStore != nil {
-		ref := types.InstanceRef{Backend: "kubevirt", Context: src.Context, Namespace: ns, Name: dst}
-		if err := registryStore.SetRef(ref, types.RegistryEntry{Backend: "kubevirt", Context: src.Context, Namespace: ns}); err != nil {
+		ref := src.Ref()
+		ref.Peer, ref.Name = "", dst
+		if err := registryStore.SetRef(ref, types.RegistryEntry{Backend: ref.Backend, Context: ref.Context, Namespace: ref.Namespace}); err != nil {
 			return fmt.Errorf("saving registry entry: %w", err)
 		}
 	}
@@ -1508,13 +1531,35 @@ func (m *hwEditModel) apply() {
 		}
 		return
 	}
-	c := kubevirt.NewClient(ns)
+	cpu := 0
 	if v, err := strconv.Atoi(strings.TrimSpace(m.cpu.Value())); err == nil && v > 0 && v != m.vm.CPU {
-		c.ScaleCPU(m.vm.Name, v)
+		cpu = v
 	}
-	if mem := strings.TrimSpace(m.mem.Value()); mem != "" && mem != m.vm.Mem {
-		c.ScaleMemory(m.vm.Name, mem)
+	mem := strings.TrimSpace(m.mem.Value())
+	if mem == m.vm.Mem {
+		mem = ""
 	}
+	if cpu == 0 && mem == "" {
+		return
+	}
+	if err := scaleVM(m.vm, cpu, mem); err != nil {
+		m.status = err.Error()
+	}
+}
+
+// scaleVM changes a VM's CPU and memory through its backend's Sizer — the
+// same operation `corral scale` and the web hardware form run. A zero cpu or
+// empty mem leaves that half alone.
+func scaleVM(vm types.VM, cpu int, mem string) error {
+	adapter, err := backend.For(vm.Ref())
+	if err != nil {
+		return err
+	}
+	sizer, ok := adapter.(backend.Sizer)
+	if !ok {
+		return unsupported(adapter, "hardware edits")
+	}
+	return sizer.Scale(vm.Name, cpu, mem)
 }
 
 func (m hwEditModel) render() string {

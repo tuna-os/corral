@@ -24,7 +24,6 @@ import (
 	"charm.land/lipgloss/v2/table"
 	"github.com/tuna-os/corral/pkg/backend"
 	"github.com/tuna-os/corral/pkg/ct"
-	"github.com/tuna-os/corral/pkg/kubevirt"
 	"github.com/tuna-os/corral/pkg/snapshot"
 	"github.com/tuna-os/corral/pkg/types"
 )
@@ -307,22 +306,28 @@ func consistencyLabel(c snapshot.Consistency, th theme) string {
 
 // ── Events ────────────────────────────────────────────────────────
 
-// eventsState is the Events tab: recent Kubernetes events for the VM and its
-// virt-launcher pod. KubeVirt-only, because no other backend has an event
-// stream to show — the actions menu gates it accordingly.
+// eventsState is the Events tab: the VM's recent activity from its backend's
+// Eventer — Kubernetes events for the VM and its virt-launcher pod, the unit's
+// journal, PVE tasks. The actions menu offers it only where an Eventer exists.
 type eventsState struct {
 	vmName string
-	events []kubevirt.EventInfo
+	events []backend.Event
 	err    string
 }
 
 func newEventsState(vm types.VM) eventsState {
 	s := eventsState{vmName: vm.Name}
-	ns := vm.Namespace
-	if ns == "" {
-		ns = kubevirt.DefaultNamespace
+	adapter, err := backend.For(vm.Ref())
+	if err != nil {
+		s.err = err.Error()
+		return s
 	}
-	evs, err := kubevirt.NewClientForContext(ns, vm.Context).Events(vm.Name)
+	eventer, ok := adapter.(backend.Eventer)
+	if !ok {
+		s.err = unsupported(adapter, "events").Error()
+		return s
+	}
+	evs, err := eventer.Events(vm.Name)
 	if err != nil {
 		s.err = err.Error()
 		return s
@@ -363,7 +368,7 @@ func (m tuiModel) eventsView() string {
 			})
 		for _, e := range s.events {
 			mark := th.muted.Render("·")
-			if e.Type == "Warning" {
+			if e.Kind == "Warning" {
 				mark = th.warn.Render("!")
 			}
 			t.Row(mark, humanAge(e.Time), e.Reason, e.Object, oneLine(e.Message))
@@ -417,12 +422,19 @@ func humanAge(stamp string) string {
 // be able to set the mark without opening a browser.
 func (m *tuiModel) toggleTemplate() {
 	vm := m.selected
-	ns := vm.Namespace
-	if ns == "" {
-		ns = kubevirt.DefaultNamespace
-	}
 	on := !vm.IsTemplate
-	if err := kubevirt.NewClientForContext(ns, vm.Context).MarkTemplate(vm.Name, on); err != nil {
+	err := func() error {
+		adapter, err := backend.For(vm.Ref())
+		if err != nil {
+			return err
+		}
+		templater, ok := adapter.(backend.Templater)
+		if !ok {
+			return unsupported(adapter, "template")
+		}
+		return templater.MarkTemplate(vm.Name, on)
+	}()
+	if err != nil {
 		m.notice, m.noticeKind = "template: "+err.Error(), "error"
 		return
 	}
