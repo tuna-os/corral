@@ -44,10 +44,25 @@ func RunContexts(contexts []config.ContextConfig) []Check {
 		case "libvirt":
 			runner = base
 			checks = libvirtChecks(target.Context)
+		case "virtualbox":
+			runner = base
+			checks = virtualboxChecks()
 		case "proxmox":
 			// No runner: this backend speaks HTTP, so the probe is an API call
 			// rather than a command.
 			checks = proxmoxChecks(target.Name, target.Context)
+		case "vsphere":
+			// No runner: this backend speaks SOAP, so the probe is a session
+			// login rather than a command.
+			checks = vsphereChecks(target.Name)
+		case "xen":
+			// No runner: this backend speaks XML-RPC, so the probe is a
+			// session login rather than a command.
+			checks = xenChecks(target.Name)
+		case "nutanix":
+			// No runner: this backend speaks REST with per-request auth,
+			// so the probe is one cheap list page rather than a login.
+			checks = nutanixChecks(target.Name)
 		default:
 			checks = []Check{{Name: "Backend supported", Detail: fmt.Sprintf("unknown backend %q", target.Backend), Severity: "required"}}
 		}

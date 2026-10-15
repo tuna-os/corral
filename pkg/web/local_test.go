@@ -152,7 +152,7 @@ func TestLocalVNCBridge_DialsLocalPort(t *testing.T) {
 
 	fx := NewTestFixture()
 	defer fx.Close()
-	ws, err := websocket.Dial(wsURL(fx.Server.URL)+"/api/vnc/local/laptopvm", "", "http://localhost")
+	ws, err := websocket.Dial(wsURL(fx.Server.URL)+"/api/vnc/local/laptopvm", "", fx.Server.URL)
 	if err != nil {
 		t.Fatalf("ws dial: %v", err)
 	}

@@ -518,6 +518,17 @@ func TestContextManagement(t *testing.T) {
 	if HasBackend("proxmox") {
 		t.Error("HasBackend('proxmox') want false")
 	}
+	// Proxmox contexts save like every other remote backend: host in
+	// Context, secrets in the environment, never in the block.
+	if err := AddContext(ContextConfig{Name: "pve", Backend: "proxmox", Context: "pve.example.com"}); err != nil {
+		t.Fatalf("AddContext proxmox: %v", err)
+	}
+	if !HasBackend("proxmox") {
+		t.Error("HasBackend('proxmox') want true")
+	}
+	if err := RemoveContext("pve"); err != nil {
+		t.Fatalf("RemoveContext pve: %v", err)
+	}
 
 	if err := RemoveContext("my-incus"); err != nil {
 		t.Fatalf("RemoveContext: %v", err)

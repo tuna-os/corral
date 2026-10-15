@@ -371,6 +371,7 @@ test.describe('Corral web UI', () => {
     expect(await waitFor(() => !vmExists(vm), 60_000, 3000, `${vm} deleted`)).toBe(true);
   });
 
+  // @live-only: needs a second schedulable node plus a real boot (kind TCG never reaches Running, #77).
   test('live-migrate a running VM between nodes via the UI @live-only', async ({ page }) => {
     test.setTimeout(600_000);
     const vm = trackVM('e2e-mig-' + uid());
@@ -445,6 +446,7 @@ test.describe('Corral web UI', () => {
 
   // ── 6. Import qcow2 by URL (CDI completes end to end) ─────────────
 
+  // @live-only: the CDI import must reach Succeeded and the VM must boot (kind TCG, #77).
   test('import qcow2 URL: CDI import succeeds and VM boots @live-only', async ({ page }) => {
     test.setTimeout(600_000);
     const vm = trackVM('e2e-imp-' + uid());
@@ -536,6 +538,7 @@ test.describe('Corral web UI', () => {
 
   // ── 10. Settings: snapshots tab ────────────────────────────────────
 
+  // @live-only: needs a VolumeSnapshotClass plus a bootable import (kind TCG, #77); the guard below keeps CI green.
   test('Snapshots tab: take and delete a snapshot @live-only', async ({ page }) => {
     test.setTimeout(420_000);
     const { body: caps } = await api('/api/capabilities');
@@ -578,6 +581,7 @@ test.describe('Corral web UI', () => {
 
   // ── 11. Consoles: VNC (RFB) and serial terminal over websockets ────
 
+  // @live-only: needs a Running VM with qemu VNC/serial sockets (kind TCG never boots, #77).
   test('VNC and serial TTY consoles connect to a running VM @live-only', async ({ page }) => {
     test.setTimeout(600_000);
     const vm = trackVM('e2e-con-' + uid());
@@ -661,6 +665,7 @@ test.describe('Corral web UI', () => {
   // (A true-positive needs a Windows VM or a Linux guest with
   // gnome-remote-desktop/xrdp — out of e2e budget; covered by unit tests.)
 
+  // @live-only: the probe runs against a Running VM (kind TCG never boots, #77).
   test('RDP probe: closed for a Linux VM, Summary row renders @live-only', async ({ page }) => {
     test.setTimeout(420_000);
     const vm = trackVM('e2e-rdp-' + uid());
@@ -687,6 +692,7 @@ test.describe('Corral web UI', () => {
   // Runs when the cluster has a NetworkAttachmentDefinition (Multus
   // installed — see deploy/multus/); skips cleanly otherwise.
 
+  // @live-only: needs real Multus NADs — the skip guard above is load-bearing (without it CI crashed on nads[0]).
   test('Add NIC: attach a Multus network and the guest gets the interface @live-only', async ({ page }) => {
     test.setTimeout(420_000);
     const { body: nads } = await api('/api/nads');
@@ -720,6 +726,7 @@ test.describe('Corral web UI', () => {
 
   // ── 12. SSH access ─────────────────────────────────────────────────
 
+  // @live-only: needs a booted VM with an IP reachable by ssh from the runner (kind TCG, #77).
   test('SSH: key injected at create, login works @live-only', async ({ page }) => {
     test.setTimeout(600_000);
     const vm = trackVM('e2e-ssh-' + uid());
@@ -784,6 +791,7 @@ test.describe('Corral web UI', () => {
 
   // ── 12b. Tailscale connectivity ─────────────────────────────────────
 
+  // @live-only: needs the tailnet plus the Tailscale operator proxy on top of a booted VM.
   test('Tailscale: VM joins tailnet and is reachable via SSH @live-only', async ({ page }) => {
     test.setTimeout(600_000);
     const vm = trackVM('e2e-ts-' + uid());
@@ -1030,6 +1038,7 @@ test.describe('Corral web UI', () => {
   // The disk is wiped+rebuilt; the key (recorded as a VM annotation at create)
   // must be re-baked, or the VM would be locked out. Uses fedora-bootc (fast
   // ostree build) and rebuilds via the API with NO key in the request.
+  // @live-only: two builder-VM ostree builds plus boots and virtctl port-forward (45 min, needs KVM).
   test('bootc rebuild re-bakes the SSH key and preserves access @live-only', async ({ page }) => {
     test.setTimeout(2_700_000); // 45 min — two fedora-bootc builds + boots
 

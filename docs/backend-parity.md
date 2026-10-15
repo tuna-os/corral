@@ -27,33 +27,33 @@ to the matrix.
 Legend: ✅ shipped · 🔨 the backend can do this and Corral does not yet · — the
 backend cannot, or it is meaningless there.
 
-| Operation | kubevirt | qemu | incus | libvirt | proxmox |
-|---|---|---|---|---|---|
-| List / inventory | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Create | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Start | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Stop | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Restart | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Pause / resume | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Delete | ✅ | ✅ | ✅ | ✅ | ✅ |
-| SSH | ✅ | ✅ | ✅ | 🔨 | ✅ |
-| Serial / shell console | ✅ | 🔨 | ✅ | 🔨 | 🔨 |
-| Graphical console (VNC) | ✅ | ✅ | 🔨 | ✅ | 🔨 |
-| RDP | ✅ | 🔨 | 🔨 | 🔨 | 🔨 |
-| Live CPU / memory | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Snapshot / restore | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Migrate | ✅ | — | 🔨 | 🔨 | ✅ |
-| Clone | ✅ | 🔨 | 🔨 | 🔨 | ✅ |
-| Template mark | ✅ | 🔨 | 🔨 | 🔨 | ✅ |
-| CPU / memory edit | ✅ | 🔨 | 🔨 | 🔨 | ✅ |
-| Add / remove disks | ✅ | 🔨 | 🔨 | 🔨 | ✅ |
-| Expand disk | ✅ | 🔨 | 🔨 | 🔨 | ✅ |
-| GPU passthrough | ✅ | 🔨 | 🔨 | 🔨 | ✅ |
-| Export / backup disk | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Events | ✅ | ✅ | — | — | ✅ |
-| Tags | ✅ | 🔨 | 🔨 | 🔨 | ✅ |
-| Published ports | ✅ | ✅ | 🔨 | — | — |
-| Containers (CT) | ✅ | — | ✅ | — | 🔨 |
+| Operation | kubevirt | qemu | incus | libvirt | proxmox | virtualbox | vsphere | xen | nutanix |
+|---|---|---|---|---|---|---|---|---|---|
+| List / inventory | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Create | ✅ | ✅ | ✅ | ✅ | ✅ | 🔨 | 🔨 | 🔨 | 🔨 |
+| Start | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Stop | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Restart | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Pause / resume | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
+| Delete | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| SSH | ✅ | ✅ | ✅ | 🔨 | ✅ | 🔨 | 🔨 | 🔨 | 🔨 |
+| Serial / shell console | ✅ | 🔨 | ✅ | 🔨 | 🔨 | 🔨 | 🔨 | 🔨 | 🔨 |
+| Graphical console (VNC) | ✅ | ✅ | 🔨 | ✅ | 🔨 | 🔨 | 🔨 | 🔨 | 🔨 |
+| RDP | ✅ | 🔨 | 🔨 | 🔨 | 🔨 | 🔨 | 🔨 | 🔨 | — |
+| Live CPU / memory | ✅ | ✅ | ✅ | ✅ | ✅ | 🔨 | 🔨 | 🔨 | 🔨 |
+| Snapshot / restore | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Migrate | ✅ | — | 🔨 | 🔨 | ✅ | — | ✅ | ✅ | ✅ |
+| Clone | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | ✅ | ✅ | ✅ |
+| Template mark | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | ✅ | 🔨 | — |
+| CPU / memory edit | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | ✅ | 🔨 | 🔨 |
+| Add / remove disks | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | 🔨 | 🔨 | 🔨 |
+| Expand disk | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | 🔨 | 🔨 | 🔨 |
+| GPU passthrough | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | 🔨 | 🔨 | — |
+| Export / backup disk | ✅ | ✅ | ✅ | ✅ | ✅ | 🔨 | 🔨 | 🔨 | 🔨 |
+| Events | ✅ | ✅ | — | — | ✅ | — | 🔨 | 🔨 | 🔨 |
+| Tags | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | 🔨 | 🔨 | 🔨 |
+| Published ports | ✅ | ✅ | 🔨 | — | — | 🔨 | — | — | — |
+| Containers (CT) | ✅ | — | ✅ | — | 🔨 | — | — | — | — |
 
 ## What the audit found
 
@@ -193,6 +193,70 @@ websocket bridge is not. So the capability flags say no, and the matrix says why
 - **vnc** — vncproxy tickets work (pkg/proxmoxbe.VNCTicket); the web UI has no websocket bridge for them yet
 - **rdp** — same, via the guest address
 - **containers** — pkg/proxmoxbe.Containers lists them and Create makes them; pkg/ct does not yet surface a non-Kubernetes CT
+
+### virtualbox — 15 gaps
+
+- **create** — createvm plus storagectl/storageattach/modifyvm exist natively; Corral has no creator wiring them yet
+- **ssh** — Corral has no address discovery yet. Use the Guest Additions guestproperty or a NAT port-forward for the guest address, then plain ssh.
+- **tty** — the UART is redirectable to a host pipe via modifyvm --uartmode1; Corral has no console bridge for it
+- **vnc** — VRDE serves the guest display natively; Corral wires no viewer or bridge to it
+- **rdp** — VRDE is an RDP server already; Corral has no probe or bridge for it
+- **metrics** — VBoxManage reports host CPU and memory counters through its metrics query. Corral has no sampler for them yet.
+- **clone** — clonevm
+- **template** — no native mark; the local registry mark, the same mechanism qemu would use
+- **scale** — modifyvm --cpus/--memory while stopped
+- **volumes** — storageattach/storagectl plus closemedium; nothing drives them yet
+- **expand** — modifymedium --resize while stopped
+- **gpu** — PCI passthrough via modifyvm --pciattach on Linux hosts; experimental and host-limited
+- **export** — export to OVA natively; pkg/export has no VirtualBox adapter yet
+- **tags** — setextradata keys or the registry mark; nothing reads them back yet
+- **ports** — NAT port-forward rules via modifyvm --natpf1. Corral does not manage them yet.
+
+### vsphere — 12 gaps
+
+- **create** — CloneVM works natively, and OVF deploy works too. Corral has no creator for them yet.
+- **ssh** — Corral has no address discovery yet. Use the Tools-reported guest address, then plain ssh.
+- **tty** — the serial port is redirectable to host or network; Corral has no console bridge for it
+- **vnc** — MKS/webmks tickets exist (AcquireTicket); Corral wires no viewer or bridge to them
+- **rdp** — same probe and bridge via the guest address
+- **metrics** — vCenter reports CPU and memory counters through performance manager. Corral has no sampler for them yet.
+- **volumes** — reconfig device attach and detach; nothing drives them yet
+- **expand** — virtual disk extend via reconfig; nothing drives it yet
+- **gpu** — PCI passthrough via reconfig device attach; experimental and host-limited
+- **export** — ExportVm serves an OVF/NFC lease natively; pkg/export has no vSphere adapter yet
+- **events** — The event manager keeps per-VM history. Corral wires no reader for it yet.
+- **tags** — vSphere has native tags. Nothing drives them yet.
+
+### xen — 14 gaps
+
+- **create** — VM.create works natively. Corral has no creator for it yet.
+- **ssh** — Corral has no address discovery yet. Use the guest-metrics address, then plain ssh.
+- **tty** — Guests expose a vt100 console. Corral wires no bridge to it.
+- **vnc** — Guests expose an RFB display. Corral wires no viewer to it.
+- **rdp** — same probe and bridge via the guest address
+- **metrics** — VM_metrics and host_metrics carry live counters. Corral has no sampler for them yet.
+- **template** — VM.set_is_a_template marks natively. Corral has no templater wiring it yet.
+- **scale** — VCPU and memory set calls exist natively. Nothing drives them yet.
+- **volumes** — VBD plug and VDI create exist natively. Nothing drives them yet.
+- **expand** — VDI.resize grows a disk natively. Nothing drives it yet.
+- **gpu** — Hosts can assign PCI devices to guests. That path stays experimental and host-limited.
+- **export** — The pool serves XVA on /export. pkg/export has no Xen adapter yet.
+- **events** — The pool logs its own activity. Corral wires no reader for that log yet.
+- **tags** — The VM record carries tags natively. Corral has no tagger to set them yet.
+
+### nutanix — 11 gaps
+
+- **create** — VM create exists natively. Corral has no creator for it yet.
+- **ssh** — Corral has no address discovery yet. Use the NIC address, then plain ssh.
+- **tty** — Tokens for consoles exist natively. Corral wires no bridge for them yet.
+- **vnc** — Tokens for consoles exist natively. Corral wires no viewer for them yet.
+- **metrics** — v4 stats and v1 counters carry live data. Corral has no sampler for them yet.
+- **scale** — PUT updates cores and memory natively. Nothing drives it yet.
+- **volumes** — Disk endpoints exist in vmm. Nothing drives them yet.
+- **expand** — Disk update exists in vmm. Nothing drives it yet.
+- **export** — Points for VM recovery exist in vmm. Corral has no downloader for them yet.
+- **events** — The task list logs the activity of the pool. Corral wires no per-VM reader yet.
+- **tags** — Corral associates no categories yet: no reference shows the value lookup.
 
 ## Testing parity
 
