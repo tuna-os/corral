@@ -308,6 +308,27 @@ changes nothing. If the move fails after it starts, the error tells you
 whether the source is intact. Corral stops the source, and it deletes the
 source only when you give `--delete-source`.
 
+## VDI desktops
+
+These are the errors of the VDI broker (`/api/vdi/`, the Desktops screen,
+and `corral vdi connect`). [docs/vdi.md](vdi.md#self-service-broker) explains
+the broker.
+
+| Error | Cause | Fix |
+|---|---|---|
+| `the VDI broker is off (set CORRAL_VDI_BROKER=1)` | `corral web` runs without the broker | Set `CORRAL_VDI_BROKER=1` and restart `corral web` |
+| `VDI self-service needs an authenticated identity` (401) | The request came without the identity headers | Connect through the Tailscale ingress or the `corral-auth` gateway |
+| `a service identity cannot use VDI self-service` (403) | A Corral peer token sent the request | Use a user identity; peers cannot hold desktops |
+| `the desktop belongs to another user` (403) | Another user holds the desktop | Use your own desktop, or ask an admin to release it |
+| `pool has no free members` (409) | Users hold every member of the pool | Wait for a release, or ask an admin to add members |
+| `no claimed desktop by that ID` (404) | The claim ended: a release or a reclaim | Claim the pool again |
+| `the claim on this desktop expired` (409) | No broker renewed the Lease for an hour | Claim the pool again; the claim then renews |
+| `the desktop is not running; start it, then connect` (409) | The member stopped | Select **Start**, or send `POST .../start` |
+| `the desktop offers no console Corral can open` (409) | The VM has no RDP, graphics device, or serial console | Enable a console in the golden VM |
+| `startError` in a claim | The member did not start; you keep the desktop | Fix the cause (often cluster capacity), then start it again |
+| A release task ends with `the claim is kept; retry the release` | The stop or the recreate failed | Release again after you fix the cause |
+| A desktop was released while you were away | The disconnect grace period or the maximum duration ran out | Claim again; see [Sessions and reclaim](vdi.md#sessions-and-reclaim) |
+
 ## Unsupported operations
 
 Some commands work on KubeVirt only. On another backend they stop with
@@ -335,6 +356,9 @@ Some commands work on local QEMU only. On another backend they stop with
 | `CORRAL_LOG_LEVEL`, `CORRAL_LOG_FORMAT`, `CORRAL_LOG_FILE` | Log level, format and file. See [Collect evidence](#collect-evidence) |
 | `CORRAL_OVMF_CODE`, `CORRAL_OVMF_VARS` | UEFI firmware files for local VMs |
 | `CORRAL_PROXMOX_TOKEN`, `CORRAL_PROXMOX_TOKEN_<CONTEXT>` | Proxmox API token |
+| `CORRAL_VDI_BROKER`, `CORRAL_VDI_NAMESPACES` | Turn on the VDI broker of `corral web`, and the namespaces it serves |
+| `CORRAL_VDI_DISCONNECT_GRACE`, `CORRAL_VDI_MAX_SESSION` | The VDI reclaim policy (default `15m` and no maximum) |
+| `CORRAL_VDI_BROKER_URL` | Default `--broker` of `corral vdi connect` |
 | `KUBECONFIG` | Kubeconfig file. When it exists, Corral adds a `kubevirt` context |
 | `TS_AUTHKEY` | Tailscale auth key that `corral config` shows |
 | `XDG_CONFIG_HOME` | Parent directory of the Corral configuration |

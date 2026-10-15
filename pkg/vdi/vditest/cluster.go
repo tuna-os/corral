@@ -15,9 +15,11 @@ import (
 )
 
 type member struct {
-	ref     vdi.MemberRef
-	pool    string
-	running bool
+	ref        vdi.MemberRef
+	pool       string
+	running    bool
+	noVNC      bool
+	noTerminal bool
 }
 
 type pool struct {
@@ -214,13 +216,33 @@ func (c *Cluster) MemberState(cl vdi.MemberClaim) (vdi.MemberState, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	m, ok := c.members[cl.Member.ID()]
-	switch {
-	case !ok:
+	if !ok {
 		return vdi.MemberState{Phase: "Missing"}, nil
-	case m.running:
-		return vdi.MemberState{Phase: "Running", Running: true}, nil
 	}
-	return vdi.MemberState{Phase: "Stopped"}, nil
+	s := vdi.MemberState{Phase: "Stopped", VNC: !m.noVNC && m.ref.Kind == vdi.PoolKindVM, Terminal: !m.noTerminal}
+	if m.running {
+		s.Phase, s.Running = "Running", true
+	}
+	return s, nil
+}
+
+// SetConsoles says which consoles member offers (all, by default; a CT
+// member never offers VNC).
+func (c *Cluster) SetConsoles(ref vdi.MemberRef, vnc, terminal bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if m, ok := c.members[ref.ID()]; ok {
+		m.noVNC, m.noTerminal = !vnc, !terminal
+	}
+}
+
+// SetRunning starts or stops member out of band, e.g. a guest shutdown.
+func (c *Cluster) SetRunning(ref vdi.MemberRef, running bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if m, ok := c.members[ref.ID()]; ok {
+		m.running = running
+	}
 }
 
 // StartMember implements vdi.Cluster.

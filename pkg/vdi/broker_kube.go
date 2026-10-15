@@ -186,7 +186,7 @@ func (kubeBrokerCluster) MemberState(c MemberClaim) (MemberState, error) {
 		for _, m := range members {
 			if m.Name == c.Member.Name {
 				state := m.state()
-				return MemberState{Phase: string(state), Running: state == CTMemberReady}, nil
+				return MemberState{Phase: string(state), Running: state == CTMemberReady, Terminal: true}, nil
 			}
 		}
 		return MemberState{Phase: string(CTMemberMissing)}, nil
@@ -195,7 +195,23 @@ func (kubeBrokerCluster) MemberState(c MemberClaim) (MemberState, error) {
 	if err != nil {
 		return MemberState{}, err
 	}
-	var v vmListItem
+	var v struct {
+		Spec struct {
+			Template struct {
+				Spec struct {
+					Domain struct {
+						Devices struct {
+							Graphics *bool `json:"autoattachGraphicsDevice"`
+							Serial   *bool `json:"autoattachSerialConsole"`
+						} `json:"devices"`
+					} `json:"domain"`
+				} `json:"spec"`
+			} `json:"template"`
+		} `json:"spec"`
+		Status struct {
+			PrintableStatus string `json:"printableStatus"`
+		} `json:"status"`
+	}
 	if err := json.Unmarshal(out, &v); err != nil {
 		return MemberState{}, fmt.Errorf("decode VM %s: %w", c.Member.Name, err)
 	}
@@ -203,7 +219,12 @@ func (kubeBrokerCluster) MemberState(c MemberClaim) (MemberState, error) {
 	if phase == "" {
 		phase = "Unknown"
 	}
-	return MemberState{Phase: phase, Running: phase == "Running"}, nil
+	// KubeVirt attaches both devices unless the VM opts out.
+	devices := v.Spec.Template.Spec.Domain.Devices
+	return MemberState{
+		Phase: phase, Running: phase == "Running",
+		VNC: devices.Graphics == nil || *devices.Graphics, Terminal: devices.Serial == nil || *devices.Serial,
+	}, nil
 }
 
 func (kubeBrokerCluster) StartMember(c MemberClaim) error {

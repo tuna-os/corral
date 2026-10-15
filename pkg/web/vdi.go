@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -81,6 +82,21 @@ func startVDIReclaim(ctx context.Context) {
 	}
 }
 
+// vdiConsoleGate keeps the console of a claimed desktop to its holder and
+// to admins (#229). Consoles of other VMs and CTs pass unchanged.
+func vdiConsoleGate(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if b := vdiBroker; b != nil {
+			login, _ := caller(r)
+			if err := b.AuthorizeConsole(vdi.Actor{Identity: login, Admin: isAdmin(r)}, r.PathValue("ns"), r.PathValue("name")); err != nil {
+				errResp(w, vdiStatus(err), err)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // trackConsole reports a console session on a VDI desktop to the broker,
 // for disconnect reclaim (#228). Consoles of other VMs are ignored.
 func trackConsole(h websocket.Handler) websocket.Handler {
@@ -121,6 +137,7 @@ func registerVDIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/vdi/desktops/{kind}/{ns}/{member}", vdiRoute(handleVDIDesktop))
 	mux.HandleFunc("POST /api/vdi/desktops/{kind}/{ns}/{member}/start", vdiRoute(handleVDIStart))
 	mux.HandleFunc("POST /api/vdi/desktops/{kind}/{ns}/{member}/release", vdiRoute(handleVDIRelease))
+	mux.HandleFunc("GET /api/vdi/desktops/{kind}/{ns}/{member}/connect", vdiRoute(handleVDIConnect))
 }
 
 type vdiHandler func(w http.ResponseWriter, r *http.Request, b *vdi.Broker, a vdi.Actor)
@@ -157,7 +174,8 @@ func vdiStatus(err error) int {
 		return http.StatusForbidden
 	case errors.Is(err, vdi.ErrNotFound), errors.Is(err, vdi.ErrPoolNotFound):
 		return http.StatusNotFound
-	case errors.Is(err, vdi.ErrPoolExhausted), errors.Is(err, vdi.ErrPersistentCTPool):
+	case errors.Is(err, vdi.ErrPoolExhausted), errors.Is(err, vdi.ErrPersistentCTPool),
+		errors.Is(err, vdi.ErrNotRunning), errors.Is(err, vdi.ErrClaimExpired), errors.Is(err, vdi.ErrUnreachable):
 		return http.StatusConflict
 	}
 	return http.StatusInternalServerError
@@ -239,4 +257,33 @@ func handleVDIRelease(w http.ResponseWriter, r *http.Request, b *vdi.Broker, a v
 	task := tasks.start(r.Context(), id)
 	go func() { task.finish(release()) }()
 	jsonResp(w, http.StatusAccepted, map[string]string{"task": id, "desktop": ref.ID()})
+}
+
+// vdiRDPProbe asks the guest for RDP the way GET /api/vms/{ns}/{name}/rdp
+// does: TCP 3389 on its address, from this server.
+func vdiRDPProbe(c vdi.MemberClaim) (string, error) {
+	info, ok := vmiIndex()[c.Member.Namespace+"/"+c.Member.Name]
+	if !ok || info.IP == "" {
+		return "", fmt.Errorf("the VM has no guest address yet")
+	}
+	addr := net.JoinHostPort(info.IP, "3389")
+	conn, err := rdpDial(addr)
+	if err != nil {
+		return "", fmt.Errorf("TCP 3389 did not answer at %s", addr)
+	}
+	_ = conn.Close()
+	return addr, nil
+}
+
+// GET /api/vdi/desktops/{kind}/{ns}/{member}/connect — the console to open
+// for a desktop (holder or admin): the chosen protocol and its route, the
+// fallbacks in order, and why other protocols were skipped. 409 tells the
+// caller what to do first: start the desktop, or claim it again.
+func handleVDIConnect(w http.ResponseWriter, r *http.Request, b *vdi.Broker, a vdi.Actor) {
+	t, err := b.Connect(a, memberRef(r), vdiRDPProbe)
+	if err != nil {
+		errResp(w, vdiStatus(err), err)
+		return
+	}
+	jsonResp(w, http.StatusOK, t)
 }

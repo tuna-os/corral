@@ -30,19 +30,23 @@ The pool definition lives in the cluster (ConfigMap corral-vdi-ctpool-<name>);
 "reconcile" creates, starts, replaces, and removes members to match it, and
 never destroys a claimed member. Releasing a member destroys it and recreates
 it from the image. See docs/vdi-ct-pools.md.`,
-		PersistentPreRunE: func(*cobra.Command, []string) error {
-			kubeContext, err := ctPoolKubeContext()
-			if err != nil || kubeContext == "" {
-				return err
-			}
-			vdi.SetRunner(shell.WithKubeContext(shell.Real{}, kubeContext))
-			ct.SetRunner(shell.WithKubeContext(shell.DefaultKubectl, kubeContext))
-			return nil
-		},
+		PersistentPreRunE: useKubeContext,
 	}
 	c.AddCommand(ctPoolApplyCmd(), ctPoolReconcileCmd(), ctPoolStatusCmd(), ctPoolListCmd(),
 		ctPoolDeleteCmd(), ctPoolClaimCmd(), ctPoolReleaseCmd())
 	return c
+}
+
+// useKubeContext points the vdi and ct runners at the kubeconfig context
+// of --context.
+func useKubeContext(*cobra.Command, []string) error {
+	kubeContext, err := ctPoolKubeContext()
+	if err != nil || kubeContext == "" {
+		return err
+	}
+	vdi.SetRunner(shell.WithKubeContext(shell.Real{}, kubeContext))
+	ct.SetRunner(shell.WithKubeContext(shell.DefaultKubectl, kubeContext))
+	return nil
 }
 
 // ctPoolKubeContext is the kubeconfig context of the --context Corral
@@ -57,7 +61,7 @@ func ctPoolKubeContext() (string, error) {
 		return "", fmt.Errorf("unknown context %q (see corral context ls)", contextName)
 	}
 	if cfg.Backend != "kubevirt" {
-		return "", fmt.Errorf("CT pools need a Kubernetes cluster (context %q is %s)", contextName, cfg.Backend)
+		return "", fmt.Errorf("VDI pools need a Kubernetes cluster (context %q is %s)", contextName, cfg.Backend)
 	}
 	return cfg.Context, nil
 }

@@ -4,12 +4,14 @@
 gives static desktop pools with admin (CLI-driven) assignment, and it builds
 each pool from clones of an already-built VM. `corral web` adds the Phase 2
 [self-service broker](#self-service-broker): an authenticated user claims,
-starts, and releases their own desktop without an admin. The broker takes
-back a desktop that its user left, with care. One-click connect is later
-Phase 2 work, which
-[issue #69](https://github.com/tuna-os/corral/issues/69) tracks (see also
-[VDI Epic Status](vdi-epic-status.md)). What's here is real and cluster-tested:
+starts, connects to, and releases their own desktop without an admin. The
+broker takes back a desktop that its user left, with care.
+[Issue #69](https://github.com/tuna-os/corral/issues/69) tracks the VDI epic
+(see also [VDI Epic Status](vdi-epic-status.md)). What's here is real and cluster-tested:
 create a pool, hand a member to a user, connect, release it, delete the pool.
+
+**Stability level:** Preview (see the
+[criteria](enterprise-readiness.md#stability-levels)).
 
 This page is about pools of VMs. For pools of ephemeral Linux desktops that
 Corral builds from a container image, see [CT-backed pools](vdi-ct-pools.md).
@@ -97,11 +99,12 @@ corral vdi assign devpool alice
 #   assigned devpool-1 → alice
 #   connect:  corral vdi connect devpool-1
 
-# 5. Connect. Prints every reachable path — pick whichever fits the guest.
+# 5. Connect. Picks the best console the guest offers (see "Connect" below).
 corral vdi connect devpool-1
-#   VNC (browser or client):  corral web  →  open devpool-1  →  Console
-#   RDP (if the guest answers on 3389):  corral viewer devpool-1  (or a native RDP client via virtctl port-forward)
-#   SSH (Linux guests):  corral ssh devpool-1
+#   desktop vm/corral-vms/devpool-1 (held by alice)
+#   connect: VNC: virtctl vnc devpool-1 -n corral-vms
+#   fallback: terminal
+#   skipped: rdp: TCP 3389 did not answer at 10.244.1.17:3389 from this machine
 
 # 6. Native USB Redirection (smartcards, security keys, YubiKeys).
 #    List local USB devices available on the client:
@@ -191,10 +194,10 @@ released another user's desktop).
 - **Open mode has no ownership.** Without `CORRAL_ADMINS`, every caller is
   an admin and may release any desktop. Set an allowlist before you offer
   the broker to more than one person.
-- **Console routes predate the broker.** The broker does not yet gate the
-  console websockets of a claimed member. The one-click connect work (#229)
-  adds that gate. Until then, restrict console access with the ingress or the tailnet
-  ACLs if desktops must be private.
+- **Private consoles.** Only the holder and the admins can open the noVNC,
+  terminal, and RDP websockets of a claimed desktop. The
+  consoles of other VMs keep their rules: any user who can read the web UI
+  can open them.
 
 ### Sessions and reclaim
 
@@ -281,21 +284,48 @@ curl -X POST https://corral.example.ts.net/api/vdi/desktops/vm/corral-vms/devpoo
   - Before it attaches a device, the command displays the security implications (host device exclusivity, migration blockage, guest trust boundaries).
 
 
-## What "connect" actually does today
+## Connect
 
-`corral vdi connect <member>` prints instructions — it does **not** yet
-pick a protocol and open a session for you. That one-click behavior is
-Phase 2 territory (see the RFC). It specifically depends on
-[ADR-0002](adr/0002-browser-rdp-via-ironrdp.md) phase 2 (in-browser RDP),
-which must land first. Then Windows members get the same one-click experience
-that VNC already gives Linux members. Until then:
+Connect turns a claimed desktop into one console (#229). It uses the
+console transports that Corral already has and adds no display protocol.
+The rules are the same everywhere:
 
-| Guest | How to actually connect |
-|---|---|
-| Any VM (VNC always works) | `corral web` → open the VM → Console tab (noVNC in the browser) |
-| Linux VM with RDP configured | `GET /api/vms/{ns}/{name}/rdp` (or the Summary panel) tells you if 3389 answers; connect with a native RDP client via `virtctl port-forward` |
-| Windows VM | Same RDP path as above — `corral-windows`-created VMs expose RDP through the proxy service if you passed `--rdp` at create time |
-| Any VM with SSH | `corral ssh <member>` |
+1. A CT member offers only its terminal (xterm.js in the browser).
+2. A VM member offers RDP when TCP 3389 answers on the guest. The browser
+   runs it with IronRDP through the RDCleanPath proxy
+   ([ADR-0002](adr/0002-browser-rdp-via-ironrdp.md)).
+3. If RDP does not answer, the VM offers VNC (noVNC in the browser) when it
+   has a graphics device. Its serial console comes last.
+
+The first protocol on the list is the target. The others are the fallbacks,
+in order. The answer also says why it skipped a protocol, for example
+`rdp: TCP 3389 did not answer at 10.244.1.17:3389`. The broker probes again
+for each request, so a guest whose RDP service starts or stops gets the
+correct protocol at its next connect.
+
+Only the holder of the desktop or an admin gets a target. A claim that
+ended gives 404. An expired claim and a stopped desktop give 409, with the
+action to take first: claim the pool again, or start the desktop.
+
+**In the web UI**, the broker adds **Desktops** to the sidebar. The screen
+lists your desktops and the pools. **Get a desktop** claims a member,
+**Connect** opens the console tab that the broker chose, and **Release**
+gives the desktop back. Only the holder and the admins can open the
+console websockets of a claimed desktop. Other VMs keep the access rules
+they had before.
+
+**On the command line**, `corral vdi connect <member>` prints the target.
+`--open` opens it.
+
+| Mode | What `connect` uses | `--open` starts |
+|---|---|---|
+| `--broker https://corral.example.ts.net` (or `CORRAL_VDI_BROKER_URL`) | The broker's answer, with your tailnet identity | The browser on the Desktops screen, which connects to the desktop |
+| Without `--broker` | Your kubeconfig credentials; `--user <login>` requires that this user holds the desktop | `xfreerdp` for RDP, `virtctl vnc`, `virtctl console`, or a shell in the CT |
+
+Without `--broker`, the RDP probe runs from your machine. The command
+offers RDP only if your machine can reach the guest address. Use `--kind ct`
+for a CT member. The `corral-auth` gateway signs in with a browser, so
+`--broker` works through the Tailscale ingress only.
 
 ## Troubleshooting
 
@@ -349,9 +379,6 @@ When a golden VM asks for host devices or GPUs (via `gpus` or `hostDevices` in i
 
 ## Current limitations (by design, not bugs)
 
-- **Self-service is a web API.** The [broker](#self-service-broker) has no
-  "get a desktop" page in the web UI yet. The one-click connect work (#229)
-  adds it.
 - **No input-idle reclaim.** The broker reclaims after a console disconnect
   or a maximum duration (see [Sessions and reclaim](#sessions-and-reclaim)).
   It cannot see whether a connected user types.
