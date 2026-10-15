@@ -125,10 +125,16 @@ func (m tuiModel) updateEdit(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 		cmd := m.refreshCmd("")
 		return m, cmd
 	}
+	// A toggle changed the ports: push them to the cluster. Whatever the
+	// form returned besides is cursor upkeep the apply supersedes.
+	if m.edit.apply {
+		cmd := m.portsCmd()
+		return m, cmd
+	}
 	return m, cmd
 }
 
-func (m tuiModel) editView() string { return m.edit.render() }
+func (m tuiModel) editView() string { return m.withProgress(m.edit.render()) }
 
 func (m tuiModel) updateHWEdit(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 	hm, cmd := m.hwEdit.Update(msg)
@@ -138,10 +144,23 @@ func (m tuiModel) updateHWEdit(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 		cmd := m.refreshCmd("")
 		return m, cmd
 	}
+	if m.hwEdit.submit {
+		cmd := m.hwApplyCmd()
+		return m, cmd
+	}
 	return m, cmd
 }
 
-func (m tuiModel) hwEditView() string { return m.hwEdit.render() }
+func (m tuiModel) hwEditView() string { return m.withProgress(m.hwEdit.render()) }
+
+// withProgress adds the running operation under a form, so a form waiting on
+// a backend says so.
+func (m tuiModel) withProgress(view string) string {
+	if m.busy {
+		view += "\n  " + m.spin.View() + " " + m.th.muted.Render(m.busyLabel)
+	}
+	return view
+}
 
 // ── create and plugins ────────────────────────────────────────────
 
@@ -162,13 +181,7 @@ func (m tuiModel) updateCreate(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 	return m, cmd
 }
 
-func (m tuiModel) createView() string {
-	view := m.create.render(m.th, m.width)
-	if m.busy {
-		view += "\n  " + m.spin.View() + " " + m.th.muted.Render(m.busyLabel)
-	}
-	return view
-}
+func (m tuiModel) createView() string { return m.withProgress(m.create.render(m.th, m.width)) }
 
 func (m tuiModel) updatePlugins(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 	pm, cmd, back := m.plugins.Update(msg)

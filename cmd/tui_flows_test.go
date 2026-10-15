@@ -904,8 +904,8 @@ func TestTUIHardware_FocusApplyAndCancel(t *testing.T) {
 	applied.cpu.SetValue("6")
 	applied.mem.SetValue("16Gi")
 	out, _ := applied.Update(key("enter"))
-	if !out.(hwEditModel).done {
-		t.Error("enter should apply and close the form")
+	if !out.(hwEditModel).submit || out.(hwEditModel).done {
+		t.Error("enter should ask the root to apply the form, not close it yet")
 	}
 
 	cancelled, _ := hw.Update(key("esc"))

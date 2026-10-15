@@ -751,9 +751,8 @@ func TestTUICTHardware_ScalesThePod(t *testing.T) {
 
 	hw.cpu.SetValue("4")
 	hw.mem.SetValue("2Gi")
-	hw.apply()
-	if hw.status != "" {
-		t.Fatalf("apply reported %q", hw.status)
+	if status := hw.apply(); status != "" {
+		t.Fatalf("apply reported %q", status)
 	}
 	if !calledWith(f, "dev-shell") {
 		t.Errorf("no call touched the CT, calls: %v", f.Calls())
@@ -765,7 +764,7 @@ func TestTUICTHardware_UnchangedValuesDoNotScale(t *testing.T) {
 
 	c := ct.CT{Name: "files", Namespace: "corral-vms", CPU: 1, Mem: "256Mi"}
 	hw := newCTHWEditModel(c)
-	hw.apply()
+	_ = hw.apply()
 	if len(f.Calls()) != 0 {
 		t.Errorf("apply with unchanged values issued %d call(s)", len(f.Calls()))
 	}
@@ -776,17 +775,18 @@ func TestTUICTHardware_FailureKeepsTheFormOpen(t *testing.T) {
 	f.AddPrefixResponse("kubectl", "", errors.New("pod resize rejected"))
 
 	c := ct.CT{Name: "files", Namespace: "corral-vms", CPU: 1, Mem: "256Mi"}
-	hw := newCTHWEditModel(c)
-	hw.cpu.SetValue("8")
-	next, _ := hw.Update(key("enter"))
-	updated := next.(hwEditModel)
-	if updated.done {
-		t.Error("a failed scale should keep the form open")
+	m := testModel(types.VM{})
+	m.mode, m.isCT, m.selectedCT = ModeHWEdit, true, c
+	m.hwEdit = newCTHWEditModel(c)
+	m.hwEdit.cpu.SetValue("8")
+	m = press(m, "enter")
+	if m.mode != ModeHWEdit {
+		t.Errorf("a failed scale should keep the form open, went to %v", m.mode)
 	}
-	if updated.status == "" {
+	if m.hwEdit.status == "" {
 		t.Fatal("expected the failure to be recorded")
 	}
-	if !strings.Contains(updated.render(), updated.status) {
+	if !strings.Contains(m.render(), m.hwEdit.status) {
 		t.Error("failure not drawn in the form")
 	}
 	_ = f
@@ -998,7 +998,7 @@ func TestTUIHardware_ScalesThroughTheBackendSizer(t *testing.T) {
 
 	hw := newHWEditModel(kubeVM("web-prod"))
 	hw.cpu.SetValue("4")
-	hw.apply()
+	hw.status = hw.apply()
 	if !calledWith(f, "get", "vm", "web-prod", "corral-vms") {
 		t.Errorf("hardware edit did not read the VM through the KubeVirt Sizer; calls: %v", f.Calls())
 	}
@@ -1008,14 +1008,14 @@ func TestTUIHardware_ScalesThroughTheBackendSizer(t *testing.T) {
 
 	f.Reset()
 	unchanged := newHWEditModel(kubeVM("web-prod"))
-	unchanged.apply()
+	_ = unchanged.apply()
 	if len(f.Calls()) != 0 {
 		t.Errorf("an unchanged form still ran %v", f.Calls())
 	}
 
 	inc := newHWEditModel(types.VM{Name: "web", Backend: "incus", Context: "lab", CPU: 2, Mem: "4Gi"})
 	inc.cpu.SetValue("4")
-	inc.apply()
+	inc.status = inc.apply()
 	if !strings.Contains(inc.status, "incus backend does not support hardware edits") {
 		t.Errorf("hardware edit on an Incus VM: status = %q, want a refusal naming incus", inc.status)
 	}
