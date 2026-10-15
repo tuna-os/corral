@@ -7,7 +7,6 @@ package doctor
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 	"sync"
 
@@ -77,178 +76,6 @@ func runUnlocked() []Check {
 	return append(clusterChecks(), local...)
 }
 
-// localChecks covers the QEMU backend and client-side tooling — everything
-// that matters on this machine regardless of any cluster.
-func localChecks() []Check {
-	var checks []Check
-
-	_, qemuErr := runner.LookPath("qemu-system-x86_64")
-	checks = append(checks, Check{
-		Name:   "QEMU (local backend)",
-		OK:     qemuErr == nil,
-		Detail: detailIf(qemuErr == nil, "qemu-system-x86_64 found", "not installed — needed only for local VMs (dnf/apt install qemu-system-x86)"),
-	})
-
-	kvm := statDevKVM()
-	checks = append(checks, Check{
-		Name:   "KVM acceleration",
-		OK:     kvm == nil,
-		Detail: detailIf(kvm == nil, "/dev/kvm accessible", "no /dev/kvm access — local VMs fall back to slow emulation (add your user to the kvm group, or enable virtualization in BIOS)"),
-	})
-
-	// Nested virtualization (#68): only meaningful where KVM works at all,
-	// and only a warning — it matters when this host's VMs will themselves
-	// run VMs (e.g. a laptop hosting a KubeVirt dev cluster).
-	if kvm == nil {
-		nested, known := nestedVirtEnabled()
-		if known {
-			checks = append(checks, Check{
-				Name:   "Nested virtualization",
-				OK:     nested,
-				Detail: detailIf(nested, "kvm module has nested=1 — VMs can host VMs", "disabled — enable with: modprobe -r kvm_intel && modprobe kvm_intel nested=1 (or kvm_amd); only needed if VMs will run VMs"),
-			})
-		}
-	}
-
-	_, tsErr := runner.LookPath("tailscale")
-	checks = append(checks, Check{
-		Name:   "Tailscale CLI",
-		OK:     tsErr == nil,
-		Detail: detailIf(tsErr == nil, "found — VMs can join the tailnet", "not installed (optional) — VMs won't auto-join the tailnet"),
-	})
-
-	_, vcErr := runner.LookPath("virtctl")
-	checks = append(checks, Check{
-		Name:   "virtctl CLI",
-		OK:     vcErr == nil,
-		Detail: detailIf(vcErr == nil, "found — needed for KubeVirt consoles/SSH", "not installed — needed only for the KubeVirt backend (brew install virtctl)"),
-	})
-
-	// VSOCK: host device + socat + ssh-keygen, like tuna-os/tunaos iso-e2e setup_vsock
-	vsockOK, vsockReason := vsockHostCheck()
-	checks = append(checks, Check{
-		Name:   "VSOCK host support",
-		OK:     vsockOK,
-		Detail: detailIf(vsockOK, "AF_VSOCK available (vhost_vsock + vsock-capable socat + ssh-keygen) — corral --vsock fallback works", vsockReason+" — corral --vsock and tunaOS live-ISO fallback will not work"),
-	})
-	// TPM: swtpm for LUKS/measured-boot testing (tuna-os/tunaos luks-e2e)
-	_, tpmErr := runner.LookPath("swtpm")
-	checks = append(checks, Check{
-		Name:   "swtpm (TPM emulation)",
-		OK:     tpmErr == nil,
-		Detail: detailIf(tpmErr == nil, "found — corral --tpm for LUKS/measured-boot testing", "not installed (optional) — needed only for corral --tpm / luks-e2e (dnf/apt install swtpm)"),
-	})
-	// OVMF firmware for UEFI boot (tuna-os/tunaos ISO live boot)
-	if ovmfAvailable() {
-		checks = append(checks, Check{Name: "OVMF firmware", OK: true, Detail: "UEFI firmware found — corral --firmware uefi / tunaOS ISO boot works"})
-	} else {
-		checks = append(checks, Check{Name: "OVMF firmware", OK: false, Detail: "UEFI firmware not found (install edk2-ovmf/ovmf) — UEFI guests will not boot"})
-	}
-	// socat for QMP/VNC bridges (tuna-os/tunaos iso-e2e screenshot path)
-	if _, err := runner.LookPath("socat"); err == nil {
-		checks = append(checks, Check{Name: "socat", OK: true, Detail: "found — needed for VNC bridge and vsock ProxyCommand"})
-	} else {
-		checks = append(checks, Check{Name: "socat", OK: false, Detail: "not installed — corral screenshot via VNC + corral --vsock SSH need it (dnf/apt install socat)"})
-	}
-	// qemu-img for disk handling
-	if _, err := runner.LookPath("qemu-img"); err == nil {
-		checks = append(checks, Check{Name: "qemu-img", OK: true, Detail: "found — disk create/resize for local VMs"})
-	} else {
-		checks = append(checks, Check{Name: "qemu-img", OK: false, Detail: "not installed — local VM disk creation needs it (dnf/apt install qemu-img or qemu-utils)"})
-	}
-
-	return checks
-}
-
-var vsockHostCheck = func() (bool, string) {
-	if _, err := os.Stat("/dev/vhost-vsock"); err != nil {
-		return false, "no /dev/vhost-vsock (modprobe vhost_vsock)"
-	}
-	if f, err := os.OpenFile("/dev/vhost-vsock", os.O_WRONLY, 0); err != nil {
-		return false, "no writable /dev/vhost-vsock"
-	} else {
-		_ = f.Close()
-	}
-	if _, err := runner.LookPath("socat"); err != nil {
-		return false, "socat not found"
-	}
-	// Check vsock in socat -V or -h
-	if out, err := runner.Run("socat", "-V"); err == nil && containsCI(string(out), "vsock") {
-		// ok
-	} else if out2, err2 := runner.Run("socat", "-h"); err2 == nil && containsCI(string(out2), "vsock") {
-		// ok
-	} else {
-		return false, "socat has no VSOCK support"
-	}
-	if _, err := runner.LookPath("ssh-keygen"); err != nil {
-		return false, "ssh-keygen not found"
-	}
-	return true, ""
-}
-
-var ovmfAvailable = func() bool {
-	_, _, err := findOVMF()
-	return err == nil
-}
-
-func containsCI(s, sub string) bool {
-	return len(s) >= len(sub) && (func() bool {
-		lower := strings.ToLower(s)
-		return len(lower) >= len(sub) && strings.Contains(lower, strings.ToLower(sub))
-	})()
-}
-
-func findOVMF() (string, string, error) {
-	// Reuse qemu's firmware discovery by probing env.
-	if code := os.Getenv("CORRAL_OVMF_CODE"); code != "" {
-		if _, err := os.Stat(code); err == nil {
-			return code, os.Getenv("CORRAL_OVMF_VARS"), nil
-		}
-	}
-	candidates := []struct{ code, vars string }{
-		{"/usr/share/qemu/edk2-x86_64-code.fd", "/usr/share/qemu/edk2-i386-vars.fd"},
-		{"/usr/share/edk2/ovmf/OVMF_CODE.fd", "/usr/share/edk2/ovmf/OVMF_VARS.fd"},
-		{"/usr/share/OVMF/OVMF_CODE_4M.fd", "/usr/share/OVMF/OVMF_VARS_4M.fd"},
-		{"/usr/share/OVMF/OVMF_CODE.fd", "/usr/share/OVMF/OVMF_VARS.fd"},
-		{"/usr/share/edk2-ovmf/x64/OVMF_CODE.fd", "/usr/share/edk2-ovmf/x64/OVMF_VARS.fd"},
-		{"/usr/share/qemu/ovmf-x86_64-code.bin", "/usr/share/qemu/ovmf-x86_64-vars.bin"},
-		{"/home/linuxbrew/.linuxbrew/share/qemu/edk2-x86_64-code.fd", "/home/linuxbrew/.linuxbrew/share/qemu/edk2-i386-vars.fd"},
-	}
-	for _, c := range candidates {
-		if _, err := os.Stat(c.code); err == nil {
-			if _, err := os.Stat(c.vars); err == nil {
-				return c.code, c.vars, nil
-			}
-		}
-	}
-	return "", "", fmt.Errorf("not found")
-}
-
-// nestedVirtEnabled reads the kvm_intel/kvm_amd module's nested parameter.
-// known=false when neither module directory exists (no KVM, or exotic arch).
-// A seam for tests.
-var nestedVirtEnabled = func() (nested, known bool) {
-	for _, mod := range []string{"kvm_intel", "kvm_amd"} {
-		b, err := os.ReadFile("/sys/module/" + mod + "/parameters/nested")
-		if err != nil {
-			continue
-		}
-		v := strings.TrimSpace(string(b))
-		return v == "1" || v == "Y" || v == "y", true
-	}
-	return false, false
-}
-
-// statDevKVM is a seam for tests; returns nil when /dev/kvm is usable.
-var statDevKVM = func() error {
-	f, err := os.OpenFile("/dev/kvm", os.O_RDWR, 0)
-	if err != nil {
-		return err
-	}
-	f.Close()
-	return nil
-}
-
 // clusterChecks runs the KubeVirt-backend diagnostics (requires a cluster).
 func clusterChecks() []Check {
 	var checks []Check
@@ -289,21 +116,34 @@ func clusterChecks() []Check {
 		fix:     installCDI,
 	})
 
-	cfg := kubevirtConfig()
+	kvCR, cfg := kubevirtState()
+	// A CR an operator reconciles is not corral's to patch, so the rows below
+	// report but do not offer a fix: HCO would revert it. The detail says so,
+	// because "not fixable" without a reason reads as a corral limitation.
+	kvFixable := kvInstalled && kvCR.ManagedBy == ""
+	// Where an operator owns the CR, a failing row says so. Only a failing row:
+	// on a passing one the advice is noise, and these five rows pass on a
+	// healthy HCO cluster.
+	managed := func(detail string, ok bool) string {
+		if ok || kvCR.ManagedBy == "" {
+			return detail
+		}
+		return detail + "; set via the HyperConverged CR — " + kvCR.ManagedBy + " reverts direct edits"
+	}
 	rollout := cfg.RolloutStrategy == "LiveUpdate"
 	checks = append(checks, Check{
 		Name:    "LiveUpdate rollout strategy",
 		OK:      rollout,
-		Detail:  "lets CPU/RAM hotplug live-migrate; offline fallback otherwise",
-		Fixable: kvInstalled && !rollout,
+		Detail:  managed("lets CPU/RAM hotplug live-migrate; offline fallback otherwise", rollout),
+		Fixable: kvFixable && !rollout,
 		fix:     reconcileKubeVirt,
 	})
 	liveMig := contains(cfg.WorkloadUpdateMethods, "LiveMigrate")
 	checks = append(checks, Check{
 		Name:    "LiveMigrate workload updates",
 		OK:      liveMig,
-		Detail:  "required by live CPU/RAM hotplug",
-		Fixable: kvInstalled && !liveMig,
+		Detail:  managed("required by live CPU/RAM hotplug", liveMig),
+		Fixable: kvFixable && !liveMig,
 		fix:     reconcileKubeVirt,
 	})
 	for _, gate := range []string{"Snapshot", "HotplugVolumes", "VMExport"} {
@@ -311,8 +151,8 @@ func clusterChecks() []Check {
 		checks = append(checks, Check{
 			Name:    "Feature gate: " + gate,
 			OK:      has,
-			Detail:  gateDetail(gate),
-			Fixable: kvInstalled && !has,
+			Detail:  managed(gateDetail(gate), has),
+			Fixable: kvFixable && !has,
 			fix:     reconcileKubeVirt,
 		})
 	}
@@ -441,29 +281,35 @@ func clusterChecks() []Check {
 
 // permittedGPUResourceNames returns the resourceName of every PCI/mediated
 // device permitted in the KubeVirt CR (empty if none, or no CR yet).
+// Listed with -A for the same reason kubevirtState is: under the Hyperconverged
+// Cluster Operator the CR is not named `kubevirt` in namespace `kubevirt`, and
+// asking for that name reported every permitted device as absent (#383).
 func permittedGPUResourceNames() []string {
-	out, err := run("kubectl", "get", "kubevirt", "kubevirt", "-n", "kubevirt", "-o", "json")
+	out, err := run("kubectl", "get", "kubevirt", "-A", "-o", "json")
 	if err != nil {
 		return nil
 	}
-	var kv struct {
-		Spec struct {
-			Configuration struct {
-				PermittedHostDevices struct {
-					PCIHostDevices  []struct{ ResourceName string } `json:"pciHostDevices"`
-					MediatedDevices []struct{ ResourceName string } `json:"mediatedDevices"`
-				} `json:"permittedHostDevices"`
-			} `json:"configuration"`
-		} `json:"spec"`
+	var list struct {
+		Items []struct {
+			Spec struct {
+				Configuration struct {
+					PermittedHostDevices struct {
+						PCIHostDevices  []struct{ ResourceName string } `json:"pciHostDevices"`
+						MediatedDevices []struct{ ResourceName string } `json:"mediatedDevices"`
+					} `json:"permittedHostDevices"`
+				} `json:"configuration"`
+			} `json:"spec"`
+		} `json:"items"`
 	}
-	if json.Unmarshal(out, &kv) != nil {
+	if json.Unmarshal(out, &list) != nil || len(list.Items) == 0 {
 		return nil
 	}
+	devices := list.Items[0].Spec.Configuration.PermittedHostDevices
 	var names []string
-	for _, d := range kv.Spec.Configuration.PermittedHostDevices.PCIHostDevices {
+	for _, d := range devices.PCIHostDevices {
 		names = append(names, d.ResourceName)
 	}
-	for _, d := range kv.Spec.Configuration.PermittedHostDevices.MediatedDevices {
+	for _, d := range devices.MediatedDevices {
 		names = append(names, d.ResourceName)
 	}
 	return names
@@ -619,38 +465,104 @@ type kvConfig struct {
 	FeatureGates          []string
 }
 
-func kubevirtConfig() kvConfig {
-	out, err := run("kubectl", "get", "kubevirt", "kubevirt", "-n", "kubevirt", "-o", "json")
+// kvRef is where the KubeVirt CR actually is, and who owns it.
+type kvRef struct {
+	Name      string
+	Namespace string
+	// ManagedBy is the operator that reconciles this CR, or "" when the CR is
+	// corral's to edit. It decides whether a fix is offered at all.
+	ManagedBy string
+}
+
+// Found reports whether a CR was located.
+func (r kvRef) Found() bool { return r.Name != "" }
+
+// kubevirtState locates the KubeVirt CR and reads its configuration.
+//
+// The CR is found by listing, not by name. The upstream manifests install it as
+// `kubevirt` in namespace `kubevirt`, and this used to ask for exactly that —
+// but the Hyperconverged Cluster Operator names it
+// `kubevirt-kubevirt-hyperconverged` in `kubevirt-hyperconverged`, so the
+// lookup failed and every row below it read as disabled on a cluster that had
+// them all enabled (#383). The installed-check above never had this problem
+// because it already listed with -A; the two answers to "where is the CR"
+// are now one.
+func kubevirtState() (kvRef, kvConfig) {
+	out, err := run("kubectl", "get", "kubevirt", "-A", "-o", "json")
 	if err != nil {
-		return kvConfig{}
+		return kvRef{}, kvConfig{}
 	}
-	var kv struct {
-		Spec struct {
-			Configuration struct {
-				VMRolloutStrategy      string `json:"vmRolloutStrategy"`
-				DeveloperConfiguration struct {
-					FeatureGates []string `json:"featureGates"`
-				} `json:"developerConfiguration"`
-			} `json:"configuration"`
-			WorkloadUpdateStrategy struct {
-				WorkloadUpdateMethods []string `json:"workloadUpdateMethods"`
-			} `json:"workloadUpdateStrategy"`
-		} `json:"spec"`
+	var list struct {
+		Items []struct {
+			Metadata struct {
+				Name            string            `json:"name"`
+				Namespace       string            `json:"namespace"`
+				Labels          map[string]string `json:"labels"`
+				OwnerReferences []struct {
+					Kind string `json:"kind"`
+				} `json:"ownerReferences"`
+			} `json:"metadata"`
+			Spec struct {
+				Configuration struct {
+					VMRolloutStrategy      string `json:"vmRolloutStrategy"`
+					DeveloperConfiguration struct {
+						FeatureGates []string `json:"featureGates"`
+					} `json:"developerConfiguration"`
+				} `json:"configuration"`
+				WorkloadUpdateStrategy struct {
+					WorkloadUpdateMethods []string `json:"workloadUpdateMethods"`
+				} `json:"workloadUpdateStrategy"`
+			} `json:"spec"`
+		} `json:"items"`
 	}
-	if json.Unmarshal(out, &kv) != nil {
-		return kvConfig{}
+	if json.Unmarshal(out, &list) != nil || len(list.Items) == 0 {
+		return kvRef{}, kvConfig{}
 	}
-	return kvConfig{
-		RolloutStrategy:       kv.Spec.Configuration.VMRolloutStrategy,
-		WorkloadUpdateMethods: kv.Spec.WorkloadUpdateStrategy.WorkloadUpdateMethods,
-		FeatureGates:          kv.Spec.Configuration.DeveloperConfiguration.FeatureGates,
+	// One KubeVirt CR per cluster is the supported shape: the operator is
+	// cluster-scoped in effect and a second CR does not reconcile. Taking the
+	// first is therefore not a guess between equals.
+	item := list.Items[0]
+	ref := kvRef{Name: item.Metadata.Name, Namespace: item.Metadata.Namespace}
+	for _, owner := range item.Metadata.OwnerReferences {
+		if owner.Kind == "HyperConverged" {
+			ref.ManagedBy = "the Hyperconverged Cluster Operator"
+		}
+	}
+	// Belt and braces: an HCO install that lost its owner reference still
+	// labels its operands, and patching it would still be reverted.
+	if ref.ManagedBy == "" {
+		if by := item.Metadata.Labels["app.kubernetes.io/managed-by"]; strings.Contains(by, "hco") {
+			ref.ManagedBy = "the Hyperconverged Cluster Operator"
+		}
+	}
+	return ref, kvConfig{
+		RolloutStrategy:       item.Spec.Configuration.VMRolloutStrategy,
+		WorkloadUpdateMethods: item.Spec.WorkloadUpdateStrategy.WorkloadUpdateMethods,
+		FeatureGates:          item.Spec.Configuration.DeveloperConfiguration.FeatureGates,
 	}
 }
 
 // reconcileKubeVirt enables LiveUpdate + LiveMigrate + the Snapshot/
 // HotplugVolumes/VMExport gates, preserving any other gates already set.
 func reconcileKubeVirt() error {
-	cfg := kubevirtConfig()
+	ref, cfg := kubevirtState()
+	if !ref.Found() {
+		return fmt.Errorf("no KubeVirt CR found in any namespace — " +
+			"if KubeVirt is installed, please report the output of `kubectl get kubevirt -A`")
+	}
+	// A managed CR must not be patched. HCO reconciles its operands and
+	// documents that users are expected not to modify them directly, so this
+	// patch would apply, report success, and then be silently reverted — a fix
+	// that un-fixes itself is worse than no fix, because the row goes green
+	// once and the operator stops looking.
+	if ref.ManagedBy != "" {
+		return fmt.Errorf("the KubeVirt CR %s/%s is managed by %s, which reverts direct edits to it\n"+
+			"set these through the HyperConverged CR instead:\n"+
+			"  workloadUpdateMethods: spec.workloadUpdateStrategy.workloadUpdateMethods\n"+
+			"  feature gates and vmRolloutStrategy: the kubevirt.kubevirt.io/jsonpatch annotation\n"+
+			"see https://github.com/kubevirt/hyperconverged-cluster-operator/blob/main/docs/cluster-configuration.md",
+			ref.Namespace, ref.Name, ref.ManagedBy)
+	}
 	gates := union(cfg.FeatureGates, []string{"Snapshot", "HotplugVolumes", "VMExport"})
 	methods := union(cfg.WorkloadUpdateMethods, []string{"LiveMigrate"})
 	patch := map[string]any{
@@ -663,7 +575,7 @@ func reconcileKubeVirt() error {
 		},
 	}
 	body, _ := json.Marshal(patch)
-	out, err := run("kubectl", "patch", "kubevirt", "kubevirt", "-n", "kubevirt",
+	out, err := run("kubectl", "patch", "kubevirt", ref.Name, "-n", ref.Namespace,
 		"--type", "merge", "-p", string(body))
 	if err != nil {
 		return fmt.Errorf("patching KubeVirt: %s", strings.TrimSpace(string(out)))

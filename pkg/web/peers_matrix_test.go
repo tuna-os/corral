@@ -438,7 +438,7 @@ func TestPeerConsole_PrefersDirectGuestEndpoint(t *testing.T) {
 	defer fx.Close()
 
 	ns := listVMs(t, fx)[0]["namespace"].(string)
-	ws, err := websocket.Dial(wsURL(fx.Server.URL)+"/api/vnc/"+ns+"/desk", "", "http://localhost")
+	ws, err := websocket.Dial(wsURL(fx.Server.URL)+"/api/vnc/"+ns+"/desk", "", fx.Server.URL)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -496,7 +496,7 @@ func TestPeerConsole_FallsBackToPeerRelay(t *testing.T) {
 	defer fx.Close()
 
 	ns := listVMs(t, fx)[0]["namespace"].(string)
-	ws, err := websocket.Dial(wsURL(fx.Server.URL)+"/api/vnc/"+ns+"/desk", "", "http://localhost")
+	ws, err := websocket.Dial(wsURL(fx.Server.URL)+"/api/vnc/"+ns+"/desk", "", fx.Server.URL)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}

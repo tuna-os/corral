@@ -1,6 +1,7 @@
 package web
 
 import (
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -15,7 +16,7 @@ func TestWebSocket_VNC_Upgrade(t *testing.T) {
 
 	// Connect to VNC websocket endpoint
 	url := wsURL(fx.Server.URL) + "/api/vnc/tailvm/testvm"
-	origin := "http://localhost"
+	origin := fx.Server.URL
 
 	ws, err := websocket.Dial(url, "", origin)
 	if err != nil {
@@ -43,7 +44,7 @@ func TestWebSocket_TTY_Upgrade(t *testing.T) {
 	defer fx.Close()
 
 	url := wsURL(fx.Server.URL) + "/api/tty/tailvm/testvm"
-	origin := "http://localhost"
+	origin := fx.Server.URL
 
 	ws, err := websocket.Dial(url, "", origin)
 	if err != nil {
@@ -56,6 +57,31 @@ func TestWebSocket_TTY_Upgrade(t *testing.T) {
 	buf := make([]byte, 256)
 	_, err = ws.Read(buf)
 	t.Logf("TTY read result: %v (expected: closed when virtctl fails)", err)
+}
+
+func TestWebSocket_RejectsMismatchedOriginWithoutAuth(t *testing.T) {
+	t.Setenv("CORRAL_AUTH_REQUIRED", "")
+	fx := NewTestFixture()
+	defer fx.Close()
+
+	url := wsURL(fx.Server.URL) + "/api/vnc/tailvm/testvm"
+	if ws, err := websocket.Dial(url, "", "https://attacker.example"); err == nil {
+		_ = ws.Close()
+		t.Fatal("WebSocket handshake accepted a mismatched Origin with auth disabled")
+	}
+}
+
+func TestWebSocketOrigin_AllowsMissingOriginOnlyInOpenMode(t *testing.T) {
+	r := httptest.NewRequest("GET", "http://corral.example/api/vnc/ns/vm", nil)
+	r.Host = "corral.example"
+	t.Setenv("CORRAL_AUTH_REQUIRED", "")
+	if err := validateWebSocketOrigin(r); err != nil {
+		t.Fatalf("open mode should preserve native clients without Origin: %v", err)
+	}
+	t.Setenv("CORRAL_AUTH_REQUIRED", "true")
+	if err := validateWebSocketOrigin(r); err == nil {
+		t.Fatal("auth-required mode accepted a WebSocket without Origin")
+	}
 }
 
 // ── Helpers ──────────────────────────────────────────────────────
@@ -73,7 +99,7 @@ func TestWebSocket_VNC_MissingName(t *testing.T) {
 	defer fx.Close()
 
 	url := wsURL(fx.Server.URL) + "/api/vnc/tailvm/"
-	ws, err := websocket.Dial(url, "", "http://localhost")
+	ws, err := websocket.Dial(url, "", fx.Server.URL)
 	if err != nil {
 		t.Logf("dial with empty name: %v", err)
 		return
@@ -90,6 +116,6 @@ func TestWebSocket_InvalidPath(t *testing.T) {
 	defer fx.Close()
 
 	url := wsURL(fx.Server.URL) + "/api/vnc"
-	_, err := websocket.Dial(url, "", "http://localhost")
+	_, err := websocket.Dial(url, "", fx.Server.URL)
 	t.Logf("dial invalid path: %v (expected: error)", err)
 }
