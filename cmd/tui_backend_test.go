@@ -25,9 +25,9 @@ func TestTUIPortsSSHExport_UseTheVMsBackend(t *testing.T) {
 	if err := sshSelected(lv); err == nil || !strings.Contains(err.Error(), "no discovered SSH address") {
 		t.Errorf("ssh on a libvirt domain = %v, want libvirt's own refusal, not local QEMU", err)
 	}
-	vb := types.VM{Name: "box", Backend: "virtualbox"}
-	if err := sshSelected(vb); err == nil || !strings.Contains(err.Error(), "virtualbox backend does not support ssh") {
-		t.Errorf("ssh on a VirtualBox VM = %v, want a refusal naming virtualbox", err)
+	xe := types.VM{Name: "box", Backend: "xen", Context: "pool"}
+	if err := sshSelected(xe); err == nil || !strings.Contains(err.Error(), "xen backend does not support ssh") {
+		t.Errorf("ssh on a Xen VM = %v, want a refusal naming xen", err)
 	}
 
 	vs := types.VM{Name: "app", Backend: "vsphere", Context: "vc"}

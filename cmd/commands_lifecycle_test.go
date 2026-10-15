@@ -230,15 +230,31 @@ func TestLifecycleCommandsOnVirtualBoxUseVBoxManage(t *testing.T) {
 
 // info and ssh on a backend with no Inspector or Sheller refuse by backend
 // name instead of reading local QEMU metadata for a VM that is not local.
-func TestInfoAndSSHOnVirtualBoxAreRefusedByBackend(t *testing.T) {
-	remoteVMScratch(t, "web", types.RegistryEntry{Backend: "virtualbox"})
-	for action, run := range map[string]func() error{
-		"info": func() error { return infoCmd.RunE(infoCmd, []string{"web"}) },
-		"ssh":  func() error { return sshCmd.RunE(sshCmd, []string{"web"}) },
+func TestInfoAndSSHOnABackendWithoutThemAreRefusedByBackend(t *testing.T) {
+	for action, tc := range map[string]struct {
+		backend string
+		run     func() error
+	}{
+		"info": {"virtualbox", func() error { return infoCmd.RunE(infoCmd, []string{"web"}) }},
+		"ssh":  {"xen", func() error { return sshCmd.RunE(sshCmd, []string{"web"}) }},
 	} {
-		err := run()
-		if err == nil || !strings.Contains(err.Error(), "virtualbox backend does not support "+action) {
-			t.Errorf("%s on a VirtualBox VM = %v, want a refusal naming virtualbox", action, err)
+		remoteVMScratch(t, "web", types.RegistryEntry{Backend: tc.backend})
+		err := tc.run()
+		if err == nil || !strings.Contains(err.Error(), tc.backend+" backend does not support "+action) {
+			t.Errorf("%s on a %s VM = %v, want a refusal naming %s", action, tc.backend, err, tc.backend)
 		}
+	}
+}
+
+// ssh on a VirtualBox VM goes to its own Sheller: the NAT forward for guest
+// port 22, read through VBoxManage — never local QEMU metadata.
+func TestSSHOnVirtualBoxReadsItsEndpoint(t *testing.T) {
+	fake := remoteVMScratch(t, "web", types.RegistryEntry{Backend: "virtualbox"})
+	fake.AddPrefixResponse("VBoxManage", "", errors.New("VBoxManage: no such VM"))
+	virtualbox.SetRunner(fake)
+	t.Cleanup(func() { virtualbox.SetRunner(shell.Real{}) })
+	err := sshCmd.RunE(sshCmd, []string{"web"})
+	if err == nil || !strings.Contains(err.Error(), "virtualbox showvminfo web") {
+		t.Errorf("ssh on a VirtualBox VM = %v, want VirtualBox's endpoint lookup", err)
 	}
 }

@@ -36,7 +36,7 @@ backend cannot, or it is meaningless there.
 | Restart | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Pause / resume | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
 | Delete | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| SSH | ✅ | ✅ | ✅ | 🔨 | ✅ | 🔨 | 🔨 | 🔨 | 🔨 |
+| SSH | ✅ | ✅ | ✅ | 🔨 | ✅ | ✅ | 🔨 | 🔨 | 🔨 |
 | Serial / shell console | ✅ | 🔨 | ✅ | 🔨 | 🔨 | 🔨 | 🔨 | 🔨 | 🔨 |
 | Graphical console (VNC) | ✅ | ✅ | 🔨 | ✅ | 🔨 | 🔨 | 🔨 | 🔨 | 🔨 |
 | RDP | ✅ | 🔨 | 🔨 | 🔨 | 🔨 | 🔨 | 🔨 | 🔨 | — |
@@ -194,10 +194,9 @@ websocket bridge is not. So the capability flags say no, and the matrix says why
 - **rdp** — same, via the guest address
 - **containers** — pkg/proxmoxbe.Containers lists them and Create makes them; pkg/ct does not yet surface a non-Kubernetes CT
 
-### virtualbox — 12 gaps
+### virtualbox — 11 gaps
 
 - **create** — createvm plus storagectl/storageattach/modifyvm exist natively; Corral has no creator wiring them yet
-- **ssh** — Corral has no address discovery yet. Use the Guest Additions guestproperty or a NAT port-forward for the guest address, then plain ssh.
 - **tty** — the UART is redirectable to a host pipe via modifyvm --uartmode1; Corral has no console bridge for it
 - **vnc** — VRDE serves the guest display natively; Corral wires no viewer or bridge to it
 - **rdp** — VRDE is an RDP server already; Corral has no probe or bridge for it

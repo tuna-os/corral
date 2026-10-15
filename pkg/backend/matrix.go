@@ -177,7 +177,7 @@ var Matrix = map[string]map[string]Entry{
 		"incus":      {Shipped, "incus exec … ssh, pkg/incus.SSH"},
 		"libvirt":    {Possible, "the domain's address via the guest agent or DHCP leases, then plain ssh — pkg/libvirt has SSH but the TUI does not offer it because the capability table omits it"},
 		"proxmox":    {Shipped, "the guest agent (VM) or interface list (CT) for the address, then plain ssh"},
-		"virtualbox": {Possible, "the guest address via Guest Additions guestproperty or a NAT port-forward, then plain ssh — no address discovery is wired yet"},
+		"virtualbox": {Shipped, "a NAT port-forward to guest port 22, else the Guest Additions address, then plain ssh — pkg/virtualbox.SSH"},
 		"vsphere":    {Possible, "the guest address via VMware Tools, then plain ssh — no address discovery is wired yet"},
 		"xen":        {Possible, "the guest address via guest metrics, then plain ssh — no address discovery is wired yet"},
 		"nutanix":    {Possible, "the NIC address sits in inventory, then plain ssh — no address discovery is wired yet"},
