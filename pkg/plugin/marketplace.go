@@ -158,6 +158,13 @@ func AddSource(source Source) error {
 	if !validName.MatchString(source.Name) {
 		return fmt.Errorf("invalid marketplace name %q", source.Name)
 	}
+	// "corral" names the built-in source. A custom source under that name
+	// could pass its plugins off as built-in ("corral/<plugin>"), and
+	// RemoveSource and SetSourceEnabled refuse the name, so it could never
+	// be removed again.
+	if source.Name == "corral" {
+		return fmt.Errorf("marketplace name %q is reserved for the built-in marketplace", source.Name)
+	}
 	if err := validateSourceURL(source.URL); err != nil {
 		return err
 	}
