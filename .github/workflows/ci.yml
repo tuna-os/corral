@@ -20,12 +20,21 @@ env:
   KUBECTL_VERSION: v1.36.1
   VIRTCTL_VERSION: v1.8.2
 
+# A PR's newer push cancels its older run. On main every merge gets its own run
+# (keyed by sha) and the dedupe happens per job instead (`concurrency` on each
+# job, keyed by job + ref): at most one running and one pending of each job, a
+# newer pending one replaces an older one, and nothing in progress is cancelled.
+# A run-wide group starved publishing: every merge replaced the pending run, so
+# under a busy runner queue publish-plugins went hours without running.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
+    concurrency:
+      group: ${{ github.workflow }}-test-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -96,6 +105,9 @@ jobs:
           path: cover.out
 
   lint:
+    concurrency:
+      group: ${{ github.workflow }}-lint-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     # golangci-lint, which this repo has had a config for and never run.
     #
     # Two gates, because a mature codebase cannot adopt a linter in one step
@@ -138,6 +150,9 @@ jobs:
     # its arm64 cross-build step already cover — one runner per PR push saved.
     needs: test
     if: github.event_name != 'pull_request'
+    concurrency:
+      group: ${{ github.workflow }}-publish-image-${{ github.ref }}
+      cancel-in-progress: false
     runs-on: ubuntu-26.04
     permissions:
       contents: read
@@ -197,6 +212,9 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
 
   web-image-smoke:
+    concurrency:
+      group: ${{ github.workflow }}-web-image-smoke-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     # Container image build + probe smoke for docs/deployment-modes.md mode 2.
     # scripts/smoke-web-image.sh builds the image from the Containerfile,
     # boots it, and curls /healthz + /readyz. No VPN or live cluster needed.
@@ -222,6 +240,9 @@ jobs:
     # https://github.com/tuna-os/corral/releases/download/binaries/corral-<os>-<arch>
     needs: test
     if: github.event_name != 'pull_request'
+    concurrency:
+      group: ${{ github.workflow }}-release-binaries-${{ github.ref }}
+      cancel-in-progress: false
     runs-on: ubuntu-26.04
     permissions:
       contents: write
@@ -292,6 +313,11 @@ jobs:
     # no verifier pinned to main accepts — and would move the rolling index.
     needs: test
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    # Its own group, so a publish that has started always finishes and the
+    # newest pending one always runs next (a rolling release wants the newest).
+    concurrency:
+      group: ${{ github.workflow }}-publish-plugins-${{ github.ref }}
+      cancel-in-progress: false
     runs-on: ubuntu-26.04
     permissions:
       contents: write
