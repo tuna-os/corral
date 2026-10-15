@@ -1,7 +1,8 @@
 # RFC-0002: Plugin contributions to the web UI
 
-**Status:** Proposal. This RFC changes no code. It asks for a decision on
-the plugin contract, which ADR-0007 owns.
+**Status:** Accepted. The code now does stages 0, 1 and 2. "As built" below
+records the answers to the open questions and where the code departs from the
+proposal.
 **Date:** 2026-10-08
 **Author:** drafted from a live session with James Reilly + Claude
 
@@ -123,8 +124,8 @@ Stage it:
 2. Let the marketplace carry a plugin whose only purpose is a screen.
 
 Stage 0 was worth doing on its own, and it paid for itself in core code that
-went away. Stages 1 and 2 remain a decision for a maintainer, because they
-change the contract in ADR-0007.
+went away. Stages 1 and 2 changed the contract in ADR-0007, so a maintainer
+decided them. They are now done.
 
 Stage 0 needed browser coverage for the capability it moves, and demo mode had
 none, because it installs no plugins. `pkg/web/hostpower_demo.go` now reports
@@ -152,3 +153,46 @@ provider and does not change this contract.
    widget" until somebody asks for it?
 3. Is `kind: table` enough, or does the first real plugin need a chart? A
    chart means a data contract for series, which is a larger commitment.
+
+## As built
+
+The code is in `pkg/plugin/sdk/sdk.go` (the contract), `pkg/web/pluginui.go`
+(the server) and `pkg/web/static/content/pluginui.js` (the page).
+
+### Answers to the open questions
+
+1. **Not in the tree.** A plugin section opens from the Extensions screen and
+   from the command palette. The tree stays the operator's model of the fleet.
+2. **Not on the dashboard by default.** A plugin widget waits in "Add widget".
+   A new plugin does not change a dashboard that an operator built.
+3. **No chart.** The three shapes are `rows`, `table` and `message`. A chart
+   needs a contract for series, and no plugin has asked for one yet.
+
+### Where the code departs from the proposal
+
+- **No actions yet.** The proposal let a row carry an `action`. The first cut
+  is read-only. Corral refuses a document with an `action` field. Actions
+  need a consent step of their own, and they can come in a later stage.
+- **An unknown field is an error.** A plugin that writes `cells` in place of
+  `rows` gets an error. It does not get an empty table on every screen.
+- **The browser never sees a command.** `GET /api/plugins/ui` sends the id,
+  title, icon and interval of each item. The command stays on the server. A
+  request names an item, and corral looks up its command in the plugin's own
+  metadata.
+- **Each call has limits.** A call stops after 10 seconds, and the widget says
+  that the plugin did not answer. Corral reads at most 256 KiB of output.
+  Corral stops a plugin that writes more.
+- **One call serves all viewers.** Corral keeps each document for 15 seconds.
+  It makes one call at a time for each item. Ten open pages do not make ten
+  calls to a cloud API.
+- **Datacenter only.** Corral offers a plugin widget on the Datacenter
+  dashboard, not on a node screen. The contract does not tell a plugin which node it is
+  shown for.
+- **The marketplace shows it before install.** A marketplace entry can carry
+  the same `ui` section. `Entry.Validate` checks it, and the Extensions screen
+  shows what the plugin will add. At run time, corral reads the declaration
+  from the installed binary, because the binary runs the commands.
+
+Demo mode has a fixture, `pkg/web/pluginui_demo.go`, so the browser suite
+covers a widget, a table section, a plugin that fails and a document that
+contains markup.

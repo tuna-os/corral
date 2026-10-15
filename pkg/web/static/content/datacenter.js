@@ -11,6 +11,7 @@ import { capabilityAlerts, capabilityLayout, capabilityWidgets } from '../ui/cap
 import { $, esc, toast } from '../ui/dom.js';
 import { bindTemplateTable, bindVMTable, templateTable, vmTable } from './vm-table.js';
 import { confirmDestroy } from '../ui/confirm.js';
+import { pollWhileVisible } from '../ui/visibility.js';
 
 // Tag the tree/list is filtered to, or null for "show all".
 let tagFilter = null;
@@ -31,10 +32,10 @@ export const NO_SAMPLES = `No samples yet. Usage comes from <strong>metrics-serv
   (see <em>Cluster health</em>), sampled every 15 seconds.`;
 
 // Run fn now and every ms until body leaves the DOM — for widgets whose data
-// is not part of the fleet poll (task log, usage samples).
+// is not part of the fleet poll (task log, usage samples). Nothing is fetched
+// while the page is hidden; see ui/visibility.js.
 function pollWhileShown(body, fn, ms) {
-  fn();
-  const t = setInterval(() => (body.isConnected ? fn() : clearInterval(t)), ms);
+  pollWhileVisible(fn, ms, () => body.isConnected);
 }
 
 export function chartWidget(title, url, metric) {

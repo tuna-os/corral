@@ -3,6 +3,7 @@
 
 import { api, findVM } from './api.js';
 import { emit, on, state } from './state.js';
+import { onPageVisible, pageHidden } from './ui/visibility.js';
 
 // Whether the dock is open, how tall it is, and which panel is showing are all
 // operator preferences, like the sidebar width. Without this the dock shuts on
@@ -89,7 +90,10 @@ document.addEventListener('alpine:init', () => {
       // fetch per actual change.
       on('select', () => { if (this.panel === 'events') this.loadEvents(); });
       this.refresh();
-      setInterval(() => this.refresh(), 5000);
+      // The dock lives as long as the page, so a plain listener is right here.
+      // ui/visibility.js has the reasons for both rules.
+      setInterval(() => { if (!pageHidden()) this.refresh(); }, 5000);
+      onPageVisible(() => this.refresh());
     },
 
     /** Switch panels, opening the dock if it was shut. */

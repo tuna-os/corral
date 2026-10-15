@@ -210,6 +210,12 @@ registerCapability({
     return h ? actionItems(h) : [];
   },
 
+  // A node's mark in the topology: whether the machine under it is powered.
+  nodeBadges(nodeName) {
+    const h = hostList().find((x) => x.node === nodeName || x.name === nodeName);
+    return h ? [{ label: `power ${h.state}`, tone: hostPowerDot(h.state) }] : [];
+  },
+
   alerts() {
     return hostList()
       .filter((h) => h.state === 'stopped' && guestsOn(h).length)
