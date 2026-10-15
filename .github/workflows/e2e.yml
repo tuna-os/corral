@@ -34,7 +34,7 @@ on:
       - "!pkg/lifecycle/**"
       - "!pkg/schedule/**"
       - "!pkg/testenv/**"
-      - "!pkg/vdi/**"
+      - "scripts/e2e-vdi.sh"
   workflow_dispatch:
 
 # Least privilege by default: the read-only token is all any job here needs
@@ -124,6 +124,14 @@ jobs:
           E2E_CONTAINERDISK: quay.io/kubevirt/cirros-container-disk-demo:latest
           CORRAL_NS: corral-vms
         run: npx playwright test --grep-invert "@live-only" --reporter=line
+
+      # The VDI broker (#227–#229) on its own corral web instance: claim,
+      # ownership, connect, release, and reclaim against real Leases.
+      - name: VDI broker e2e
+        env:
+          E2E_CONTAINERDISK: quay.io/kubevirt/cirros-container-disk-demo:latest
+          CORRAL_NS: corral-vms
+        run: scripts/e2e-vdi.sh ./corral
 
       - name: Verify cleanup left nothing behind
         if: always()

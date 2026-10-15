@@ -3,8 +3,8 @@
 **Status:** Phases 0 and 1 implemented. Browser RDP via IronRDP/RDCleanPath
 and the `corral-vdi` static-pool CLI have shipped. From Phase 2, atomic Lease
 claims (#226), CT-backed ephemeral pools (#230), the self-service broker
-API (#227, [ADR-0013](../adr/0013-vdi-broker-placement.md)), and reclaim
-(#228) have shipped. The rest of Phases 2–4 remain a design proposal; this RFC defines their corrected
+API (#227, [ADR-0013](../adr/0013-vdi-broker-placement.md)), reclaim (#228),
+and one-click connect (#229) have shipped. The rest of Phases 2–4 remain a design proposal; this RFC defines their corrected
 scope but does not commit their implementation. Setup guides: [docs/vdi.md](../vdi.md)
 and [docs/vdi-ct-pools.md](../vdi-ct-pools.md), epic status: [docs/vdi-epic-status.md](../vdi-epic-status.md).
 **Date:** 2026-07-02
@@ -202,6 +202,13 @@ disconnect grace and no maximum duration. `corral vdi pool create
 --ephemeral` makes VM pools whose members Corral clones again from the
 golden VM after each claim. Rule 5 stays unimplemented. See
 [docs/vdi.md](../vdi.md#sessions-and-reclaim).
+
+One-click connect has shipped (#229). The broker chooses RDP in the browser when
+TCP 3389 answers, then VNC, then the serial console; a CT gets its terminal. It
+gives the console route and the fallbacks, and the web Desktops screen and
+`corral vdi connect` use the same answer. The console websockets of a
+claimed desktop accept only its holder and admins. See
+[docs/vdi.md](../vdi.md#connect).
 
 **Phase 3 — capacity-aware GPU pools and native USB redirection. Proposed.**
 Pool creation inspects the golden VM's host-device requests and compares the

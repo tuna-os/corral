@@ -169,27 +169,6 @@ func unassignCmd() *cobra.Command {
 	}
 }
 
-// connectCmd prints how to reach a member — it reuses the same VNC/RDP/SSH
-// paths every other Corral VM already has (virtctl vnc, the RDP port
-// probe, corral ssh) rather than inventing a new connection mechanism.
-// True one-click routing (picking the right protocol automatically) is
-// Phase 2 territory once ADR-0002 phase 2's in-browser RDP lands.
-func connectCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "connect <member>",
-		Short: "Print how to connect to an assigned desktop",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(_ *cobra.Command, args []string) error {
-			name, ns := args[0], nsOrDefault()
-			fmt.Printf("VNC (browser or client):  corral web  →  open %s  →  Console\n", name)
-			fmt.Printf("RDP (if the guest answers on 3389):  corral viewer %s  (or a native RDP client via virtctl port-forward)\n", name)
-			fmt.Printf("SSH (Linux guests):  corral ssh %s\n", name)
-			fmt.Printf("(namespace: %s)\n", ns)
-			return nil
-		},
-	}
-}
-
 func usbCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "usb",

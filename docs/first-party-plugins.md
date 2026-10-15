@@ -15,12 +15,16 @@ curated marketplace.
 | `schedule` | Lifecycle windows | KubeVirt | Kubernetes CronJobs for VM start/stop |
 | `snapsched` | Snapshot retention schedules | KubeVirt | KubeVirt snapshots and pruning CronJobs |
 | `windows` | Windows VM creation | KubeVirt | UEFI, TPM, Hyper-V, installer and virtio media |
-| `vdi` | Desktop pools | KubeVirt | Static VM pools from golden VM clones, Lease claims, CT-backed ephemeral pools |
+| `vdi` | Desktop pools | KubeVirt | Static and ephemeral VM pools from golden VM clones, Lease claims, CT-backed ephemeral pools, one-click connect |
 
 `corral-vdi` provides static desktop pools for Phase 1 and CT-backed ephemeral
-pools. RFC-0001 governs them. [docs/vdi.md](vdi.md) and
+pools. The self-service broker of Phase 2 is part of `corral web`
+([ADR-0013](adr/0013-vdi-broker-placement.md)). VDI is at the Preview stability
+level. RFC-0001 governs them. [docs/vdi.md](vdi.md) and
 [docs/vdi-ct-pools.md](vdi-ct-pools.md) document them. [docs/vdi-epic-status.md](vdi-epic-status.md)
-tracks the dependency gates of the epic. `corral-incus` is a compatibility
+tracks the dependency gates of the epic.
+
+`corral-incus` is a compatibility
 binary for older installations. Incus is now a built-in backend, and tuna-os does
 not publish it as a marketplace plugin.
 

@@ -12,6 +12,7 @@ import (
 
 	"golang.org/x/net/websocket"
 
+	"github.com/tuna-os/corral/pkg/kubevirt"
 	"github.com/tuna-os/corral/pkg/vdi"
 	"github.com/tuna-os/corral/pkg/vdi/vditest"
 )
@@ -35,7 +36,7 @@ func newVDIFixture(t *testing.T) *vdiFixture {
 	t.Setenv("CORRAL_VDI_BROKER", "1")
 	t.Setenv("CORRAL_VDI_NAMESPACES", "vdi")
 	t.Setenv("CORRAL_ADMINS", "root@example.com")
-	c := vditest.New(func() time.Time { return time.Date(2026, 10, 15, 9, 0, 0, 0, time.UTC) })
+	c := vditest.New(time.Now)
 	c.AddPool(vdi.PoolRef{Kind: vdi.PoolKindVM, Namespace: "vdi", Name: "desk"}, vdi.PoolModePersistent, 2)
 	orig := vdiCluster
 	vdiCluster = c
@@ -358,4 +359,120 @@ func TestVDI_ReclaimIsAuditedInTheTaskLog(t *testing.T) {
 	if len(activity.entries) != 1 || activity.entries[0].Action != "vdi reclaim (disconnect-grace)" || activity.entries[0].User != vdi.ReclaimActor {
 		t.Fatalf("task log = %+v", activity.entries)
 	}
+}
+
+// stubRDP makes the RDP probe of desk-1 answer (open) or refuse.
+func (f *vdiFixture) stubRDP(t *testing.T, open bool) {
+	t.Helper()
+	f.Runner.AddResponseKV("kubectl", []string{"get", "vmis", "-A", "-o", "json"},
+		`{"items":[{"metadata":{"name":"desk-1","namespace":"vdi"},"status":{"interfaces":[{"ipAddress":"10.0.0.5"}]}}]}`, nil)
+	orig := rdpDial
+	rdpDial = func(addr string) (net.Conn, error) {
+		if !open || addr != "10.0.0.5:3389" {
+			return nil, &net.OpError{Op: "dial", Err: io.EOF}
+		}
+		a, b := net.Pipe()
+		_ = b.Close()
+		return a, nil
+	}
+	t.Cleanup(func() { rdpDial = orig })
+}
+
+func TestVDI_ConnectResolvesTheProtocol(t *testing.T) {
+	f := newVDIFixture(t)
+	f.claim(t, "alice@example.com")
+	path := "/api/vdi/desktops/" + vdiDesk1.ID() + "/connect"
+
+	f.stubRDP(t, false)
+	var got vdi.ConnectTarget
+	if code := f.do(t, "GET", path, "alice@example.com", nil, &got); code != http.StatusOK {
+		t.Fatalf("connect: HTTP %d", code)
+	}
+	if got.Protocol != vdi.ProtocolVNC || got.Path != "/api/vnc/vdi/desk-1" || len(got.Skipped) != 1 || !strings.Contains(got.Skipped[0], "10.0.0.5:3389") {
+		t.Fatalf("RDP closed: %+v", got)
+	}
+
+	f.stubRDP(t, true)
+	got = vdi.ConnectTarget{}
+	if code := f.do(t, "GET", path, "alice@example.com", nil, &got); code != http.StatusOK || got.Protocol != vdi.ProtocolRDP ||
+		got.Path != "/api/rdp/vdi/desk-1?rdcleanpath=1" || got.Direct != "10.0.0.5:3389" || got.Desktop.Owner != "alice@example.com" {
+		t.Fatalf("RDP open: HTTP %d %+v", code, got)
+	}
+}
+
+func TestVDI_ConnectAuthorizationAndStaleClaims(t *testing.T) {
+	f := newVDIFixture(t)
+	f.stubRDP(t, false)
+	f.claim(t, "alice@example.com")
+	path := "/api/vdi/desktops/" + vdiDesk1.ID() + "/connect"
+	if code := f.do(t, "GET", path, "bob@example.com", nil, nil); code != http.StatusForbidden {
+		t.Errorf("bob: HTTP %d, want 403", code)
+	}
+	if code := f.do(t, "GET", path, "", nil, nil); code != http.StatusUnauthorized {
+		t.Errorf("anonymous: HTTP %d, want 401", code)
+	}
+	if code := f.do(t, "GET", path, "root@example.com", nil, nil); code != http.StatusOK {
+		t.Errorf("admin: HTTP %d, want 200", code)
+	}
+	f.cluster.SetRunning(vdiDesk1, false)
+	if code := f.do(t, "GET", path, "alice@example.com", nil, nil); code != http.StatusConflict {
+		t.Errorf("stopped: HTTP %d, want 409", code)
+	}
+	f.release(t, "alice@example.com", vdiDesk1)
+	if code := f.do(t, "GET", path, "alice@example.com", nil, nil); code != http.StatusNotFound {
+		t.Errorf("released: HTTP %d, want 404", code)
+	}
+}
+
+func TestVDI_ConsoleOfAClaimedDesktopIsTheHolders(t *testing.T) {
+	f := newVDIFixture(t)
+	orig := consoleDialer
+	dialer := &pipeDialer{ended: make(chan struct{}, 8)}
+	consoleDialer = dialer
+	t.Cleanup(func() { consoleDialer = orig })
+	f.claim(t, "alice@example.com")
+
+	dial := func(login, path string) error {
+		cfg, err := websocket.NewConfig(wsURL(f.Server.URL)+path, f.Server.URL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if login != "" {
+			cfg.Header.Set("Tailscale-User-Login", login)
+		}
+		ws, err := websocket.DialConfig(cfg)
+		if err == nil {
+			_ = ws.Close()
+			<-dialer.ended // the bridge has ended
+		}
+		return err
+	}
+	if err := dial("bob@example.com", "/api/vnc/vdi/desk-1"); err == nil {
+		t.Error("bob opened alice's console")
+	}
+	if err := dial("", "/api/rdp/vdi/desk-1"); err == nil {
+		t.Error("an anonymous caller opened alice's console")
+	}
+	if err := dial("alice@example.com", "/api/vnc/vdi/desk-1"); err != nil {
+		t.Errorf("alice: %v", err)
+	}
+	if err := dial("root@example.com", "/api/vnc/vdi/desk-1"); err != nil {
+		t.Errorf("admin: %v", err)
+	}
+	if err := dial("bob@example.com", "/api/vnc/vdi/desk-2"); err != nil {
+		t.Errorf("an unclaimed member must stay open: %v", err)
+	}
+}
+
+// pipeDialer hands every console a fresh in-memory connection and signals
+// ended when a bridge closes it.
+type pipeDialer struct{ ended chan struct{} }
+
+func (d *pipeDialer) Dial(_, _ string, _ kubevirt.Console) (net.Conn, error) {
+	a, b := net.Pipe()
+	go func() {
+		_, _ = io.Copy(io.Discard, b)
+		d.ended <- struct{}{}
+	}()
+	return a, nil
 }

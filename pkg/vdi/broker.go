@@ -106,6 +106,10 @@ func (c MemberClaim) Expired(now time.Time) bool {
 type MemberState struct {
 	Phase   string `json:"phase"`
 	Running bool   `json:"running"`
+	// The consoles the member offers when it runs: VNC is a VM with a
+	// graphics device; Terminal is a VM serial console or a CT shell.
+	VNC      bool `json:"-"`
+	Terminal bool `json:"-"`
 }
 
 // Cluster is everything the broker needs from Kubernetes. KubeCluster is
@@ -393,6 +397,14 @@ func (b *Broker) BeginRelease(a Actor, ref MemberRef) (func() error, error) {
 }
 
 func (b *Broker) desktop(c MemberClaim) Desktop {
+	state, err := b.cluster.MemberState(c)
+	if err != nil {
+		state = MemberState{Phase: "Unknown"}
+	}
+	return b.desktopWithState(c, state)
+}
+
+func (b *Broker) desktopWithState(c MemberClaim, state MemberState) Desktop {
 	d := Desktop{
 		ID: c.Member.ID(), SessionID: c.SessionID(),
 		PoolID: PoolRef{Kind: c.Member.Kind, Namespace: c.Member.Namespace, Name: c.Pool}.ID(),
@@ -407,11 +419,6 @@ func (b *Broker) desktop(c MemberClaim) Desktop {
 	}
 	if at, reason := b.reclaimAt(c, marks, connected); reason != "" {
 		d.ReclaimAt, d.ReclaimReason = &at, reason
-	}
-	state, err := b.cluster.MemberState(c)
-	if err != nil {
-		d.Phase = "Unknown"
-		return d
 	}
 	d.Phase, d.Running = state.Phase, state.Running
 	return d

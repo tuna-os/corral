@@ -149,9 +149,9 @@ func routes(useDemoConsole bool) (*http.ServeMux, error) {
 			serveDemoVNC(ws)
 		}
 	}
-	mux.Handle("GET /api/vnc/{ns}/{name}", consoleWebSocket(trackConsole(vncHandler)))
-	mux.Handle("GET /api/tty/{ns}/{name}", consoleWebSocket(trackConsole(ttyBridge)))
-	mux.Handle("GET /api/rdp/{ns}/{name}", consoleWebSocket(trackConsole(rdpBridge)))
+	mux.Handle("GET /api/vnc/{ns}/{name}", vdiConsoleGate(consoleWebSocket(trackConsole(vncHandler))))
+	mux.Handle("GET /api/tty/{ns}/{name}", vdiConsoleGate(consoleWebSocket(trackConsole(ttyBridge))))
+	mux.Handle("GET /api/rdp/{ns}/{name}", vdiConsoleGate(consoleWebSocket(trackConsole(rdpBridge))))
 
 	return mux, nil
 }

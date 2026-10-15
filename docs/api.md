@@ -383,6 +383,7 @@ takes the caller only from the identity headers. See
 | `GET /api/vdi/desktops/{kind}/{ns}/{member}` | One desktop (holder or admin). |
 | `POST /api/vdi/desktops/{kind}/{ns}/{member}/start` | Starts it (holder or admin). |
 | `POST /api/vdi/desktops/{kind}/{ns}/{member}/release` | 202 `{"task": "...", "desktop": "..."}`; poll `GET /api/tasks/{id}`. |
+| `GET /api/vdi/desktops/{kind}/{ns}/{member}/connect` | The console to open (holder or admin), below. 409 for a stopped desktop or an expired claim. |
 
 A desktop:
 
@@ -399,6 +400,22 @@ the reclaim policy (#228): `connected` (the user has a console open), `disconnec
 and `reclaimAt` with `reclaimReason` (`disconnect-grace` or `max-duration`). Status codes: 401 without an
 identity, 403 for another user's desktop or a peer service identity, 404 for
 an unknown or unclaimed desktop.
+
+A connect target names the protocol (`rdp`, `vnc`, or `terminal`) and the
+console route to open. `direct` is the guest address that answered the RDP
+probe. `fallbacks` are the other protocols in order, and `skipped` says why a
+protocol is missing:
+
+```json
+{"protocol": "rdp", "path": "/api/rdp/corral-vms/devpool-1?rdcleanpath=1",
+ "direct": "10.244.1.17:3389",
+ "fallbacks": [{"protocol": "vnc", "path": "/api/vnc/corral-vms/devpool-1"},
+               {"protocol": "terminal", "path": "/api/tty/corral-vms/devpool-1"}],
+ "desktop": {"id": "vm/corral-vms/devpool-1", "owner": "alice@example.com", "...": "..."}}
+```
+
+When the broker is on, the console websockets (`/api/vnc`, `/api/tty`,
+`/api/rdp`) of a claimed desktop accept only its holder and admins.
 
 ---
 

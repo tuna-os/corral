@@ -11,8 +11,10 @@ import { ctAction, renderCT } from './content/ct.js';
 import { renderDatacenter } from './content/datacenter.js';
 import { renderDoctor } from './content/doctor.js';
 import { renderExtensions } from './content/extensions.js';
-// Imported for its side effect: the module registers the host-power
-// capability with ui/capabilities.js. Core names nothing in it.
+// Imported for their side effects: each module registers a capability (VDI
+// desktops, host power, plugin screens) with ui/capabilities.js. Core names
+// nothing in them.
+import './content/desktops.js';
 import './content/hostpower.js';
 import './content/pluginui.js';
 import { disconnectMultiview, renderMultiview } from './content/multiview.js';
