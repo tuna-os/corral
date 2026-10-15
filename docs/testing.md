@@ -118,8 +118,8 @@ dashboard. Neither needs production.
   It checks the console pop-out and the context menu.
 - **Mid-tier Playwright** (`e2e/corral.spec.js` without `@live-only`, in
   `.github/workflows/e2e.yml`). It runs kind + emulated KubeVirt on every
-  push to `main`, and on each pull request that changes the `corral` binary,
-  the UI or the specs. It covers the wizard for every source type and the
+  push to `main`. It also runs on each pull request that changes the
+  `corral` binary, the UI or the specs. It covers the wizard for every source type and the
   catalog. It covers CDI import to Succeeded and scale on a stopped VM. It
   covers one cirros boot lifecycle and the bulk-action bar. It covers the
   export picker, tag chips and filters, and `/api/whoami`. It covers the

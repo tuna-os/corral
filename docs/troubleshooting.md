@@ -89,9 +89,29 @@ also when you do not use that feature.
 
 ## Collect evidence
 
-Corral has no debug flag and no debug environment variable. Structured logs
-are an open request ([#419](https://github.com/tuna-os/corral/issues/419)).
-Use these commands and files instead.
+Corral writes structured logs to stderr. `--log-level debug` logs each
+command that Corral runs (`kubectl`, `virtctl`, `incus`, `virsh` and the
+others) with its duration and exit code. Corral replaces tokens,
+passwords, Tailscale auth keys and Proxmox API tokens with `[REDACTED]`
+before it writes the record. It logs the size of the input of a command,
+not the input. The input can hold manifests and cloud-init passwords.
+
+```bash
+corral list --log-level debug
+corral list --log-level debug --log-format json 2>corral.log
+```
+
+| Flag | Variable | Values |
+|---|---|---|
+| `--log-level` | `CORRAL_LOG_LEVEL` | `debug`, `info` (default), `warn`, `error` |
+| `--log-format` | `CORRAL_LOG_FORMAT` | `text` (default), `json` |
+| `--log-file` | `CORRAL_LOG_FILE` | A file that gets the log instead of stderr. Corral creates it with mode `0600` |
+
+The TUI draws on the terminal, so it always writes its log to a file. The
+default file is `~/.cache/corral/tui.log` (`$XDG_CACHE_HOME/corral` when
+that variable is set).
+
+Use these commands and files too.
 
 | Tool | What it shows |
 |---|---|
@@ -294,6 +314,7 @@ Some commands work on local QEMU only. On another backend they stop with
 | `CORRAL_LIBVIRT_URI` | libvirt URI. `--context` sets it for libvirt |
 | `CORRAL_NAMESPACE` | KubeVirt namespace (default `corral-vms`) |
 | `CORRAL_KUBECTL_TIMEOUT` | Timeout for each `kubectl` call (default `5s`) |
+| `CORRAL_LOG_LEVEL`, `CORRAL_LOG_FORMAT`, `CORRAL_LOG_FILE` | Log level, format and file. See [Collect evidence](#collect-evidence) |
 | `CORRAL_OVMF_CODE`, `CORRAL_OVMF_VARS` | UEFI firmware files for local VMs |
 | `CORRAL_PROXMOX_TOKEN`, `CORRAL_PROXMOX_TOKEN_<CONTEXT>` | Proxmox API token |
 | `KUBECONFIG` | Kubeconfig file. When it exists, Corral adds a `kubevirt` context |
