@@ -44,7 +44,7 @@ func createBootcInContext(req createRequest, ns, context string) (id string, tas
 
 	go func() {
 		err := kubevirt.WithContext(context, func() error {
-			build, buildErr := kubevirt.BootcBuildDisk(req.Name, ns, image, sshKey, req.Disk, req.StorageClass, "", req.Node, task)
+			build, buildErr := kubevirt.BootcBuildDisk(req.Name, ns, image, sshKey, req.Disk, req.StorageClass, "", nil, req.Node, task)
 			if buildErr != nil {
 				return buildErr
 			}

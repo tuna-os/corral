@@ -268,6 +268,19 @@ corral delete gate
 forwarded port succeeds. bootc install injects the SSH key with
 `--root-ssh-authorized-keys`, and nothing changes the published image.
 
+### Kernel arguments
+
+`--karg` (repeatable) puts a kernel argument into the installed boot entry,
+as it does for `corral vmtest`. The argument is there from the first boot:
+
+```bash
+corral create gate --bootc ghcr.io/tuna-os/yellowfin:gnome-testing \
+  --karg tunaos.countme=0 --wait-ssh --timeout 900
+```
+
+Each value must be one argument with no spaces. `corral bootc create` also
+takes `--karg`.
+
 ### Locally built images
 
 Images in root podman storage work directly — no registry round-trip:
@@ -366,7 +379,10 @@ that matter in practice:
   upstream. A registry:2 aimed at quay is not able to serve content from ghcr.
 - **Interrupted builds**: sometimes the builder finishes but the final VM step
   does not. Then `corral bootc create --resume <name>` reuses the disk PVC that the
-  builder completed. It does not build the disk again.
+  builder completed. It does not build the disk again, so it cannot add a kernel
+  argument. With `--karg`, the resume continues only if the builder installed
+  each argument that you give. If not, it stops with an error. Then build
+  the disk again without `--resume`.
 
 ## Troubleshooting the gate
 

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"unicode"
 )
 
 func errBootcUnavailable() error {
@@ -26,7 +27,7 @@ type BootcBuildResult struct {
 
 // Registered by bootc.go when the `bootc` build tag is set; nil otherwise.
 var (
-	bootcBuildFunc   func(name, namespace, imageURI, sshPublicKey, diskSize, storageClass, provisionScript, node string, progress io.Writer) (*BootcBuildResult, error)
+	bootcBuildFunc   func(name, namespace, imageURI, sshPublicKey, diskSize, storageClass, provisionScript string, kargs []string, node string, progress io.Writer) (*BootcBuildResult, error)
 	bootcVMFunc      func(name, namespace, pvcName, imageURI, sshKey, mem string, cpu int, node string) map[string]any
 	bootcRebuildFunc func(name, namespace, imageURI, sshPublicKey, diskSize string, progress io.Writer) error
 	bootcResumeFunc  func(name, namespace string) (imageURI, pvcName string, ready, failed bool)
@@ -49,14 +50,73 @@ func BootcImageOf(name, namespace string) string {
 }
 
 // BootcBuildDisk runs the on-cluster bootc disk build. storageClass "" uses
-// PreferredStorageClass(). node "" lets the scheduler place the builder; a
+// PreferredStorageClass(). kargs go to `bootc install to-disk --karg`, so they
+// are in the boot entry from the first boot; the builder VM records them for
+// BootcBuiltKargs. node "" lets the scheduler place the builder; a
 // non-empty node pins it (so it co-locates with a node-bound local-path disk
 // and the final VM can mount it). Errors if the plugin isn't compiled in.
-func BootcBuildDisk(name, namespace, imageURI, sshPublicKey, diskSize, storageClass, provisionScript, node string, progress io.Writer) (*BootcBuildResult, error) {
+func BootcBuildDisk(name, namespace, imageURI, sshPublicKey, diskSize, storageClass, provisionScript string, kargs []string, node string, progress io.Writer) (*BootcBuildResult, error) {
 	if bootcBuildFunc == nil {
 		return nil, errBootcUnavailable()
 	}
-	return bootcBuildFunc(name, namespace, imageURI, sshPublicKey, diskSize, storageClass, provisionScript, node, progress)
+	return bootcBuildFunc(name, namespace, imageURI, sshPublicKey, diskSize, storageClass, provisionScript, kargs, node, progress)
+}
+
+// bootcKargsAnnotation records, on the builder VM, the kernel arguments its
+// `bootc install to-disk` installed. A `--resume` reads it back, because a
+// resume skips the install and so cannot add a kernel argument itself.
+const bootcKargsAnnotation = "corral.bootc/kargs"
+
+// ValidateKargs rejects a kernel argument that is empty or holds whitespace:
+// each one must be a single token for `bootc install to-disk --karg`.
+func ValidateKargs(kargs []string) error {
+	for _, karg := range kargs {
+		if karg == "" || strings.IndexFunc(karg, unicode.IsSpace) >= 0 {
+			return fmt.Errorf("--karg %q is not one kernel argument (it must be non-empty, with no whitespace)", karg)
+		}
+	}
+	return nil
+}
+
+// BootcKargFlags renders kargs as shell words for a `bootc install to-disk`
+// line in a generated script: ` --karg 'a=1' --karg 'b'`, each value
+// single-quoted so the shell passes it through unchanged. Empty for no kargs.
+func BootcKargFlags(kargs []string) string {
+	var b strings.Builder
+	for _, karg := range kargs {
+		b.WriteString(" --karg '")
+		b.WriteString(strings.ReplaceAll(karg, "'", `'\''`))
+		b.WriteString("'")
+	}
+	return b.String()
+}
+
+// BootcBuiltKargs returns the kernel arguments that name's builder VM
+// installed, read from its corral.bootc/kargs annotation. A builder from
+// before the annotation existed, or one that installed none, returns nil.
+func BootcBuiltKargs(name, namespace string) []string {
+	out, err := runPkg("kubectl", "get", "vm", name+"-bootc-builder", "-n", namespace,
+		"-o", "jsonpath={.metadata.annotations."+strings.ReplaceAll(bootcKargsAnnotation, ".", `\.`)+"}")
+	if err != nil {
+		return nil
+	}
+	return strings.Fields(string(out))
+}
+
+// MissingKargs returns the requested kernel arguments that are not in
+// installed, in request order.
+func MissingKargs(requested, installed []string) []string {
+	have := make(map[string]bool, len(installed))
+	for _, karg := range installed {
+		have[karg] = true
+	}
+	var missing []string
+	for _, karg := range requested {
+		if !have[karg] {
+			missing = append(missing, karg)
+		}
+	}
+	return missing
 }
 
 // GenerateBootcVM builds the final VM manifest that UEFI-boots a bootc-built

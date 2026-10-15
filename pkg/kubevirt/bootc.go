@@ -102,7 +102,7 @@ func bootcRebuild(name, namespace, imageURI, sshPublicKey, diskSize string, prog
 	// Rebuild keeps whatever storage class the existing PVC used — "" tells
 	// bootcBuildDisk to fall back to PreferredStorageClass(), same as before
 	// storageClass existed as an explicit override.
-	if _, err := bootcBuildDisk(name, namespace, imageURI, sshPublicKey, diskSize, "", "", "", progress); err != nil {
+	if _, err := bootcBuildDisk(name, namespace, imageURI, sshPublicKey, diskSize, "", "", nil, "", progress); err != nil {
 		return fmt.Errorf("rebuild: %w", err)
 	}
 
@@ -118,7 +118,7 @@ func bootcRebuild(name, namespace, imageURI, sshPublicKey, diskSize string, prog
 // onto it via `bootc install to-disk`, waits for that VM to finish, then deletes
 // the builder (keeping the disk). Progress/builder logs go to progress.
 // storageClass "" falls back to PreferredStorageClass().
-func bootcBuildDisk(name, namespace, imageURI, sshPublicKey, diskSize, storageClass, provisionScript, node string, progress io.Writer) (*BootcBuildResult, error) {
+func bootcBuildDisk(name, namespace, imageURI, sshPublicKey, diskSize, storageClass, provisionScript string, kargs []string, node string, progress io.Writer) (*BootcBuildResult, error) {
 	if progress == nil {
 		progress = os.Stderr
 	}
@@ -152,7 +152,7 @@ func bootcBuildDisk(name, namespace, imageURI, sshPublicKey, diskSize, storageCl
 
 	// The cloud-init script is larger than KubeVirt's 2 KB inline userData limit,
 	// so deliver it via a Secret the VM references with cloudInitNoCloud.secretRef.
-	secret := generateBuilderSecret(builderName+"-cloudinit", namespace, imageURI, sshPublicKey, provisionScript)
+	secret := generateBuilderSecret(builderName+"-cloudinit", namespace, imageURI, sshPublicKey, provisionScript, kargs)
 	sdata, err := json.Marshal(secret)
 	if err != nil {
 		return nil, fmt.Errorf("marshaling builder secret: %w", err)
@@ -161,7 +161,7 @@ func bootcBuildDisk(name, namespace, imageURI, sshPublicKey, diskSize, storageCl
 		return nil, fmt.Errorf("creating builder secret: %w", err)
 	}
 
-	builder := generateBuilderVM(builderName, namespace, pvcName, builderName+"-cloudinit", imageURI, node)
+	builder := generateBuilderVM(builderName, namespace, pvcName, builderName+"-cloudinit", imageURI, kargs, node)
 	bdata, err := json.Marshal(builder)
 	if err != nil {
 		return nil, fmt.Errorf("marshaling builder VM: %w", err)
@@ -266,14 +266,15 @@ func builderImage() string {
 //
 // Both paths add `console=ttyS0 systemd.wants=sshd.service` to the BLS entries —
 // desktop images ship sshd disabled, and corral reaches VMs over SSH.
-// builderScript returns the cloud-init the builder VM runs, with the image and
-// SSH key substituted in.
-func builderScript(imageURI, sshPublicKey, provisionScript string) string {
+// builderScript returns the cloud-init the builder VM runs, with the image,
+// SSH key and kernel arguments substituted in.
+func builderScript(imageURI, sshPublicKey, provisionScript string, kargs []string) string {
 	return strings.NewReplacer(
 		"__IMAGE__", imageURI,
 		"__SSHKEY__", strings.TrimSpace(sshPublicKey),
 		"__MIRRORCONF__", builderMirrorConf(),
 		"__PROVISIONB64__", base64.StdEncoding.EncodeToString([]byte(provisionScript)),
+		"__KARGS__", BootcKargFlags(kargs),
 	).Replace(builderCloudInit)
 }
 
@@ -335,7 +336,7 @@ func builderMirrorConf() string {
 
 // generateBuilderSecret holds the cloud-init userData (too large for KubeVirt's
 // 2 KB inline limit) for the builder VM to reference via cloudInitNoCloud.secretRef.
-func generateBuilderSecret(name, namespace, imageURI, sshPublicKey, provisionScript string) map[string]any {
+func generateBuilderSecret(name, namespace, imageURI, sshPublicKey, provisionScript string, kargs []string) map[string]any {
 	return map[string]any{
 		"apiVersion": "v1",
 		"kind":       "Secret",
@@ -344,7 +345,7 @@ func generateBuilderSecret(name, namespace, imageURI, sshPublicKey, provisionScr
 			"namespace": namespace,
 			"labels":    map[string]any{"corral-bootc-builder": name},
 		},
-		"stringData": map[string]any{"userdata": builderScript(imageURI, sshPublicKey, provisionScript)},
+		"stringData": map[string]any{"userdata": builderScript(imageURI, sshPublicKey, provisionScript, kargs)},
 	}
 }
 
@@ -352,8 +353,10 @@ func generateBuilderSecret(name, namespace, imageURI, sshPublicKey, provisionScr
 // recorded as an annotation — not used by the builder itself (it's baked
 // into the cloud-init secret instead) but read back by bootcResumeState if
 // the CLI that started the build gets interrupted before it can create the
-// final VM: the annotation is what lets a later `--resume` recover it.
-func generateBuilderVM(name, namespace, pvcName, secretName, imageURI, node string) map[string]any {
+// final VM: the annotation is what lets a later `--resume` recover it. kargs
+// are recorded the same way (see BootcBuiltKargs): a resume cannot install
+// a kernel argument, so it checks the ones this build did.
+func generateBuilderVM(name, namespace, pvcName, secretName, imageURI string, kargs []string, node string) map[string]any {
 	disk := func(n string, extra map[string]any) map[string]any {
 		d := map[string]any{"name": n, "disk": map[string]any{"bus": "virtio"}}
 		for k, v := range extra {
@@ -404,6 +407,10 @@ func generateBuilderVM(name, namespace, pvcName, secretName, imageURI, node stri
 			map[string]any{"kubernetes.io/hostname": node}
 	}
 
+	annotations := map[string]any{"corral.bootc/image": imageURI}
+	if len(kargs) > 0 {
+		annotations[bootcKargsAnnotation] = strings.Join(kargs, " ")
+	}
 	return map[string]any{
 		"apiVersion": "kubevirt.io/v1",
 		"kind":       "VirtualMachine",
@@ -411,15 +418,16 @@ func generateBuilderVM(name, namespace, pvcName, secretName, imageURI, node stri
 			"name":        name,
 			"namespace":   namespace,
 			"labels":      map[string]any{"corral-bootc-builder": name},
-			"annotations": map[string]any{"corral.bootc/image": imageURI},
+			"annotations": annotations,
 		},
 		"spec": vmSpec,
 	}
 }
 
-// builderCloudInit is the #cloud-config the builder VM runs. __IMAGE__ and
-// __SSHKEY__ are substituted by generateBuilderVM. Markers CORRAL_BUILD_OK /
-// CORRAL_BUILD_FAIL on the serial console signal the result to waitForBuilderVM.
+// builderCloudInit is the #cloud-config the builder VM runs. __IMAGE__,
+// __SSHKEY__, __MIRRORCONF__, __PROVISIONB64__ and __KARGS__ are substituted
+// by builderScript. Markers CORRAL_BUILD_OK / CORRAL_BUILD_FAIL on the serial
+// console signal the result to waitForBuilderVM.
 const builderCloudInit = `#cloud-config
 write_files:
   - path: /etc/containers/registries.conf.d/corral-mirror.conf
@@ -485,7 +493,7 @@ write_files:
       echo "CORRAL_COMPOSEFS=$COMPOSEFS FS=$FS"
       podman run --rm --privileged --pid=host --security-opt label=type:unconfined_t \
         -v /var/lib/containers:/var/lib/containers -v /dev:/dev -v /root/buildkey.pub:/buildkey.pub:ro \
-        "$IMG" bootc install to-disk $BACKEND --filesystem "$FS" --wipe \
+        "$IMG" bootc install to-disk $BACKEND --filesystem "$FS" --wipe__KARGS__ \
         --root-ssh-authorized-keys /buildkey.pub /dev/disk/by-id/virtio-target \
         || { echo CORRAL_BUILD_FAIL install; echo CORRAL_BUILD_FAIL install > /dev/ttyS0 2>/dev/null; sync; sleep 2; poweroff; exit 1; }
       udevadm settle

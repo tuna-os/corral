@@ -45,6 +45,7 @@ var (
 	createStorageClass      string
 	createBootc             string
 	createProvisionScript   string
+	createKargs             []string
 	createStart             bool
 	createWaitSSH           bool
 	createTimeout           int
@@ -239,6 +240,7 @@ Boot a container image as a VM? Install the bootc extension:
   corral create myvm --iso ./install.iso --disk 40G
   corral create scratch --kubevirt --image bluefin --ephemeral --ttl 2h
   corral create gate --bootc ghcr.io/tuna-os/yellowfin:gnome --wait-ssh --timeout 900
+  corral create gate --bootc ghcr.io/tuna-os/yellowfin:gnome --karg tunaos.countme=0 --wait-ssh
   corral create builder --kubevirt --image fedora --lan   # direct LAN access via a Multus bridge NAD
   corral create builder --kubevirt --image fedora --lan-service   # LAN access via LoadBalancer Service (Cilium/MetalLB)`,
 	Args: cobra.ExactArgs(1),
@@ -269,6 +271,12 @@ Boot a container image as a VM? Install the bootc extension:
 // (the CLI's --kubevirt flag, or the TUI's backend picker); it governs bootc's
 // otherwise-automatic backend selection.
 func executeCreate(name string, kubevirtExplicit bool) error {
+	if len(createKargs) > 0 && createBootc == "" {
+		return fmt.Errorf("--karg needs --bootc: only a bootc install puts kernel arguments into the boot entry")
+	}
+	if err := kubevirt.ValidateKargs(createKargs); err != nil {
+		return err
+	}
 	if existing := resolveBackend(name); existing != "" && !createForce {
 		return fmt.Errorf("VM %q already exists (backend: %s). Use --force to overwrite", name, existing)
 	}
@@ -409,6 +417,7 @@ func init() {
 	createCmd.Flags().StringVarP(&createFile, "file", "f", "", "Lima YAML file (corral reads Lima format natively)")
 	createCmd.Flags().StringVarP(&createStorageClass, "storage-class", "s", "", "[kubevirt] StorageClass for new disks (default: cluster preference)")
 	createCmd.Flags().StringVar(&createBootc, "bootc", "", "Bootc container image to run")
+	createCmd.Flags().StringArrayVar(&createKargs, "karg", nil, "[bootc] Kernel argument to install into the boot entry, there from the first boot (repeatable)")
 	createCmd.Flags().BoolVar(&createStart, "start", false, "Start the VM after creating it")
 	createCmd.Flags().BoolVar(&createWaitSSH, "wait-ssh", false, "Start the VM and block until SSH answers; nonzero exit on timeout (CI boot gate; works on QEMU and KubeVirt bootc VMs)")
 	createCmd.Flags().IntVar(&createTimeout, "timeout", 600, "Seconds to wait for SSH with --wait-ssh")
@@ -599,17 +608,7 @@ func runKubevirtBootcCreate(name string) error {
 		if !plugin.IsInstalled("bootc") {
 			return fmt.Errorf("bootc build needs the bootc plugin: corral plugin install bootc")
 		}
-		args := []string{"create", name, "--image", createBootc, "-n", ns}
-		if size != "" {
-			args = append(args, "--disk", size)
-		}
-		if createStorageClass != "" {
-			args = append(args, "--storage-class", createStorageClass)
-		}
-		if createNode != "" {
-			args = append(args, "--node", createNode)
-		}
-		if err := plugin.Dispatch("bootc", args); err != nil {
+		if err := plugin.Dispatch("bootc", bootcPluginArgs(name, ns, size)); err != nil {
 			return err
 		}
 		if registryStore != nil {
@@ -625,7 +624,7 @@ func runKubevirtBootcCreate(name string) error {
 		return nil
 	}
 
-	build, err := kubevirt.BootcBuildDisk(name, ns, createBootc, sshKey, size, createStorageClass, createProvisionScript, createNode, os.Stderr)
+	build, err := kubevirt.BootcBuildDisk(name, ns, createBootc, sshKey, size, createStorageClass, createProvisionScript, createKargs, createNode, os.Stderr)
 	if err != nil {
 		return err
 	}
@@ -654,6 +653,25 @@ func runKubevirtBootcCreate(name string) error {
 		return kubevirt.NewClient(ns).StartVM(name)
 	}
 	return nil
+}
+
+// bootcPluginArgs is the `corral bootc` command line that delegates a
+// KubeVirt bootc create to the plugin when the build is not compiled in.
+func bootcPluginArgs(name, ns, size string) []string {
+	args := []string{"create", name, "--image", createBootc, "-n", ns}
+	if size != "" {
+		args = append(args, "--disk", size)
+	}
+	if createStorageClass != "" {
+		args = append(args, "--storage-class", createStorageClass)
+	}
+	if createNode != "" {
+		args = append(args, "--node", createNode)
+	}
+	for _, karg := range createKargs {
+		args = append(args, "--karg", karg)
+	}
+	return args
 }
 
 func runLocalBootcCreate(name string) error {
@@ -750,7 +768,7 @@ func runLocalBootcCreate(name string) error {
 	cmd := exec.Command("sudo", "podman", "run", "--privileged", "--pid=host", "--security-opt", "label=disable",
 		"-v", "/dev:/dev", "-v", vmDir+":/output:Z",
 		createBootc, "sh", "-c",
-		localBootcScript(loopDev, createProvisionScript))
+		localBootcScript(loopDev, createProvisionScript, createKargs))
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
@@ -809,7 +827,9 @@ func maybeStartAndWait(name string) error {
 	return qemu.WaitSSH(name, createSSHUser, time.Duration(createTimeout)*time.Second)
 }
 
-func localBootcScript(disk, provisionScript string) string {
+// localBootcScript is the `sh -c` script the local bootc build runs inside
+// the image. Each karg goes to `bootc install to-disk --karg`, single-quoted.
+func localBootcScript(disk, provisionScript string, kargs []string) string {
 	var provisionArg string
 	if provisionScript != "" {
 		provisionArg = `&& cat /output/provision.sh | chroot "$MNT" /bin/bash`
@@ -828,7 +848,7 @@ else
   COMPOSEFS=0; FS=xfs; BACKEND=--generic-image
 fi
 echo "corral: install backend composefs=$COMPOSEFS fs=$FS"
-bootc install to-disk $BACKEND --filesystem "$FS" --wipe --root-ssh-authorized-keys /output/id_rsa.pub "$DISK"
+bootc install to-disk $BACKEND --filesystem "$FS" --wipe%s --root-ssh-authorized-keys /output/id_rsa.pub "$DISK"
 udevadm settle
 if [ "$COMPOSEFS" = 1 ]; then
   MNT_ESP=$(mktemp -d)
@@ -857,5 +877,5 @@ fi
 udevadm settle
 MNT=$(mktemp -d)
 mount "${DISK}p3" "$MNT" %s && umount "$MNT"
-rm -rf "$MNT"`, disk, provisionArg)
+rm -rf "$MNT"`, disk, kubevirt.BootcKargFlags(kargs), provisionArg)
 }
