@@ -97,8 +97,10 @@ package is visible on every run.
 `pkg/web/jstest/*.test.mjs` tests the web client's ES modules one at a time,
 with no browser and no server. Each test imports the file that
 `pkg/web/static/` ships, so the test and the browser run the same code. The
-tests use `node:test` and stub `fetch`, so there is nothing to install. The
-files are outside `static/`, so `go:embed` does not ship them.
+tests use `node:test` and stub `fetch`, so there is nothing to install. A
+module that touches `document` imports `dom-stub.mjs` first, which supplies
+the few DOM calls the client makes. The files are outside `static/`, so
+`go:embed` does not ship them.
 
 Run them with `just test-js` (Node 22 or newer). CI runs them first in
 `.github/workflows/ui-smoke.yml`. Put the API request shape, error messages,

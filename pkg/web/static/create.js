@@ -304,7 +304,7 @@ function isLocalTarget() {
   return selectedCreateBackend() === 'qemu';
 }
 
-export function updateSourceFields() {
+function updateSourceFields() {
   const backend = selectedCreateBackend();
   const local = backend === 'qemu';
   const fileBacked = backend === 'qemu' || backend === 'libvirt';
@@ -355,6 +355,35 @@ export function updateSourceFields() {
     else src.removeAttribute('list');
   }
   if (type === 'pvc') loadPVCSources();
+}
+
+// The backends the form can create on, from /api/contexts, with the server's
+// default selected. Called once at boot, after the capabilities are known.
+export async function loadCreateTargets() {
+  const select = document.querySelector('#create-form [name=target]');
+  if (!select) return;
+  try {
+    const result = await api('/api/contexts');
+    const targets = result.contexts || [];
+    select.innerHTML = targets.map((c) => `<option value="${esc(c.name)}" data-backend="${esc(c.backend)}" ${c.name === result.default ? 'selected' : ''}>${esc(c.name)} · ${esc(c.backend)}${c.context ? ` · ${esc(c.context)}` : ''}</option>`).join('');
+  } catch {
+    select.innerHTML = '<option value="cluster" data-backend="kubevirt">cluster · kubevirt</option>';
+  }
+  updateSourceFields();
+}
+
+// The KubeVirt instance types and preferences the form offers.
+export async function loadInstanceTypes() {
+  let d;
+  try { d = await api('/api/instancetypes'); } catch { return; }
+  const fill = (sel, items, head) => {
+    const el = document.querySelector(sel);
+    if (!el) return;
+    el.innerHTML = `<option value="">${head}</option>` +
+      (items || []).map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+  };
+  fill('[name=instancetype]', d.instancetypes, '— manual CPU/mem —');
+  fill('[name=preference]', d.preferences, '(none)');
 }
 
 // Populates the "Existing PVC" dropdown from the DataVolume/ISO library
