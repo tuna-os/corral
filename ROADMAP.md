@@ -20,9 +20,9 @@ images on a KubeVirt cluster (`scripts/boot-gate.sh` in tunaOS).
   the `tailvm-` prefix during the transition ([SPEC.md](SPEC.md)).
 - Corral supports five backends. The `bootc` mode builds a disk from a
   bootable container on the cluster. Then it runs that disk as a KubeVirt VM.
-- 🟡 **Org CI adoption is not complete.** tunaos#1273 closed without a merge.
-  The tunaOS CI boot gate (`reusable-build-image.yml`) uses
-  `scripts/iso-e2e.sh`, not Corral. See #431.
+- 🟡 **Org CI adoption waits for review.** tunaOS#3249 moves the tunaOS boot
+  gate (`reusable-build-image.yml`) from `scripts/iso-e2e.sh` to
+  `corral vmtest`. Its smoke cells pass on hosted KVM. See #431.
 - 🟡 **v0.7.0 notes are on main**
   ([docs/releases/v0.7.0.md](docs/releases/v0.7.0.md)). A maintainer must
   push the tag and publish the GitHub Release (#339).
@@ -33,7 +33,7 @@ images on a KubeVirt cluster (`scripts/boot-gate.sh` in tunaOS).
 | Priority | Item | Tracking | Status |
 |----------|------|----------|--------|
 | P0 | Publish v0.7.0 (tag + GitHub Release) | #339, #210 | 🟡 Notes merged; tag not pushed |
-| P1 | tunaOS CI boot-gate adoption | #431 | 🔴 Open |
+| P1 | tunaOS CI boot-gate adoption | #431 | 🟡 tunaOS#3249 in review (Corral side merged: #512, #514, #546) |
 | P1 | VDI plugin GA | #69 | 🟡 Phase 1 done; Phase 2 open |
 | P2 | Plugin signing and SBOM | #505 | 🔴 Open |
 | P3 | Dependency hygiene | #97 | 🟢 Ongoing (Renovate) |
