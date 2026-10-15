@@ -26,16 +26,15 @@ images on a KubeVirt cluster (`scripts/boot-gate.sh` in tunaOS).
 - 🟡 **The org CI change waits for review.** tunaOS#3249 moves the tunaOS boot
   gate (`reusable-build-image.yml`) from `scripts/iso-e2e.sh` to
   `corral vmtest`. Its smoke cells pass on hosted KVM. See #431.
-- 🟡 **v0.7.0 notes are on main**
-  ([docs/releases/v0.7.0.md](docs/releases/v0.7.0.md)). A maintainer must
-  push the tag and publish the GitHub Release (#339).
+- ✅ **v0.7.0 is released** (2026-10-15): signed binaries with SBOMs,
+  and Homebrew is on v0.7.0 (#339, #210).
 - The repo has no milestones. This file and the issue labels track the work.
 
 ### Priorities
 
 | Priority | Item | Tracking | Status |
 |----------|------|----------|--------|
-| P0 | Publish v0.7.0 (tag + GitHub Release) | #339, #210 | 🟡 Notes ready; tag push starts `release.yml` |
+| P0 | Launch: Show HN and announcements | #423, #424, #425, #426 | 🔴 Open; release done |
 | P1 | tunaOS CI boot-gate adoption | #431 | 🟡 tunaOS#3249 in review (Corral side merged: #512, #514, #546, #570) |
 | P3 | Dependency hygiene | #97 | 🟢 Ongoing (Renovate) |
 
@@ -43,37 +42,33 @@ images on a KubeVirt cluster (`scripts/boot-gate.sh` in tunaOS).
 
 ## Roadmap (dependency order)
 
-Phases 2 and 3 are done (see the Done list). The open work is the release,
-the tunaOS adoption, and the launch.
+Phases 2 and 3 and the v0.7.0 release are done (see the Done list). The
+open work is the tunaOS adoption and the launch.
 
 ```mermaid
 flowchart TD
-  R["#339 v0.7.0 release"] --> C["#210 close"]
-  R --> L1["#423 Show HN"]
-  R --> L4["#424 KubeVirt partnership"]
-  R --> L2["#426 bootc case study"]
-  R --> L3["#425 VDI launch"]
-  BG["#431 tunaOS boot gate"] --> L2
+  L1["#423 Show HN"]
+  L4["#424 KubeVirt partnership"]
+  L3["#425 VDI launch"]
+  BG["#431 tunaOS boot gate"] --> L2["#426 bootc case study"]
 ```
 
-### Phase 1: Release and adoption (now)
+### Phase 1: Adoption (now)
 
 | Item | Issue | Depends on | Owner |
 |------|-------|------------|-------|
-| Push the `v0.7.0` tag. `release.yml` publishes the signed Release from `docs/releases/v0.7.0.md` | #339 | — | maintainer |
-| Close the release-channel finding after v0.7.0 shows on the Releases page | #210 | #339 | maintainer |
 | tunaOS CI boot gate: review and merge tunaOS#3249 | #431 | — (cross-repo) | ci-maintainer |
 
 ### Phase 4: Launch and outreach
 
-The git history is clean (#264). Announce after the release is public.
+The git history is clean (#264) and v0.7.0 is public (#339).
 
 | Item | Issue | Depends on |
 |------|-------|------------|
-| Show HN | #423 | #339 |
-| bootc case study | #426 | #339, #431 |
-| VDI launch announcement | #425 | #339 |
-| KubeVirt ecosystem positioning | #424 | #339 |
+| Show HN | #423 | — |
+| bootc case study | #426 | #431 |
+| VDI launch announcement | #425 | — |
+| KubeVirt ecosystem positioning | #424 | — |
 
 ### Open after Phase 3
 
