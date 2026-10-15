@@ -10,7 +10,9 @@ Corral herds VMs — and containers — into your tailnet. Corral is a single Go
 with a CLI, TUI, and web dashboard. It manages VMs across nine backends. Five
 are Tier 1 or 2 (qemu, kubevirt, incus, libvirt, proxmox). Four are Tier 3
 (vsphere, nutanix, xen, virtualbox). It exposes every guest over the Tailscale
-network that your devices already share. Developers also use it to boot-gate tunaOS
+network that your devices already share.
+
+Developers also use it to boot-gate tunaOS
 images on a KubeVirt cluster (`scripts/boot-gate.sh` in tunaOS).
 
 ---
