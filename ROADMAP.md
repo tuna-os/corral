@@ -97,7 +97,6 @@ backfill first so that each refactor has a safety net.
 
 | Item | Issue | Depends on |
 |------|-------|------------|
-| Backfill tests, cheapest gaps first (RFC-0004) | #506 | — |
 | Route all backend-specific code through `pkg/backend` (46 branches left; ratchet in `pkg/backend/matrix_test.go`) | #214 | #506 |
 | Split `pkg/web/server.go`: routing, auth, task tracker, create logic | #503 | #506 |
 | ✅ Split `app.js` into ES modules with node unit tests (`pkg/web/jstest`): API adapter #517, poll #523, session #525, console transports #531, workspace layout | #288, #406 | #506 |
@@ -144,6 +143,9 @@ Show HN brings many first-time clones and installs.
 - Config cache and cross-process lock: #359.
 - Enterprise readiness criteria
   ([docs/enterprise-readiness.md](docs/enterprise-readiness.md)): #404.
+- Test backfill (RFC-0004), coverage floor 59.5% to 69.0%: #506. It
+  fixed two bugs. Gc stopped a VM with the same name in another
+  namespace (#538). VM stop could kill an unrelated process (#540).
 
 ---
 
