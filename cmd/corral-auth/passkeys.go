@@ -108,9 +108,19 @@ func randomID(n int) []byte {
 	}
 	return b
 }
+
+// ceremony stores a pending ceremony and returns its id. Callers hold p.mu.
+// login/begin needs no session, so every anonymous call lands here: expired
+// ceremonies are dropped on the way in, or the map grows without bound.
 func (p *passkeyManager) ceremony(kind, user string, data *wa.SessionData) string {
+	now := time.Now()
+	for id, c := range p.ceremonies {
+		if now.After(c.Expires) {
+			delete(p.ceremonies, id)
+		}
+	}
 	id := base64.RawURLEncoding.EncodeToString(randomID(24))
-	p.ceremonies[id] = passkeyCeremony{Kind: kind, User: user, Data: *data, Expires: time.Now().Add(5 * time.Minute)}
+	p.ceremonies[id] = passkeyCeremony{Kind: kind, User: user, Data: *data, Expires: now.Add(5 * time.Minute)}
 	return id
 }
 func (p *passkeyManager) take(id, kind string) (passkeyCeremony, error) {
