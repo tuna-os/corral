@@ -87,6 +87,10 @@ type kubevirtAdapter struct{ client *kubevirt.Client }
 
 func (kubevirtAdapter) Backend() string { return "kubevirt" }
 
+// DefaultNamespace makes KubeVirt a Namespacer: a VM lives in a Kubernetes
+// namespace inside its cluster.
+func (kubevirtAdapter) DefaultNamespace() string { return kubevirt.DefaultNamespace }
+
 func (a kubevirtAdapter) Start(name string) error  { return a.client.StartVM(name) }
 func (a kubevirtAdapter) Stop(name string) error   { return a.client.StopVM(name) }
 func (a kubevirtAdapter) Delete(name string) error { return a.client.DeleteVM(name) }

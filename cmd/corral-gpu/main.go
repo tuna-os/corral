@@ -21,6 +21,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
+	"github.com/tuna-os/corral/pkg/backend"
 	"github.com/tuna-os/corral/pkg/config"
 	"github.com/tuna-os/corral/pkg/device"
 	"github.com/tuna-os/corral/pkg/kubevirt"
@@ -256,11 +257,7 @@ func detachGPU(vm, ns, name string) error {
 
 // instanceRef builds the canonical reference for the instance a command names.
 func instanceRef(ctx config.ContextConfig, name, namespace string) types.InstanceRef {
-	ref := types.InstanceRef{Backend: ctx.Backend, Context: ctx.Context, Name: name}
-	if ctx.Backend == "kubevirt" {
-		ref.Namespace = namespace
-	}
-	return ref
+	return backend.Ref(ctx.Backend, ctx.Context, namespace, name)
 }
 
 func orDash(s string) string {

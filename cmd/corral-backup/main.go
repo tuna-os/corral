@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/tuna-os/corral/pkg/backend"
 	"github.com/tuna-os/corral/pkg/config"
 	"github.com/tuna-os/corral/pkg/cronops"
 	"github.com/tuna-os/corral/pkg/export"
@@ -168,10 +169,7 @@ func backupRef(name string) (types.InstanceRef, error) {
 		}
 		target = found
 	}
-	ref := types.InstanceRef{Backend: target.Backend, Context: target.Context, Name: name}
-	if target.Backend == "kubevirt" {
-		ref.Namespace = ns()
-	}
+	ref := backend.Ref(target.Backend, target.Context, ns(), name)
 	return ref, ref.Validate()
 }
 
