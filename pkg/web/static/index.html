@@ -18,23 +18,25 @@
 <link rel="stylesheet" href="style.css">
 <!-- Vendored (see vendor/README.md) so consoles work offline/air-gapped —
      same rationale as the vendored Alpine below (ADR-0004). -->
-<link rel="stylesheet" href="vendor/xterm.min.css">
-<script src="vendor/xterm.min.js"></script>
-<script src="vendor/addon-fit.min.js"></script>
+<!-- integrity= digests below come from vendor/MANIFEST.json (issue #215); same-origin
+     go:embed assets, so no crossorigin attribute is needed for the check to apply. -->
+<link rel="stylesheet" href="vendor/xterm.min.css" integrity="sha256-9/ckrqK7Ygpkgr+45L3s+uEVKwx/rO9V+9ph87bP7bI=">
+<script src="vendor/xterm.min.js" integrity="sha256-QZbiQu8c9MKt6tjZf0p3KmlXYHb3CwleAEtKu7BJ578="></script>
+<script src="vendor/addon-fit.min.js" integrity="sha256-pqe7szVp8Wqj4Y1xQl400DX8iaC36MughPiFX5GqOPE="></script>
 <!-- Dashboard widget grid and live charts (#348), vendored for the same reason.
      Classic scripts, so dashboard.js finds GridStack and uPlot as globals. -->
-<link rel="stylesheet" href="vendor/gridstack.min.css">
-<link rel="stylesheet" href="vendor/uPlot.min.css">
-<script src="vendor/gridstack-all.js"></script>
-<script src="vendor/uPlot.iife.min.js"></script>
+<link rel="stylesheet" href="vendor/gridstack.min.css" integrity="sha256-dO/IIVnF6NKMss69n5Er6dcouwf6g4lqa2L0qEMgcSY=">
+<link rel="stylesheet" href="vendor/uPlot.min.css" integrity="sha256-32MMao1vjur/JktQ9zzlsRT2Rv/ZoLt08EmwoAE1+gQ=">
+<script src="vendor/gridstack-all.js" integrity="sha256-J66XH9mBwDQa/8BRx5PX5UF/Snhbv+992I/38ROdjc8="></script>
+<script src="vendor/uPlot.iife.min.js" integrity="sha256-GcjUxq2Ikpp59K5J1vcWFWbf0Lo9FcxJXpdPeH63jx8="></script>
   <!-- IronRDP web component for in-browser RDP (ADR-0002 phase 2). -->
-  <script type="module" src="vendor/iron-remote-desktop.js"></script>
+  <script type="module" src="vendor/iron-remote-desktop.js" integrity="sha256-IjWd+yAQF+v38lwuSW27/RZovK0aNNDav9Balo4apQ8="></script>
 <!-- app.js (a module, deferred by spec) must run before Alpine's own deferred
      script so its alpine:init listener is registered before Alpine auto-starts
      — deferred/module scripts execute in document order, so order matters here. -->
 <script type="module" src="app.js"></script>
 <!-- Vendored, not CDN-loaded — see docs/adr/0004-web-ui-alpinejs-no-build.md -->
-<script defer src="alpine.min.js"></script>
+<script defer src="alpine.min.js" integrity="sha256-V7N9fK6aJ9ll/a5K3MhEJF39xAfmVa7oXc//OggDaj8="></script>
 </head>
 <body>
 <!-- The sidebar is a long list of focusable rows, and every one of them sits
