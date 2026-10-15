@@ -28,8 +28,8 @@ func wheel(up bool) tea.MouseWheelMsg {
 }
 
 func mouse(m tuiModel, msg tea.Msg) tuiModel {
-	next, _ := m.Update(msg)
-	return next.(tuiModel)
+	next, cmd := m.Update(msg)
+	return settle(next.(tuiModel), cmd)
 }
 
 // ── geometry ──────────────────────────────────────────────────────
@@ -506,7 +506,7 @@ func TestMouseWheel_IgnoredWhereNothingScrolls(t *testing.T) {
 	m := demoModel(t)
 	for _, mode := range []TUIMode{ModeDoctor, ModeEvents, ModeConfirmDelete, ModeHWEdit, ModeCloneInput} {
 		m.mode = mode
-		if handled := (&m).handleMouse(wheel(false)); handled {
+		if handled, _ := (&m).handleMouse(wheel(false)); handled {
 			t.Errorf("mode %v claimed to handle a wheel tick", mode)
 		}
 	}

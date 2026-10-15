@@ -420,8 +420,7 @@ func humanAge(stamp string) string {
 // MarkTemplate call behind the web UI's "Make template" button. Templates are
 // what `corral clone` copies from, so a fleet driven from the terminal needs to
 // be able to set the mark without opening a browser.
-func (m *tuiModel) toggleTemplate() {
-	vm := m.selected
+func toggleTemplate(vm types.VM) (notice, kind string) {
 	on := !vm.IsTemplate
 	err := func() error {
 		adapter, err := backend.For(vm.Ref())
@@ -435,14 +434,12 @@ func (m *tuiModel) toggleTemplate() {
 		return templater.MarkTemplate(vm.Name, on)
 	}()
 	if err != nil {
-		m.notice, m.noticeKind = "template: "+err.Error(), "error"
-		return
+		return "template: " + err.Error(), "error"
 	}
 	if on {
-		m.notice, m.noticeKind = vm.Name+" marked as a template", "ok"
-	} else {
-		m.notice, m.noticeKind = vm.Name+" is no longer a template", "ok"
+		return vm.Name + " marked as a template", "ok"
 	}
+	return vm.Name + " is no longer a template", "ok"
 }
 
 // ── CT hardware ───────────────────────────────────────────────────
@@ -459,36 +456,35 @@ func newCTHWEditModel(c ct.CT) hwEditModel {
 
 // ── the operation contract ────────────────────────────────────────
 
-// performBackendAction runs a power, pause, or migrate action through
-// pkg/backend's contract, and reports the outcome in the status bar.
+// backendAction runs a power, pause, or migrate action on vm through
+// pkg/backend's contract, and returns the outcome for the status bar.
 //
 // This is what replaced performAction's per-backend if/else ladder. The win is
 // not brevity: it is that a backend which cannot do something now *says so*.
 // The ladder's final `else` sent every unknown backend to local QEMU, and its
 // pause and migrate branches did nothing at all off KubeVirt — the operator
 // pressed a key, the fleet did not change, and nothing explained why.
-func (m *tuiModel) performBackendAction(action string) {
-	adapter, err := backend.For(m.selected.Ref())
+func backendAction(vm types.VM, action string) (notice, kind string) {
+	adapter, err := backend.For(vm.Ref())
 	if err != nil {
-		m.notice, m.noticeKind = err.Error(), "error"
-		return
+		return err.Error(), "error"
 	}
 
 	var opErr error
 	switch action {
 	case "start":
-		opErr = withPower(adapter, action, func(p backend.Power) error { return p.Start(m.selected.Name) })
+		opErr = withPower(adapter, action, func(p backend.Power) error { return p.Start(vm.Name) })
 	case "stop":
-		opErr = withPower(adapter, action, func(p backend.Power) error { return p.Stop(m.selected.Name) })
+		opErr = withPower(adapter, action, func(p backend.Power) error { return p.Stop(vm.Name) })
 	case "delete":
-		opErr = withPower(adapter, action, func(p backend.Power) error { return p.Delete(m.selected.Name) })
+		opErr = withPower(adapter, action, func(p backend.Power) error { return p.Delete(vm.Name) })
 	case "restart":
 		restarter, ok := adapter.(backend.Restarter)
 		if !ok {
 			opErr = unsupported(adapter, "restart")
 			break
 		}
-		opErr = restarter.Restart(m.selected.Name)
+		opErr = restarter.Restart(vm.Name)
 	case "pause", "unpause":
 		suspender, ok := adapter.(backend.Suspender)
 		if !ok {
@@ -496,9 +492,9 @@ func (m *tuiModel) performBackendAction(action string) {
 			break
 		}
 		if action == "pause" {
-			opErr = suspender.Pause(m.selected.Name)
+			opErr = suspender.Pause(vm.Name)
 		} else {
-			opErr = suspender.Resume(m.selected.Name)
+			opErr = suspender.Resume(vm.Name)
 		}
 	case "migrate":
 		mover, ok := adapter.(backend.Mover)
@@ -508,18 +504,17 @@ func (m *tuiModel) performBackendAction(action string) {
 		}
 		// The backend's own pre-flight, rather than Corral guessing: PVE answers
 		// this properly and names the blocking resource.
-		if can, why := mover.CanMigrate(m.selected.Name); !can {
-			opErr = fmt.Errorf("%s cannot migrate: %s", m.selected.Name, why)
+		if can, why := mover.CanMigrate(vm.Name); !can {
+			opErr = fmt.Errorf("%s cannot migrate: %s", vm.Name, why)
 			break
 		}
-		opErr = mover.Migrate(m.selected.Name, "")
+		opErr = mover.Migrate(vm.Name, "")
 	}
 
 	if opErr != nil {
-		m.notice, m.noticeKind = opErr.Error(), "error"
-		return
+		return opErr.Error(), "error"
 	}
-	m.notice, m.noticeKind = fmt.Sprintf("%s: %s", m.selected.Name, pastTense(action)), "ok"
+	return fmt.Sprintf("%s: %s", vm.Name, pastTense(action)), "ok"
 }
 
 func withPower(adapter backend.Adapter, action string, run func(backend.Power) error) error {
