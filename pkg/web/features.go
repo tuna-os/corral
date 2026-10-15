@@ -289,11 +289,12 @@ func snapshotRef(r *http.Request) types.InstanceRef {
 }
 
 // snapshotError maps an adapter failure onto a status. A backend that cannot
-// do this is a client-side 400 — retrying won't help and the message says why
-// — where a backend that tried and failed is a 502.
+// do this, or a local VM name the qemu package refused, is a client-side 400
+// — retrying won't help and the message says why — where a backend that
+// tried and failed is a 502.
 func snapshotError(w http.ResponseWriter, err error) {
 	var unsupported *snapshot.Unsupported
-	if errors.As(err, &unsupported) {
+	if errors.As(err, &unsupported) || errors.Is(err, qemu.ErrInvalidVMName) {
 		errResp(w, http.StatusBadRequest, err)
 		return
 	}

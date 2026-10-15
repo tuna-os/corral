@@ -19,10 +19,11 @@ default remotes.
 |---|---|
 | Inventory in `corral list`, the TUI and the web UI | yes. VMs show in `corral list`; containers show in `corral ct list` |
 | Start, stop, delete | yes (CLI, TUI, web) |
-| Restart | TUI and web. The CLI `corral restart` does not support Incus today ([#489](https://github.com/tuna-os/corral/issues/489)) |
+| Restart | yes (CLI, TUI, web), with `incus restart` |
+| Console and log | `corral viewer` runs `incus console --type=vga` (needs `remote-viewer` or `spicy`). `corral logs` prints `incus console --show-log` |
 | Create | yes, from an Incus image (`images:ubuntu/24.04` and similar) |
 | Shell | `corral ssh` and the web terminal run `incus exec`, not network SSH |
-| Snapshots | TUI only today, see [backend support](backend-support.md#incus-and-libvirt-snapshots-migration-and-hotplug) |
+| Snapshots | yes (CLI, TUI, web), see [backend support](backend-support.md#incus-and-libvirt-snapshots-migration-and-hotplug) |
 | Cold move to or from another backend | yes, `corral move` |
 | Live migration, CPU/RAM change, disk or NIC hotplug | no, not yet |
 | Browser VNC | no, the web UI gives a terminal |
@@ -186,7 +187,7 @@ In the web UI, the console of an Incus instance is a terminal that also runs
 | `corral list` prints `warning: context lab unavailable: ...` | Corral could not list that remote. The rest of the fleet still shows. Run `corral doctor --context lab` |
 | `the Incus backend creates from an Incus image; use --image ...` | You gave an ISO, qcow2 or PVC source. Incus creates only from an Incus image |
 | `incus launch failed: ...` | Incus refused the create. The text after the colon comes from Incus, for example an unknown image or a bad memory value |
-| `snapshot is only supported for KubeVirt VMs` | The `corral snapshot` CLI is KubeVirt-only today. Use the TUI Snapshots view ([#491](https://github.com/tuna-os/corral/issues/491)) |
+| `snapshots are not available for the incus backend: NAME is running` | A restore needs a stopped instance. Run `corral stop NAME` first |
 | `corral ct create --backend incus` puts the container on the wrong remote | This command uses the default remote of your Incus client. Run `incus remote switch` first, or use `corral incus --remote NAME create` |
 
 For more symptoms, see [problems and fixes](troubleshooting.md).

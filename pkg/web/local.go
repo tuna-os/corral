@@ -99,10 +99,15 @@ func createLocalVM(w http.ResponseWriter, req createRequest) {
 			fmt.Errorf("local VMs need an installer ISO or a qcow2 image — a path on this host, or a URL"))
 		return
 	}
+	// Force: the "already exists" check above is the real one. After it,
+	// VMHome/<name> holds only this request's RecordCreating placeholder,
+	// which qemu.Create would otherwise refuse as an existing VM (#501) —
+	// the same pattern as `corral create --bootc` (cmd/create.go).
 	opts := types.CreateOpts{
 		Name: req.Name, Backend: "qemu",
 		CPU: req.CPU, Mem: req.Mem, Disk: req.Disk,
-		UEFI: req.Firmware == "uefi" || req.UEFI,
+		UEFI:  req.Firmware == "uefi" || req.UEFI,
+		Force: true,
 	}
 	assign := func(path string) {
 		if qcow {

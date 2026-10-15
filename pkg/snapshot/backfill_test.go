@@ -284,6 +284,11 @@ func TestBackfill_Libvirt_List_LabelsAndTimes(t *testing.T) {
 
 func TestBackfill_Incus_RestoreDelete(t *testing.T) {
 	fake := withFake(t)
+	// Restore checks the instance is stopped through the incus package.
+	instances := shell.NewFake()
+	instances.AddResponse("incus list lab: --format=json", `[{"name":"web","status":"Stopped"}]`, nil)
+	incus.SetRunner(instances)
+	t.Cleanup(func() { incus.SetRunner(shell.Real{}) })
 	fake.AddResponse("incus snapshot restore lab:web s1", "", nil)
 	if err := (Incus{}).Restore(incusRef("web"), "s1"); err != nil {
 		t.Fatalf("Restore: %v", err)

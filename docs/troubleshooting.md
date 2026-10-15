@@ -104,9 +104,10 @@ Use these commands and files instead.
 | `corral qmp NAME query-status` | Local QEMU: the raw state from the QEMU monitor |
 | `--json` | Machine-readable output for `corral list` and other commands |
 
-`corral logs` does not support Incus or libvirt today
-([#489](https://github.com/tuna-os/corral/issues/489)). Use
-`incus console --show-log REMOTE:NAME` or `virsh -c URI console NAME`.
+On Incus, `corral logs` prints the console log of the instance
+(`incus console --show-log REMOTE:NAME`). libvirt keeps no guest log that
+Corral can read, so `corral logs` refuses libvirt domains. Use
+`virsh -c URI console NAME`.
 
 Files on the host where Corral runs:
 

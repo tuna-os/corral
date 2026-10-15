@@ -794,22 +794,33 @@ async function renderGPUs(vm) {
   });
 }
 
+// What each pkg/snapshot consistency means for a restore, shown on hover.
+const CONSISTENCY_HINT = {
+  offline: 'Taken while the VM was stopped: nothing was in flight',
+  filesystem: 'Guest filesystems were frozen for the capture',
+  crash: 'Taken live with nothing quiesced: restoring is like booting after a power cut',
+};
+
 async function renderSnapshots(vm, body) {
-  if (!state.caps.canSnapshot) {
+  // Only KubeVirt snapshots go through a Kubernetes VolumeSnapshotClass. Every
+  // other backend that shows this tab (capability.snapshots) snapshots through
+  // its own tool via pkg/snapshot, cluster or no cluster (#491).
+  const isKubeVirt = vm.backend === 'kubevirt';
+  if (isKubeVirt && !state.caps.canSnapshot) {
     body.innerHTML = `<p class="console-msg">Snapshots need a snapshot-capable StorageClass
       (no VolumeSnapshotClass found in this cluster).</p>`;
     return;
   }
-  // Scheduling is built into the web server (pkg/cronops); it needs the same
-  // snapshot-capable storage as one-off snapshots, which canSnapshot gates.
-  const hasSnapsched = state.caps.canSnapshot;
+  // Scheduling is a Kubernetes CronJob (pkg/web/snapsched.go), so it needs
+  // the cluster and the same snapshot-capable storage as one-off snapshots.
+  const hasSnapsched = isKubeVirt && state.caps.canSnapshot;
   body.innerHTML = `
     <div class="toolbar" style="margin-bottom:12px">
       <button class="btn primary" id="snap-new">${icon('camera')} Take snapshot</button>
     </div>
     ${hasSnapsched ? `<div id="snapsched-box" class="panel-section"><p class="muted">loading schedule…</p></div>` : ''}
-    <table><thead><tr><th>Name</th><th>Ready</th><th>Created</th><th></th></tr></thead>
-    <tbody id="snap-rows"><tr><td colspan="4" class="muted">loading…</td></tr></tbody></table>`;
+    <table><thead><tr><th>Name</th><th>Ready</th><th>Consistency</th><th>Created</th><th></th></tr></thead>
+    <tbody id="snap-rows"><tr><td colspan="5" class="muted">loading…</td></tr></tbody></table>`;
 
   $('#snap-new').onclick = async () => {
     try { await post(vm, '/snapshots', {}); toast('Snapshot started'); }
@@ -821,18 +832,19 @@ async function renderSnapshots(vm, body) {
 
   let snaps = [];
   try { snaps = await api(vmURL(vm, '/snapshots')); }
-  catch (e) { $('#snap-rows').innerHTML = `<tr><td colspan="4">${esc(e.message)}</td></tr>`; return; }
+  catch (e) { $('#snap-rows').innerHTML = `<tr><td colspan="5">${esc(e.message)}</td></tr>`; return; }
 
   $('#snap-rows').innerHTML = snaps.length
     ? snaps.map((s) => `<tr>
         <td>${esc(s.name)}</td>
         <td>${s.ready ? '✓' : '…'}</td>
+        <td title="${esc(CONSISTENCY_HINT[s.consistency] || '')}">${esc(s.consistency || '')}</td>
         <td>${esc(s.created || '')}</td>
         <td>
           <button class="btn sm" data-restore="${esc(s.name)}" title="VM must be stopped">Restore</button>
           <button class="btn sm danger" data-delsnap="${esc(s.name)}">Delete</button>
         </td></tr>`).join('')
-    : `<tr><td colspan="4" class="muted">No snapshots yet.</td></tr>`;
+    : `<tr><td colspan="5" class="muted">No snapshots yet.</td></tr>`;
 
   body.querySelectorAll('[data-restore]').forEach((b) => {
     b.onclick = async () => {

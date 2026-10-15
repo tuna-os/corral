@@ -1025,7 +1025,11 @@ func handleVMInfo(w http.ResponseWriter, r *http.Request) {
 		data, err = kubeClient(r, ns).VMInfo(name)
 	}
 	if err != nil {
-		errResp(w, http.StatusNotFound, err)
+		status := http.StatusNotFound
+		if errors.Is(err, qemu.ErrInvalidVMName) {
+			status = http.StatusBadRequest
+		}
+		errResp(w, status, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

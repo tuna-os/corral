@@ -46,7 +46,8 @@ func TestCreate_RefusesTraversalName(t *testing.T) {
 }
 
 // TestLifecycle_RefusesTraversalName: Delete must never remove VMHome's
-// parent or a sibling of it, and Start/Stop refuse the same names.
+// parent or a sibling of it, and Start/Stop/Info/VNCAddr refuse the same
+// names instead of reading another directory's metadata.json.
 func TestLifecycle_RefusesTraversalName(t *testing.T) {
 	home := t.TempDir()
 	vms := filepath.Join(home, "vms")
@@ -66,6 +67,12 @@ func TestLifecycle_RefusesTraversalName(t *testing.T) {
 		}
 		if err := Stop(name); !errors.Is(err, ErrInvalidVMName) {
 			t.Errorf("Stop(%q) = %v, want ErrInvalidVMName", name, err)
+		}
+		if _, err := Info(name); !errors.Is(err, ErrInvalidVMName) {
+			t.Errorf("Info(%q) = %v, want ErrInvalidVMName", name, err)
+		}
+		if _, err := VNCAddr(name); !errors.Is(err, ErrInvalidVMName) {
+			t.Errorf("VNCAddr(%q) = %v, want ErrInvalidVMName", name, err)
 		}
 	}
 	if _, err := os.Stat(victim); err != nil {

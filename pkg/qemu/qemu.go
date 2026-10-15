@@ -408,7 +408,7 @@ func Create(opts types.CreateOpts) error {
 // Start starts a QEMU VM: through systemd where there is a user session, and
 // as a detached process where there is not.
 func Start(name string) error {
-	if err := checkVMPath(name); err != nil {
+	if err := CheckVMName(name); err != nil {
 		return err
 	}
 	// TPM daemon must be up before QEMU tries to connect to its socket.
@@ -455,7 +455,7 @@ func Start(name string) error {
 
 // Stop stops a QEMU VM, whichever way it was started.
 func Stop(name string) error {
-	if err := checkVMPath(name); err != nil {
+	if err := CheckVMName(name); err != nil {
 		return err
 	}
 	if _, alive := directPID(name); alive || !userSystemd() {
@@ -477,7 +477,7 @@ func Stop(name string) error {
 
 // Delete removes a QEMU VM and its files.
 func Delete(name string) error {
-	if err := checkVMPath(name); err != nil {
+	if err := CheckVMName(name); err != nil {
 		return err
 	}
 	// A directly started VM has no unit to stop, and leaving the process
@@ -500,6 +500,9 @@ func Delete(name string) error {
 
 // Info returns VM metadata.
 func Info(name string) ([]byte, error) {
+	if err := CheckVMName(name); err != nil {
+		return nil, err
+	}
 	metaFile := filepath.Join(VMHome(), name, "metadata.json")
 	return os.ReadFile(metaFile)
 }
@@ -644,6 +647,9 @@ func readMetadata(name string) (vmMetadata, error) {
 // Tailscale IP — QEMU binds there, never 0.0.0.0). Used by the web UI's
 // websocket bridge to serve a local VM's console in the browser (#91).
 func VNCAddr(name string) (string, error) {
+	if err := CheckVMName(name); err != nil {
+		return "", err
+	}
 	meta, err := readMetadata(name)
 	if err != nil {
 		return "", err
