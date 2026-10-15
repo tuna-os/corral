@@ -3088,6 +3088,105 @@ check(
   await ctx.close();
 }
 
+// ── mid-tier interaction (RFC-0004 slice 6) ───────────────────────────
+// The e2e suite covers these flows against a live cluster (multi-select
+// bulk bar, export picker, tag chips + filter, read-only gate); this replays
+// their UI halves against `corral web --demo` on every push — the tier
+// between the render checks above and @live-only manual runs. Everything
+// here leaves no state behind: selections are cleared, dialogs cancelled,
+// filters reset, admin restored.
+
+// ── checkbox bulk bar ─────────────────────────────────────────
+// The tree Shift-select variant is covered by bulk-select above; this is the
+// grid half of the same flow: the bar stays hidden until a row checkbox is
+// ticked, counts the selection, and select-all toggles it.
+await page.click('#tree >> text=Datacenter');
+await page.waitForSelector('#content .vm-check', { timeout: 10000 }).catch(() => {});
+// Earlier sections may leave rows selected (selection survives navigation),
+// so start from a known-empty selection. Drive it through select-all: row
+// handles go stale as the grid re-syncs, so a per-box loop flakes.
+await page.locator('#content .vm-check-all').check();
+await page.locator('#content .vm-check-all').uncheck();
+check(await page.locator('#content .bulkbar').isHidden(), 'checkbox bulk bar: hidden with nothing selected');
+await page.locator('#content .vm-check').first().check();
+check(await page.locator('#content .bulkbar').isVisible(), 'checkbox bulk bar: ticking a row reveals the bar');
+check(
+  (await page.textContent('#content .bulkbar-count')) === '1 selected',
+  'checkbox bulk bar: the count names the selection',
+);
+await page.locator('#content .vm-check-all').check();
+const checkedTotal = await page.locator('#content .vm-check:checked').count();
+check(checkedTotal > 1, `checkbox bulk bar: select-all ticks every row (${checkedTotal})`);
+check(
+  (await page.textContent('#content .bulkbar-count')) === `${checkedTotal} selected`,
+  'checkbox bulk bar: the count follows select-all',
+);
+await page.screenshot({ path: `${SHOTS}/checkbox-bulkbar.png` }).catch(() => {});
+await page.locator('#content .vm-check-all').check();
+await page.locator('#content .vm-check-all').uncheck();
+check(await page.locator('#content .bulkbar').isHidden(), 'checkbox bulk bar: clearing the selection hides the bar again');
+
+// ── export picker ─────────────────────────────────────────────
+// dev-fedora is Stopped in demo, so Export is enabled (it is off while a VM
+// runs). The dialog is client-side, so cancelling downloads nothing.
+await page.click('#tree >> text=dev-fedora');
+await page.waitForSelector('#content .toolbar [data-act="export"]', { timeout: 10000 }).catch(() => {});
+check(
+  await page.locator('#content .toolbar [data-act="export"]').isEnabled(),
+  'export picker: Export is enabled on a stopped VM',
+);
+await page.click('#content .toolbar [data-act="export"]');
+await page.waitForSelector('.pick-dialog[open]', { timeout: 10000 }).catch(() => {});
+check(await page.locator('.pick-dialog[open]').count() === 1, 'export picker: the format dialog opens');
+const fmtOpts = await page.locator('.pick-dialog #pick-fmt option').evaluateAll((os) => os.map((o) => o.value));
+check(
+  fmtOpts.includes('qcow2') && fmtOpts.includes('raw'),
+  `export picker: qcow2 and raw are offered (${fmtOpts.join(',')})`,
+);
+await page.screenshot({ path: `${SHOTS}/export-picker.png` }).catch(() => {});
+await page.click('.pick-dialog [value="cancel"]');
+check(await page.locator('.pick-dialog[open]').count() === 0, 'export picker: cancel closes without downloading');
+
+// ── tag chips + filter ────────────────────────────────────────
+// Demo ships tagged VMs (web-prod carries prod,web); the chips render from
+// the fleet and the filter narrows the table. No tag is added or removed,
+// so a re-run sees the same fleet.
+await page.click('#tree >> text=Datacenter');
+await page.waitForSelector('#content [data-tagfilter="prod"]', { timeout: 10000 }).catch(() => {});
+check(
+  await page.locator('#content .chip.mini', { hasText: 'prod' }).count() > 0,
+  'tag chips: tagged rows render their tags as chips',
+);
+await page.click('#content [data-tagfilter="prod"]');
+await page.waitForTimeout(500);
+check(await page.locator('#content td:has-text("web-prod")').count() > 0, 'tag filter: prod still lists web-prod');
+check(await page.locator('#content td:has-text("db-prod")').count() > 0, 'tag filter: prod still lists db-prod');
+check(await page.locator('#content td:has-text("dev-fedora")').count() === 0, 'tag filter: prod hides dev-fedora');
+await page.screenshot({ path: `${SHOTS}/tag-filter.png` }).catch(() => {});
+await page.click('#content [data-tagfilter=""]');
+await page.waitForTimeout(500);
+check(await page.locator('#content td:has-text("dev-fedora")').count() > 0, 'tag filter: all restores the full table');
+
+// ── read-only gate ────────────────────────────────────────────
+// The e2e identity-gate spec mocks whoami because kind cannot inject a
+// Tailscale identity; the same mock works here and needs no server flag.
+await page.route('**/api/whoami', (route) => route.fulfill({
+  status: 200,
+  contentType: 'application/json',
+  body: JSON.stringify({ login: 'viewer@example', name: 'Viewer', admin: false, enforced: true }),
+}));
+await page.goto(BASE);
+await page.waitForSelector('#tree', { timeout: 15000 });
+check(await page.locator('#whoami .ro-badge').isVisible(), 'read-only gate: a viewer sees the read-only badge');
+check(await page.locator('body.read-only').count() === 1, 'read-only gate: the body carries read-only');
+check(await page.locator('#btn-create').isHidden(), 'read-only gate: Create is hidden from viewers');
+await page.screenshot({ path: `${SHOTS}/read-only.png` }).catch(() => {});
+await page.unroute('**/api/whoami');
+await page.goto(BASE);
+await page.waitForSelector('#tree', { timeout: 15000 });
+check(await page.locator('#btn-create').isVisible(), 'read-only gate: admin gets Create back');
+check(await page.locator('body.read-only').count() === 0, 'read-only gate: the suite leaves admin mode behind');
+
 check(pageErrors.length === 0, `no JS page errors (${pageErrors.join('; ').slice(0, 200)})`);
 
 await browser.close();

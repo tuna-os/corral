@@ -143,9 +143,14 @@ export function bindVMTable(root, list) {
   if (!bar) return;
   const selectedKeys = () => [...state.selectedVMKeys];
   const update = () => {
+    // The grid outlives content renders (gridHost is moved, not remounted),
+    // so the mount-time `bar` goes stale: a ticked checkbox would update a
+    // detached node and the bar would stay hidden until the next render.
+    // Resolve the live bar every time instead.
+    const live = document.querySelector('#content .bulkbar') || bar;
     const n = state.selectedVMKeys.size;
-    bar.hidden = n === 0;
-    bar.querySelector('.bulkbar-count').textContent = `${n} selected`;
+    live.hidden = n === 0;
+    live.querySelector('.bulkbar-count').textContent = `${n} selected`;
   };
   const placeholder = root.querySelector('.vm-grid');
   if (gridHost && gridHandle && placeholder && placeholder !== gridHost) {
