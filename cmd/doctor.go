@@ -7,9 +7,11 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/tuna-os/corral/pkg/config"
 	"github.com/tuna-os/corral/pkg/doctor"
+	"github.com/tuna-os/corral/pkg/setup"
 )
 
 var doctorFix bool
+var doctorSuggest bool
 
 var doctorCmd = &cobra.Command{
 	Use:   "doctor",
@@ -21,6 +23,19 @@ misconfigured. --fix reconciles the safe, config-only issues.`,
 	Example: `  corral doctor
   corral doctor --fix`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// --suggest is read-only onboarding guidance: print the host scan
+		// and exit 0. It never writes config and never fails the run —
+		// an absent backend is information, not an error.
+		if doctorSuggest {
+			for _, r := range setup.Scan().Results {
+				fmt.Printf("%-10s %-14s %s\n", r.Backend, r.Verdict, r.Detail)
+				if r.Remedy != "" && r.Verdict != setup.VerdictReady {
+					fmt.Printf("%-10s %-14s remedy: %s\n", "", "", r.Remedy)
+				}
+			}
+			fmt.Println("\nSave what works: corral setup")
+			return nil
+		}
 		if doctorFix {
 			fixed, err := doctor.Fix()
 			if err != nil {
@@ -93,4 +108,5 @@ func selectedDoctorHint() string {
 func init() {
 	rootCmd.AddCommand(doctorCmd)
 	doctorCmd.Flags().BoolVar(&doctorFix, "fix", false, "Reconcile fixable (config-only) issues")
+	doctorCmd.Flags().BoolVar(&doctorSuggest, "suggest", false, "Print the host setup scan (read-only, always exits 0)")
 }
