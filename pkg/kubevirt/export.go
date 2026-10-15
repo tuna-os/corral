@@ -86,7 +86,7 @@ func (c *Client) exportFormat(virtctl, name, volume, outputPath, format string) 
 	}
 	expName := name + "-export"
 	// Clear any export left over from an interrupted run so --vm can recreate it.
-	shell.CommandForContext(c.Context, "kubectl", "delete", "vmexport", expName, "-n", c.Namespace, "--ignore-not-found").Run()
+	_ = shell.CommandForContext(c.Context, "kubectl", "delete", "vmexport", expName, "-n", c.Namespace, "--ignore-not-found").Run()
 	// --port-forward tunnels straight to the exporter pod (internal links); the
 	// export proxy has no external Ingress, so external links never appear.
 	args := []string{"vmexport", "download", expName,
