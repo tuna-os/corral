@@ -144,6 +144,7 @@ Show HN brings many first-time clones and installs.
 - VDI pools of ephemeral CT desktops
   ([docs/vdi-ct-pools.md](docs/vdi-ct-pools.md)): #230.
 - Signed plugins with SBOMs, verified at install time: #505.
+- Signed core binaries and container image, with SBOMs: #584.
 - Self-service API for VDI: opt-in `/api/vdi/` routes in `corral web`
   ([ADR-0013](docs/adr/0013-vdi-broker-placement.md)): #227.
 

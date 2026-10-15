@@ -129,6 +129,31 @@ It works on Linux and macOS, amd64 and arm64:
 curl -fsSL https://raw.githubusercontent.com/tuna-os/corral/main/scripts/install.sh | sh
 ```
 
+CI signs each binary and the container image with Sigstore, and attests an
+SPDX SBOM for each. It uses no stored key. When `cosign` is on your `PATH`,
+the script also verifies the signature. Set `CORRAL_REQUIRE_SIGNATURE=1` to
+stop the install when `cosign` is not available. To verify by hand, use the
+exact identity of the workflow that signed the file:
+
+```bash
+iss=https://token.actions.githubusercontent.com
+# Rolling binary (from main)
+cosign verify-blob --bundle corral-linux-amd64.sigstore.json \
+  --certificate-identity https://github.com/tuna-os/corral/.github/workflows/ci.yml@refs/heads/main \
+  --certificate-oidc-issuer "$iss" corral-linux-amd64
+# Binary from the release of tag v0.7.0
+cosign verify-blob --bundle corral-linux-amd64.sigstore.json \
+  --certificate-identity https://github.com/tuna-os/corral/.github/workflows/release.yml@refs/tags/v0.7.0 \
+  --certificate-oidc-issuer "$iss" corral-linux-amd64
+# Container image and its SBOM attestations
+cosign verify ghcr.io/tuna-os/corral:latest \
+  --certificate-identity https://github.com/tuna-os/corral/.github/workflows/ci.yml@refs/heads/main \
+  --certificate-oidc-issuer "$iss"
+cosign verify-attestation --type spdxjson ghcr.io/tuna-os/corral:latest \
+  --certificate-identity https://github.com/tuna-os/corral/.github/workflows/ci.yml@refs/heads/main \
+  --certificate-oidc-issuer "$iss"
+```
+
 <details><summary>…or via <code>brew</code> (Linux &amp; macOS)</summary>
 
 Tagged releases land in the [tuna-os tap](https://github.com/tuna-os/homebrew-tap),
