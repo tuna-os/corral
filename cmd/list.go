@@ -178,8 +178,8 @@ func requireBackend(name string) (string, error) {
 
 // instanceAdapter resolves the VM a command names to its pkg/backend adapter,
 // bound to that VM's own context. Commands then assert the family they need
-// and refuse by backend name when it is absent — the alternative, a
-// `backend == "kubevirt"` branch with local QEMU as the else, sent every other
+// and refuse by backend name when it is absent — the alternative, a branch on
+// the KubeVirt backend name with local QEMU as the else, sent every other
 // backend's VMs to QEMU code that had never heard of them (#489).
 func instanceAdapter(name string) (backend.Adapter, error) {
 	ref, err := instanceRef(name)
@@ -213,13 +213,8 @@ func resolveVM(selector string) (types.VM, error) {
 	return fleet.Resolve(fleet.List(context.Background()).VMs, selector)
 }
 
+// activateVMContext exports the VM's context for its backend's package-level
+// helpers; pkg/backend owns which variable that is.
 func activateVMContext(vm types.VM) {
-	switch vm.Backend {
-	case "kubevirt":
-		_ = os.Setenv("CORRAL_KUBE_CONTEXT", vm.Context)
-	case "incus":
-		_ = os.Setenv("CORRAL_INCUS_REMOTE", vm.Context)
-	case "libvirt":
-		_ = os.Setenv("CORRAL_LIBVIRT_URI", vm.Context)
-	}
+	backend.ActivateContext(vm.Ref())
 }
