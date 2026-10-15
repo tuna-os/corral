@@ -133,6 +133,37 @@ the index, and publish both artifacts and index in one immutable release. The
 repository's `scripts/generate-marketplace.sh` and `publish-plugins` workflow
 are a reference that works.
 
+## Verify a first-party plugin
+
+CI signs each first-party plugin binary with Sigstore. It uses the GitHub
+OIDC token of the `publish-plugins` job, so it stores no private key. CI also
+makes an SPDX SBOM and a signed attestation that binds the SBOM to the binary.
+The immutable `plugins-<commit>` release holds these files next to each
+binary:
+
+| File | Content |
+|---|---|
+| `corral-NAME-linux-ARCH.sigstore.json` | Signature bundle for the binary |
+| `corral-NAME-linux-ARCH.spdx.json` | SPDX JSON SBOM |
+| `corral-NAME-linux-ARCH.sbom.sigstore.json` | Signed attestation of the SBOM |
+
+To verify a binary by hand, download it and its bundles. Then run these
+commands with [Cosign](https://docs.sigstore.dev/cosign/) 3.0 or later:
+
+```sh
+f=corral-bootc-linux-amd64
+id=https://github.com/tuna-os/corral/.github/workflows/ci.yml@refs/heads/main
+iss=https://token.actions.githubusercontent.com
+cosign verify-blob --bundle "$f.sigstore.json" \
+  --certificate-identity "$id" --certificate-oidc-issuer "$iss" "$f"
+cosign verify-blob-attestation --bundle "$f.sbom.sigstore.json" --type spdxjson \
+  --certificate-identity "$id" --certificate-oidc-issuer "$iss" "$f"
+```
+
+Use the exact identity. Do not use `--certificate-identity-regexp`, because
+a workflow in a fork can match a loose expression.
+[enterprise-readiness.md](enterprise-readiness.md) gives the full policy.
+
 ## First-party plugins
 
 [first-party-plugins.md](first-party-plugins.md) documents the maintained
