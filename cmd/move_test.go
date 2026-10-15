@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tuna-os/corral/pkg/backend"
 	"github.com/tuna-os/corral/pkg/export"
 	"github.com/tuna-os/corral/pkg/move"
 	"github.com/tuna-os/corral/pkg/types"
@@ -105,5 +106,20 @@ func TestMoveFlagDefaultsKeepTheSource(t *testing.T) {
 	}
 	if moveCmd.Flags().Lookup("dry-run") == nil {
 		t.Error("--dry-run is missing, so there is no way to read the preflight without committing")
+	}
+}
+
+// The --to help is the only place a CLI user learns which backends can receive
+// a move, so it must name every backend whose adapter implements Ingester —
+// incus dropped out of it when #164 made Incus a destination (#492).
+func TestMoveToHelpListsEveryIngestingBackend(t *testing.T) {
+	flag := moveCmd.Flags().Lookup("to")
+	if flag == nil {
+		t.Fatal("--to is missing")
+	}
+	for _, b := range backend.Backends {
+		if backend.CanIngest(b) && !strings.Contains(flag.Usage, b) {
+			t.Errorf("--to help %q omits %s, which can receive a move", flag.Usage, b)
+		}
 	}
 }
