@@ -309,8 +309,13 @@ func (i Incus) Delete(ref types.InstanceRef, name string) error {
 
 type QEMU struct{}
 
-func (QEMU) diskPath(ref types.InstanceRef) string {
-	return filepath.Join(qemu.VMHome(), ref.Name, "disk.qcow2")
+// diskPath is the VM's qcow2. The name is checked first: it is joined under
+// VMHome, and qemu-img writes snapshots into whatever disk it names.
+func (QEMU) diskPath(ref types.InstanceRef) (string, error) {
+	if err := qemu.CheckVMName(ref.Name); err != nil {
+		return "", err
+	}
+	return filepath.Join(qemu.VMHome(), ref.Name, "disk.qcow2"), nil
 }
 
 // precheck enforces the two safety limits and returns the disk to operate on.
@@ -318,7 +323,10 @@ func (q QEMU) precheck(ref types.InstanceRef, operation string) (string, error) 
 	if ref.Context != "" {
 		return "", unsupported("qemu", "the local backend has no contexts", "drop --context for local VMs")
 	}
-	disk := q.diskPath(ref)
+	disk, err := q.diskPath(ref)
+	if err != nil {
+		return "", err
+	}
 	if _, err := os.Stat(disk); err != nil {
 		return "", fmt.Errorf("local VM %q has no qcow2 disk at %s: %w", ref.Name, disk, err)
 	}
@@ -404,7 +412,10 @@ func (q QEMU) Create(ref types.InstanceRef, name string) (Snapshot, error) {
 }
 
 func (q QEMU) List(ref types.InstanceRef) ([]Snapshot, error) {
-	disk := q.diskPath(ref)
+	disk, err := q.diskPath(ref)
+	if err != nil {
+		return nil, err
+	}
 	if _, err := os.Stat(disk); err != nil {
 		return nil, fmt.Errorf("local VM %q has no qcow2 disk at %s: %w", ref.Name, disk, err)
 	}

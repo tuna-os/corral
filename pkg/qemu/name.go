@@ -23,7 +23,7 @@ var reservedVMNames = map[string]bool{"cache": true}
 // refuse anything else, so a request can never point VM state, or the
 // cleanup of a failed create, outside VMHome.
 func ValidateVMName(name string) error {
-	if err := checkVMPath(name); err != nil {
+	if err := CheckVMName(name); err != nil {
 		return err
 	}
 	if !vmNamePattern.MatchString(name) {
@@ -32,11 +32,12 @@ func ValidateVMName(name string) error {
 	return nil
 }
 
-// checkVMPath is the guard for operations on a VM that may already exist:
-// the name must be exactly one directory below VMHome and not one of its
-// reserved directories. It is looser than ValidateVMName so VMs created
-// before that check existed stay manageable.
-func checkVMPath(name string) error {
+// CheckVMName is the guard for operations on a VM that may already exist
+// (lifecycle, info, console, snapshots): the name must be exactly one
+// directory below VMHome and not one of its reserved directories. It is
+// looser than ValidateVMName so VMs created before that check existed stay
+// manageable.
+func CheckVMName(name string) error {
 	switch {
 	case name == "":
 		return fmt.Errorf("%w: the name is empty", ErrInvalidVMName)
