@@ -106,7 +106,9 @@ func routes(useDemoConsole bool) (*http.ServeMux, error) {
 	mux.HandleFunc("GET /api/tasklog", handleTaskLog)
 	registerFolderRoutes(mux)
 	registerMoveRoutes(mux)
-	vdiBroker = newVDIBroker()
+	if vdiBroker, err = newVDIBroker(); err != nil {
+		return nil, err
+	}
 	registerVDIRoutes(mux)
 	mux.HandleFunc("GET /api/vms/{ns}/{name}", handleVMInfo)
 	mux.HandleFunc("POST /api/vms/{ns}/{name}/{action}", handleVMAction)
@@ -147,9 +149,9 @@ func routes(useDemoConsole bool) (*http.ServeMux, error) {
 			serveDemoVNC(ws)
 		}
 	}
-	mux.Handle("GET /api/vnc/{ns}/{name}", consoleWebSocket(vncHandler))
-	mux.Handle("GET /api/tty/{ns}/{name}", consoleWebSocket(ttyBridge))
-	mux.Handle("GET /api/rdp/{ns}/{name}", consoleWebSocket(rdpBridge))
+	mux.Handle("GET /api/vnc/{ns}/{name}", consoleWebSocket(trackConsole(vncHandler)))
+	mux.Handle("GET /api/tty/{ns}/{name}", consoleWebSocket(trackConsole(ttyBridge)))
+	mux.Handle("GET /api/rdp/{ns}/{name}", consoleWebSocket(trackConsole(rdpBridge)))
 
 	return mux, nil
 }

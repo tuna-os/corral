@@ -179,8 +179,7 @@ func TestAssign_PoolNotFound(t *testing.T) {
 func TestUnassign_ClearsLabelAndStops(t *testing.T) {
 	fake := withFake(t)
 	fake.AddResponseKV("kubectl", []string{"get", "lease", leaseName("devpool-2"), "-n", "corral-vms", "-o", "json"}, "", &fakeErr{"NotFound"})
-	fake.AddResponseKV("kubectl", []string{"get", "vm", "devpool-2", "-n", "corral-vms", "-o",
-		`jsonpath={.metadata.labels.corral\.dev/vdi-pool}`}, "devpool", nil)
+	fake.AddResponseKV("kubectl", []string{"get", "vm", "devpool-2", "-n", "corral-vms", "--ignore-not-found", "-o", "json"}, vmJSON("devpool-2"), nil)
 	fake.AddResponseKV("kubectl", []string{"label", "vm", "devpool-2", "-n", "corral-vms", labelPool + "=devpool", labelAssignedTo + "-", "--overwrite"}, "", nil)
 	fake.AddResponseKV("kubectl", []string{"annotate", "vm", "devpool-2", "-n", "corral-vms", annoClaimedAt + "-", annoAssignedTo + "-", "--overwrite"}, "", nil)
 	fake.AddResponseKV("/fake/bin/virtctl", []string{"stop", "devpool-2", "-n", "corral-vms"}, "", nil)

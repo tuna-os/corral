@@ -2,9 +2,9 @@
 
 **Status:** Phases 0 and 1 implemented. Browser RDP via IronRDP/RDCleanPath
 and the `corral-vdi` static-pool CLI have shipped. From Phase 2, atomic Lease
-claims (#226), CT-backed ephemeral pools (#230), and the self-service broker
-API (#227, [ADR-0013](../adr/0013-vdi-broker-placement.md)) have shipped. The
-rest of Phases 2–4 remain a design proposal; this RFC defines their corrected
+claims (#226), CT-backed ephemeral pools (#230), the self-service broker
+API (#227, [ADR-0013](../adr/0013-vdi-broker-placement.md)), and reclaim
+(#228) have shipped. The rest of Phases 2–4 remain a design proposal; this RFC defines their corrected
 scope but does not commit their implementation. Setup guides: [docs/vdi.md](../vdi.md)
 and [docs/vdi-ct-pools.md](../vdi-ct-pools.md), epic status: [docs/vdi-epic-status.md](../vdi-epic-status.md).
 **Date:** 2026-07-02
@@ -195,6 +195,14 @@ It takes the caller from the trusted identity headers and authorizes each
 desktop operation against the holder of the member's Lease. See
 [docs/vdi.md](../vdi.md#self-service-broker).
 
+Session records and reclaim have shipped (#228) with rules 1 to 4 above.
+The broker counts the open consoles of each desktop and records them on the
+Lease, so a restart keeps the disconnect times. The defaults are a 15-minute
+disconnect grace and no maximum duration. `corral vdi pool create
+--ephemeral` makes VM pools whose members Corral clones again from the
+golden VM after each claim. Rule 5 stays unimplemented. See
+[docs/vdi.md](../vdi.md#sessions-and-reclaim).
+
 **Phase 3 — capacity-aware GPU pools and native USB redirection. Proposed.**
 Pool creation inspects the golden VM's host-device requests and compares the
 requested pool size with allocatable matching devices. It must distinguish
@@ -255,9 +263,11 @@ seam.
    reconciler of our own. A ConfigMap holds the declared pool, and labels mark
    the member CTs. The reconciler takes the member Lease before each
    destructive step. Only ephemeral CT pools are supported.
-3. **Reclaim defaults**: choose disconnect grace, maximum session duration,
-   and whether an administrator may force-release a connected session. Input
-   idle remains unavailable without guest/protocol cooperation.
+3. ~~**Reclaim defaults**~~ — **resolved by #228**: a 15-minute disconnect
+   grace (`CORRAL_VDI_DISCONNECT_GRACE`) and no maximum session duration
+   (`CORRAL_VDI_MAX_SESSION`) by default. An administrator may force-release
+   a connected session, and the task log records it. Input idle remains
+   unavailable without guest/protocol cooperation.
 4. **License UX**: does Corral only document the Windows license constraint
    (the current lean)? Or does it actively refuse to create pools above some
    size without an explicit `--i-have-licenses` flag?

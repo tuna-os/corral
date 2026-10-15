@@ -33,8 +33,12 @@ const (
 	labelAssignedTo = "corral.dev/vdi-assigned-to"
 	annoAssignedTo  = "corral.dev/vdi-assigned-to"
 	annoClaimedAt   = "corral.dev/vdi-claimed-at"
-	leasePrefix     = "corral-vdi-"
-	claimDuration   = time.Hour
+	// labelMode marks the members of an ephemeral pool; annoGolden names
+	// the VM they are recreated from.
+	labelMode     = "corral.dev/vdi-mode"
+	annoGolden    = "corral.dev/vdi-golden"
+	leasePrefix   = "corral-vdi-"
+	claimDuration = time.Hour
 )
 
 // ErrPoolNotFound is returned for a pool that has no definition or members.
@@ -83,6 +87,10 @@ type CreateOpts struct {
 	Namespace string
 	From      string // name of an existing, already-built "golden" VM to clone
 	Size      int
+	// Ephemeral pools recreate a member from From after each claim, so
+	// the next user gets a fresh desktop. Persistent members (the default)
+	// keep their disks across claims.
+	Ephemeral bool
 }
 
 // Member is one desktop in a pool.
@@ -439,6 +447,11 @@ func CreatePool(opts CreateOpts) (Pool, error) {
 		if err := labelMember(ns, name, opts.Name, ""); err != nil {
 			return pool, fmt.Errorf("labeling member %s: %w", name, err)
 		}
+		if opts.Ephemeral {
+			if err := markEphemeral(ns, name, opts.From); err != nil {
+				return pool, fmt.Errorf("labeling member %s: %w", name, err)
+			}
+		}
 		pool.Members = append(pool.Members, Member{Name: name})
 	}
 	return pool, nil
@@ -503,6 +516,15 @@ func labelSafe(identity string) string {
 		return "claimed"
 	}
 	return string(b)
+}
+
+// markEphemeral records that member is recreated from golden on release.
+func markEphemeral(ns, member, golden string) error {
+	if _, err := run("kubectl", "label", "vm", member, "-n", ns, labelMode+"="+PoolModeEphemeral, "--overwrite"); err != nil {
+		return err
+	}
+	_, err := run("kubectl", "annotate", "vm", member, "-n", ns, annoGolden+"="+golden, "--overwrite")
+	return err
 }
 
 type vmListItem struct {
@@ -660,12 +682,14 @@ func claimVM(namespace, pool, identity string) (string, bool, error) {
 // Assign is the Phase 1 compatibility name for Claim.
 func Assign(namespace, pool, user string) (string, error) { return Claim(namespace, pool, user) }
 
-// Release releases a member only when identity owns its Lease, and stops
-// it. The member stops before the claim ends: when the stop fails, the
-// holder keeps the claim and the release can be retried. Deleting the Lease
-// is the atomic ownership transition; labels are cleared as presentation
-// state. An empty identity is an administrative release, which also clears
-// legacy label-only assignments.
+// Release releases a member only when identity owns its Lease. A
+// persistent member stops and keeps its disks; an ephemeral member is
+// deleted and cloned again from its golden VM. The lifecycle step runs
+// before the claim ends: when it fails, the holder keeps the claim and the
+// release can be retried. Deleting the Lease is the atomic ownership
+// transition; labels are cleared as presentation state. An empty identity
+// is an administrative release, which also clears legacy label-only
+// assignments.
 func Release(namespace, member, identity string) error {
 	l, err := readLease(namespace, leaseName(member))
 	held := err == nil
@@ -677,11 +701,35 @@ func Release(namespace, member, identity string) error {
 	case held && identity != "" && l.Spec.HolderIdentity != identity:
 		return fmt.Errorf("member %s is claimed by %q, not %q", member, l.Spec.HolderIdentity, identity)
 	}
-	if err := kubevirt.NewClient(namespace).StopVM(member); err != nil && !isNotRunning(err) {
-		return fmt.Errorf("release %s: stop: %w (the claim is kept; retry the release)", member, err)
+	vm, found, err := getVM(namespace, member)
+	if err != nil {
+		return fmt.Errorf("release %s: %w", member, err)
 	}
-	if err := labelMember(namespace, member, poolOf(namespace, member), ""); err != nil {
-		return fmt.Errorf("release %s: clear presentation labels: %w", member, err)
+	pool := vm.Metadata.Labels[labelPool]
+	if pool == "" {
+		pool = l.Metadata.Labels[labelPool]
+	}
+	golden, ephemeral := vm.Metadata.Annotations[annoGolden], vm.Metadata.Labels[labelMode] == PoolModeEphemeral
+	if !found && pool != "" {
+		// A failed recycle can leave the member deleted; its siblings
+		// still say how to recreate it.
+		golden, ephemeral, err = poolGolden(namespace, pool)
+		if err != nil {
+			return fmt.Errorf("release %s: %w", member, err)
+		}
+	}
+	switch {
+	case ephemeral:
+		if err := recycleVM(namespace, member, pool, golden, found); err != nil {
+			return fmt.Errorf("release %s: recreate from %q: %w (the claim is kept; retry the release)", member, golden, err)
+		}
+	case found:
+		if err := kubevirt.NewClient(namespace).StopVM(member); err != nil && !isNotRunning(err) {
+			return fmt.Errorf("release %s: stop: %w (the claim is kept; retry the release)", member, err)
+		}
+		if err := labelMember(namespace, member, pool, ""); err != nil {
+			return fmt.Errorf("release %s: clear presentation labels: %w", member, err)
+		}
 	}
 	if held {
 		if err := deleteLease(namespace, leaseName(member), l.Metadata.ResourceVersion); err != nil {
@@ -689,6 +737,60 @@ func Release(namespace, member, identity string) error {
 		}
 	}
 	return nil
+}
+
+// getVM reads one VM; found is false when it does not exist.
+func getVM(namespace, name string) (vmListItem, bool, error) {
+	out, err := run("kubectl", "get", "vm", name, "-n", namespace, "--ignore-not-found", "-o", "json")
+	if err != nil {
+		return vmListItem{}, false, err
+	}
+	if len(strings.TrimSpace(string(out))) == 0 {
+		return vmListItem{}, false, nil
+	}
+	var v vmListItem
+	if err := json.Unmarshal(out, &v); err != nil {
+		return vmListItem{}, false, fmt.Errorf("decode VM %s: %w", name, err)
+	}
+	return v, true, nil
+}
+
+// poolGolden reads the mode and golden VM of pool from its members.
+func poolGolden(namespace, pool string) (golden string, ephemeral bool, err error) {
+	items, err := listPoolVMs(namespace, pool)
+	if err != nil {
+		return "", false, err
+	}
+	for _, v := range items {
+		if v.Metadata.Labels[labelMode] == PoolModeEphemeral && v.Metadata.Annotations[annoGolden] != "" {
+			return v.Metadata.Annotations[annoGolden], true, nil
+		}
+	}
+	return "", false, nil
+}
+
+// recycleVM deletes an ephemeral member and clones it again from golden,
+// as an unclaimed member of pool.
+func recycleVM(namespace, member, pool, golden string, exists bool) error {
+	if golden == "" {
+		return fmt.Errorf("member %s has no %s annotation", member, annoGolden)
+	}
+	client := kubevirt.NewClient(namespace)
+	if exists {
+		if err := client.DeleteVM(member); err != nil {
+			return err
+		}
+	}
+	if err := client.Clone(golden, member); err != nil {
+		return err
+	}
+	if err := waitForVM(namespace, member, cloneWaitTimeout); err != nil {
+		return err
+	}
+	if err := labelMember(namespace, member, pool, ""); err != nil {
+		return err
+	}
+	return markEphemeral(namespace, member, golden)
 }
 
 // isNotRunning reports virtctl refusing to stop a VM that already stopped,

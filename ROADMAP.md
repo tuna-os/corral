@@ -102,9 +102,8 @@ criteria for this phase (#404).
 
 | Item | Issue | Depends on |
 |------|-------|------------|
-| VDI session tracking and reclaim | #228 | — |
 | VDI one-click connect | #229 | — |
-| VDI GA | #69 | #228, #229 |
+| VDI GA | #69 | #229 |
 | Enterprise backends (RFC-0003) | #507 | #214 |
 
 ### Phase 4: Launch and outreach
@@ -154,6 +153,8 @@ Show HN brings many first-time clones and installs.
   27 branches on a backend name remain. Each has a reason in
   [docs/backend-parity.md](docs/backend-parity.md), and the ratchet in
   `pkg/backend/matrix_test.go` holds the count.
+- VDI session records and conservative reclaim (disconnect grace, maximum
+  duration, ephemeral VM pools): #228.
 
 ---
 

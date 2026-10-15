@@ -26,6 +26,7 @@ The VDI epic waits on hardware and media prerequisites (`#129` and `#132`). The 
 - **Atomic claims (`#226`)**: One `coordination.k8s.io` Lease for each pool member. The first writer wins, and Corral takes over an expired claim with a `resourceVersion` compare-and-swap. A release deletes the Lease only with a `resourceVersion` precondition (fixed in #530).
 - **CT-backed ephemeral pools (`#230`)**: `corral vdi ct-pool` and `pkg/vdi/ctpool.go`. A ConfigMap holds the pool definition and the recorded status. A reconciler creates, starts, replaces, and scales down CT members, and never destroys a claimed member. Claims use the `#226` Lease. A release destroys the member and creates it again from the image. A pool in persistent mode gives an explicit error. Guide: [docs/vdi-ct-pools.md](vdi-ct-pools.md).
 - **Self-service broker (`#227`)**: Opt-in `/api/vdi/` routes in `corral web` ([ADR-0013](adr/0013-vdi-broker-placement.md)). An authenticated user claims, starts, inspects, and releases their own desktop from a VM or CT pool. The caller comes from the trusted identity headers, and the holder of the member's Lease is the owner. Admins in `CORRAL_ADMINS` may act on any desktop. Guide: [docs/vdi.md](vdi.md#self-service-broker).
+- **Session records and reclaim (`#228`)**: The broker counts the open consoles of each desktop and records them on its Lease. It reclaims after an explicit release or at an optional maximum duration. It also reclaims at the end of a disconnect grace period, which a reconnect cancels. Persistent VM members stop. The broker creates ephemeral VM members (`pool create --ephemeral`) and CT members again. A restart keeps the recorded times. The broker does not detect idle input.
 - **In-Browser RDP Proxy**: RDCleanPath proxy that supports IronRDP (ADR-0002 Phase 2).
 - **Disk Snapshot Adapters (`#134`)**: Multi-backend snapshot/restore/retention in `pkg/snapshot`.
 - **Export Adapters (`#131`)**: Per-backend export of disk images in `pkg/export`.
@@ -37,7 +38,7 @@ The VDI epic waits on hardware and media prerequisites (`#129` and `#132`). The 
 |---|---|---|
 | `#226` | Atomic claim and release | Done |
 | `#227` | Authenticated self-service broker API | Done; [ADR-0013](adr/0013-vdi-broker-placement.md) |
-| `#228` | Session tracking and reclaim | Open |
+| `#228` | Session tracking and reclaim | Done; [docs/vdi.md](vdi.md#sessions-and-reclaim) |
 | `#229` | Protocol-aware one-click connect | Open |
 | `#230` | CT-backed ephemeral pools | Done (#520, #528, #530, #544, #557) |
 

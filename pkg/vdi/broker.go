@@ -8,6 +8,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -74,6 +75,19 @@ type MemberClaim struct {
 	Duration   time.Duration
 	// Version is the Lease resourceVersion.
 	Version string
+	// Session is the console presence the broker recorded on the Lease.
+	Session SessionMarks
+}
+
+// SessionMarks is the console presence of a claim, as the broker records
+// it on the claim's Lease. It is presence, not activity: an open console
+// says nothing about whether the user types.
+type SessionMarks struct {
+	// ConnectedAt is when the current or last connected period began.
+	ConnectedAt time.Time
+	// DisconnectedAt is when the last console closed; zero while connected
+	// or if no console was ever opened.
+	DisconnectedAt time.Time
 }
 
 // SessionID identifies one claim of a member. A new claim, or a takeover
@@ -116,6 +130,9 @@ type Cluster interface {
 	// member stops and keeps its disks; an ephemeral one is recreated. On
 	// a lifecycle failure the claim is kept, so the release can be retried.
 	ReleaseMember(c MemberClaim) error
+	// UpdateClaim renews c to c.RenewedAt and records c.Session, provided
+	// the claim is still at c.Version. updated is false when it changed.
+	UpdateClaim(c MemberClaim) (updated bool, err error)
 }
 
 // Broker errors. pkg/web maps them to HTTP status codes.
@@ -135,10 +152,11 @@ type Actor struct {
 
 // AuditEvent records one broker decision.
 type AuditEvent struct {
-	Action string // claim, start, release, force-release
+	Action string // claim, start, release, force-release, reclaim
 	Actor  string
 	Target string // a pool or member ID
 	Holder string // the claim holder, when it differs from Actor
+	Reason string // why a reclaim happened: ReclaimDisconnected or ReclaimMaxDuration
 	Err    error
 }
 
@@ -149,8 +167,15 @@ type BrokerConfig struct {
 	Namespaces []string
 	// Now is the clock (default time.Now).
 	Now func() time.Time
-	// Audit receives every claim, start, and release (optional).
+	// Audit receives every claim, start, release, and reclaim (optional).
 	Audit func(AuditEvent)
+	// DisconnectGrace is how long a claim survives after its last console
+	// closes. A reconnect within it cancels the reclaim. Zero disables
+	// disconnect reclaim.
+	DisconnectGrace time.Duration
+	// MaxSession reclaims a claim this long after it was acquired, whether
+	// or not a console is open. Zero disables the ceiling.
+	MaxSession time.Duration
 }
 
 // Desktop is a claimed member as the API reports it.
@@ -168,6 +193,13 @@ type Desktop struct {
 	Phase        string    `json:"phase"`
 	Running      bool      `json:"running"`
 	StartError   string    `json:"startError,omitempty"`
+	// Connected reports an open console on this broker.
+	Connected      bool       `json:"connected"`
+	DisconnectedAt *time.Time `json:"disconnectedAt,omitempty"`
+	// ReclaimAt is when the policy will reclaim the desktop if nothing
+	// changes, and ReclaimReason why.
+	ReclaimAt     *time.Time `json:"reclaimAt,omitempty"`
+	ReclaimReason string     `json:"reclaimReason,omitempty"`
 }
 
 // Broker is the self-service layer over a Cluster.
@@ -176,11 +208,19 @@ type Broker struct {
 	namespaces []string
 	now        func() time.Time
 	audit      func(AuditEvent)
+	grace      time.Duration
+	maxSession time.Duration
+	started    time.Time
+
+	mu       sync.Mutex
+	presence map[string]*presence // namespace/member → open consoles
+
+	reconcileMu sync.Mutex
 }
 
 // NewBroker returns a broker that serves the pools in cfg.Namespaces.
 func NewBroker(c Cluster, cfg BrokerConfig) *Broker {
-	b := &Broker{cluster: c, now: cfg.Now, audit: cfg.Audit}
+	b := &Broker{cluster: c, now: cfg.Now, audit: cfg.Audit, grace: cfg.DisconnectGrace, maxSession: cfg.MaxSession, presence: map[string]*presence{}}
 	for _, ns := range cfg.Namespaces {
 		if ns = strings.TrimSpace(ns); ns != "" && !slices.Contains(b.namespaces, ns) {
 			b.namespaces = append(b.namespaces, ns)
@@ -192,6 +232,7 @@ func NewBroker(c Cluster, cfg BrokerConfig) *Broker {
 	if b.audit == nil {
 		b.audit = func(AuditEvent) {}
 	}
+	b.started = b.now().UTC()
 	return b
 }
 
@@ -357,6 +398,15 @@ func (b *Broker) desktop(c MemberClaim) Desktop {
 		PoolID: PoolRef{Kind: c.Member.Kind, Namespace: c.Member.Namespace, Name: c.Pool}.ID(),
 		Kind:   c.Member.Kind, Namespace: c.Member.Namespace, Pool: c.Pool, Member: c.Member.Name,
 		Owner: c.Holder, ClaimedAt: c.AcquiredAt, ClaimExpired: c.Expired(b.now()),
+	}
+	marks, connected := b.sessionMarks(c)
+	d.Connected = connected
+	if !marks.DisconnectedAt.IsZero() {
+		at := marks.DisconnectedAt
+		d.DisconnectedAt = &at
+	}
+	if at, reason := b.reclaimAt(c, marks, connected); reason != "" {
+		d.ReclaimAt, d.ReclaimReason = &at, reason
 	}
 	state, err := b.cluster.MemberState(c)
 	if err != nil {

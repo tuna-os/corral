@@ -1,12 +1,15 @@
 package web
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"strings"
 	"time"
+
+	"golang.org/x/net/websocket"
 
 	"github.com/tuna-os/corral/pkg/kubevirt"
 	"github.com/tuna-os/corral/pkg/vdi"
@@ -25,19 +28,69 @@ var vdiCluster = vdi.KubeCluster()
 // vdiBroker is the broker routes serves; nil when the broker is off.
 var vdiBroker *vdi.Broker
 
+// vdiReclaimInterval is how often the broker applies its reclaim policy.
+const vdiReclaimInterval = 30 * time.Second
+
 // newVDIBroker builds the broker from the environment:
 //
-//	CORRAL_VDI_BROKER      1/true/yes turns the broker on
-//	CORRAL_VDI_NAMESPACES  namespaces whose pools it serves (default: corral's default namespace)
-func newVDIBroker() *vdi.Broker {
+//	CORRAL_VDI_BROKER            1/true/yes turns the broker on
+//	CORRAL_VDI_NAMESPACES        namespaces whose pools it serves (default: corral's default namespace)
+//	CORRAL_VDI_DISCONNECT_GRACE  reclaim this long after the last console closes (default 15m; 0 disables)
+//	CORRAL_VDI_MAX_SESSION       reclaim a claim this old, connected or not (default 0: no ceiling)
+func newVDIBroker() (*vdi.Broker, error) {
 	if !envEnabled("CORRAL_VDI_BROKER") {
-		return nil
+		return nil, nil
 	}
 	namespaces := strings.FieldsFunc(os.Getenv("CORRAL_VDI_NAMESPACES"), func(r rune) bool { return r == ',' || r == ' ' })
 	if len(namespaces) == 0 {
 		namespaces = []string{kubevirt.DefaultNamespace}
 	}
-	return vdi.NewBroker(vdiCluster, vdi.BrokerConfig{Namespaces: namespaces, Audit: auditVDI})
+	grace, err := envDuration("CORRAL_VDI_DISCONNECT_GRACE", 15*time.Minute)
+	if err != nil {
+		return nil, err
+	}
+	maxSession, err := envDuration("CORRAL_VDI_MAX_SESSION", 0)
+	if err != nil {
+		return nil, err
+	}
+	return vdi.NewBroker(vdiCluster, vdi.BrokerConfig{
+		Namespaces: namespaces, Audit: auditVDI, DisconnectGrace: grace, MaxSession: maxSession,
+	}), nil
+}
+
+// envDuration parses a Go duration ("15m", "8h", "0") from key, or returns
+// def when key is unset.
+func envDuration(key string, def time.Duration) (time.Duration, error) {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return def, nil
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d < 0 {
+		return 0, fmt.Errorf("%s=%q: want a non-negative duration such as 15m or 8h", key, raw)
+	}
+	return d, nil
+}
+
+// startVDIReclaim runs the broker's reclaim policy until ctx ends.
+func startVDIReclaim(ctx context.Context) {
+	if b := vdiBroker; b != nil {
+		go b.Run(ctx, vdiReclaimInterval, func(err error) {
+			fmt.Fprintln(os.Stderr, "vdi reclaim:", err)
+		})
+	}
+}
+
+// trackConsole reports a console session on a VDI desktop to the broker,
+// for disconnect reclaim (#228). Consoles of other VMs are ignored.
+func trackConsole(h websocket.Handler) websocket.Handler {
+	return func(ws *websocket.Conn) {
+		if b := vdiBroker; b != nil {
+			closed := b.ConsoleOpened(ws.Request().PathValue("ns"), ws.Request().PathValue("name"))
+			defer closed()
+		}
+		h(ws)
+	}
 }
 
 func envEnabled(key string) bool {
@@ -54,7 +107,11 @@ func auditVDI(e vdi.AuditEvent) {
 	if e.Holder != "" {
 		target += " (held by " + e.Holder + ")"
 	}
-	taskBegin(e.Actor, "vdi "+e.Action, target)(e.Err)
+	action := "vdi " + e.Action
+	if e.Reason != "" {
+		action += " (" + e.Reason + ")"
+	}
+	taskBegin(e.Actor, action, target)(e.Err)
 }
 
 func registerVDIRoutes(mux *http.ServeMux) {

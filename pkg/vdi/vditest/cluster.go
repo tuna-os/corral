@@ -38,6 +38,8 @@ type Cluster struct {
 
 	startFailures   map[string]int
 	releaseFailures map[string]int
+	updateFailures  int
+	updates         int
 	starts          map[string]int
 	stops           map[string]int
 	recreates       map[string]int
@@ -230,6 +232,47 @@ func (c *Cluster) StartMember(cl vdi.MemberClaim) error {
 		return fmt.Errorf("no member %s", cl.Member.ID())
 	}
 	return c.startLocked(m)
+}
+
+// UpdateClaim implements vdi.Cluster.
+func (c *Cluster) UpdateClaim(cl vdi.MemberClaim) (bool, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.updateFailures > 0 {
+		c.updateFailures--
+		return false, fmt.Errorf("the API server timed out")
+	}
+	cur, ok := c.claims[cl.Member.ID()]
+	if !ok || cur.Version != cl.Version || cur.Holder != cl.Holder {
+		return false, nil
+	}
+	c.rv++
+	cl.Version = strconv.Itoa(c.rv)
+	c.claims[cl.Member.ID()] = cl
+	c.updates++
+	return true, nil
+}
+
+// FailUpdates makes the next n UpdateClaim calls fail.
+func (c *Cluster) FailUpdates(n int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.updateFailures = n
+}
+
+// Updates counts successful UpdateClaim calls.
+func (c *Cluster) Updates() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.updates
+}
+
+// Claim returns member's claim.
+func (c *Cluster) Claim(ref vdi.MemberRef) (vdi.MemberClaim, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	cl, ok := c.claims[ref.ID()]
+	return cl, ok
 }
 
 // ReleaseMember implements vdi.Cluster.
