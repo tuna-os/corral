@@ -156,6 +156,16 @@ func (m *tuiModel) portsCmd() tea.Cmd {
 	}
 }
 
+// editLoadedMsg carries a ports form filled with the VM's current ports.
+type editLoadedMsg struct{ edit editModel }
+
+// portsLoadCmd reads which ports the selected VM exposes and builds the form.
+func (m *tuiModel) portsLoadCmd() tea.Cmd {
+	vm := m.selected
+	m.busyWith("Loading ports")
+	return func() tea.Msg { return editLoadedMsg{edit: newEditModel(vm)} }
+}
+
 // hwApplyCmd scales the VM or CT to the hardware form's values.
 func (m *tuiModel) hwApplyCmd() tea.Cmd {
 	m.hwEdit.submit = false
@@ -169,8 +179,9 @@ func (m *tuiModel) hwApplyCmd() tea.Cmd {
 	}
 }
 
-// updateOp applies the result of a command from this file.
-func (m *tuiModel) updateOp(msg tea.Msg) {
+// updateOp applies the result of a command from cmd/tui_ops.go,
+// cmd/tui_views.go, or cmd/tui_pools.go, and reports whether msg was one.
+func (m *tuiModel) updateOp(msg tea.Msg) bool {
 	switch msg := msg.(type) {
 	case fleetMsg:
 		m.busy = false
@@ -182,7 +193,7 @@ func (m *tuiModel) updateOp(msg tea.Msg) {
 		m.busy = false
 		if msg.err != nil {
 			m.cloneErr = msg.err.Error()
-			return
+			return true
 		}
 		m.applyFleet(msg.fleet)
 		m.mode = ModeList
@@ -190,7 +201,7 @@ func (m *tuiModel) updateOp(msg tea.Msg) {
 		m.busy = false
 		if msg.err != nil {
 			m.create.err = msg.err.Error()
-			return
+			return true
 		}
 		m.applyFleet(msg.fleet)
 		m.mode = ModeList
@@ -198,6 +209,9 @@ func (m *tuiModel) updateOp(msg tea.Msg) {
 	case doctorMsg:
 		m.busy = false
 		m.doctorRows = msg.rows
+	case editLoadedMsg:
+		m.busy = false
+		m.edit = msg.edit
 	case portsAppliedMsg:
 		m.busy = false
 		if msg.err != nil {
@@ -209,7 +223,7 @@ func (m *tuiModel) updateOp(msg tea.Msg) {
 		// closing it would drop the only copy of the error.
 		if msg.status != "" {
 			m.hwEdit.status = msg.status
-			return
+			return true
 		}
 		m.applyFleet(msg.fleet)
 		m.mode = ModeList
@@ -219,7 +233,22 @@ func (m *tuiModel) updateOp(msg tea.Msg) {
 	case eventsMsg:
 		m.busy = false
 		m.events = msg.state
+	case planMsg:
+		m.busy = false
+		m.pools.showPlan(msg.plan)
+	case moveDoneMsg:
+		m.busy = false
+		m.applyFleet(msg.fleet)
+		m.mode = ModeList
+		if msg.err != nil {
+			m.notice, m.noticeKind = "move failed: "+msg.err.Error(), "error"
+		} else {
+			m.notice, m.noticeKind = msg.notice, "ok"
+		}
+	default:
+		return false
 	}
+	return true
 }
 
 // applyFleet shows a freshly loaded fleet, keeping the context filter.

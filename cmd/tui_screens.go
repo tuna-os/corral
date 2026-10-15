@@ -269,7 +269,8 @@ func (m tuiModel) updatePoolsScreen(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 	if msg.String() == "ctrl+c" {
 		return m.quit()
 	}
-	if !m.updatePools(msg) {
+	stay, cmd := m.updatePools(msg)
+	if !stay {
 		if m.pools.notice != "" {
 			m.notice, m.noticeKind = m.pools.notice, "ok"
 		}
@@ -277,7 +278,7 @@ func (m tuiModel) updatePoolsScreen(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {
 		cmd := m.refreshCmd("")
 		return m, cmd
 	}
-	return m, nil
+	return m, cmd
 }
 
 func (m tuiModel) updateSnapshotsScreen(msg tea.KeyPressMsg) (tuiModel, tea.Cmd) {

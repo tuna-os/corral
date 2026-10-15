@@ -95,7 +95,6 @@ backfill first so that each refactor has a safety net.
 |------|-------|------------|
 | Route all backend-specific code through `pkg/backend` (46 branches left; ratchet in `pkg/backend/matrix_test.go`) | #214 | #506 |
 | ✅ Split `app.js` into ES modules with node unit tests (`pkg/web/jstest`): API adapter #517, poll #523, session #525, console transports #531, workspace layout | #288, #406 | #506 |
-| Make the TUI state machine its own type | #305 | #506 |
 
 ### Phase 3: Enterprise readiness (Q4)
 
@@ -146,6 +145,9 @@ Show HN brings many first-time clones and installs.
 - Signed plugins with SBOMs, verified at install time: #505.
 - Self-service API for VDI: opt-in `/api/vdi/` routes in `corral web`
   ([ADR-0013](docs/adr/0013-vdi-broker-placement.md)): #227.
+- TUI state machine: #305 (#511, #549, #567, #571, #575, #580). Tests
+  for each screen transition came first. Each screen has a typed mode, a
+  key handler, and a view. Backend work runs in commands, not in `Update`.
 
 ---
 
