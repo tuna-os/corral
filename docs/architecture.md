@@ -16,6 +16,8 @@ cmd/              Cobra CLI (root, subcommands, TUI)
 ├── config.go     corral config (show, set auth key)
 ├── web.go        corral web (--addr, serve embedded SPA)
 ├── tui.go        Bubble Tea TUI (VMs + Containers side by side; VM and CT action menus, clone input state)
+├── tui_modes.go  TUI screen modes and the legal transitions between them
+├── tui_screens.go TUI screens: one key handler and one view per mode
 ├── tui_views.go  TUI views at parity with the web UI (snapshots via pkg/snapshot, events, template mark, CT scaling)
 ├── plugin.go     corral plugin (search, install, list, remove)
 ├── doctor.go     corral doctor (cluster diagnostics)

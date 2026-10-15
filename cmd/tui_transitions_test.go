@@ -1,20 +1,23 @@
 package cmd
 
-// Characterization tests for the TUI's screen state machine (#305): every
-// transition the root model makes, driven through tuiModel.Update one key at a
-// time against the in-memory demo cluster. They pin today's behaviour, quirks
-// included (the ports and hardware editors close to the list, the pool screens
-// close to the list, the snapshots and events views close to the menu), so the
-// state machine can be restructured without a flow quietly moving.
+// Tests for the TUI's screen state machine (#305): every transition the root
+// model makes, driven through tuiModel.Update one key at a time against the
+// in-memory demo cluster. Each change of screen must be listed in
+// ValidTransitions, and each entry there must be exercised here, so the table
+// and the code cannot drift apart. Quirks are pinned on purpose: the ports and
+// hardware editors close to the list, the pool screens close to the list, the
+// snapshots and events views close to the menu.
 
 import (
+	"flag"
+	"strings"
 	"testing"
 
 	"github.com/tuna-os/corral/pkg/folder"
 )
 
-// screenOf is the screen the model is showing, as a TUIMode.
-func screenOf(m tuiModel) TUIMode { return FromString(m.state) }
+// screenOf is the screen the model is showing.
+func screenOf(m tuiModel) TUIMode { return m.mode }
 
 // chooseAction moves the actions-menu cursor onto the action id. It fails the
 // test when the menu does not offer that action, so gating changes surface here
@@ -39,7 +42,9 @@ type step struct {
 	quit bool
 }
 
-func runSteps(t *testing.T, m tuiModel, steps []step) tuiModel {
+// runSteps feeds the steps to the model and records each change of screen in
+// seen, failing on one ValidTransitions does not list.
+func runSteps(t *testing.T, m tuiModel, steps []step, seen map[[2]TUIMode]bool) tuiModel {
 	t.Helper()
 	for i, s := range steps {
 		from := screenOf(m)
@@ -60,6 +65,12 @@ func runSteps(t *testing.T, m tuiModel, steps []step) tuiModel {
 		}
 		if got := screenOf(m); got != s.want {
 			t.Fatalf("step %d: %q on %v went to %v, want %v", i, s.key, from, got, s.want)
+		}
+		if to := screenOf(m); to != from {
+			if !CanTransition(from, to) {
+				t.Fatalf("step %d: %v → %v is not in ValidTransitions", i, from, to)
+			}
+			seen[[2]TUIMode{from, to}] = true
 		}
 	}
 	return m
@@ -176,12 +187,23 @@ func TestTUITransitions(t *testing.T) {
 		{"CT console quits first", onCT("dev-shell"), []step{{key: "enter", want: ModeActions}, q("@console")}},
 	}
 
+	seen := map[[2]TUIMode]bool{}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			scratchPools(t, folder.Folder{Path: "/prod"})
 			postQuitAction = nil
 			t.Cleanup(func() { postQuitAction = nil })
-			runSteps(t, tc.setup(t), tc.steps)
+			runSteps(t, tc.setup(t), tc.steps, seen)
 		})
+	}
+
+	// A -run filter that picks single cases cannot exercise the whole table.
+	if t.Failed() || strings.Contains(flag.Lookup("test.run").Value.String(), "/") {
+		return
+	}
+	for _, trans := range ValidTransitions {
+		if !seen[[2]TUIMode{trans.From, trans.To}] {
+			t.Errorf("ValidTransitions lists %v → %v (%s), but no case exercises it", trans.From, trans.To, trans.When)
+		}
 	}
 }

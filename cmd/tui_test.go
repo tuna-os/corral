@@ -13,8 +13,8 @@ func TestTUI_ModelInitializationAndNavigation(t *testing.T) {
 	demo.Enable()
 
 	m := newTUIModel()
-	if m.state != "list" {
-		t.Fatalf("initial state = %q, want 'list'", m.state)
+	if m.mode != ModeList {
+		t.Fatalf("initial state = %q, want 'list'", m.mode)
 	}
 
 	// Verify items loaded in demo mode (VMs, CTs, and Incus instances)
@@ -37,22 +37,22 @@ func TestTUI_ModelInitializationAndNavigation(t *testing.T) {
 	// Test pressing Enter on selected item opens actions menu
 	newModel, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	updated := newModel.(tuiModel)
-	if updated.state != "actions" {
-		t.Errorf("state after Enter = %q, want 'actions'", updated.state)
+	if updated.mode != ModeActions {
+		t.Errorf("state after Enter = %q, want 'actions'", updated.mode)
 	}
 
 	// Test Esc key returns to list state
 	backModel, _ := updated.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	backUpdated := backModel.(tuiModel)
-	if backUpdated.state != "list" {
-		t.Errorf("state after Esc = %q, want 'list'", backUpdated.state)
+	if backUpdated.mode != ModeList {
+		t.Errorf("state after Esc = %q, want 'list'", backUpdated.mode)
 	}
 
 	// Test Doctor view navigation ('d' key)
 	docModel, _ := backUpdated.Update(tea.KeyPressMsg{Code: 'd', Text: "d"})
 	docUpdated := docModel.(tuiModel)
-	if docUpdated.state != "doctor" {
-		t.Errorf("state after 'd' = %q, want 'doctor'", docUpdated.state)
+	if docUpdated.mode != ModeDoctor {
+		t.Errorf("state after 'd' = %q, want 'doctor'", docUpdated.mode)
 	}
 }
 

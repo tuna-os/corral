@@ -168,7 +168,7 @@ func TestMouseClick_LandsOnTheRowTheFrameDrew(t *testing.T) {
 func TestMouseClick_ActionsMenuLandsOnTheRowTheFrameDrew(t *testing.T) {
 	demo.Enable()
 	m := testModel(kubeVM("web-prod"))
-	m.state = "actions"
+	m.mode = ModeActions
 
 	row := rowOf(t, m.render(), "Export")
 	m = mouse(m, click(2, row))
@@ -182,7 +182,7 @@ func TestMouseClick_PortsFormLandsOnTheRowTheFrameDrew(t *testing.T) {
 	demo.Enable()
 	vm := types.VM{Name: "web-prod", Namespace: "corral-vms", Backend: "kubevirt"}
 	m := testModel(vm)
-	m.state = "edit"
+	m.mode = ModeEdit
 	m.edit = newEditModel(vm)
 
 	// Pick a port that has a protocol name, so the row is findable in the frame.
@@ -214,8 +214,8 @@ func TestMouseClick_SelectsARow(t *testing.T) {
 	if m.list.Index() != 2 {
 		t.Errorf("index after clicking the third row = %d, want 2", m.list.Index())
 	}
-	if m.state != "list" {
-		t.Errorf("a single click changed state to %q", m.state)
+	if m.mode != ModeList {
+		t.Errorf("a single click changed state to %q", m.mode)
 	}
 }
 
@@ -236,8 +236,8 @@ func TestMouseClick_OutsideTheRowsIsIgnored(t *testing.T) {
 		if after.list.Index() != 3 {
 			t.Errorf("a click on the %s moved the selection to %d", c.name, after.list.Index())
 		}
-		if after.state != "list" {
-			t.Errorf("a click on the %s changed state to %q", c.name, after.state)
+		if after.mode != ModeList {
+			t.Errorf("a click on the %s changed state to %q", c.name, after.mode)
 		}
 	}
 }
@@ -259,12 +259,12 @@ func TestMouseDoubleClick_OpensTheActionsMenu(t *testing.T) {
 	row := headerHeight + g.titleHeight // first row
 
 	m = mouse(m, click(3, row))
-	if m.state != "list" {
-		t.Fatalf("state after one click = %q, want to stay in the list", m.state)
+	if m.mode != ModeList {
+		t.Fatalf("state after one click = %q, want to stay in the list", m.mode)
 	}
 	m = mouse(m, click(3, row))
-	if m.state != "actions" {
-		t.Fatalf("state after a double click = %q, want 'actions'", m.state)
+	if m.mode != ModeActions {
+		t.Fatalf("state after a double click = %q, want 'actions'", m.mode)
 	}
 	// The menu opened on the row that was clicked.
 	first := m.list.VisibleItems()[0]
@@ -287,7 +287,7 @@ func TestMouseDoubleClick_OnADifferentRowJustSelects(t *testing.T) {
 
 	m = mouse(m, click(3, first))
 	m = mouse(m, click(3, first+2)) // a different row
-	if m.state != "actions" {
+	if m.mode != ModeActions {
 		if m.list.Index() != 1 {
 			t.Errorf("index = %d, want the second row selected", m.list.Index())
 		}
@@ -305,8 +305,8 @@ func TestMouseDoubleClick_ExpiresAfterTheWindow(t *testing.T) {
 	// Age the first click past the window.
 	m.lastClickAt = time.Now().Add(-2 * doubleClickWindow)
 	m = mouse(m, click(3, row))
-	if m.state != "list" {
-		t.Errorf("state = %q, want a slow second click to only select", m.state)
+	if m.mode != ModeList {
+		t.Errorf("state = %q, want a slow second click to only select", m.mode)
 	}
 }
 
@@ -318,8 +318,8 @@ func TestMouseTripleClick_DoesNotRefire(t *testing.T) {
 
 	m = mouse(m, click(3, row))
 	m = mouse(m, click(3, row))
-	if m.state != "actions" {
-		t.Fatalf("state = %q, want 'actions' after the double click", m.state)
+	if m.mode != ModeActions {
+		t.Fatalf("state = %q, want 'actions' after the double click", m.mode)
 	}
 	if !m.lastClickAt.IsZero() {
 		t.Error("the double click should have consumed its timestamp")
@@ -329,11 +329,11 @@ func TestMouseTripleClick_DoesNotRefire(t *testing.T) {
 // A double click on an empty list has nothing to open, and must not panic.
 func TestMouseClick_EmptyListIsSafe(t *testing.T) {
 	m := testModel(types.VM{})
-	m.state = "list"
+	m.mode = ModeList
 	m = mouse(m, click(1, headerHeight))
 	m = mouse(m, click(1, headerHeight))
-	if m.state != "list" {
-		t.Errorf("state = %q, want to stay in an empty list", m.state)
+	if m.mode != ModeList {
+		t.Errorf("state = %q, want to stay in an empty list", m.mode)
 	}
 }
 
@@ -342,7 +342,7 @@ func TestMouseClick_EmptyListIsSafe(t *testing.T) {
 func TestMouseClick_ActionsMenuSelectsAndRuns(t *testing.T) {
 	demo.Enable()
 	m := testModel(kubeVM("web-prod"))
-	m.state = "actions"
+	m.mode = ModeActions
 
 	// Find the row that holds Delete — a destructive action, so this also
 	// proves a double click still lands on the confirmation.
@@ -362,20 +362,20 @@ func TestMouseClick_ActionsMenuSelectsAndRuns(t *testing.T) {
 	if m.actionsList.Index() != target {
 		t.Fatalf("index after the click = %d, want %d", m.actionsList.Index(), target)
 	}
-	if m.state != "actions" {
-		t.Errorf("one click ran the action (state %q)", m.state)
+	if m.mode != ModeActions {
+		t.Errorf("one click ran the action (state %q)", m.mode)
 	}
 
 	m = mouse(m, click(2, y))
-	if m.state != "confirmDelete" {
-		t.Errorf("state after double-clicking Delete = %q, want 'confirmDelete'", m.state)
+	if m.mode != ModeConfirmDelete {
+		t.Errorf("state after double-clicking Delete = %q, want 'confirmDelete'", m.mode)
 	}
 }
 
 func TestMouseClick_ActionsMenuIgnoresTheTitle(t *testing.T) {
 	demo.Enable()
 	m := testModel(kubeVM("web-prod"))
-	m.state = "actions"
+	m.mode = ModeActions
 	m.actionsList.Select(1)
 
 	m = mouse(m, click(2, 0))
@@ -390,7 +390,7 @@ func TestMouseClick_PortsFormTogglesAddsAndClears(t *testing.T) {
 	demo.Enable()
 	vm := types.VM{Name: "web-prod", Namespace: "corral-vms", Backend: "kubevirt"}
 	m := testModel(vm)
-	m.state = "edit"
+	m.mode = ModeEdit
 	m.edit = newEditModel(vm)
 
 	const firstRow = 2 // title, blank, then the ports
@@ -449,7 +449,7 @@ func TestMouseWheel_MovesTheFleetCursor(t *testing.T) {
 func TestMouseWheel_MovesTheActionsCursor(t *testing.T) {
 	demo.Enable()
 	m := testModel(kubeVM("web-prod"))
-	m.state = "actions"
+	m.mode = ModeActions
 	m.actionsList.Select(0)
 
 	m = mouse(m, wheel(false))
@@ -484,7 +484,7 @@ func TestMouseWheel_MovesThePortsCursorAndClamps(t *testing.T) {
 	demo.Enable()
 	vm := types.VM{Name: "web-prod", Namespace: "corral-vms"}
 	m := testModel(vm)
-	m.state = "edit"
+	m.mode = ModeEdit
 	m.edit = newEditModel(vm)
 
 	m = mouse(m, wheel(true))
@@ -504,10 +504,10 @@ func TestMouseWheel_MovesThePortsCursorAndClamps(t *testing.T) {
 // some other cursor.
 func TestMouseWheel_IgnoredWhereNothingScrolls(t *testing.T) {
 	m := demoModel(t)
-	for _, state := range []string{"doctor", "events", "confirmDelete", "hwedit", "cloneInput"} {
-		m.state = state
+	for _, mode := range []TUIMode{ModeDoctor, ModeEvents, ModeConfirmDelete, ModeHWEdit, ModeCloneInput} {
+		m.mode = mode
 		if handled := (&m).handleMouse(wheel(false)); handled {
-			t.Errorf("state %q claimed to handle a wheel tick", state)
+			t.Errorf("mode %v claimed to handle a wheel tick", mode)
 		}
 	}
 }
