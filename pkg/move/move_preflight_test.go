@@ -14,8 +14,9 @@ import (
 
 // The tests below sweep the whole backend matrix through the stubbed seams.
 // newStub mirrors reality (only kubevirt/qemu/libvirt/incus/proxmox export a
-// disk and ingest one); export.Supported itself is a pure switch, so the four
-// backends without an export adapter are refused without touching anything.
+// disk and ingest one; virtualbox exports an OVA appliance, not a disk);
+// export.Supported itself is a pure switch, so the backends without an export
+// adapter are refused without touching anything.
 
 // TestPreflightNineBackendRefusalTable pins which of the nine backends can be
 // a move source or destination, so adding a backend (or an adapter) visibly
@@ -28,6 +29,8 @@ func TestPreflightNineBackendRefusalTable(t *testing.T) {
 
 	exporters := map[string]bool{"kubevirt": true, "qemu": true, "libvirt": true, "incus": true, "proxmox": true}
 	receivers := map[string]bool{"kubevirt": true, "qemu": true, "libvirt": true, "incus": true, "proxmox": true}
+	// These export, but an artifact that is not a disk image cannot seed a move.
+	appliances := map[string]bool{"virtualbox": true}
 
 	for _, from := range backend.Backends {
 		dst := "qemu"
@@ -42,6 +45,8 @@ func TestPreflightNineBackendRefusalTable(t *testing.T) {
 			if strings.Contains(text, "cannot export a disk") || strings.Contains(text, "not a disk image") {
 				t.Errorf("%s should be a move source, got:\n%s", from, text)
 			}
+		} else if appliances[from] {
+			mustRefuse(t, plan, "not a disk image")
 		} else {
 			mustRefuse(t, plan, "cannot export a disk")
 		}

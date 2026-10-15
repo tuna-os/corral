@@ -644,3 +644,56 @@ func virtualSize(path string) int64 {
 	}
 	return info.VirtualSize
 }
+
+// ── VirtualBox ────────────────────────────────────────────────────
+//
+// VBoxManage export writes an OVA appliance: the OVF descriptor and every
+// disk in one archive. A running or paused VM holds the session lock that
+// export needs, so it is refused with the remedy rather than failing inside
+// VBoxManage. A powered-off or saved VM exports offline-consistent.
+
+type VirtualBox struct{}
+
+func (VirtualBox) Formats() []Format { return []Format{OVA} }
+
+func (v VirtualBox) Export(ctx context.Context, req Request, progress ProgressFunc) (Result, error) {
+	format, err := pickFormat("virtualbox", req.Format, v.Formats())
+	if err != nil {
+		return Result{}, err
+	}
+	out, err := runner.Run("VBoxManage", "showvminfo", req.Ref.Name, "--machinereadable")
+	if err != nil {
+		return Result{}, fmt.Errorf("VBoxManage showvminfo %s: %s", req.Ref.Name, commandError(out, err))
+	}
+	switch state := vboxState(string(out)); state {
+	case "running", "paused":
+		return Result{}, unsupported("virtualbox",
+			fmt.Sprintf("%s is %s, and VirtualBox exports only a powered-off or saved VM", req.Ref.Name, state),
+			fmt.Sprintf("stop it first: corral stop %s", req.Ref.Name))
+	}
+	if err := ensureDestDir(req.Dest); err != nil {
+		return Result{}, err
+	}
+	if err := cancelled(ctx); err != nil {
+		return Result{}, err
+	}
+	// VBoxManage refuses to overwrite an existing appliance.
+	if err := os.Remove(req.Dest); err != nil && !os.IsNotExist(err) {
+		return Result{}, err
+	}
+	progress.report("exporting appliance", 0, 0)
+	if out, err := runner.Run("VBoxManage", "export", req.Ref.Name, "--output", req.Dest); err != nil {
+		return Result{}, fmt.Errorf("VBoxManage export: %s", commandError(out, err))
+	}
+	return finish(req.Dest, format, snapshot.Offline)
+}
+
+// vboxState reads VMState from showvminfo --machinereadable output.
+func vboxState(info string) string {
+	for _, line := range strings.Split(info, "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(line), "VMState="); ok {
+			return strings.Trim(v, `"`)
+		}
+	}
+	return ""
+}

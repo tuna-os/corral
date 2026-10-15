@@ -49,7 +49,7 @@ backend cannot, or it is meaningless there.
 | Add / remove disks | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | 🔨 | 🔨 | 🔨 |
 | Expand disk | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | 🔨 | 🔨 | 🔨 |
 | GPU passthrough | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | 🔨 | 🔨 | — |
-| Export / backup disk | ✅ | ✅ | ✅ | ✅ | ✅ | 🔨 | 🔨 | 🔨 | 🔨 |
+| Export / backup disk | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 🔨 | 🔨 | 🔨 |
 | Events | ✅ | ✅ | — | — | ✅ | — | 🔨 | 🔨 | 🔨 |
 | Tags | ✅ | 🔨 | 🔨 | 🔨 | ✅ | 🔨 | 🔨 | 🔨 | 🔨 |
 | Published ports | ✅ | ✅ | 🔨 | — | — | 🔨 | — | — | — |
@@ -194,7 +194,7 @@ websocket bridge is not. So the capability flags say no, and the matrix says why
 - **rdp** — same, via the guest address
 - **containers** — pkg/proxmoxbe.Containers lists them and Create makes them; pkg/ct does not yet surface a non-Kubernetes CT
 
-### virtualbox — 13 gaps
+### virtualbox — 12 gaps
 
 - **create** — createvm plus storagectl/storageattach/modifyvm exist natively; Corral has no creator wiring them yet
 - **ssh** — Corral has no address discovery yet. Use the Guest Additions guestproperty or a NAT port-forward for the guest address, then plain ssh.
@@ -206,7 +206,6 @@ websocket bridge is not. So the capability flags say no, and the matrix says why
 - **volumes** — storageattach/storagectl plus closemedium; nothing drives them yet
 - **expand** — modifymedium --resize while stopped
 - **gpu** — PCI passthrough via modifyvm --pciattach on Linux hosts; experimental and host-limited
-- **export** — export to OVA natively; pkg/export has no VirtualBox adapter yet
 - **tags** — setextradata keys or the registry mark; nothing reads them back yet
 - **ports** — NAT port-forward rules via modifyvm --natpf1. Corral does not manage them yet.
 
