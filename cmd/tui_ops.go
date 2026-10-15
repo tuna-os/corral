@@ -213,6 +213,12 @@ func (m *tuiModel) updateOp(msg tea.Msg) {
 		}
 		m.applyFleet(msg.fleet)
 		m.mode = ModeList
+	case snapshotsMsg:
+		m.busy = false
+		m.snapshots.apply(msg)
+	case eventsMsg:
+		m.busy = false
+		m.events = msg.state
 	}
 }
 

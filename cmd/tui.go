@@ -413,7 +413,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		_, cmd := m.handleMouse(msg)
 		return m, cmd
 
-	case fleetMsg, cloneDoneMsg, createDoneMsg, doctorMsg, portsAppliedMsg, hwAppliedMsg:
+	case fleetMsg, cloneDoneMsg, createDoneMsg, doctorMsg, portsAppliedMsg, hwAppliedMsg, snapshotsMsg, eventsMsg:
 		m.updateOp(msg)
 		return m, nil
 
@@ -502,9 +502,11 @@ func (m *tuiModel) runSelectedAction() tea.Cmd {
 		// the VM already has rather than silently taking one more.
 		m.snapshots = newSnapshotsState(m.selected)
 		m.mode = ModeSnapshots
+		return m.snapshotsCmd("Loading snapshots", nil)
 	case "events":
-		m.events = newEventsState(m.selected)
+		m.events = eventsState{vmName: m.selected.Name}
 		m.mode = ModeEvents
+		return m.eventsCmd()
 	case "pool":
 		m.pools = newPoolAssignState(m.selected)
 		m.mode = ModePools

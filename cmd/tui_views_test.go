@@ -88,7 +88,8 @@ func modelWithSnapshots(vm types.VM) tuiModel {
 	m := testModel(vm)
 	m.mode = ModeSnapshots
 	m.snapshots = newSnapshotsState(vm)
-	return m
+	cmd := m.snapshotsCmd("Loading snapshots", nil)
+	return settle(m, cmd)
 }
 
 func key(s string) tea.KeyPressMsg {
@@ -565,7 +566,7 @@ func TestTUIEvents_RendersWarningsAndFiltersOtherObjects(t *testing.T) {
 
 	m := testModel(kubeVM("web-prod"))
 	m.mode = ModeEvents
-	m.events = newEventsState(m.selected)
+	m.events = loadEvents(m.selected)
 	if m.events.err != "" {
 		t.Fatalf("events error: %s", m.events.err)
 	}
@@ -593,14 +594,14 @@ func TestTUIEvents_EmptyAndErrorStates(t *testing.T) {
 	f.AddPrefixResponse("kubectl get events", `{"items":[]}`, nil)
 
 	m := testModel(kubeVM("web-prod"))
-	m.events = newEventsState(m.selected)
+	m.events = loadEvents(m.selected)
 	if !strings.Contains(m.eventsView(), "No recent events") {
 		t.Errorf("empty events view = %s", m.eventsView())
 	}
 
 	f.Reset()
 	f.AddPrefixResponse("kubectl get events", "", errors.New("forbidden"))
-	m.events = newEventsState(m.selected)
+	m.events = loadEvents(m.selected)
 	if m.events.err == "" {
 		t.Fatal("expected the events error to be recorded")
 	}
@@ -615,7 +616,7 @@ func TestTUIEvents_ReloadAndBackNavigation(t *testing.T) {
 
 	m := testModel(kubeVM("web-prod"))
 	m.mode = ModeEvents
-	m.events = newEventsState(m.selected)
+	m.events = loadEvents(m.selected)
 	before := len(f.Calls())
 
 	m = press(m, "r")
@@ -973,7 +974,7 @@ func TestTUIEventsAndTemplate_RefuseABackendWithoutTheFamily(t *testing.T) {
 	vm := types.VM{Name: "web", Backend: "incus", Context: "lab", Running: true, Status: "Running"}
 
 	m := testModel(vm)
-	m.events = newEventsState(m.selected)
+	m.events = loadEvents(m.selected)
 	if !strings.Contains(m.events.err, "incus backend does not support events") {
 		t.Errorf("events on an Incus VM: err = %q, want a refusal naming incus", m.events.err)
 	}
