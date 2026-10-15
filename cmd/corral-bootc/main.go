@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/tuna-os/corral/pkg/bootc"
@@ -81,7 +82,7 @@ var targetFor = bootc.TargetFor
 // then hand it to the backend's target. The split is the point of #130 — the
 // same built disk works for local QEMU and for libvirt, and neither needs a
 // cluster to produce it.
-func buildAndImport(name string, target config.ContextConfig, image, sshKey, disk, mem string, cpu int, filesystem string, useSudo bool) error {
+func buildAndImport(name string, target config.ContextConfig, image, sshKey, disk, mem string, cpu int, filesystem string, kargs []string, useSudo bool) error {
 	if image == "" {
 		return fmt.Errorf("--image is required — a catalog name (see `corral bootc images`) or an OCI ref like quay.io/fedora/fedora-bootc:41")
 	}
@@ -116,7 +117,7 @@ func buildAndImport(name string, target config.ContextConfig, image, sshKey, dis
 	workDir := filepath.Join(qemu.VMHome(), "cache", "bootc")
 	built, err := builder.Build(bootc.BuildRequest{
 		Image: image, Dest: filepath.Join(workDir, name+".raw"),
-		Size: size, SSHKey: key, Filesystem: filesystem,
+		Size: size, SSHKey: key, Filesystem: filesystem, Kargs: kargs,
 	}, func(msg string) { fmt.Fprintln(os.Stderr, msg) })
 	if err != nil {
 		return err
@@ -133,13 +134,34 @@ func buildAndImport(name string, target config.ContextConfig, image, sshKey, dis
 	return nil
 }
 
+// checkResumeKargs refuses a --resume that asks for kernel arguments the
+// interrupted build did not install. A resume reuses the finished disk and
+// runs no `bootc install`, so it has no way to add one.
+func checkResumeKargs(name string, requested, installed []string) error {
+	missing := kubevirt.MissingKargs(requested, installed)
+	if len(missing) == 0 {
+		return nil
+	}
+	return fmt.Errorf("the resumable build for %q did not install --karg %s, and --resume cannot add kernel arguments to a finished disk — rerun without --resume to build a fresh disk",
+		name, strings.Join(missing, " --karg "))
+}
+
 func main() {
 	if sdk.HandleMetadata(sdk.Metadata{Name: "bootc", Version: "0.3.0", Description: "Build bootable container images into VMs", Capabilities: []string{"cli-command", "backend-workflow"}, Permissions: []string{"mutate Kubernetes resources and instance definitions", "pull container images", "run privileged containers to partition a disk image"}, SupportedBackends: bootc.SupportedBackends}) {
 		return
 	}
+	if err := newRootCmd().Execute(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
+
+// newRootCmd builds the corral-bootc command tree.
+func newRootCmd() *cobra.Command {
 	var (
 		namespace, disk, mem, sshKey, node, storageClass string
 		contextName, filesystem                          string
+		kargs                                            []string
 		cpu                                              int
 		resume, useSudo                                  bool
 	)
@@ -150,6 +172,9 @@ func main() {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
+			if err := kubevirt.ValidateKargs(kargs); err != nil {
+				return err
+			}
 			ns := namespace
 			if ns == "" {
 				ns = kubevirt.DefaultNamespace
@@ -162,7 +187,7 @@ func main() {
 			}
 			if target.Backend != "kubevirt" {
 				image, _ := cmd.Flags().GetString("image")
-				return buildAndImport(name, target, image, sshKey, disk, mem, cpu, filesystem, useSudo)
+				return buildAndImport(name, target, image, sshKey, disk, mem, cpu, filesystem, kargs, useSudo)
 			}
 			if !kubevirt.BootcAvailable() {
 				return fmt.Errorf("this corral-bootc build lacks the bootc pipeline (build with -tags bootc)")
@@ -177,7 +202,8 @@ func main() {
 			// --resume picks up an interrupted build: a builder VM that
 			// finished installing but never got its final VM created because
 			// the CLI died mid-wait (Ctrl+C, SSH drop) — see
-			// kubevirt.BootcResumeState. Skips the build step entirely.
+			// kubevirt.BootcResumeState. Skips the build step entirely, so it
+			// accepts --karg only when that build already installed it.
 			if resume {
 				image, pvcName, ready, failed := kubevirt.BootcResumeState(name, ns)
 				if failed {
@@ -185,6 +211,9 @@ func main() {
 				}
 				if !ready {
 					return fmt.Errorf("no resumable build found for %q (no completed builder + disk PVC)", name)
+				}
+				if err := checkResumeKargs(name, kargs, kubevirt.BootcBuiltKargs(name, ns)); err != nil {
+					return err
 				}
 				if err := finishVM(name, ns, pvcName, image, key, mem, cpu, node); err != nil {
 					return err
@@ -206,7 +235,7 @@ func main() {
 				size = "80Gi"
 			}
 
-			build, err := kubevirt.BootcBuildDisk(name, ns, image, key, size, storageClass, "", node, os.Stderr)
+			build, err := kubevirt.BootcBuildDisk(name, ns, image, key, size, storageClass, "", kargs, node, os.Stderr)
 			if err != nil {
 				return fmt.Errorf("bootc build: %w — if the builder actually finished after this failed, retry with --resume", err)
 			}
@@ -220,7 +249,8 @@ func main() {
 	create.Flags().StringVar(&node, "node", "", "Schedule on a specific node")
 	create.Flags().StringVar(&sshKey, "ssh-key", "", "SSH public key (default: ~/.ssh/*.pub)")
 	create.Flags().StringVarP(&storageClass, "storage-class", "s", "", "StorageClass for the disk PVC (default: cluster preference)")
-	create.Flags().BoolVar(&resume, "resume", false, "Finish a build that completed after a previous `create` was interrupted")
+	create.Flags().BoolVar(&resume, "resume", false, "Finish a build that completed after a previous `create` was interrupted (with --karg: only if that build installed it)")
+	create.Flags().StringArrayVar(&kargs, "karg", nil, "Kernel argument to install into the boot entry, there from the first boot (repeatable)")
 	create.Flags().StringVar(&filesystem, "filesystem", "", "Override the root filesystem a local build would pick from the image (xfs for ostree, ext4 or btrfs for composefs)")
 	create.Flags().BoolVar(&useSudo, "sudo", false, "Run the local build's podman under sudo — bootc install needs root (off-cluster backends only)")
 
@@ -346,8 +376,5 @@ preserved. Use this to apply image updates.`,
 	root.PersistentFlags().StringVarP(&namespace, "namespace", "n", kubevirt.DefaultNamespace, "Namespace (KubeVirt only)")
 	root.PersistentFlags().StringVar(&contextName, "context", "", "Corral context to build for (default: the selected context)")
 	root.AddCommand(create, images, rebuildCmd, upgradeCmd, switchCmd, statusCmd)
-	if err := root.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
+	return root
 }

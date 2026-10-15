@@ -17,7 +17,7 @@ import (
 // manual composefs key injection, and the console/sshd kargs).
 func TestRenderBuilderVM(t *testing.T) {
 	vm := generateBuilderVM("e2e-x-bootc-builder", "corral-vms",
-		"e2e-x-bootc-disk", "e2e-x-bootc-builder-cloudinit", "quay.io/centos-bootc/centos-bootc:stream9", "")
+		"e2e-x-bootc-disk", "e2e-x-bootc-builder-cloudinit", "quay.io/centos-bootc/centos-bootc:stream9", nil, "")
 
 	data, err := json.Marshal(vm)
 	if err != nil {
@@ -39,7 +39,7 @@ func TestRenderBuilderVM(t *testing.T) {
 
 	// The recipe lives in the Secret's userdata.
 	sec := generateBuilderSecret("e2e-x-bootc-builder-cloudinit", "corral-vms",
-		"ghcr.io/projectbluefin/dakota:testing", "ssh-ed25519 AAAATESTKEY user@host", "")
+		"ghcr.io/projectbluefin/dakota:testing", "ssh-ed25519 AAAATESTKEY user@host", "", nil)
 	script := sec["stringData"].(map[string]any)["userdata"].(string)
 	for _, want := range []string{
 		"ghcr.io/projectbluefin/dakota:testing", // image substituted
@@ -59,6 +59,52 @@ func TestRenderBuilderVM(t *testing.T) {
 		if !strings.Contains(script, want) {
 			t.Errorf("builder cloud-init missing %q", want)
 		}
+	}
+}
+
+// Each --karg reaches the builder's `bootc install to-disk` as its own
+// single-quoted word, so it is in the boot entry from the first boot. The
+// cloud-config stays valid YAML with a quote in a value.
+func TestBuilderScript_Kargs(t *testing.T) {
+	t.Setenv("CORRAL_REGISTRY_MIRROR", "off")
+	script := builderScript("ghcr.io/tuna-os/yellowfin:gnome", "ssh-ed25519 AAAA", "",
+		[]string{"tunaos.countme=0", "console=ttyS0,115200n8", "it's=1"})
+	want := `bootc install to-disk $BACKEND --filesystem "$FS" --wipe --karg 'tunaos.countme=0' --karg 'console=ttyS0,115200n8' --karg 'it'\''s=1' \`
+	if !strings.Contains(script, want) {
+		t.Errorf("builder script missing %q:\n%s", want, script)
+	}
+	if strings.Contains(script, "__KARGS__") {
+		t.Error("builder script still holds the __KARGS__ placeholder")
+	}
+	var doc map[string]any
+	if err := yaml.Unmarshal([]byte(script), &doc); err != nil {
+		t.Fatalf("builder cloud-config with kargs is not valid YAML: %v", err)
+	}
+
+	plain := builderScript("ghcr.io/tuna-os/yellowfin:gnome", "ssh-ed25519 AAAA", "", nil)
+	if !strings.Contains(plain, `--filesystem "$FS" --wipe \`) || strings.Contains(plain, "--karg") || strings.Contains(plain, "__KARGS__") {
+		t.Errorf("builder script without kargs must keep the plain install line:\n%s", plain)
+	}
+}
+
+// The builder VM records the kargs it installs, which is what a later
+// `--resume` checks. A build with no kargs records nothing.
+func TestRenderBuilderVM_RecordsKargs(t *testing.T) {
+	vm := generateBuilderVM("e2e-x-bootc-builder", "corral-vms", "e2e-x-bootc-disk",
+		"e2e-x-bootc-builder-cloudinit", "quay.io/centos-bootc/centos-bootc:stream9",
+		[]string{"tunaos.countme=0", "console=ttyS0,115200n8"}, "")
+	ann := vm["metadata"].(map[string]any)["annotations"].(map[string]any)
+	if got := ann["corral.bootc/kargs"]; got != "tunaos.countme=0 console=ttyS0,115200n8" {
+		t.Errorf("corral.bootc/kargs = %v, want the space-joined kargs", got)
+	}
+	if ann["corral.bootc/image"] != "quay.io/centos-bootc/centos-bootc:stream9" {
+		t.Errorf("corral.bootc/image = %v", ann["corral.bootc/image"])
+	}
+
+	none := generateBuilderVM("e2e-x-bootc-builder", "corral-vms", "e2e-x-bootc-disk",
+		"e2e-x-bootc-builder-cloudinit", "quay.io/centos-bootc/centos-bootc:stream9", nil, "")
+	if _, ok := none["metadata"].(map[string]any)["annotations"].(map[string]any)["corral.bootc/kargs"]; ok {
+		t.Error("a build with no kargs must not record a corral.bootc/kargs annotation")
 	}
 }
 
@@ -90,7 +136,7 @@ func TestRenderBootcFinalVM(t *testing.T) {
 // ENTIRE config ("empty cloud config"), so the build never started.
 func TestBuilderSecretUserdataIsValidYAML(t *testing.T) {
 	provision := "#!/bin/bash\nsystemctl enable sshd\necho 'EOF'\nkey: looks-like-yaml\n"
-	secret := generateBuilderSecret("vm1", "ns1", "ghcr.io/tuna-os/yellowfin:gnome", "ssh-ed25519 AAAA test", provision)
+	secret := generateBuilderSecret("vm1", "ns1", "ghcr.io/tuna-os/yellowfin:gnome", "ssh-ed25519 AAAA test", provision, nil)
 	userdata, _ := secret["stringData"].(map[string]any)["userdata"].(string)
 	if userdata == "" {
 		t.Fatal("empty userdata")
@@ -115,7 +161,7 @@ func TestBuilderSecretUserdataIsValidYAML(t *testing.T) {
 func TestRenderBuilderVM_NodePinned(t *testing.T) {
 	vm := generateBuilderVM("e2e-x-bootc-builder", "corral-vms",
 		"e2e-x-bootc-disk", "e2e-x-bootc-builder-cloudinit",
-		"quay.io/centos-bootc/centos-bootc:stream9", "karnataka")
+		"quay.io/centos-bootc/centos-bootc:stream9", nil, "karnataka")
 	spec := vm["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)
 	sel, ok := spec["nodeSelector"].(map[string]any)
 	if !ok || sel["kubernetes.io/hostname"] != "karnataka" {
@@ -126,7 +172,7 @@ func TestRenderBuilderVM_NodePinned(t *testing.T) {
 func TestRenderBuilderVM_NoNodeMeansNoSelector(t *testing.T) {
 	vm := generateBuilderVM("e2e-x-bootc-builder", "corral-vms",
 		"e2e-x-bootc-disk", "e2e-x-bootc-builder-cloudinit",
-		"quay.io/centos-bootc/centos-bootc:stream9", "")
+		"quay.io/centos-bootc/centos-bootc:stream9", nil, "")
 	spec := vm["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)
 	if _, ok := spec["nodeSelector"]; ok {
 		t.Fatalf("expected no nodeSelector when node is empty, got %v", spec["nodeSelector"])

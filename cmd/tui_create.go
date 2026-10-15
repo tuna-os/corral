@@ -507,6 +507,7 @@ func resetCreateVars() {
 	createCloudInitPassword, createCloudInit = "", ""
 	createInstanceType, createPreference = "", ""
 	createFile, createStorageClass, createBootc = "", "", ""
+	createKargs = nil
 	createStart, createWaitSSH = false, false
 	createEphemeral, createTTL = false, ""
 	createLAN, createNetworkNAD, createBridgeIface, createLANService = false, "", "", false

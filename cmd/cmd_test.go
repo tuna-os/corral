@@ -1000,7 +1000,7 @@ func TestCTCreate_PortsFlag(t *testing.T) {
 }
 
 func TestLocalBootcScript_UsesTempDirMounts(t *testing.T) {
-	script := localBootcScript("/dev/loop7", "")
+	script := localBootcScript("/dev/loop7", "", nil)
 
 	if !strings.Contains(script, "DISK=/dev/loop7") {
 		t.Errorf("script missing DISK=/dev/loop7:\n%s", script)
@@ -1024,7 +1024,7 @@ func TestLocalBootcScript_UsesTempDirMounts(t *testing.T) {
 }
 
 func TestLocalBootcScript_WithProvisionScript(t *testing.T) {
-	script := localBootcScript("/dev/loop7", "echo test-provision")
+	script := localBootcScript("/dev/loop7", "echo test-provision", nil)
 
 	wantChroot := `cat /output/provision.sh | chroot "$MNT" /bin/bash`
 	if !strings.Contains(script, wantChroot) {
@@ -1032,5 +1032,65 @@ func TestLocalBootcScript_WithProvisionScript(t *testing.T) {
 	}
 	if strings.Contains(script, "chroot /mnt") {
 		t.Errorf("script contains forbidden chroot /mnt:\n%s", script)
+	}
+}
+
+func TestLocalBootcScript_Kargs(t *testing.T) {
+	script := localBootcScript("/dev/loop7", "", []string{"tunaos.countme=0", "console=ttyS0,115200n8", "it's=1"})
+	want := `--wipe --karg 'tunaos.countme=0' --karg 'console=ttyS0,115200n8' --karg 'it'\''s=1' --root-ssh-authorized-keys /output/id_rsa.pub "$DISK"`
+	if !strings.Contains(script, want) {
+		t.Errorf("script missing %q:\n%s", want, script)
+	}
+
+	plain := localBootcScript("/dev/loop7", "", nil)
+	if strings.Contains(plain, "--karg") || !strings.Contains(plain, `--wipe --root-ssh-authorized-keys`) {
+		t.Errorf("script without kargs must keep the plain install line:\n%s", plain)
+	}
+}
+
+func TestCreateKargFlag(t *testing.T) {
+	f := createCmd.Flags().Lookup("karg")
+	if f == nil {
+		t.Fatal("corral create has no --karg flag")
+	}
+	t.Cleanup(func() { createKargs = nil })
+	// Repeatable, and a comma stays inside its argument (StringArray, not
+	// StringSlice, which would split console=ttyS0,115200n8 in two).
+	for _, v := range []string{"tunaos.countme=0", "console=ttyS0,115200n8"} {
+		if err := createCmd.Flags().Set("karg", v); err != nil {
+			t.Fatalf("setting --karg %s: %v", v, err)
+		}
+	}
+	if got := strings.Join(createKargs, " "); got != "tunaos.countme=0 console=ttyS0,115200n8" {
+		t.Errorf("createKargs = %q", createKargs)
+	}
+	if !strings.Contains(createCmd.Flags().FlagUsages(), "--karg") {
+		t.Error("corral create --help must list --karg (tunaOS boot-gate.sh greps for it)")
+	}
+}
+
+func TestExecuteCreate_RejectsBadKargs(t *testing.T) {
+	t.Cleanup(func() { createKargs, createBootc = nil, "" })
+
+	createKargs, createBootc = []string{"tunaos.countme=0"}, ""
+	if err := executeCreate("vm", false); err == nil || !strings.Contains(err.Error(), "--karg needs --bootc") {
+		t.Errorf("--karg without --bootc: err = %v", err)
+	}
+
+	createKargs, createBootc = []string{"two words"}, "ghcr.io/tuna-os/yellowfin:gnome"
+	if err := executeCreate("vm", false); err == nil || !strings.Contains(err.Error(), "not one kernel argument") {
+		t.Errorf("whitespace karg: err = %v", err)
+	}
+}
+
+func TestBootcPluginArgs_ForwardsKargs(t *testing.T) {
+	t.Cleanup(func() { createBootc, createStorageClass, createNode, createKargs = "", "", "", nil })
+	createBootc, createStorageClass, createNode = "ghcr.io/tuna-os/yellowfin:gnome", "fast", "n1"
+	createKargs = []string{"tunaos.countme=0", "console=ttyS0,115200n8"}
+
+	got := strings.Join(bootcPluginArgs("gate", "ci", "40Gi"), " ")
+	want := "create gate --image ghcr.io/tuna-os/yellowfin:gnome -n ci --disk 40Gi --storage-class fast --node n1 --karg tunaos.countme=0 --karg console=ttyS0,115200n8"
+	if got != want {
+		t.Errorf("bootcPluginArgs = %q\nwant              %q", got, want)
 	}
 }
