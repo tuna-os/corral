@@ -20,6 +20,12 @@ env:
   KUBECTL_VERSION: v1.36.1
   VIRTCTL_VERSION: v1.8.2
 
+# A newer push to the same PR or branch supersedes a pending run; PR runs in
+# progress are cancelled too, main runs always finish.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     runs-on: ubuntu-26.04
