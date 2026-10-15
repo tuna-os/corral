@@ -371,6 +371,11 @@ func (m tuiModel) Init() tea.Cmd {
 }
 
 func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// Every operation the TUI started reports back here, whatever screen is up.
+	if m.updateOp(msg) {
+		return m, nil
+	}
+
 	switch msg := msg.(type) {
 	case tea.BackgroundColorMsg:
 		// The terminal answered. Rebuild every style for the real background,
@@ -412,10 +417,6 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		_, cmd := m.handleMouse(msg)
 		return m, cmd
-
-	case fleetMsg, cloneDoneMsg, createDoneMsg, doctorMsg, portsAppliedMsg, hwAppliedMsg, snapshotsMsg, eventsMsg:
-		m.updateOp(msg)
-		return m, nil
 
 	case pluginsLoadedMsg:
 		m.plugins.loading = false
@@ -482,8 +483,9 @@ func (m *tuiModel) runSelectedAction() tea.Cmd {
 	switch item.id {
 	case "ports":
 		m.mode = ModeEdit
-		m.edit = newEditModel(m.selected)
-		return m.edit.Init()
+		// The form shows once the VM's current ports have loaded.
+		m.edit = editModel{vm: m.selected}
+		return m.portsLoadCmd()
 	case "hardware":
 		m.mode = ModeHWEdit
 		if m.isCT {

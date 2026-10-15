@@ -124,10 +124,15 @@ func newMoveDestinationState(vm types.VM) poolsState {
 	return s
 }
 
-// planMove runs the preflight and switches to the plan screen. It changes
+// planMove runs the preflight for moving vm to destination. It changes
 // nothing — the same guarantee the web UI relies on to make a drop safe.
-func (s *poolsState) planMove(destination string) {
-	s.plan = move.Preflight(move.Inspect(s.vm, false), move.Target{Backend: destination})
+func planMove(vm types.VM, destination string) move.Plan {
+	return move.Preflight(move.Inspect(vm, false), move.Target{Backend: destination})
+}
+
+// showPlan switches to the plan screen.
+func (s *poolsState) showPlan(plan move.Plan) {
+	s.plan = plan
 	s.mode = "plan"
 	s.cursor = 0
 }
@@ -140,16 +145,43 @@ var executeMove = func(plan move.Plan) (move.Result, error) {
 	return move.Execute(context.Background(), plan, nil)
 }
 
-// commitMove runs an approved plan. Preflight already refused everything it
-// could; Execute re-checks rather than trusting this caller.
-func (s *poolsState) commitMove() {
-	result, err := executeMove(s.plan)
+// commitMove runs an approved plan and says where the instance went.
+// Preflight already refused everything it could; Execute re-checks rather
+// than trusting this caller.
+func commitMove(plan move.Plan) (string, error) {
+	result, err := executeMove(plan)
 	if err != nil {
-		s.err = err.Error()
-		return
+		return "", err
 	}
-	s.notice = fmt.Sprintf("moved to %s/%s — created stopped",
-		result.Destination.Backend, result.Destination.Name)
+	return fmt.Sprintf("moved to %s/%s — created stopped",
+		result.Destination.Backend, result.Destination.Name), nil
+}
+
+// planMsg carries a move preflight.
+type planMsg struct{ plan move.Plan }
+
+// moveDoneMsg reports an executed move, with the fleet after it.
+type moveDoneMsg struct {
+	notice string
+	err    error
+	fleet  fleetSnapshot
+}
+
+// planCmd runs the preflight for moving the selected instance to destination.
+func (m *tuiModel) planCmd(destination string) tea.Cmd {
+	vm := m.pools.vm
+	m.busyWith("Planning the move to " + destination)
+	return func() tea.Msg { return planMsg{plan: planMove(vm, destination)} }
+}
+
+// moveCmd runs the approved plan, then reloads the fleet.
+func (m *tuiModel) moveCmd() tea.Cmd {
+	plan, th := m.pools.plan, m.th
+	m.busyWith("Moving " + m.pools.vm.Name)
+	return func() tea.Msg {
+		notice, err := commitMove(plan)
+		return moveDoneMsg{notice: notice, err: err, fleet: loadFleet(th)}
+	}
 }
 
 // assign puts the instance in a pool, or takes it out when path is empty.
@@ -179,8 +211,8 @@ func (s *poolsState) assign(path string) {
 
 // updatePools handles a key. It returns false when the screen is done, which
 // the caller reads as "go back", matching how the snapshots and events views
-// hand control back.
-func (m *tuiModel) updatePools(msg tea.KeyPressMsg) bool {
+// hand control back, and the command for a preflight or a move.
+func (m *tuiModel) updatePools(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 	s := &m.pools
 
 	if s.naming {
@@ -203,12 +235,12 @@ func (m *tuiModel) updatePools(msg tea.KeyPressMsg) bool {
 				s.path += r
 			}
 		}
-		return true
+		return true, nil
 	}
 
 	switch msg.String() {
 	case "esc", "q":
-		return false
+		return false, nil
 	case "up", "k":
 		if s.cursor > 0 {
 			s.cursor--
@@ -218,41 +250,47 @@ func (m *tuiModel) updatePools(msg tea.KeyPressMsg) bool {
 			s.cursor++
 		}
 	case "enter", " ":
-		return s.activate()
+		stay, planTo := s.activate()
+		if planTo != "" {
+			return true, m.planCmd(planTo)
+		}
+		return stay, nil
 	case "y":
-		// Only the plan screen has a confirm, and only when it can run.
+		// Only the plan screen has a confirm, and only when it can run. The
+		// screen closes when the move reports back.
 		if s.mode == "plan" && s.plan.OK() {
-			s.commitMove()
-			return false
+			return true, m.moveCmd()
 		}
 	}
-	return true
+	return true, nil
 }
 
-func (s *poolsState) activate() bool {
+// activate runs the highlighted row. It reports false when the screen is done,
+// and the destination to plan a move to when that is what the row asks for.
+func (s *poolsState) activate() (bool, string) {
 	if s.mode == "plan" {
-		return true // the plan screen confirms with y, not enter
+		return true, "" // the plan screen confirms with y, not enter
 	}
 	if s.cursor >= len(s.choices) {
-		return true
+		return true, ""
 	}
 	choice := s.choices[s.cursor]
 	if !choice.enabled() {
 		s.err = choice.reason
-		return true
+		return true, ""
 	}
 	switch s.mode {
 	case "assign":
 		if choice.value == "\x00new" {
 			s.naming, s.err = true, ""
-			return true
+			return true, ""
 		}
 		s.assign(choice.value)
-		return false
+		return false, ""
 	case "destination":
-		s.planMove(choice.value)
+		return true, choice.value
 	}
-	return true
+	return true, ""
 }
 
 // ── rendering ─────────────────────────────────────────────────────

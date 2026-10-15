@@ -8,6 +8,7 @@ package cmd
 // one with no move at all.
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -34,6 +35,14 @@ func poolVM() types.VM {
 
 // ── assigning to a pool ───────────────────────────────────────────
 
+// poolKey feeds one key to the pools screen and runs any command it starts,
+// reporting whether the screen stays open.
+func poolKey(m *tuiModel, k string) bool {
+	stay, cmd := m.updatePools(key(k))
+	*m = settle(*m, cmd)
+	return stay
+}
+
 func TestPoolAssign_PutsTheInstanceInTheChosenPool(t *testing.T) {
 	store := scratchPools(t, folder.Folder{Path: "prod"})
 	vm := poolVM()
@@ -42,10 +51,10 @@ func TestPoolAssign_PutsTheInstanceInTheChosenPool(t *testing.T) {
 	m.mode = ModePools
 
 	// row 0 is "(unassigned)", row 1 is "prod".
-	if !m.updatePools(key("down")) {
+	if !poolKey(&m, "down") {
 		t.Fatal("moving the cursor closed the screen")
 	}
-	if m.updatePools(key("enter")) {
+	if poolKey(&m, "enter") {
 		t.Fatal("choosing a pool should close the screen")
 	}
 
@@ -69,7 +78,7 @@ func TestPoolAssign_UnassignRemovesMembership(t *testing.T) {
 	m := testModel(vm)
 	m.pools = newPoolAssignState(vm)
 
-	if m.updatePools(key("enter")) { // row 0 = "(unassigned)"
+	if poolKey(&m, "enter") { // row 0 = "(unassigned)"
 		t.Fatal("choosing unassigned should close the screen")
 	}
 	tree, _ := store.Tree()
@@ -86,16 +95,16 @@ func TestPoolAssign_CreatesANestedPoolInline(t *testing.T) {
 
 	// The last row is "+ new pool…".
 	for range len(m.pools.choices) - 1 {
-		m.updatePools(key("down"))
+		poolKey(&m, "down")
 	}
-	m.updatePools(key("enter"))
+	poolKey(&m, "enter")
 	if !m.pools.naming {
 		t.Fatal("the new-pool prompt did not open")
 	}
 	for _, r := range "prod/web" {
-		m.updatePools(key(string(r)))
+		poolKey(&m, string(r))
 	}
-	m.updatePools(key("enter"))
+	poolKey(&m, "enter")
 
 	tree, _ := store.Tree()
 	if got := tree.PathOf(vm.Ref()); got != "prod/web" {
@@ -147,7 +156,7 @@ func TestMove_ChoosingADestinationOnlyShowsThePlan(t *testing.T) {
 	m := testModel(vm)
 	m.pools = newMoveDestinationState(vm)
 
-	if !m.updatePools(key("enter")) {
+	if !poolKey(&m, "enter") {
 		t.Fatal("choosing a destination closed the screen instead of showing the plan")
 	}
 	if m.pools.mode != "plan" {
@@ -175,19 +184,21 @@ func TestMovePlan_ConfirmRunsTheMoveExactlyOnce(t *testing.T) {
 	vm := poolVM()
 	m := testModel(vm)
 	m.pools = newMoveDestinationState(vm)
-	m.updatePools(key("enter")) // to the plan
+	m.mode = ModePools
+	poolKey(&m, "enter") // to the plan
 
 	if !m.pools.plan.OK() {
 		t.Skipf("no runnable destination in this environment: %v", m.pools.plan.Refusals)
 	}
-	if m.updatePools(key("y")) {
-		t.Fatal("confirming should close the screen")
+	// The screen closes when the move reports back.
+	if m = press(m, "y"); m.mode != ModeList {
+		t.Fatalf("confirming should close the screen, mode %v", m.mode)
 	}
 	if *runs != 1 {
 		t.Fatalf("the move ran %d times, want exactly 1", *runs)
 	}
-	if !strings.Contains(m.pools.notice, "created stopped") {
-		t.Errorf("the result does not say the instance is not running yet: %q", m.pools.notice)
+	if m.noticeKind != "ok" || !strings.Contains(m.notice, "created stopped") {
+		t.Errorf("the result does not say the instance is not running yet: %q (%s)", m.notice, m.noticeKind)
 	}
 }
 
@@ -234,7 +245,7 @@ func TestMove_SelectingIncusProceedsToThePlan(t *testing.T) {
 			m.pools.cursor = i
 		}
 	}
-	m.updatePools(key("enter"))
+	poolKey(&m, "enter")
 	if m.pools.mode != "plan" {
 		t.Fatalf("selecting an enabled destination should produce a plan: mode=%q err=%q", m.pools.mode, m.pools.err)
 	}
@@ -248,7 +259,7 @@ func TestMovePlan_RefusedPlanOffersNoConfirmation(t *testing.T) {
 	vm.Backend = "qemu" // a guest cannot be moved onto its own backend
 	m := testModel(vm)
 	m.pools = newMoveDestinationState(vm)
-	m.pools.planMove("qemu")
+	m.pools.showPlan(planMove(vm, "qemu"))
 
 	if m.pools.plan.OK() {
 		t.Fatal("expected a refused plan for a backend that cannot export")
@@ -263,7 +274,7 @@ func TestMovePlan_RefusedPlanOffersNoConfirmation(t *testing.T) {
 	// Pressing it anyway must do nothing — and "nothing" means the executor
 	// was never reached, not merely that the screen stayed put.
 	runs := countMoves(t)
-	if !m.updatePools(key("y")) {
+	if !poolKey(&m, "y") {
 		t.Fatal("y closed the screen on a refused plan")
 	}
 	if *runs != 0 {
@@ -334,5 +345,41 @@ func TestPoolPicker_CountsReadAsEnglish(t *testing.T) {
 				t.Errorf("empty pool reads %q", choice.detail)
 			}
 		}
+	}
+}
+
+// Choosing a destination plans in a command, and a move that fails closes the
+// screen with the reason in the status bar rather than dropping it.
+func TestMove_PlanAndMoveRunInCommands(t *testing.T) {
+	scratchPools(t)
+	previous := executeMove
+	executeMove = func(move.Plan) (move.Result, error) { return move.Result{}, errors.New("export refused") }
+	t.Cleanup(func() { executeMove = previous })
+
+	vm := poolVM()
+	m := testModel(vm)
+	m.mode, m.pools = ModePools, newMoveDestinationState(vm)
+
+	next, cmd := m.Update(key("enter"))
+	m = next.(tuiModel)
+	if !m.busy || cmd == nil || m.pools.mode == "plan" {
+		t.Fatalf("enter should plan in a command (busy %v, pools mode %q)", m.busy, m.pools.mode)
+	}
+	m = settle(m, cmd)
+	if m.pools.mode != "plan" {
+		t.Fatalf("the plan never landed: pools mode %q", m.pools.mode)
+	}
+	if !m.pools.plan.OK() {
+		t.Skipf("no runnable destination in this environment: %v", m.pools.plan.Refusals)
+	}
+
+	next, cmd = m.Update(key("y"))
+	m = next.(tuiModel)
+	if !m.busy || cmd == nil || m.mode != ModePools {
+		t.Fatalf("y should run the move in a command and keep the plan up (busy %v, mode %v)", m.busy, m.mode)
+	}
+	m = settle(m, cmd)
+	if m.mode != ModeList || m.noticeKind != "error" || !strings.Contains(m.notice, "export refused") {
+		t.Errorf("after a failed move: mode %v, notice %q (%s)", m.mode, m.notice, m.noticeKind)
 	}
 }
