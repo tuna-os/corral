@@ -105,10 +105,11 @@ jobs:
             echo "boot-timeout=35m" >> "$GITHUB_OUTPUT"
           fi
 
+      # ovmf: the guest boots under UEFI, which is what bootc installs for.
       - name: Install the tools the harness drives
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq podman qemu-system-x86 qemu-utils ffmpeg
+          sudo apt-get install -y -qq podman qemu-system-x86 qemu-utils ovmf ffmpeg
 
       # Built into the workspace, not /usr/local/bin: the runner user cannot
       # write there, and `sudo -E ./corral` reaches the same binary.

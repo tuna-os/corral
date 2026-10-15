@@ -71,6 +71,22 @@ type Spec struct {
 	// tested: it only has to say something.
 	ReadyMarker string `yaml:"readyMarker"`
 
+	// FailMarker is a regular expression matched against the guest's serial
+	// console while the run waits for ready. When it matches, the run fails
+	// at once instead of waiting out the timeout: a guest that says it is in
+	// an emergency shell, or that its own contract failed, has answered.
+	FailMarker string `yaml:"failMarker"`
+
+	// Kargs are kernel arguments installed into the boot entry, after the
+	// serial console argument the harness always adds. They are there from
+	// the first boot, which a command run over SSH afterwards is not.
+	Kargs []string `yaml:"kargs"`
+
+	// Filesystem overrides the root filesystem the image's bootc backend
+	// implies (xfs for ostree, ext4 or btrfs for composefs). Empty lets the
+	// backend decide, which is right unless the image needs something else.
+	Filesystem string `yaml:"filesystem"`
+
 	// Users are accounts created in the derived image. A test that has to log
 	// in as a human needs one, and bootc's own install only knows about root.
 	Users []User `yaml:"users"`
@@ -280,6 +296,21 @@ func (s *Spec) Validate() error {
 			problems = append(problems, fmt.Sprintf("readyMarker %q is not a valid regular expression: %v", s.ReadyMarker, err))
 		}
 	}
+	if s.FailMarker != "" {
+		if _, err := regexp.Compile(s.FailMarker); err != nil {
+			problems = append(problems, fmt.Sprintf("failMarker %q is not a valid regular expression: %v", s.FailMarker, err))
+		}
+	}
+	switch s.Filesystem {
+	case "", "xfs", "ext4", "btrfs":
+	default:
+		problems = append(problems, fmt.Sprintf("filesystem %q is not one of xfs, ext4, btrfs", s.Filesystem))
+	}
+	for i, karg := range s.Kargs {
+		if strings.TrimSpace(karg) == "" || strings.ContainsAny(karg, " \t\n") {
+			problems = append(problems, fmt.Sprintf("kargs[%d] %q is not one kernel argument", i, karg))
+		}
+	}
 	for i, u := range s.Users {
 		if strings.TrimSpace(u.Name) == "" {
 			problems = append(problems, fmt.Sprintf("users[%d] has no name", i))
@@ -307,11 +338,27 @@ func (s *Spec) Validate() error {
 // readyPattern compiles the serial readiness marker, or returns nil when the
 // run gates on SSH instead.
 func (s *Spec) readyPattern() (*regexp.Regexp, error) {
-	if s.ReadyMarker == "" {
+	return linePattern(s.ReadyMarker)
+}
+
+// failPattern compiles the serial failure marker, or returns nil when there
+// is none.
+func (s *Spec) failPattern() (*regexp.Regexp, error) {
+	return linePattern(s.FailMarker)
+}
+
+// linePattern wraps a marker so a match quotes the whole line it was on.
+func linePattern(marker string) (*regexp.Regexp, error) {
+	if marker == "" {
 		return nil, nil
 	}
-	// Matched against a whole line so the result can quote what it found.
-	return regexp.Compile(".*" + s.ReadyMarker + ".*")
+	return regexp.Compile(".*" + marker + ".*")
+}
+
+// kargs are the kernel arguments installed into the boot entry: the serial
+// console the harness reads, then whatever the spec adds.
+func (s *Spec) kargs() []string {
+	return append([]string{SerialKarg}, s.Kargs...)
 }
 
 // imageScripts and bootScripts split provision entries by when they run.

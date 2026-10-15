@@ -16,6 +16,11 @@ disk: 32GiB
 timeout: 20m
 sshUser: root
 readyMarker: YELLOWFIN_READY
+failMarker: YELLOWFIN_FAIL
+kargs:
+  - tunaos.countme=0
+  - systemd.unit=graphical.target
+filesystem: ext4
 rootPassword: rootpw
 users:
   - name: tester
@@ -88,6 +93,13 @@ func TestParse_FullSpec(t *testing.T) {
 	if !spec.needsLayer() {
 		t.Error("a spec with users, packages and files needs a layer")
 	}
+	if spec.FailMarker != "YELLOWFIN_FAIL" || spec.Filesystem != "ext4" {
+		t.Errorf("failMarker/filesystem = %q/%q", spec.FailMarker, spec.Filesystem)
+	}
+	// The serial console comes first: a spec's kargs add to it, never replace it.
+	if got := strings.Join(spec.kargs(), " "); got != SerialKarg+" tunaos.countme=0 systemd.unit=graphical.target" {
+		t.Errorf("kargs = %q", got)
+	}
 }
 
 func TestParse_RejectsUnknownFields(t *testing.T) {
@@ -124,6 +136,9 @@ func TestWithDefaults(t *testing.T) {
 func TestValidate_ReportsEveryProblemAtOnce(t *testing.T) {
 	spec := &Spec{
 		ReadyMarker: "([unclosed",
+		FailMarker:  "(also",
+		Kargs:       []string{"two words"},
+		Filesystem:  "zfs",
 		Users:       []User{{Name: ""}, {Name: "bad name"}},
 		Files:       []File{{Path: "relative/path"}},
 		LayerEngine: "podman",
@@ -132,7 +147,7 @@ func TestValidate_ReportsEveryProblemAtOnce(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected a validation error")
 	}
-	for _, want := range []string{"no image to test", "readyMarker", "users[0]", "users[1]", "files[0]", "layerEngine"} {
+	for _, want := range []string{"no image to test", "readyMarker", "failMarker", "kargs[0]", "filesystem", "users[0]", "users[1]", "files[0]", "layerEngine"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error is missing %q:\n%v", want, err)
 		}

@@ -230,7 +230,9 @@ and `system_files/` shape. `--layer-engine` forces one.
 production desktop image — cannot answer an SSH probe, so `readyMarker` waits
 for a regular expression on the serial console instead. Every local VM now
 captures its console to `serial.log`, and vmtest installs `console=ttyS0` as a
-kernel argument at install time so the log survives reboots.
+kernel argument at install time so the log survives reboots. A `failMarker`
+ends the wait the moment the guest reports its own failure, and the spec's
+`kargs` follow `console=ttyS0` into the boot entry.
 
 **The post-boot hook reports twice.** A systemd oneshot writes its exit code to
 `/var/lib/corral/postboot.status` for SSH to read, and prints

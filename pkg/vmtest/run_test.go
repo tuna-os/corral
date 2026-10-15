@@ -352,6 +352,104 @@ func TestWaitReady_SSHTimeoutCarriesTheConsoleTail(t *testing.T) {
 	}
 }
 
+// A failure marker ends the wait the moment the console shows it, and is
+// checked before the ready marker: a guest that printed both has failed.
+func TestWaitReady_FailMarkerEndsTheWait(t *testing.T) {
+	dir := vmState(t, "gate")
+	if err := os.WriteFile(filepath.Join(dir, "serial.log"),
+		[]byte("DESKTOP_OK\nBASE_FAIL no system bus\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	spec := &Spec{Name: "gate", ReadyMarker: "DESKTOP_OK", FailMarker: "BASE_FAIL|emergency mode"}
+	spec.WithDefaults() // fifteen minutes: the test passes only if the wait ends early
+	result := &Result{}
+	err := waitReady(spec, Keypair{}, result, func(string) {})
+	if err == nil {
+		t.Fatal("a reported failure should fail the wait")
+	}
+	if !strings.Contains(err.Error(), "BASE_FAIL no system bus") {
+		t.Errorf("the error should quote the failure line: %v", err)
+	}
+	if result.ReadyBy != "" {
+		t.Errorf("readyBy = %q for a guest that reported a failure", result.ReadyBy)
+	}
+}
+
+// With a failure marker that never appears, the ready marker decides exactly
+// as it does on its own.
+func TestWaitReady_FailMarkerAbsentLeavesTheReadyGate(t *testing.T) {
+	pollInterval = time.Millisecond
+	t.Cleanup(func() { pollInterval = 2 * time.Second })
+	dir := vmState(t, "gate")
+	if err := os.WriteFile(filepath.Join(dir, "serial.log"), []byte("boot\nDESKTOP_OK now\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	spec := &Spec{Name: "gate", ReadyMarker: "DESKTOP_OK", FailMarker: "BASE_FAIL"}
+	spec.WithDefaults()
+	result := &Result{}
+	if err := waitReady(spec, Keypair{}, result, func(string) {}); err != nil {
+		t.Fatalf("waitReady: %v", err)
+	}
+	if result.ReadyBy != readyByMarker || !strings.Contains(result.ReadyEvidence, "DESKTOP_OK now") {
+		t.Errorf("readyBy/evidence = %q/%q", result.ReadyBy, result.ReadyEvidence)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "serial.log"), []byte("boot\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	spec.Timeout = Duration(10 * time.Millisecond)
+	err := waitReady(spec, Keypair{}, &Result{}, func(string) {})
+	if err == nil || !strings.Contains(err.Error(), "did not appear") {
+		t.Errorf("want the marker timeout, got %v", err)
+	}
+}
+
+// Without a ready marker, a failure marker still watches the console while
+// the SSH probe decides readiness.
+func TestWaitReady_FailMarkerWatchesAnSSHGate(t *testing.T) {
+	pollInterval = time.Millisecond
+	t.Cleanup(func() { pollInterval = 2 * time.Second })
+	dir := vmState(t, "gate")
+	if err := os.WriteFile(filepath.Join(dir, "metadata.json"), []byte(`{"name":"gate","ssh_port":2242}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	serial := filepath.Join(dir, "serial.log")
+	if err := os.WriteFile(serial, []byte("booting\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	attempts := 0
+	qemu.SetSSHRunner(func(string, ...string) ([]byte, error) {
+		attempts++
+		if attempts == 2 {
+			if err := os.WriteFile(serial, []byte("booting\nYou are in emergency mode\n"), 0o644); err != nil {
+				t.Error(err)
+			}
+		}
+		return []byte("Connection refused"), errors.New("exit status 255")
+	})
+	t.Cleanup(func() { qemu.SetSSHRunner(nil) })
+
+	spec := &Spec{Name: "gate", FailMarker: "emergency mode"}
+	spec.WithDefaults()
+	err := waitReady(spec, Keypair{PrivatePath: "/run/key"}, &Result{}, func(string) {})
+	if err == nil || !strings.Contains(err.Error(), "You are in emergency mode") {
+		t.Errorf("want the failure marker, got %v", err)
+	}
+
+	// And a guest that answers is ready by SSH.
+	if err := os.WriteFile(serial, []byte("booting\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	qemu.SetSSHRunner(func(string, ...string) ([]byte, error) { return nil, nil })
+	result := &Result{}
+	if err := waitReady(spec, Keypair{PrivatePath: "/run/key"}, result, func(string) {}); err != nil {
+		t.Fatalf("waitReady: %v", err)
+	}
+	if result.ReadyBy != readyBySSH {
+		t.Errorf("readyBy = %q, want %q", result.ReadyBy, readyBySSH)
+	}
+}
+
 func TestOperatorKey(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
