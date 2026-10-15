@@ -55,28 +55,14 @@ with --force. The scan never dials hosts you have not configured.`,
 		// at most one default is ever set.
 		for _, r := range report.Ranked() {
 			var opts setup.ApplyOptions
-			switch r.Backend {
-			case "incus", "libvirt":
-				if r.Verdict != setup.VerdictReady {
-					continue
-				}
-				if _, ok := config.FindContext(r.Backend); ok && !setupForce {
-					fmt.Printf("%s: context %q already exists (use --force to replace).\n", r.Backend, r.Backend)
-					continue
-				}
-			case "kubevirt":
-				if r.Verdict != setup.VerdictReady {
-					continue
-				}
-				if _, ok := config.FindContext("kubevirt"); ok && !setupForce {
-					fmt.Println("kubevirt: context \"kubevirt\" already exists (use --force to replace).")
-					continue
-				}
-			case "proxmox":
-				// A configured-but-unhealthy PVE host is not re-offered; an
-				// explicit new host comes from flags, not from the scan.
+			// The scan says which backends get a context offer; a
+			// configured-but-unhealthy PVE host is not re-offered, since an
+			// explicit new host comes from flags, not from the scan.
+			if !r.Offerable || r.Verdict != setup.VerdictReady {
 				continue
-			default:
+			}
+			if _, ok := config.FindContext(r.Backend); ok && !setupForce {
+				fmt.Printf("%s: context %q already exists (use --force to replace).\n", r.Backend, r.Backend)
 				continue
 			}
 			opts.Overwrite = setupForce
