@@ -133,7 +133,11 @@ jobs:
 
   publish-image:
     # corral-web image: the web UI served on the cluster (deploy/corral-web.yaml)
+    # Not on pull requests: there it built both arches and pushed nothing,
+    # which web-image-smoke (same Containerfile, amd64, plus the probes) and
+    # its arm64 cross-build step already cover — one runner per PR push saved.
     needs: test
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-26.04
     permissions:
       contents: read
@@ -206,6 +210,11 @@ jobs:
 
       - name: Build image and smoke-test probes
         run: ./scripts/smoke-web-image.sh
+
+      # publish-image builds amd64 and arm64 on main; this keeps a PR from
+      # breaking the arm64 binary that image (and release-binaries) ships.
+      - name: Cross-build arm64 (bootc tag)
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -tags bootc -o /dev/null .
 
   release-binaries:
     # Publishes static binaries to a rolling "binaries" release so consumers
