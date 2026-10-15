@@ -38,6 +38,12 @@ func TestAcquireLease_CreateWins(t *testing.T) {
 	if manifest.Metadata.Name != leaseName("devpool-1") || manifest.Spec.HolderIdentity != "alice" {
 		t.Errorf("lease manifest = %+v", manifest)
 	}
+	// The API server parses MicroTime with exactly six fractional digits.
+	for _, ts := range []string{manifest.Spec.AcquireTime, manifest.Spec.RenewTime} {
+		if _, err := time.Parse(leaseTimeLayout, ts); err != nil {
+			t.Errorf("lease time %q is not a MicroTime: %v", ts, err)
+		}
+	}
 	if manifest.Metadata.ResourceVersion != "" {
 		t.Errorf("a create must not carry a resourceVersion, got %q", manifest.Metadata.ResourceVersion)
 	}

@@ -39,6 +39,13 @@ type leaseRef struct {
 
 func leaseName(member string) string { return leasePrefix + member }
 
+// leaseTimeLayout is the MicroTime wire format of a Lease's acquireTime and
+// renewTime (RFC3339Micro in k8s.io/apimachinery). The API server rejects
+// any other number of fractional digits, so RFC3339Nano fails.
+const leaseTimeLayout = "2006-01-02T15:04:05.000000Z07:00"
+
+func leaseTime(t time.Time) string { return t.UTC().Format(leaseTimeLayout) }
+
 // vmLeaseRef is the Lease of a VM-backed pool member.
 func vmLeaseRef(namespace, pool, member string) leaseRef {
 	return leaseRef{Namespace: namespace, Name: leaseName(member), Labels: map[string]string{labelPool: pool, labelVDIMember: member}}
@@ -60,8 +67,8 @@ func leaseManifest(ref leaseRef, holder string, duration time.Duration, now time
 	data, err := json.Marshal(map[string]any{
 		"apiVersion": "coordination.k8s.io/v1", "kind": "Lease", "metadata": metadata,
 		"spec": map[string]any{
-			"holderIdentity": holder, "acquireTime": now.Format(time.RFC3339Nano),
-			"renewTime": now.Format(time.RFC3339Nano), "leaseDurationSeconds": int32(duration.Seconds()),
+			"holderIdentity": holder, "acquireTime": leaseTime(now),
+			"renewTime": leaseTime(now), "leaseDurationSeconds": int32(duration.Seconds()),
 		},
 	})
 	if err != nil {
