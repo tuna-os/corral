@@ -17,15 +17,14 @@ images on a KubeVirt cluster (`scripts/boot-gate.sh` in tunaOS).
 
 ---
 
-## Current Status (2026-10-15)
+## Current Status (2026-10-16)
 
 - Corral is a Go rewrite of the legacy Python `tailvm`. On-disk names keep
   the `tailvm-` prefix during the transition ([SPEC.md](SPEC.md)).
 - Corral supports nine backends. The `bootc` mode builds a disk from a
   bootable container on the cluster. Then it runs that disk as a KubeVirt VM.
-- 🟡 **The org CI change waits for review.** tunaOS#3249 moves the tunaOS boot
-  gate (`reusable-build-image.yml`) from `scripts/iso-e2e.sh` to
-  `corral vmtest`. Its smoke cells pass on hosted KVM. See #431.
+- ✅ **tunaOS CI uses Corral as its boot gate.** tunaOS#3249 replaced
+  `scripts/iso-e2e.sh` with `corral vmtest` v0.7.0 (#431).
 - ✅ **v0.7.0 is out** (2026-10-15): signed binaries with SBOMs,
   and Homebrew is on v0.7.0 (#339, #210).
 - The repo has no milestones. This file and the issue labels track the work.
@@ -34,39 +33,25 @@ images on a KubeVirt cluster (`scripts/boot-gate.sh` in tunaOS).
 
 | Priority | Item | Tracking | Status |
 |----------|------|----------|--------|
-| P0 | Launch: Show HN and announcements | #423, #424, #425, #426 | 🔴 Open; release done |
-| P1 | tunaOS CI boot-gate adoption | #431 | 🟡 tunaOS#3249 in review (Corral side merged: #512, #514, #546, #570) |
+| P0 | Launch: Show HN and announcements (drafts in `docs/blog/`) | #423, #424, #425, #426 | 🟡 Drafts merged (#611); a person must post them |
 | P3 | Dependency hygiene | #97 | 🟢 Ongoing (Renovate) |
 
 ---
 
 ## Roadmap (dependency order)
 
-Phases 2 and 3 and the v0.7.0 release are done (see the Done list). The
-open work is the tunaOS adoption and the launch.
-
-```mermaid
-flowchart TD
-  L1["#423 Show HN"]
-  L4["#424 KubeVirt partnership"]
-  L3["#425 VDI launch"]
-  BG["#431 tunaOS boot gate"] --> L2["#426 bootc case study"]
-```
-
-### Phase 1: Adoption (now)
-
-| Item | Issue | Depends on | Owner |
-|------|-------|------------|-------|
-| tunaOS CI boot gate: review and merge tunaOS#3249 | #431 | — (cross-repo) | ci-maintainer |
+Phases 1 to 3 are done (see the Done list). The launch remains. Each
+launch item has a draft in `docs/blog/` and a `ready-for-human` label.
 
 ### Phase 4: Launch and outreach
 
-The git history is clean (#264) and v0.7.0 is public (#339).
+The git history is clean (#264), v0.7.0 is public (#339), and tunaOS uses
+the gate (#431).
 
 | Item | Issue | Depends on |
 |------|-------|------------|
 | Show HN | #423 | — |
-| bootc case study | #426 | #431 |
+| bootc case study | #426 | — |
 | VDI launch announcement | #425 | — |
 | KubeVirt ecosystem positioning | #424 | — |
 
@@ -123,6 +108,10 @@ The git history is clean (#264) and v0.7.0 is public (#339).
 - Enterprise backends (RFC-0003): VirtualBox, vSphere, XenServer/XCP-ng and
   Nutanix, and CLI commands through the adapters: #507 (#586–#591, #594–#596).
 - TUI models in their own files (`cmd/tui.go` 1,496 to 590 lines): #554.
+- v0.7.0 released with signed binaries and SBOMs: #339, #210.
+- tunaOS CI boot gate on `corral vmtest` (tunaOS#3249): #431.
+- `e2e-kind` is a required check. Its path filter is a job, so PRs that
+  skip the end-to-end test do not block.
 - Old build files removed from the git history (33 MB to 12 MB): #264.
 
 ---
