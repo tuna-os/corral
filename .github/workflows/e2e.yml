@@ -13,28 +13,11 @@ on:
   # Only run the (expensive) browser e2e when something that affects runtime
   # behaviour changes — Go code, the served UI, the e2e specs themselves, or the
   # deploy manifests. Docs/marketplace/CI-config-only PRs skip it.
-  # The "!" lines drop Go that cannot change the `corral web` this job drives:
-  # tests, the TUI, the plugin binaries (cmd/corral-*), and the pkg/ trees the
-  # corral binary does not import (`go list -tags bootc -deps .`). Every push
-  # to main still runs the whole suite.
+  # The `changes` job below holds the filter. It drops Go that cannot change
+  # the `corral web` this job drives: tests, the TUI, the plugin binaries
+  # (cmd/corral-*), and the pkg/ trees the corral binary does not import
+  # (`go list -tags bootc -deps .`). Every push to main runs the whole suite.
   pull_request:
-    paths:
-      - "**.go"
-      - "go.mod"
-      - "go.sum"
-      - "e2e/**"
-      - "pkg/web/static/**"
-      - "deploy/**"
-      - "Containerfile"
-      - ".github/workflows/e2e.yml"
-      - "!**_test.go"
-      - "!cmd/tui*.go"
-      - "!cmd/corral-*/**"
-      - "!pkg/device/**"
-      - "!pkg/lifecycle/**"
-      - "!pkg/schedule/**"
-      - "!pkg/testenv/**"
-      - "scripts/e2e-vdi.sh"
   workflow_dispatch:
 
 # Least privilege by default: the read-only token is all any job here needs
@@ -62,7 +45,41 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # The path filter lives in a job, not under `on.pull_request.paths`, so that
+  # `e2e-kind` can be a required check. A workflow that a path filter skips
+  # never reports, and a required check that never reports blocks the merge.
+  # A job that its `if:` skips reports success.
+  changes:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.filter.outputs.run }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - id: filter
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ "$EVENT" != pull_request ]; then
+            echo run=true >>"$GITHUB_OUTPUT"; exit 0
+          fi
+          run=false
+          while IFS= read -r f; do
+            case "$f" in
+              *_test.go|cmd/tui*.go|cmd/corral-*/*|pkg/device/*|pkg/lifecycle/*|pkg/schedule/*|pkg/testenv/*) continue ;;
+            esac
+            case "$f" in
+              *.go|go.mod|go.sum|e2e/*|pkg/web/static/*|deploy/*|Containerfile|.github/workflows/e2e.yml|scripts/e2e-vdi.sh) run=true ;;
+            esac
+          done < <(git diff --name-only "$BASE"...HEAD)
+          echo "run=$run" | tee -a "$GITHUB_OUTPUT"
+
   e2e-kind:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     runs-on: ubuntu-26.04
     timeout-minutes: 45
     steps:
