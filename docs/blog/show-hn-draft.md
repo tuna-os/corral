@@ -1,6 +1,8 @@
 # Show HN draft
 
-> **Title:** Show HN: Corral – Proxmox-style VM manager for KubeVirt, QEMU, Incus, libvirt and Proxmox, one Go binary
+> **Title:** Show HN: Corral – Proxmox-style VM manager for KubeVirt, QEMU, Incus and libvirt
+
+The title has 80 characters. The HN limit is 80.
 >
 > **URL:** https://github.com/tuna-os/corral
 
@@ -73,7 +75,13 @@ from it. The alternative was to attach a foreign disk to an empty instance.
 That would have looked like it worked, and then behaved unlike every other
 Incus instance.
 
-Honest state of things: v0.6.x, about twelve weeks old, one developer plus a
+New in v0.7.0: `corral vmtest` boots a bootc image in a local QEMU VM, runs
+your checks, and exits with one code per failure class. That makes it a CI
+gate for "does this image boot?" (docs/ci-boot-gate.md). The VDI plugin's
+self-service desktop broker is now Stable on KubeVirt, with an end-to-end CI
+test. The rest of VDI is Preview, and docs/vdi.md says which part is which.
+
+Honest state of things: v0.7.0, about eighteen weeks old, one developer plus a
 lot of Claude. KubeVirt is still the most exercised path. But local QEMU, Incus
 and libvirt have caught up on the basics — inventory, create, lifecycle,
 snapshots, export. And local QEMU in the web UI is complete: lifecycle, info,
@@ -95,8 +103,10 @@ Apache-2.0. Happy to answer anything.
 - Submit early in the day, US Eastern, Tue–Thu. Have the `--demo` GIF at the
   top of the README before you submit (done).
 - Re-check the version and age line immediately before you post. It was
-  accurate at v0.6.0 (tagged 2026-08-06) against a repo created 2026-06-10.
-  We last refreshed the age line on 2026-09-02.
+  accurate at v0.7.0 (released 2026-10-15) against a repo created 2026-06-10.
+  We last refreshed the age line on 2026-10-16.
+- Paste the text between the two `---` lines as the first comment, right
+  after you submit the link.
 - Expected pushback to be ready for, each with its answer:
 - "why not virt-manager/Cockpit?" Answer: cluster, laptop, Incus, libvirt and
   PVE aggregated as one fleet, tailnet-native, bootc.
