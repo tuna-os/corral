@@ -7,7 +7,7 @@ import (
 )
 
 // ── accelArgsFor platform matrix ─────────────────────────────
-// The try-tuna-desktop one-liner runs on Linux and macOS; the matrix pins
+// Consumers run on Linux and macOS; the matrix pins
 // every combination so a refactor cannot silently move a platform back to
 // flags its hypervisor rejects.
 
