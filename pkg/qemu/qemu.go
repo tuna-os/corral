@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -760,9 +761,19 @@ func SSHViaVsock(name, username, command string) error {
 	return cmd.Run()
 }
 
+func qemuSystemBinary() string {
+	// Apple Silicon (and aarch64 Linux) run the aarch64 system emulator;
+	// everything else keeps the x86_64 one.
+	if runtime.GOARCH == "arm64" {
+		return "qemu-system-aarch64"
+	}
+	return "qemu-system-x86_64"
+}
+
 func findQEMU() (qemu, qemuImg string, err error) {
+	qemuBin := qemuSystemBinary()
 	// PATH first — covers any install location (and lets tests inject fakes).
-	if q, e1 := exec.LookPath("qemu-system-x86_64"); e1 == nil {
+	if q, e1 := exec.LookPath(qemuBin); e1 == nil {
 		if qi, e2 := exec.LookPath("qemu-img"); e2 == nil {
 			return q, qi, nil
 		}
@@ -772,8 +783,9 @@ func findQEMU() (qemu, qemuImg string, err error) {
 		"/home/linuxbrew/.linuxbrew/bin",
 		"/usr/bin",
 		"/usr/local/bin",
+		"/opt/homebrew/bin",
 	} {
-		qemuPath := filepath.Join(base, "qemu-system-x86_64")
+		qemuPath := filepath.Join(base, qemuBin)
 		qemuImgPath := filepath.Join(base, "qemu-img")
 		if _, e := os.Stat(qemuPath); e == nil {
 			if _, e := os.Stat(qemuImgPath); e == nil {
@@ -886,10 +898,27 @@ func qemuArgs(opts generateUnitOpts) []string {
 // one that starts and then cannot find its CPU model — both read as a broken
 // image rather than a machine that cannot nest.
 func accelArgs(cpu int) []string {
-	if _, err := os.Stat("/dev/kvm"); err != nil {
-		return []string{"-cpu", "max", "-smp", fmt.Sprintf("%d", cpu), "-machine", "q35,accel=tcg"}
+	_, kvmErr := os.Stat("/dev/kvm")
+	return accelArgsFor(runtime.GOOS, runtime.GOARCH, kvmErr == nil, cpu)
+}
+
+// accelArgsFor is the pure platform matrix behind accelArgs, so the darwin
+// and fallback combinations are unit-testable without their hardware.
+// macOS has no /dev/kvm: Hypervisor.framework (hvf) is the accelerator, the
+// virt board on Apple Silicon, q35 on Intel.
+func accelArgsFor(goos, arch string, hasKVM bool, cpu int) []string {
+	smp := fmt.Sprintf("%d", cpu)
+	if goos == "darwin" {
+		machine := "q35,accel=hvf"
+		if arch == "arm64" {
+			machine = "virt,accel=hvf"
+		}
+		return []string{"-cpu", "host", "-smp", smp, "-machine", machine}
 	}
-	return []string{"-cpu", "host", "-smp", fmt.Sprintf("%d", cpu), "-machine", "q35,accel=kvm"}
+	if hasKVM {
+		return []string{"-cpu", "host", "-smp", smp, "-machine", "q35,accel=kvm"}
+	}
+	return []string{"-cpu", "max", "-smp", smp, "-machine", "q35,accel=tcg"}
 }
 
 func generateUnit(opts generateUnitOpts) string {
