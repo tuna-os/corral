@@ -250,7 +250,7 @@ to build a static demo site. See [web-demo/README.md](web-demo/README.md).
 ## Test-drive Tuna Desktop in a VM — one command
 
 No install, no image to hunt down. On Linux or macOS, one copy-paste
-command starts a Tuna Desktop test drive. It downloads Corral
+command starts a test drive of Tuna Desktop. It downloads Corral
 (checksum-verified), boots a digest-pinned, cosign-verified image in local
 QEMU, and opens the desktop in a browser tab over noVNC:
 
