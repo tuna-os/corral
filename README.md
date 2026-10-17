@@ -249,17 +249,17 @@ to build a static demo site. See [web-demo/README.md](web-demo/README.md).
 
 ## Test-drive Tuna Desktop in a VM — one command
 
-No install, no image to hunt down. One copy-paste command on Linux or macOS
-test-drives Tuna Desktop. It downloads Corral (checksum-verified), boots a
-digest-pinned, cosign-verified image in local QEMU, and opens the desktop in
-a browser tab over noVNC:
+No install, no image to hunt down. On Linux or macOS, one copy-paste
+command starts a Tuna Desktop test drive. It downloads Corral
+(checksum-verified), boots a digest-pinned, cosign-verified image in local
+QEMU, and opens the desktop in a browser tab over noVNC:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/tuna-os/corral/main/scripts/try-tuna-desktop.sh | bash
 ```
 
-Corral serves the console from 127.0.0.1 only, and refuses console WebSocket
-upgrades from any foreign Origin. Ctrl-C (or `try-tuna-desktop.sh stop`)
+Corral serves the console from 127.0.0.1 only. It refuses WebSocket upgrades
+for consoles from any foreign Origin. Ctrl-C (or `try-tuna-desktop.sh stop`)
 stops the VM and verifies no QEMU process or listener remains. It needs
 QEMU, podman and cosign. The script reports each missing piece with its
 install fix, not a stack trace. See the script header for options
