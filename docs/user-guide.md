@@ -459,16 +459,16 @@ corral bootc create my-node --image quay.io/centos-bootc/centos-bootc:stream9
 - Builds a bootable OS disk on the cluster with `bootc install to-disk`.
 - Upgrade the OS image of a guest with `corral bootc upgrade <vm-name>`.
 
-For desktop images that do not ship a regular account, create one in the
-installed disk instead of modifying the guest by hand:
+For desktop images without a regular account, create one in the installed
+disk instead of changing the guest by hand:
 
 ```bash
 corral bootc create my-node --image ghcr.io/tuna-os/marlin:tuna \
   --user tuna --password-prompt
 ```
 
-Use `--password-hash` with a SHA-512 crypt value for automation. Plaintext
-`--password` is not accepted. The same account flags work with `bootc rebuild`,
+Use `--password-hash` with a SHA-512 crypt value for automation. Corral rejects
+`--password` in plaintext. The same account flags work with `bootc rebuild`,
 `bootc upgrade`, and `bootc switch`; `--resume` cannot add an account to a
 disk that has already been installed.
 

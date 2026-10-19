@@ -115,16 +115,16 @@ func writeProvisionScript(script string) (path string, cleanup func(), err error
 		return "", func() {}, err
 	}
 	if _, err := f.WriteString(script); err != nil {
-		f.Close()
-		os.Remove(f.Name())
+		_ = f.Close()
+		_ = os.Remove(f.Name())
 		return "", func() {}, err
 	}
 	if err := f.Close(); err != nil {
-		os.Remove(f.Name())
+		_ = os.Remove(f.Name())
 		return "", func() {}, err
 	}
 	if err := os.Chmod(f.Name(), 0o600); err != nil {
-		os.Remove(f.Name())
+		_ = os.Remove(f.Name())
 		return "", func() {}, err
 	}
 	return f.Name(), func() { _ = os.Remove(f.Name()) }, nil

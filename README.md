@@ -338,8 +338,8 @@ VM that runs, without any local tooling:
 (Corral applies the SSH key again across the `--wipe`). Rebuild your OS in CI,
 `corral create` it as a VM in minutes.
 
-To make a desktop image immediately usable at its greeter, create a login
-account while the disk is being installed:
+To make the greeter usable on a desktop image, create a login account while
+installing the disk:
 
 ```bash
 corral bootc create dev --image ghcr.io/tuna-os/marlin:tuna \
@@ -349,8 +349,8 @@ corral bootc create dev --image ghcr.io/tuna-os/marlin:tuna \
   --user tuna --password-hash '$6$rounds=656000$<salt>$<hash>'
 ```
 
-The password prompt is hidden; plaintext `--password` is intentionally not
-accepted. `--user`, `--password-prompt`, and `--password-hash` are also
+Corral hides the password prompt and rejects plaintext `--password`. The
+`--user`, `--password-prompt`, and `--password-hash` flags are also
 available on `bootc rebuild`, `bootc upgrade`, and `bootc switch`. A resumed
 build reuses an already-installed disk and cannot add an account.
 

@@ -174,14 +174,20 @@ func loginProvisionScript(user, passwordHash string, passwordPrompt bool, out io
 		return "", err
 	}
 	if passwordPrompt {
-		fmt.Fprint(out, "Password: ")
+		if _, err := fmt.Fprint(out, "Password: "); err != nil {
+			return "", fmt.Errorf("writing password prompt: %w", err)
+		}
 		plain, err := readPassword(int(os.Stdin.Fd()))
 		if err != nil {
 			return "", fmt.Errorf("reading password: %w", err)
 		}
 		defer clearBytes(plain)
-		fmt.Fprintln(out)
-		fmt.Fprint(out, "Confirm password: ")
+		if _, err := fmt.Fprintln(out); err != nil {
+			return "", fmt.Errorf("writing password prompt newline: %w", err)
+		}
+		if _, err := fmt.Fprint(out, "Confirm password: "); err != nil {
+			return "", fmt.Errorf("writing password confirmation prompt: %w", err)
+		}
 		confirm, err := readPassword(int(os.Stdin.Fd()))
 		if err != nil {
 			return "", fmt.Errorf("reading password confirmation: %w", err)
@@ -197,7 +203,9 @@ func loginProvisionScript(user, passwordHash string, passwordPrompt bool, out io
 		if err != nil {
 			return "", err
 		}
-		fmt.Fprintln(out)
+		if _, err := fmt.Fprintln(out); err != nil {
+			return "", fmt.Errorf("writing password prompt newline: %w", err)
+		}
 	}
 	return bootc.AccountProvisionScript(user, passwordHash)
 }
