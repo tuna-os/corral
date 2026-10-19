@@ -338,8 +338,8 @@ VM that runs, without any local tooling:
 (Corral applies the SSH key again across the `--wipe`). Rebuild your OS in CI,
 `corral create` it as a VM in minutes.
 
-To make the greeter usable on a desktop image, create a login account while
-installing the disk:
+To make the greeter usable on a desktop image, create a login account before
+the first boot:
 
 ```bash
 corral bootc create dev --image ghcr.io/tuna-os/marlin:tuna \

@@ -460,7 +460,7 @@ corral bootc create my-node --image quay.io/centos-bootc/centos-bootc:stream9
 - Upgrade the OS image of a guest with `corral bootc upgrade <vm-name>`.
 
 For desktop images without a regular account, create one in the installed
-disk instead of changing the guest by hand:
+disk. Do not change the guest by hand:
 
 ```bash
 corral bootc create my-node --image ghcr.io/tuna-os/marlin:tuna \
