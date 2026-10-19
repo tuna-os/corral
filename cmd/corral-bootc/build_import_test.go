@@ -74,7 +74,7 @@ func runBuildAndImport(t *testing.T, fb *fakeBuilder, ft *fakeTarget, useRealTar
 	}
 	oldErr := os.Stderr
 	os.Stderr = w
-	runErr := buildAndImport("myvm", target, image, sshKey, disk, "4G", 2, "", nil, customize, useSudo)
+	runErr := buildAndImport("myvm", target, image, sshKey, disk, "4G", 2, "", nil, customize, "", useSudo)
 	_ = w.Close()
 	os.Stderr = oldErr
 	out, _ := io.ReadAll(r)

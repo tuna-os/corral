@@ -107,9 +107,15 @@ func (b LocalBuilder) Build(req BuildRequest, progress func(string)) (BuildResul
 		return BuildResult{}, err
 	}
 	defer cleanupKey()
+	provisionPath, cleanupProvision, err := writeProvisionScript(req.ProvisionScript)
+	if err != nil {
+		return BuildResult{}, err
+	}
+	defer cleanupProvision()
 
-	// bootc writes into the file it is given, so it has to exist at full size
-	// first — it partitions what is there rather than growing it.
+	// bootc writes into the target before any target backend sees it. Apply
+	// account setup to that installed root so local builds get the same
+	// first-class login user as the cluster builder.
 	size := req.Size
 	if size == "" {
 		size = "20G"
@@ -126,6 +132,14 @@ func (b LocalBuilder) Build(req BuildRequest, progress func(string)) (BuildResul
 		// is worse than no disk.
 		os.Remove(req.Dest)
 		return BuildResult{}, installError(out, err)
+	}
+	if provisionPath != "" {
+		report("applying bootc login-user provisioning")
+		name, args := b.podman(b.provisionArgs(req, provisionPath)...)
+		if out, err := runner.Run(name, args...); err != nil {
+			_ = os.Remove(req.Dest)
+			return BuildResult{}, fmt.Errorf("provisioning the bootc login user: %s", commandError(out, err))
+		}
 	}
 	if backend.Kind == "composefs" {
 		report("composefs: restoring the kernel and initrd on the ESP")
@@ -378,6 +392,51 @@ func (b LocalBuilder) installArgs(req BuildRequest, backend Backend, keyPath str
 	args = append(args, "/target.img")
 	return args
 }
+
+// provisionArgs builds the post-install container invocation. The script is
+// mounted read-only so a password hash is not exposed in the process argv.
+func (b LocalBuilder) provisionArgs(req BuildRequest, scriptPath string) []string {
+	dest, _ := filepath.Abs(req.Dest)
+	args := []string{
+		"run", "--rm",
+		"--privileged",
+		"--pid=host",
+		"-v", "/dev:/dev",
+		"-v", dest + ":/target.img",
+		"-v", scriptPath + ":/provision.sh:ro",
+		"--security-opt", "label=type:unconfined_t",
+	}
+	return append(args, req.Image, "sh", "-c", provisionDiskScript)
+}
+
+// provisionDiskScript mounts the installed root partition and executes the
+// supplied script in its namespace. It identifies the root by content rather
+// than assuming a partition number; composefs and ostree layouts differ.
+const provisionDiskScript = `set -eu
+LOOP=$(losetup --find --show --partscan /target.img)
+MNT=$(mktemp -d)
+ROOT=0
+trap 'umount "$MNT" 2>/dev/null || true; losetup -d "$LOOP" 2>/dev/null || true; rmdir "$MNT" 2>/dev/null || true' EXIT
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  ls "${LOOP}"p* >/dev/null 2>&1 && break
+  sleep 1
+done
+for part in "${LOOP}"p*; do
+  mount "$part" "$MNT" 2>/dev/null || continue
+  if [ -f "$MNT/etc/os-release" ] || [ -d "$MNT/state/os/default" ]; then
+    mkdir -p "$MNT/tmp"
+    cp /provision.sh "$MNT/tmp/corral-provision.sh"
+    chmod 0700 "$MNT/tmp/corral-provision.sh"
+    chroot "$MNT" /bin/bash /tmp/corral-provision.sh
+    rm -f "$MNT/tmp/corral-provision.sh"
+    ROOT=1
+    umount "$MNT"
+    break
+  fi
+  umount "$MNT"
+done
+[ "$ROOT" = 1 ] || { echo "corral: no installed root partition found" >&2; exit 1; }
+`
 
 // composefsFixupArgs builds the second container run a composefs disk needs
 // after `bootc install`, which the cluster builder (pkg/kubevirt/bootc.go)
