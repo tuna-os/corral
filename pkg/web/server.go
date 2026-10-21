@@ -24,6 +24,7 @@ type ServerState struct {
 	store         *registry.Store
 	consoleDialer kubevirt.ConsoleDialer
 	commandRunner shell.Runner
+	metrics       *cpuRing
 }
 
 // NewServerState initializes ServerState with production defaults.
@@ -38,6 +39,7 @@ func NewServerState() (*ServerState, error) {
 	}
 	return &ServerState{
 		store:         s,
+		metrics:       newCPURing(kubevirt.SampleAllUsage),
 		consoleDialer: kubevirt.RealConsoleDialer{},
 		commandRunner: runner,
 	}, nil
@@ -95,7 +97,6 @@ func Serve(addr string, allowedHosts ...string) error {
 	store = state.GetStore()
 	consoleDialer = state.GetConsoleDialer()
 	defaultRunner = state.GetRunner()
-	_ = state // Retain reference for future handler migration to accept *ServerState parameter
 	kubevirt.ProxyTags = config.TailnetTags()
 
 	// Assemble theme: config.yaml → CLI flags override → serve.
@@ -104,7 +105,7 @@ func Serve(addr string, allowedHosts ...string) error {
 	}
 	applyCLITheme() // CLI flags always win over config file
 
-	mux, err := newMux()
+	mux, err := newMuxWithMetrics(state.metrics)
 	if err != nil {
 		return err
 	}
@@ -122,7 +123,13 @@ func Serve(addr string, allowedHosts ...string) error {
 			return err
 		}
 	}
-	startMetricSampler()
+	samplerCtx, cancelSampler := context.WithCancel(context.Background())
+	samplerDone := make(chan struct{})
+	go func() {
+		defer close(samplerDone)
+		state.metrics.runSampler(samplerCtx)
+	}()
+	defer func() { cancelSampler(); <-samplerDone }()
 	startVDIReclaim(context.Background())
 	if MetricsEnabled {
 		StartMetrics(context.Background())

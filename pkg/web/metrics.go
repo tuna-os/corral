@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"net/http"
 	"sort"
 	"strconv"
@@ -28,19 +29,24 @@ type cpuSample struct {
 // charts: nodeKey(name) sums the VMs on one node and dcKey sums them all.
 // Neither can collide with a VM key, because a namespace cannot hold "@".
 type cpuRing struct {
-	mu         sync.Mutex
-	data       map[string][]cpuSample // key -> samples (oldest first)
-	nodes      map[string]string      // "namespace/vm" -> node at the last tick
-	lastTick   int64                  // T of the newest sample() that got data
-	maxSamples int
+	mu          sync.Mutex
+	data        map[string][]cpuSample // key -> samples (oldest first)
+	nodes       map[string]string      // "namespace/vm" -> node at the last tick
+	lastTick    int64                  // T of the newest sample() that got data
+	maxSamples  int
+	sampleUsage func() map[string]kubevirt.Usage
 }
 
 const dcKey = "@dc"
 
 func nodeKey(name string) string { return "@node/" + name }
 
-// cpuHist retains ~1h at the 15s sample interval (240 samples per VM).
-var cpuHist = &cpuRing{data: map[string][]cpuSample{}, maxSamples: 240}
+// newCPURing retains ~1h at the 15s sample interval (240 samples per VM).
+// The source belongs to this ring, so tests and independent routers never
+// replace a process-wide sampler.
+func newCPURing(source func() map[string]kubevirt.Usage) *cpuRing {
+	return &cpuRing{data: map[string][]cpuSample{}, maxSamples: 240, sampleUsage: source}
+}
 
 const metricSampleInterval = 15 * time.Second
 
@@ -66,12 +72,8 @@ func (r *cpuRing) get(key string) []cpuSample {
 	return out
 }
 
-// sampleAllUsage joins one cluster-wide reading into the ring. Exposed as a
-// seam so tests can drive it without a ticker.
-var sampleAllUsage = kubevirt.SampleAllUsage
-
 func (r *cpuRing) sample() {
-	usage := sampleAllUsage()
+	usage := r.sampleUsage()
 	if usage == nil {
 		return // metrics-server absent: record nothing rather than zeros
 	}
@@ -127,23 +129,30 @@ func (r *cpuRing) current() []vmUsage {
 	return out
 }
 
-// startMetricSampler kicks off the background usage sampler. It samples on a
-// fixed interval regardless of whether metrics-server is up yet —
-// SampleAllUsage returns nil when it's absent, so ticks are cheap no-ops until
-// it comes online.
-func startMetricSampler() {
-	go func() {
-		cpuHist.sample() // seed immediately so the first graph isn't empty
-		t := time.NewTicker(metricSampleInterval)
-		defer t.Stop()
-		for range t.C {
-			cpuHist.sample()
+// runSampler seeds immediately, then samples until the owner cancels ctx.
+// The caller owns the goroutine and can wait for it to return on shutdown.
+func (r *cpuRing) runSampler(ctx context.Context) {
+	if ctx.Err() != nil {
+		return
+	}
+	r.sample()
+	t := time.NewTicker(metricSampleInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if ctx.Err() != nil {
+				return
+			}
+			r.sample()
 		}
-	}()
+	}
 }
 
-func historyResp(w http.ResponseWriter, key string) {
-	samples := cpuHist.get(key)
+func (hist *cpuRing) historyResp(w http.ResponseWriter, key string) {
+	samples := hist.get(key)
 	if samples == nil {
 		samples = []cpuSample{}
 	}
@@ -152,20 +161,20 @@ func historyResp(w http.ResponseWriter, key string) {
 
 // GET /api/metrics/history — the datacenter roll-up: CPU and memory summed
 // over every running VM, one sample per tick.
-func handleDCMetricsHistory(w http.ResponseWriter, _ *http.Request) {
-	historyResp(w, dcKey)
+func (hist *cpuRing) handleDCMetricsHistory(w http.ResponseWriter, _ *http.Request) {
+	hist.historyResp(w, dcKey)
 }
 
 // GET /api/nodes/{name}/metrics/history — the same roll-up for one node.
-func handleNodeMetricsHistory(w http.ResponseWriter, r *http.Request) {
-	historyResp(w, nodeKey(r.PathValue("name")))
+func (hist *cpuRing) handleNodeMetricsHistory(w http.ResponseWriter, r *http.Request) {
+	hist.historyResp(w, nodeKey(r.PathValue("name")))
 }
 
 // GET /api/metrics/top?by=cpu|mem&node=NAME&limit=N — the busiest running VMs
 // at the last tick, for the dashboard's "top VMs" widgets.
-func handleTopVMs(w http.ResponseWriter, r *http.Request) {
+func (hist *cpuRing) handleTopVMs(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	rows := cpuHist.current()
+	rows := hist.current()
 	if node := q.Get("node"); node != "" {
 		kept := rows[:0]
 		for _, v := range rows {
@@ -189,4 +198,9 @@ func handleTopVMs(w http.ResponseWriter, r *http.Request) {
 		rows = rows[:n]
 	}
 	jsonResp(w, http.StatusOK, rows)
+}
+
+// GET /api/vms/{ns}/{name}/metrics/history — retained CPU and memory samples.
+func (hist *cpuRing) handleMetricsHistory(w http.ResponseWriter, r *http.Request) {
+	hist.historyResp(w, r.PathValue("ns")+"/"+r.PathValue("name"))
 }

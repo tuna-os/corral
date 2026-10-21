@@ -1,9 +1,13 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -44,15 +48,13 @@ func TestCPURing_GetCopyIsolated(t *testing.T) {
 
 func TestCPURing_Sample(t *testing.T) {
 	r := &cpuRing{data: map[string][]cpuSample{}, maxSamples: 10}
-	old := sampleAllUsage
-	sampleAllUsage = func() map[string]kubevirt.Usage {
+	r.sampleUsage = func() map[string]kubevirt.Usage {
 		return map[string]kubevirt.Usage{
 			"ns/a": {MilliCPU: 120, MemBytes: 1 << 30, Node: "n1"},
 			"ns/b": {MilliCPU: 5, MemBytes: 1 << 20, Node: "n1"},
 			"ns/c": {MilliCPU: 40, Node: "n2"},
 		}
 	}
-	defer func() { sampleAllUsage = old }()
 
 	r.sample()
 	if got := r.get("ns/a"); len(got) != 1 || got[0].CPU != 120 || got[0].Mem != 1<<30 {
@@ -72,9 +74,7 @@ func TestCPURing_Sample(t *testing.T) {
 
 func TestCPURing_SampleNilDegrades(t *testing.T) {
 	r := &cpuRing{data: map[string][]cpuSample{}, maxSamples: 10}
-	old := sampleAllUsage
-	sampleAllUsage = func() map[string]kubevirt.Usage { return nil } // metrics-server absent
-	defer func() { sampleAllUsage = old }()
+	r.sampleUsage = func() map[string]kubevirt.Usage { return nil } // metrics-server absent
 
 	r.sample() // must not panic
 	if len(r.get("ns/a")) != 0 || len(r.get(dcKey)) != 0 {
@@ -84,15 +84,13 @@ func TestCPURing_SampleNilDegrades(t *testing.T) {
 
 func TestCPURing_CurrentDropsStoppedVMs(t *testing.T) {
 	r := &cpuRing{data: map[string][]cpuSample{}, maxSamples: 10}
-	old := sampleAllUsage
-	defer func() { sampleAllUsage = old }()
 
-	sampleAllUsage = func() map[string]kubevirt.Usage {
+	r.sampleUsage = func() map[string]kubevirt.Usage {
 		return map[string]kubevirt.Usage{"ns/a": {MilliCPU: 10}, "ns/b": {MilliCPU: 20}}
 	}
 	r.sample()
 	time.Sleep(2 * time.Millisecond) // the next tick needs a later timestamp
-	sampleAllUsage = func() map[string]kubevirt.Usage {
+	r.sampleUsage = func() map[string]kubevirt.Usage {
 		return map[string]kubevirt.Usage{"ns/b": {MilliCPU: 30, Node: "n1"}}
 	}
 	r.sample()
@@ -104,22 +102,20 @@ func TestCPURing_CurrentDropsStoppedVMs(t *testing.T) {
 }
 
 func TestTopVMs(t *testing.T) {
-	old, oldHist := sampleAllUsage, cpuHist
-	defer func() { sampleAllUsage, cpuHist = old, oldHist }()
-	cpuHist = &cpuRing{data: map[string][]cpuSample{}, maxSamples: 10}
-	sampleAllUsage = func() map[string]kubevirt.Usage {
+	r := &cpuRing{data: map[string][]cpuSample{}, maxSamples: 10}
+	r.sampleUsage = func() map[string]kubevirt.Usage {
 		return map[string]kubevirt.Usage{
 			"ns/small": {MilliCPU: 10, MemBytes: 8 << 30, Node: "n1"},
 			"ns/busy":  {MilliCPU: 900, MemBytes: 1 << 30, Node: "n1"},
 			"ns/other": {MilliCPU: 500, MemBytes: 2 << 30, Node: "n2"},
 		}
 	}
-	cpuHist.sample()
+	r.sample()
 
 	get := func(query string) []vmUsage {
 		t.Helper()
 		rec := httptest.NewRecorder()
-		handleTopVMs(rec, httptest.NewRequest("GET", "/api/metrics/top?"+query, nil))
+		r.handleTopVMs(rec, httptest.NewRequest("GET", "/api/metrics/top?"+query, nil))
 		var rows []vmUsage
 		if err := json.Unmarshal(rec.Body.Bytes(), &rows); err != nil {
 			t.Fatalf("%s: %v", query, err)
@@ -140,5 +136,82 @@ func TestTopVMs(t *testing.T) {
 	}
 	if got := names(get("node=n1")); !reflect.DeepEqual(got, []string{"busy", "small"}) {
 		t.Errorf("node=n1 = %v, want only that node's VMs", got)
+	}
+}
+
+// Independent routers must never read each other's histories or source seams.
+func TestMetricsRouterIsolation(t *testing.T) {
+	routers := make([]http.Handler, 2)
+	for i := range routers {
+		cpu := (i + 1) * 100
+		hist := newCPURing(func() map[string]kubevirt.Usage {
+			return map[string]kubevirt.Usage{"ns/vm": {MilliCPU: cpu, Node: "node"}}
+		})
+		hist.sample()
+		mux, err := routesWithMetrics(false, hist)
+		if err != nil {
+			t.Fatal(err)
+		}
+		routers[i] = mux
+	}
+	for i, router := range routers {
+		t.Run(strconv.Itoa(i), func(t *testing.T) {
+			t.Parallel()
+			for _, path := range []string{"/api/metrics/history", "/api/nodes/node/metrics/history", "/api/vms/ns/vm/metrics/history"} {
+				rec := httptest.NewRecorder()
+				router.ServeHTTP(rec, httptest.NewRequest("GET", path, nil))
+				var samples []cpuSample
+				if err := json.Unmarshal(rec.Body.Bytes(), &samples); err != nil {
+					t.Fatal(err)
+				}
+				if rec.Code != 200 || len(samples) != 1 || samples[0].CPU != (i+1)*100 {
+					t.Fatalf("%s: %d %s", path, rec.Code, rec.Body.String())
+				}
+			}
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, httptest.NewRequest("GET", "/api/metrics/top", nil))
+			var rows []vmUsage
+			if err := json.Unmarshal(rec.Body.Bytes(), &rows); err != nil {
+				t.Fatal(err)
+			}
+			if len(rows) != 1 || rows[0].CPU != (i+1)*100 {
+				t.Fatalf("top: %+v", rows)
+			}
+		})
+	}
+}
+
+func TestMetricSamplerCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	hist := newCPURing(func() map[string]kubevirt.Usage {
+		cancel() // cancellation during the initial collection must also stop the loop
+		return map[string]kubevirt.Usage{"ns/vm": {MilliCPU: 12}}
+	})
+	done := make(chan struct{})
+	go func() { defer close(done); hist.runSampler(ctx) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("sampler did not stop")
+	}
+	if got := hist.get("ns/vm"); len(got) != 1 || got[0].CPU != 12 {
+		t.Fatalf("seed: %+v", got)
+	}
+	hist.sampleUsage = func() map[string]kubevirt.Usage { t.Fatal("sampled after cancellation"); return nil }
+	hist.runSampler(ctx)
+}
+
+func TestMetricsHistoryEmpty(t *testing.T) {
+	hist := newCPURing(func() map[string]kubevirt.Usage { return nil })
+	mux, err := routesWithMetrics(false, hist)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/api/metrics/history", "/api/nodes/unknown/metrics/history", "/api/vms/ns/unknown/metrics/history", "/api/metrics/top"} {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest("GET", path, nil))
+		if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != "[]" {
+			t.Fatalf("%s: %d %s", path, rec.Code, rec.Body.String())
+		}
 	}
 }

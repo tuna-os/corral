@@ -309,3 +309,16 @@ The marketplace is the `marketplace/index.json` file in the repo, fetched
 from GitHub raw at runtime. Each entry has a name, description, version, and
 platform-specific download URLs. Installation downloads the binary, sets the
 executable bit, and places it in the plugin dir.
+
+## Web handler state migration
+
+`pkg/web.ServerState` is an incremental dependency-injection boundary, not yet
+an isolation guarantee for the entire web server. Its CPU/memory history ring
+is per-server: the router binds all four history/top handlers to that ring,
+and the sampler uses a source injected into the ring rather than a mutable
+package-level function. `Serve` cancels and joins this sampler when it returns.
+The browser-only demo owns a separate ring and a process-lifetime sampler.
+
+Other handler dependencies (including peers, folders, console configuration,
+and the legacy registry/runner globals) still need migration under #614.
+Do not infer that multiple full Corral servers are isolated in one process yet.

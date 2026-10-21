@@ -1,12 +1,14 @@
 package web
 
 import (
+	"context"
 	"encoding/binary"
 	"io"
 	"net/http"
 
 	"github.com/tuna-os/corral/pkg/demo"
 	"github.com/tuna-os/corral/pkg/folder"
+	"github.com/tuna-os/corral/pkg/kubevirt"
 	"golang.org/x/net/websocket"
 )
 
@@ -77,10 +79,12 @@ func serveDemoVNC(ws *websocket.Conn) {
 func DemoHandler() (http.Handler, error) {
 	EnableDemo()
 	applyCLITheme()
-	mux, err := newMux()
+	metrics := newCPURing(kubevirt.SampleAllUsage)
+	mux, err := newMuxWithMetrics(metrics)
 	if err != nil {
 		return nil, err
 	}
-	startMetricSampler()
+	// The browser demo lives for the lifetime of the WASM process.
+	go metrics.runSampler(context.Background())
 	return mux, nil
 }
