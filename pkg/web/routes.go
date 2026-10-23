@@ -14,11 +14,15 @@ import (
 // newMux builds the HTTP router wrapped in the request pipeline. Split out
 // from Serve so tests can exercise the full route table with httptest.
 func newMux() (http.Handler, error) {
+	return newMuxWithMetrics(newCPURing(kubevirt.SampleAllUsage))
+}
+
+func newMuxWithMetrics(metrics *cpuRing) (http.Handler, error) {
 	// Capture this for the router being built, then clear it so a demo mux in
 	// one test cannot turn later production-style muxes into demo consoles.
 	useDemoConsole := demoEnabled
 	demoEnabled = false
-	mux, err := routes(useDemoConsole)
+	mux, err := routesWithMetrics(useDemoConsole, metrics)
 	if err != nil {
 		return nil, err
 	}
@@ -28,6 +32,10 @@ func newMux() (http.Handler, error) {
 // routes builds the route table. useDemoConsole serves the demo VNC console
 // instead of dialing a real VM.
 func routes(useDemoConsole bool) (*http.ServeMux, error) {
+	return routesWithMetrics(useDemoConsole, newCPURing(kubevirt.SampleAllUsage))
+}
+
+func routesWithMetrics(useDemoConsole bool, metrics *cpuRing) (*http.ServeMux, error) {
 	sub, err := fs.Sub(staticFS, "static")
 	if err != nil {
 		return nil, err
@@ -74,9 +82,9 @@ func routes(useDemoConsole bool) (*http.ServeMux, error) {
 	mux.HandleFunc("DELETE /api/cts/{ns}/{name}", handleDeleteCT)
 	mux.HandleFunc("PUT /api/cts/{ns}/{name}/scale", handleScaleCT)
 	mux.HandleFunc("GET /api/nodes", handleNodes)
-	mux.HandleFunc("GET /api/nodes/{name}/metrics/history", handleNodeMetricsHistory)
-	mux.HandleFunc("GET /api/metrics/history", handleDCMetricsHistory)
-	mux.HandleFunc("GET /api/metrics/top", handleTopVMs)
+	mux.HandleFunc("GET /api/nodes/{name}/metrics/history", metrics.handleNodeMetricsHistory)
+	mux.HandleFunc("GET /api/metrics/history", metrics.handleDCMetricsHistory)
+	mux.HandleFunc("GET /api/metrics/top", metrics.handleTopVMs)
 	mux.HandleFunc("GET /api/hostpower", handleHostPower)
 	mux.HandleFunc("POST /api/hostpower/{plugin}/{action}", handleHostPowerAction)
 	mux.HandleFunc("GET /api/capabilities", handleCapabilities)
@@ -127,7 +135,7 @@ func routes(useDemoConsole bool) (*http.ServeMux, error) {
 	mux.HandleFunc("POST /api/vms/{ns}/{name}/bootc/rebuild", noLocal(handleBootcRebuild))
 	mux.HandleFunc("GET /api/vms/{ns}/{name}/events", handleEvents)
 	mux.HandleFunc("GET /api/vms/{ns}/{name}/metrics", handleMetrics)
-	mux.HandleFunc("GET /api/vms/{ns}/{name}/metrics/history", handleMetricsHistory)
+	mux.HandleFunc("GET /api/vms/{ns}/{name}/metrics/history", metrics.handleMetricsHistory)
 	mux.HandleFunc("GET /api/vms/{ns}/{name}/export", noLocal(handleExport))
 	mux.HandleFunc("POST /api/vms/{ns}/{name}/volumes", noLocal(handleAddVolume))
 	mux.HandleFunc("DELETE /api/vms/{ns}/{name}/volumes/{vol}", noLocal(handleRemoveVolume))
