@@ -76,8 +76,10 @@ Artifacts (in --artifacts, default ` + vmtest.DefaultArtifactDir + `):
   ready.png        the screen when the guest became ready (failure.png if not)
   timelapse.webm   the boot as a video (--video, needs ffmpeg)
   diagnostics/     failed units, bootc status, journal warnings
-  layer/           the generated Containerfile and overlay, when one was built
-  ssh/             the run's own keypair
+
+The private SSH identity is kept outside the artifact directory. With the
+default --keep, the summary prints the command that uses it.
+The temporary image-layer build context is removed after the build and is not uploaded.
 
 Exit codes: 0 passed, 1 bad spec, 2 this host cannot run it, 3 layer build
 failed, 4 disk build failed, 5 VM would not start, 6 never became ready,
@@ -88,7 +90,8 @@ failed, 4 disk build failed, 5 VM would not start, 6 never became ready,
   # A system to test: an account with a password, a package, and SSH ready.
   corral vmtest gate --bootc ghcr.io/tuna-os/yellowfin:latest \
     --user tester --password hunter2 --sudo-user --package jq
-  ssh -i corral-vmtest-out/ssh/id_ed25519 -p 2242 tester@127.0.0.1
+  # With --keep, use the SSH command printed in the summary. Its private key
+  # is kept outside corral-vmtest-out/ so uploaded artifacts contain no key.
 
   # Assertions, a first-boot hook, and a video of the boot.
   corral vmtest gate --bootc "$IMAGE" --post-boot ./firstboot.sh \
@@ -253,9 +256,6 @@ func printVMTestSummary(result *vmtest.Result) {
 	}
 	if result.Kept && result.SSH.Command != "" {
 		fmt.Printf("  ssh:        %s\n", result.SSH.Command)
-		if result.SSH.Password != "" {
-			fmt.Printf("  password:   %s (%s)\n", result.SSH.Password, result.SSH.User)
-		}
 		fmt.Printf("  delete:     corral delete %s\n", result.Name)
 	}
 	fmt.Printf("  artifacts:  %s\n", result.Artifacts)

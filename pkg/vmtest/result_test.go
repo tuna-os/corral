@@ -56,7 +56,7 @@ func TestResultWrite_PrivateEvenWhenReplacingPermissiveFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result := &Result{Name: "gate", SSH: SSHAccess{Password: "guest-password"}}
+	result := &Result{Name: "gate", SSH: SSHAccess{IdentityFile: "/tmp/corral-vmtest-ssh/id_ed25519"}}
 	if _, err := result.Write(dir); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
@@ -66,6 +66,22 @@ func TestResultWrite_PrivateEvenWhenReplacingPermissiveFile(t *testing.T) {
 	}
 	if got := info.Mode().Perm(); got != 0o600 {
 		t.Errorf("result mode = %04o, want 0600", got)
+	}
+}
+
+func TestResultWrite_DoesNotPersistSSHPassword(t *testing.T) {
+	dir := t.TempDir()
+	result := &Result{Name: "gate", SSH: SSHAccess{User: "tester"}}
+	path, err := result.Write(dir)
+	if err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), `"password"`) {
+		t.Fatalf("result contains an SSH password field: %s", data)
 	}
 }
 

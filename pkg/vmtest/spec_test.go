@@ -207,19 +207,6 @@ func TestNormalizeSize(t *testing.T) {
 	}
 }
 
-func TestPasswordFor(t *testing.T) {
-	spec := &Spec{RootPassword: "r", Users: []User{{Name: "tester", Password: "t"}}}
-	if got := spec.passwordFor("root"); got != "r" {
-		t.Errorf("root password = %q", got)
-	}
-	if got := spec.passwordFor("tester"); got != "t" {
-		t.Errorf("tester password = %q", got)
-	}
-	if got := spec.passwordFor("nobody"); got != "" {
-		t.Errorf("unknown user password = %q, want empty", got)
-	}
-}
-
 func TestPasswordLoginWanted(t *testing.T) {
 	if (&Spec{}).passwordLoginWanted() {
 		t.Error("no passwords means no password logins")
