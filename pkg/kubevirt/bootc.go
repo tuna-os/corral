@@ -54,8 +54,9 @@ func bootcBuildTimeout() time.Duration {
 // the VM (frees the RWO block disk) → delete the old disk PVC → build a fresh one
 // from the image → start. The final VM references the disk PVC by name and boots
 // it via UEFI, so no manifest patch is needed — the rebuilt disk just takes the
-// same name. Sizing/networks/node on the VM are preserved.
-func bootcRebuild(name, namespace, imageURI, sshPublicKey, diskSize string, progress io.Writer) error {
+// same name. Sizing/networks/node on the VM are preserved. provisionScript is
+// applied inside the newly installed root filesystem before the VM starts.
+func bootcRebuild(name, namespace, imageURI, sshPublicKey, diskSize, provisionScript string, progress io.Writer) error {
 	if progress == nil {
 		progress = os.Stderr
 	}
@@ -101,8 +102,9 @@ func bootcRebuild(name, namespace, imageURI, sshPublicKey, diskSize string, prog
 
 	// Rebuild keeps whatever storage class the existing PVC used — "" tells
 	// bootcBuildDisk to fall back to PreferredStorageClass(), same as before
-	// storageClass existed as an explicit override.
-	if _, err := bootcBuildDisk(name, namespace, imageURI, sshPublicKey, diskSize, "", "", nil, "", progress); err != nil {
+	// storageClass existed as an explicit override. The account provision
+	// script is applied after bootc installs the replacement disk.
+	if _, err := bootcBuildDisk(name, namespace, imageURI, sshPublicKey, diskSize, "", provisionScript, nil, "", progress); err != nil {
 		return fmt.Errorf("rebuild: %w", err)
 	}
 
@@ -547,11 +549,21 @@ write_files:
       # The script travels base64-encoded in its own write_files entry:
       # embedding it verbatim here put its lines at column 0, which
       # terminated this YAML block literal and broke the whole cloud-config.
-      mkdir -p /mnt/root; mount /dev/disk/by-id/virtio-target-part3 /mnt/root 2>/dev/null
+      mkdir -p /mnt/root
+      mount /dev/disk/by-id/virtio-target-part3 /mnt/root 2>/dev/null || {
+        echo CORRAL_BUILD_FAIL rootmount
+        echo CORRAL_BUILD_FAIL rootmount > /dev/ttyS0 2>/dev/null || true
+        sync; sleep 2; poweroff; exit 1
+      }
+      mkdir -p /mnt/root/tmp
       base64 -d /root/provision.b64 > /mnt/root/tmp/provision.sh 2>/dev/null || true
       if [ -s /mnt/root/tmp/provision.sh ]; then
         chmod +x /mnt/root/tmp/provision.sh
-        chroot /mnt/root /bin/bash /tmp/provision.sh
+        if ! chroot /mnt/root /bin/bash /tmp/provision.sh; then
+          echo CORRAL_BUILD_FAIL provision
+          echo CORRAL_BUILD_FAIL provision > /dev/ttyS0 2>/dev/null || true
+          sync; sleep 2; poweroff; exit 1
+        fi
       fi
       rm -f /mnt/root/tmp/provision.sh
       sync; umount /mnt/root 2>/dev/null

@@ -102,3 +102,30 @@ func writeKey(key string) (path string, cleanup func(), err error) {
 	}
 	return f.Name(), func() { os.Remove(f.Name()) }, nil
 }
+
+// writeProvisionScript puts setup somewhere the build container can read.
+// The script may contain a password hash, so it is mounted read-only rather
+// than copied into a command-line argument.
+func writeProvisionScript(script string) (path string, cleanup func(), err error) {
+	if strings.TrimSpace(script) == "" {
+		return "", func() {}, nil
+	}
+	f, err := os.CreateTemp("", "corral-provision-*.sh")
+	if err != nil {
+		return "", func() {}, err
+	}
+	if _, err := f.WriteString(script); err != nil {
+		_ = f.Close()
+		_ = os.Remove(f.Name())
+		return "", func() {}, err
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(f.Name())
+		return "", func() {}, err
+	}
+	if err := os.Chmod(f.Name(), 0o600); err != nil {
+		_ = os.Remove(f.Name())
+		return "", func() {}, err
+	}
+	return f.Name(), func() { _ = os.Remove(f.Name()) }, nil
+}

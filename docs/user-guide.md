@@ -459,6 +459,19 @@ corral bootc create my-node --image quay.io/centos-bootc/centos-bootc:stream9
 - Builds a bootable OS disk on the cluster with `bootc install to-disk`.
 - Upgrade the OS image of a guest with `corral bootc upgrade <vm-name>`.
 
+For desktop images without a regular account, create one in the installed
+disk. Do not change the guest by hand:
+
+```bash
+corral bootc create my-node --image ghcr.io/tuna-os/marlin:tuna \
+  --user tuna --password-prompt
+```
+
+Use `--password-hash` with a SHA-512 crypt value for automation. Corral rejects
+`--password` in plaintext. The same account flags work with `bootc rebuild`,
+`bootc upgrade`, and `bootc switch`; `--resume` cannot add an account to a
+disk that has already been installed.
+
 #### Testing a bootc image (`corral vmtest`)
 
 `corral vmtest` boots an image locally and tests it. It needs no plugin, and

@@ -56,6 +56,10 @@ type BuildRequest struct {
 	// Customize lists scripts applied to the image through tacklebox
 	// (`tacklebox customize-live`) before the disk build. Empty skips.
 	Customize []string
+	// ProvisionScript runs inside the installed root filesystem before the disk
+	// is handed to a target. It is used for setup that must work on both local
+	// and KubeVirt builds, such as creating a login account.
+	ProvisionScript string
 }
 
 // BuildResult describes the disk produced.

@@ -19,6 +19,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,6 +33,7 @@ import (
 	"github.com/tuna-os/corral/pkg/qemu"
 	"github.com/tuna-os/corral/pkg/registry"
 	"github.com/tuna-os/corral/pkg/types"
+	"golang.org/x/term"
 )
 
 // finishVM applies the final VM from a completed build's disk PVC, exposes
@@ -82,7 +84,7 @@ var targetFor = bootc.TargetFor
 // then hand it to the backend's target. The split is the point of #130 — the
 // same built disk works for local QEMU and for libvirt, and neither needs a
 // cluster to produce it.
-func buildAndImport(name string, target config.ContextConfig, image, sshKey, disk, mem string, cpu int, filesystem string, kargs, customize []string, useSudo bool) error {
+func buildAndImport(name string, target config.ContextConfig, image, sshKey, disk, mem string, cpu int, filesystem string, kargs, customize []string, provisionScript string, useSudo bool) error {
 	if image == "" {
 		return fmt.Errorf("--image is required — a catalog name (see `corral bootc images`) or an OCI ref like quay.io/fedora/fedora-bootc:41")
 	}
@@ -118,7 +120,7 @@ func buildAndImport(name string, target config.ContextConfig, image, sshKey, dis
 	built, err := builder.Build(bootc.BuildRequest{
 		Image: image, Dest: filepath.Join(workDir, name+".raw"),
 		Size: size, SSHKey: key, Filesystem: filesystem, Kargs: kargs,
-		Customize: customize,
+		Customize: customize, ProvisionScript: provisionScript,
 	}, func(msg string) { fmt.Fprintln(os.Stderr, msg) })
 	if err != nil {
 		return err
@@ -147,6 +149,73 @@ func checkResumeKargs(name string, requested, installed []string) error {
 		name, strings.Join(missing, " --karg "))
 }
 
+var readPassword = term.ReadPassword
+
+// loginProvisionScript validates the account flags and, when requested, reads
+// a password without putting plaintext in argv or shell history. The returned
+// script contains only the SHA-512 crypt hash.
+func loginProvisionScript(user, passwordHash string, passwordPrompt bool, out io.Writer) (string, error) {
+	if out == nil {
+		out = io.Discard
+	}
+	if passwordPrompt && passwordHash != "" {
+		return "", fmt.Errorf("--password-prompt and --password-hash are mutually exclusive")
+	}
+	if user == "" {
+		if passwordPrompt || passwordHash != "" {
+			return "", fmt.Errorf("--password-prompt and --password-hash require --user")
+		}
+		return "", nil
+	}
+	if err := bootc.ValidateLoginUser(user); err != nil {
+		return "", err
+	}
+	if err := bootc.ValidatePasswordHash(passwordHash); err != nil {
+		return "", err
+	}
+	if passwordPrompt {
+		if _, err := fmt.Fprint(out, "Password: "); err != nil {
+			return "", fmt.Errorf("writing password prompt: %w", err)
+		}
+		plain, err := readPassword(int(os.Stdin.Fd()))
+		if err != nil {
+			return "", fmt.Errorf("reading password: %w", err)
+		}
+		defer clearBytes(plain)
+		if _, err := fmt.Fprintln(out); err != nil {
+			return "", fmt.Errorf("writing password prompt newline: %w", err)
+		}
+		if _, err := fmt.Fprint(out, "Confirm password: "); err != nil {
+			return "", fmt.Errorf("writing password confirmation prompt: %w", err)
+		}
+		confirm, err := readPassword(int(os.Stdin.Fd()))
+		if err != nil {
+			return "", fmt.Errorf("reading password confirmation: %w", err)
+		}
+		defer clearBytes(confirm)
+		if len(plain) == 0 {
+			return "", fmt.Errorf("password cannot be empty")
+		}
+		if string(plain) != string(confirm) {
+			return "", fmt.Errorf("passwords do not match")
+		}
+		passwordHash, err = bootc.HashPassword(string(plain))
+		if err != nil {
+			return "", err
+		}
+		if _, err := fmt.Fprintln(out); err != nil {
+			return "", fmt.Errorf("writing password prompt newline: %w", err)
+		}
+	}
+	return bootc.AccountProvisionScript(user, passwordHash)
+}
+
+func clearBytes(value []byte) {
+	for i := range value {
+		value[i] = 0
+	}
+}
+
 func main() {
 	if sdk.HandleMetadata(sdk.Metadata{Name: "bootc", Version: "0.3.0", Description: "Build bootable container images into VMs", Capabilities: []string{"cli-command", "backend-workflow"}, Permissions: []string{"mutate Kubernetes resources and instance definitions", "pull container images", "run privileged containers to partition a disk image"}, SupportedBackends: bootc.SupportedBackends}) {
 		return
@@ -162,10 +231,11 @@ func newRootCmd() *cobra.Command {
 	var (
 		namespace, disk, mem, sshKey, node, storageClass string
 		contextName, filesystem                          string
+		loginUser, passwordHash                          string
 		kargs                                            []string
 		customize                                        []string
 		cpu                                              int
-		resume, useSudo                                  bool
+		resume, useSudo, passwordPrompt                  bool
 	)
 
 	create := &cobra.Command{
@@ -192,7 +262,11 @@ func newRootCmd() *cobra.Command {
 			}
 			if target.Backend != "kubevirt" {
 				image, _ := cmd.Flags().GetString("image")
-				return buildAndImport(name, target, image, sshKey, disk, mem, cpu, filesystem, kargs, customize, useSudo)
+				provisionScript, err := loginProvisionScript(loginUser, passwordHash, passwordPrompt, cmd.ErrOrStderr())
+				if err != nil {
+					return err
+				}
+				return buildAndImport(name, target, image, sshKey, disk, mem, cpu, filesystem, kargs, customize, provisionScript, useSudo)
 			}
 			if len(customize) > 0 {
 				return fmt.Errorf("--customize runs scripts on this machine before the build, which the kubevirt backend cannot do — build locally (qemu context) or bake the customization into the image")
@@ -207,6 +281,9 @@ func newRootCmd() *cobra.Command {
 				key = kubevirt.LoadSSHPublicKey()
 			}
 
+			if resume && (loginUser != "" || passwordPrompt || passwordHash != "") {
+				return fmt.Errorf("--resume reuses an already-installed disk and cannot add a login user — rerun without --resume")
+			}
 			// --resume picks up an interrupted build: a builder VM that
 			// finished installing but never got its final VM created because
 			// the CLI died mid-wait (Ctrl+C, SSH drop) — see
@@ -242,8 +319,12 @@ func newRootCmd() *cobra.Command {
 			if size == "" {
 				size = "80Gi"
 			}
+			provisionScript, err := loginProvisionScript(loginUser, passwordHash, passwordPrompt, cmd.ErrOrStderr())
+			if err != nil {
+				return err
+			}
 
-			build, err := kubevirt.BootcBuildDisk(name, ns, image, key, size, storageClass, "", kargs, node, os.Stderr)
+			build, err := kubevirt.BootcBuildDisk(name, ns, image, key, size, storageClass, provisionScript, kargs, node, os.Stderr)
 			if err != nil {
 				return fmt.Errorf("bootc build: %w — if the builder actually finished after this failed, retry with --resume", err)
 			}
@@ -256,6 +337,9 @@ func newRootCmd() *cobra.Command {
 	create.Flags().IntVar(&cpu, "cpu", 2, "vCPUs")
 	create.Flags().StringVar(&node, "node", "", "Schedule on a specific node")
 	create.Flags().StringVar(&sshKey, "ssh-key", "", "SSH public key (default: ~/.ssh/*.pub)")
+	create.Flags().StringVar(&loginUser, "user", "", "Create a login user in the installed image")
+	create.Flags().BoolVar(&passwordPrompt, "password-prompt", false, "Prompt securely for the login user's password (never accepts plaintext in argv)")
+	create.Flags().StringVar(&passwordHash, "password-hash", "", "Set the login user's SHA-512 crypt password hash (requires --user)")
 	create.Flags().StringVarP(&storageClass, "storage-class", "s", "", "StorageClass for the disk PVC (default: cluster preference)")
 	create.Flags().BoolVar(&resume, "resume", false, "Finish a build that completed after a previous `create` was interrupted (with --karg: only if that build installed it)")
 	create.Flags().StringArrayVar(&kargs, "karg", nil, "Kernel argument to install into the boot entry, there from the first boot (repeatable)")
@@ -284,9 +368,15 @@ lists this same catalog alongside the OS image catalog in one place.`,
 		},
 	}
 
+	addLoginFlags := func(cmd *cobra.Command) {
+		cmd.Flags().StringVar(&loginUser, "user", "", "Create a login user in the installed image")
+		cmd.Flags().BoolVar(&passwordPrompt, "password-prompt", false, "Prompt securely for the login user's password (never accepts plaintext in argv)")
+		cmd.Flags().StringVar(&passwordHash, "password-hash", "", "Set the login user's SHA-512 crypt password hash (requires --user)")
+	}
+
 	// rebuild reruns the on-cluster build and re-points the VM. newImage "" =
 	// keep the recorded image (an upgrade — pull the latest of the same tag).
-	rebuild := func(name, newImage string) error {
+	rebuild := func(name, newImage, provisionScript string) error {
 		ns := namespace
 		if ns == "" {
 			ns = kubevirt.DefaultNamespace
@@ -305,7 +395,7 @@ lists this same catalog alongside the OS image catalog in one place.`,
 		if key == "" {
 			key = kubevirt.LoadSSHPublicKey()
 		}
-		if err := kubevirt.BootcRebuild(name, ns, image, key, disk, os.Stderr); err != nil {
+		if err := kubevirt.BootcRebuild(name, ns, image, key, disk, provisionScript, os.Stderr); err != nil {
 			return err
 		}
 		if store, err := registry.NewStore(); err == nil {
@@ -324,20 +414,32 @@ preserved. Use this to apply image updates.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			img, _ := cmd.Flags().GetString("image")
-			return rebuild(args[0], img)
+			provisionScript, err := loginProvisionScript(loginUser, passwordHash, passwordPrompt, cmd.ErrOrStderr())
+			if err != nil {
+				return err
+			}
+			return rebuild(args[0], img, provisionScript)
 		},
 	}
 	rebuildCmd.Flags().String("image", "", "Override the image (default: the recorded one)")
 	rebuildCmd.Flags().StringVar(&disk, "disk", "", "Override disk size (default: keep existing)")
 	rebuildCmd.Flags().StringVar(&sshKey, "ssh-key", "", "SSH public key (default: ~/.ssh/*.pub)")
+	addLoginFlags(rebuildCmd)
 
 	upgradeCmd := &cobra.Command{
 		Use:   "upgrade <name>",
 		Short: "Rebuild a bootc VM from the latest of its current image (alias for rebuild)",
 		Args:  cobra.ExactArgs(1),
-		RunE:  func(cmd *cobra.Command, args []string) error { return rebuild(args[0], "") },
+		RunE: func(cmd *cobra.Command, args []string) error {
+			provisionScript, err := loginProvisionScript(loginUser, passwordHash, passwordPrompt, cmd.ErrOrStderr())
+			if err != nil {
+				return err
+			}
+			return rebuild(args[0], "", provisionScript)
+		},
 	}
 	upgradeCmd.Flags().StringVar(&sshKey, "ssh-key", "", "SSH public key (default: ~/.ssh/*.pub)")
+	addLoginFlags(upgradeCmd)
 
 	switchCmd := &cobra.Command{
 		Use:   "switch <name> --image <ref>",
@@ -348,12 +450,17 @@ preserved. Use this to apply image updates.`,
 			if img == "" {
 				return fmt.Errorf("--image is required (catalog name or OCI ref)")
 			}
-			return rebuild(args[0], img)
+			provisionScript, err := loginProvisionScript(loginUser, passwordHash, passwordPrompt, cmd.ErrOrStderr())
+			if err != nil {
+				return err
+			}
+			return rebuild(args[0], img, provisionScript)
 		},
 	}
 	switchCmd.Flags().String("image", "", "New bootc image — catalog name or OCI ref")
 	switchCmd.Flags().StringVar(&disk, "disk", "", "Override disk size (default: keep existing)")
 	switchCmd.Flags().StringVar(&sshKey, "ssh-key", "", "SSH public key (default: ~/.ssh/*.pub)")
+	addLoginFlags(switchCmd)
 
 	statusCmd := &cobra.Command{
 		Use:   "status",
