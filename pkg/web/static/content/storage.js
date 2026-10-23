@@ -1,12 +1,11 @@
-// Storage screen: what a source offers, and the disks imported from it.
-//
-// The counterpart to Storage View in the sidebar. Proxmox puts the contents of
-// a storage target on its own screen rather than only in the tree, because the
-// tree has room for a name and nothing else — the same reason this exists.
-
+import { api } from '../api.js';
+import { refresh } from '../app.js';
 import { icon } from '../icons.js';
+import { dataVolumeMenuItems, imageSourceMenuItems } from '../menus.js';
 import { state } from '../state.js';
-import { esc } from '../ui/dom.js';
+import { confirmDestroy } from '../ui/confirm.js';
+import { esc, toast } from '../ui/dom.js';
+import { attachContextMenu } from '../ui/menu.js';
 
 export function renderStorage(main, name) {
   // A "dv:<namespace>" selection is the imported-disk group rather than an
@@ -34,6 +33,20 @@ export function renderStorage(main, name) {
         <td class="muted">${esc(i.defaultUser || '')}</td>
       </tr>`).join('')}</tbody>
     </table>`;
+
+  const removeSource = async (img) => {
+    if (!confirm(`Remove custom source "${img.name}"?`)) return;
+    try {
+      await api(`/api/sources/${encodeURIComponent(img.name)}`, { method: 'DELETE' });
+      toast(`Removed source ${img.name}`);
+      refresh(true);
+    } catch (err) { toast(err.message); }
+  };
+
+  main.querySelectorAll('tbody tr').forEach((tr, idx) => {
+    const img = images[idx];
+    if (img) attachContextMenu(tr, () => imageSourceMenuItems(img, { onRemove: removeSource }));
+  });
 }
 
 function renderDataVolumes(main, ns) {
@@ -48,4 +61,23 @@ function renderDataVolumes(main, ns) {
         <td class="muted">${esc(d.source || d.url || '')}</td>
       </tr>`).join('')}</tbody>
     </table>` : '<p class="muted">No imported disks in this namespace.</p>'}`;
+
+  const deleteDV = async (d) => {
+    if (!await confirmDestroy({
+      title: `Delete image ${d.name}?`,
+      identifier: d.name,
+      label: `Type ${d.name} to confirm`,
+      note: 'Any guest built from it keeps its disk; the image itself is gone.',
+    })) return;
+    try {
+      await api(`/api/datavolumes/${d.namespace}/${d.name}`, { method: 'DELETE' });
+      toast('Deleted');
+      refresh(true);
+    } catch (e) { toast(e.message); }
+  };
+
+  main.querySelectorAll('tbody tr').forEach((tr, idx) => {
+    const dv = dvs[idx];
+    if (dv) attachContextMenu(tr, () => dataVolumeMenuItems(dv, { onDelete: deleteDV }));
+  });
 }

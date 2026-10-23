@@ -195,6 +195,43 @@ export function attachContextMenu(el, getItems) {
       if (items && items.length) showContextMenu(e, items, el);
     }
   });
+
+  // Long-press equivalent on touch devices (500ms hold without scrolling/moving).
+  let touchTimer = null;
+  let startX = 0;
+  let startY = 0;
+
+  el.addEventListener('pointerdown', (e) => {
+    if (e.pointerType !== 'touch') return;
+    startX = e.clientX;
+    startY = e.clientY;
+    clearTimeout(touchTimer);
+    touchTimer = setTimeout(() => {
+      touchTimer = null;
+      const items = typeof getItems === 'function' ? getItems() : getItems;
+      if (items && items.length) {
+        showContextMenu({ clientX: startX, clientY: startY, preventDefault() {}, stopPropagation() {} }, items, el);
+      }
+    }, 500);
+  });
+
+  const cancelTouch = () => {
+    if (touchTimer) {
+      clearTimeout(touchTimer);
+      touchTimer = null;
+    }
+  };
+
+  el.addEventListener('pointermove', (e) => {
+    if (!touchTimer) return;
+    // If movement exceeds threshold (scrolling or dragging), cancel long press
+    if (Math.hypot(e.clientX - startX, e.clientY - startY) > 10) {
+      cancelTouch();
+    }
+  });
+
+  el.addEventListener('pointerup', cancelTouch);
+  el.addEventListener('pointercancel', cancelTouch);
 }
 
 document.addEventListener('pointerdown', (e) => {

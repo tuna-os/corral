@@ -10,10 +10,12 @@
 import { api } from '../api.js';
 import { refresh, select } from '../app.js';
 import { icon } from '../icons.js';
+import { desktopMenuItems, desktopPoolMenuItems } from '../menus.js';
 import { state } from '../state.js';
 import { treeRow } from '../tree.js';
 import { registerCapability } from '../ui/capabilities.js';
 import { $, esc, toast } from '../ui/dom.js';
+import { attachContextMenu } from '../ui/menu.js';
 import { consoleSelection, sessionText, vdiClaimURL, vdiDesktopURL, vdiDesktopsURL, vdiPoolsURL } from '../vdi.js';
 
 // The caller's desktops, from the last poll. Null while the broker is off.
@@ -73,21 +75,48 @@ function poolRows(pools) {
   </tbody></table>`;
 }
 
-function bind(main) {
+function bind(main, list = [], pools = []) {
   main.querySelectorAll('[data-vdi-connect]').forEach((b) => { b.onclick = () => connect(b.dataset.vdiConnect); });
+  const startDesktop = (id) => post(vdiDesktopURL(id, 'start'), (d) => toast(d.startError || `Starting ${d.member}`));
+  const releaseDesktop = (id) => {
+    if (!confirm(`Release ${id}? The desktop stops, and an ephemeral desktop loses its changes.`)) return;
+    post(vdiDesktopURL(id, 'release'), () => toast(`Releasing ${id}`));
+  };
+  const claimPool = (id) => post(vdiClaimURL(id), (d) => toast(d.startError || `${d.member} is yours. Select Connect when it runs.`));
+
   main.querySelectorAll('[data-vdi-start]').forEach((b) => {
-    b.onclick = () => post(vdiDesktopURL(b.dataset.vdiStart, 'start'), (d) => toast(d.startError || `Starting ${d.member}`));
+    b.onclick = () => startDesktop(b.dataset.vdiStart);
   });
   main.querySelectorAll('[data-vdi-release]').forEach((b) => {
-    b.onclick = () => {
-      const id = b.dataset.vdiRelease;
-      if (!confirm(`Release ${id}? The desktop stops, and an ephemeral desktop loses its changes.`)) return;
-      post(vdiDesktopURL(id, 'release'), () => toast(`Releasing ${id}`));
-    };
+    b.onclick = () => releaseDesktop(b.dataset.vdiRelease);
   });
   main.querySelectorAll('[data-vdi-claim]').forEach((b) => {
-    b.onclick = () => post(vdiClaimURL(b.dataset.vdiClaim), (d) => toast(d.startError || `${d.member} is yours. Select Connect when it runs.`));
+    b.onclick = () => claimPool(b.dataset.vdiClaim);
   });
+
+  const mineTable = main.querySelector('#vdi-mine table');
+  if (mineTable) {
+    mineTable.querySelectorAll('tbody tr').forEach((tr, idx) => {
+      const d = list[idx];
+      if (d) {
+        attachContextMenu(tr, () => desktopMenuItems(d, {
+          onConnect: connect,
+          onStart: startDesktop,
+          onRelease: releaseDesktop,
+        }));
+      }
+    });
+  }
+
+  const poolsTable = main.querySelector('#vdi-pools table');
+  if (poolsTable) {
+    poolsTable.querySelectorAll('tbody tr').forEach((tr, idx) => {
+      const p = pools[idx];
+      if (p) {
+        attachContextMenu(tr, () => desktopPoolMenuItems(p, { onClaim: claimPool }));
+      }
+    });
+  }
 }
 
 async function renderDesktops(main, linked) {
@@ -106,7 +135,7 @@ async function renderDesktops(main, linked) {
   }
   $('#vdi-mine').innerHTML = desktopRows(mine);
   $('#vdi-pools').innerHTML = poolRows(pools);
-  bind(main);
+  bind(main, mine, pools);
   // A link from `corral vdi connect --broker` names the desktop to open.
   if (linked && linkTried !== linked) {
     linkTried = linked;

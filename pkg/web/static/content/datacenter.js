@@ -9,6 +9,8 @@ import { icon } from '../icons.js';
 import { state } from '../state.js';
 import { capabilityAlerts, capabilityLayout, capabilityWidgets } from '../ui/capabilities.js';
 import { $, esc, toast } from '../ui/dom.js';
+import { dataVolumeMenuItems } from '../menus.js';
+import { attachContextMenu } from '../ui/menu.js';
 import { bindTemplateTable, bindVMTable, templateTable, vmTable } from './vm-table.js';
 import { confirmDestroy } from '../ui/confirm.js';
 import { pollWhileVisible } from '../ui/visibility.js';
@@ -230,18 +232,30 @@ async function loadImages() {
       <td><button class="btn sm danger" data-deldv="${esc(d.namespace)}/${esc(d.name)}">${icon('trash')}</button></td>
     </tr>`).join('')}
     </tbody></table>`;
+  const deleteDV = async (d) => {
+    const ns = d.namespace;
+    const name = d.name;
+    if (!await confirmDestroy({
+      title: `Delete image ${name}?`,
+      identifier: name,
+      label: `Type ${name} to confirm`,
+      note: 'Any guest built from it keeps its disk; the image itself is gone.',
+    })) return;
+    try { await api(`/api/datavolumes/${ns}/${name}`, { method: 'DELETE' }); toast('Deleted'); }
+    catch (e) { toast(e.message); }
+    setTimeout(loadImages, 500);
+  };
+
+  el.querySelectorAll('tbody tr').forEach((tr, idx) => {
+    const d = dvs[idx];
+    if (d) attachContextMenu(tr, () => dataVolumeMenuItems(d, { onDelete: deleteDV }));
+  });
+
   el.querySelectorAll('[data-deldv]').forEach((b) => {
     b.onclick = async () => {
       const [ns, name] = b.dataset.deldv.split('/');
-      if (!await confirmDestroy({
-        title: `Delete image ${name}?`,
-        identifier: name,
-        label: `Type ${name} to confirm`,
-        note: 'Any guest built from it keeps its disk; the image itself is gone.',
-      })) return;
-      try { await api(`/api/datavolumes/${ns}/${name}`, { method: 'DELETE' }); toast('Deleted'); }
-      catch (e) { toast(e.message); }
-      setTimeout(loadImages, 500);
+      const d = dvs.find((x) => x.namespace === ns && x.name === name);
+      if (d) deleteDV(d);
     };
   });
 }

@@ -450,3 +450,121 @@ export function unassignedMenuItems() {
     },
   ];
 }
+
+export function dataVolumeMenuItems(dv, opts = {}) {
+  const isKubeVirt = state.caps?.kubevirt !== false;
+  const items = [];
+
+  if (isKubeVirt && dv.phase === 'Succeeded') {
+    items.push({
+      icon: 'plus',
+      label: 'Create VM from this disk…',
+      mutate: true,
+      action: () => {
+        const btn = document.querySelector('#btn-create');
+        if (btn) btn.click();
+        const srcType = document.querySelector('[name=sourceType]');
+        if (srcType) {
+          srcType.value = 'pvc';
+          srcType.dispatchEvent(new Event('change'));
+        }
+        const pvcInput = document.querySelector('[name=pvcSource]');
+        if (pvcInput) {
+          pvcInput.value = dv.name;
+        }
+      },
+    });
+  }
+
+  items.push({
+    icon: 'trash',
+    label: `Delete disk ${dv.name}`,
+    danger: true,
+    mutate: true,
+    action: () => {
+      if (typeof opts.onDelete === 'function') {
+        opts.onDelete(dv);
+      }
+    },
+  });
+
+  return items;
+}
+
+export function imageSourceMenuItems(img, opts = {}) {
+  const items = [];
+  items.push({
+    icon: 'plus',
+    label: `Create VM from ${img.name}…`,
+    mutate: true,
+    action: () => {
+      const btn = document.querySelector('#btn-create');
+      if (btn) btn.click();
+      const catSelect = document.querySelector('[name=catalogImage]');
+      if (catSelect) {
+        catSelect.value = img.name;
+      }
+    },
+  });
+
+  if (img.custom && typeof opts.onRemove === 'function') {
+    items.push({
+      icon: 'trash',
+      label: `Remove source ${img.name}`,
+      danger: true,
+      mutate: true,
+      action: () => opts.onRemove(img),
+    });
+  }
+
+  return items;
+}
+
+export function desktopMenuItems(d, opts = {}) {
+  const items = [];
+  if (d.running) {
+    items.push({
+      icon: 'desktop',
+      label: 'Connect',
+      action: () => {
+        if (typeof opts.onConnect === 'function') opts.onConnect(d.id);
+      },
+    });
+  } else {
+    items.push({
+      icon: 'play',
+      label: 'Start',
+      mutate: true,
+      action: () => {
+        if (typeof opts.onStart === 'function') opts.onStart(d.id);
+      },
+    });
+  }
+
+  items.push({
+    icon: 'stop',
+    label: 'Release desktop',
+    danger: true,
+    mutate: true,
+    action: () => {
+      if (typeof opts.onRelease === 'function') opts.onRelease(d.id);
+    },
+  });
+
+  return items;
+}
+
+export function desktopPoolMenuItems(pool, opts = {}) {
+  const items = [];
+  items.push({
+    icon: 'plus',
+    label: 'Get a desktop',
+    mutate: true,
+    disabled: !pool.free,
+    title: pool.free ? 'Claim a desktop from this pool' : 'No free desktop',
+    action: () => {
+      if (typeof opts.onClaim === 'function') opts.onClaim(pool.id);
+    },
+  });
+  return items;
+}

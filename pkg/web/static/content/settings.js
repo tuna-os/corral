@@ -1,11 +1,19 @@
-// Settings screen: theme and branding.
-
 import { api, sendJSON } from '../api.js';
 import { icon } from '../icons.js';
-import { MODES, setThemeMode, themeMode } from '../ui/theme.js';
-import { $, esc } from '../ui/dom.js';
+import {
+  customAccent,
+  DENSITIES,
+  densityMode,
+  MODES,
+  setCustomAccent,
+  setDensityMode,
+  setThemeMode,
+  themeMode,
+} from '../ui/theme.js';
+import { resetWorkspaceLayout } from '../ui/workspace.js';
+import { $, esc, toast } from '../ui/dom.js';
 
-// ── Settings: theme & branding ────────────────────────────────────
+// ── Settings: theme, preferences & branding ───────────────────────
 // Live-preview settings form: changes apply to the page immediately;
 // Save persists to config.yaml via PUT /api/theme.
 
@@ -25,11 +33,15 @@ export async function renderSettings(main) {
     ['#f59e0b', 'Amber'],
   ];
 
+  const currentAccent = customAccent() || theme.accent;
+  const isCustomAccent = !!customAccent();
+
   main.innerHTML = `
     <div class="page-head"><h1>${icon('cog')} Settings</h1></div>
 
     <h2 class="section">${icon('cog')} Appearance</h2>
-    <div class="hw-edit" style="align-items:center">
+    <div class="hw-edit" style="align-items:center;margin-bottom:12px">
+      <label style="min-width:120px">Colour scheme</label>
       <div class="seg" role="radiogroup" aria-label="Colour scheme">
         ${MODES.map((m) => `<button type="button" class="btn sm seg-btn" role="radio" data-theme-mode="${m}"
           aria-checked="${m === themeMode() ? 'true' : 'false'}">${m === 'system' ? 'System' : m === 'light' ? 'Light' : 'Dark'}</button>`).join('')}
@@ -37,27 +49,51 @@ export async function renderSettings(main) {
       <span class="muted">System follows this device. Remembered in this browser only.</span>
     </div>
 
-    <h2 class="section">${icon('cpu')} Accent colour</h2>
     <div class="hw-edit" style="align-items:center">
-      <label>Colour <input type="color" id="set-accent" value="${esc(theme.accent)}"></label>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        ${presets.map(([hex, label]) =>
-          `<button class="btn sm preset" data-hex="${esc(hex)}" style="${hex === theme.accent ? 'border-color:' + esc(hex) + ';outline:1px solid ' + esc(hex) : ''}">${esc(label)}</button>`).join('')}
+      <label style="min-width:120px">Table density</label>
+      <div class="seg" role="radiogroup" aria-label="Table density">
+        ${DENSITIES.map((d) => `<button type="button" class="btn sm seg-btn" role="radio" data-density-mode="${d}"
+          aria-checked="${d === densityMode() ? 'true' : 'false'}">${d.charAt(0).toUpperCase() + d.slice(1)}</button>`).join('')}
       </div>
+      <span class="muted">Controls row padding and font sizing in tables and inventory grids.</span>
     </div>
 
-    <h2 class="section">Branding</h2>
+    <h2 class="section">${icon('cpu')} Accent colour</h2>
+    <div class="hw-edit" style="align-items:center">
+      <label>Colour <input type="color" id="set-accent" value="${esc(currentAccent)}"></label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        ${presets.map(([hex, label]) =>
+          `<button class="btn sm preset" data-hex="${esc(hex)}" style="${hex === currentAccent ? 'border-color:' + esc(hex) + ';outline:1px solid ' + esc(hex) : ''}">${esc(label)}</button>`).join('')}
+      </div>
+      <button class="btn sm" id="set-reset-accent" ${isCustomAccent ? '' : 'disabled'}>Reset to server default</button>
+      <span class="muted" id="accent-note">${isCustomAccent ? 'Custom accent saved in this browser.' : 'Using server default accent.'}</span>
+    </div>
+
+    <h2 class="section">Workspace & Display Preferences</h2>
+    <div class="hw-edit" style="align-items:center">
+      <button class="btn sm" id="set-reset-workspace">${icon('restart')} Reset workspace layout</button>
+      <span class="muted">Restores default sidebar width, dock height, and panel visibility.</span>
+    </div>
+
+    <h2 class="section">Documentation & Reference</h2>
+    <div style="background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:20px;font-size:0.86rem;line-height:1.6">
+      <p><strong>Context Menus:</strong> Right-click or touch long-press (500ms) on any inventory row (VMs, containers, storage disks, catalog images, nodes, pools, or desktops) to open quick actions. Keyboard shortcuts: <kbd>ContextMenu</kbd> key or <kbd>Shift+F10</kbd>.</p>
+      <p><strong>Command Palette:</strong> Press <kbd>Ctrl+K</kbd> / <kbd>Cmd+K</kbd> or click <em>Search</em> in the header to jump to resources, switch tree views, toggle theme, or run actions.</p>
+      <p><strong>Branding vs User Preferences:</strong> Appearance, density, and local accent customization are remembered per browser in <code>localStorage</code>. Server branding and default accent below are stored cluster-wide via <code>PUT /api/theme</code>.</p>
+    </div>
+
+    <h2 class="section">Server Branding (Cluster-wide)</h2>
     <div class="hw-edit">
       <label>Title <input id="set-brand-title" value="${esc(theme.brand_title)}" placeholder="Corral"></label>
       <label>Emoji <input id="set-brand-emoji" value="${esc(theme.brand_emoji)}" placeholder="🤠" maxlength="4" style="width:80px"></label>
       <label>Subtitle <input id="set-brand-subtitle" value="${esc(theme.brand_subtitle)}" placeholder="Virtual Environment" style="width:200px"></label>
     </div>
 
-    <h2 class="section">Custom CSS</h2>
+    <h2 class="section">Server Custom CSS (Cluster-wide)</h2>
     <textarea id="set-css" rows="10" style="width:100%;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:var(--radius);padding:10px;font-family:monospace;font-size:.85rem" placeholder="/* Custom CSS injected into every page */">${esc(theme.custom_css)}</textarea>
 
     <div class="dialog-actions" style="justify-content:flex-start;margin-top:16px">
-      <button class="btn primary" id="set-save">${icon('download')} Save</button>
+      <button class="btn primary" id="set-save">${icon('download')} Save server branding</button>
       <button class="btn" id="set-reset-css" ${theme.custom_css ? '' : 'disabled'}>Reset CSS</button>
       <span class="muted" style="margin-left:12px;font-size:.82rem" id="set-status"></span>
     </div>`;
@@ -95,6 +131,16 @@ export async function renderSettings(main) {
     themePreview.textContent = css.value;
   };
 
+  // Density mode selector.
+  main.querySelectorAll('[data-density-mode]').forEach((b) => {
+    b.onclick = () => {
+      setDensityMode(b.dataset.densityMode);
+      main.querySelectorAll('[data-density-mode]').forEach(
+        (o) => o.setAttribute('aria-checked', o === b ? 'true' : 'false'),
+      );
+    };
+  });
+
   // Preset swatches.
   main.querySelectorAll('[data-theme-mode]').forEach((b) => {
     b.onclick = () => {
@@ -107,10 +153,18 @@ export async function renderSettings(main) {
     };
   });
 
+  const onAccentChanged = (val) => {
+    setCustomAccent(val);
+    updatePreview();
+    const isCustom = !!customAccent();
+    $('#set-reset-accent').disabled = !isCustom;
+    $('#accent-note').textContent = isCustom ? 'Custom accent saved in this browser.' : 'Using server default accent.';
+  };
+
   main.querySelectorAll('.preset').forEach((b) => {
     b.onclick = () => {
       accent.value = b.dataset.hex;
-      updatePreview();
+      onAccentChanged(b.dataset.hex);
       // Highlight the active preset.
       main.querySelectorAll('.preset').forEach((p) => p.style.outline = '');
       b.style.outline = `1px solid ${b.dataset.hex}`;
@@ -118,7 +172,24 @@ export async function renderSettings(main) {
     };
   });
 
-  accent.oninput = updatePreview;
+  $('#set-reset-accent').onclick = () => {
+    setCustomAccent('');
+    accent.value = theme.accent;
+    updatePreview();
+    main.querySelectorAll('.preset').forEach((p) => {
+      p.style.outline = p.dataset.hex === theme.accent ? `1px solid ${theme.accent}` : '';
+      p.style.borderColor = p.dataset.hex === theme.accent ? theme.accent : '';
+    });
+    $('#set-reset-accent').disabled = true;
+    $('#accent-note').textContent = 'Using server default accent.';
+    toast('Accent reset to server default');
+  };
+
+  $('#set-reset-workspace').onclick = () => {
+    resetWorkspaceLayout();
+  };
+
+  accent.oninput = () => onAccentChanged(accent.value);
   title.oninput = updatePreview;
   emoji.oninput = updatePreview;
   subtitle.oninput = updatePreview;
