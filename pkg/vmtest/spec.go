@@ -40,6 +40,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tuna-os/corral/pkg/image/layer"
 	"gopkg.in/yaml.v3"
 )
 
@@ -141,23 +142,10 @@ type Spec struct {
 }
 
 // User is a test account in the derived image.
-type User struct {
-	Name     string `yaml:"name"`
-	Password string `yaml:"password"`
-	// Sudo adds the account to the base image's administrator group (wheel, or
-	// sudo on Debian bases — whichever exists).
-	Sudo              bool     `yaml:"sudo"`
-	Groups            []string `yaml:"groups"`
-	Shell             string   `yaml:"shell"`
-	SSHAuthorizedKeys []string `yaml:"sshAuthorizedKeys"`
-}
+type User = layer.User
 
 // File is written into the derived image.
-type File struct {
-	Path    string `yaml:"path"`
-	Content string `yaml:"content"`
-	Mode    string `yaml:"mode"`
-}
+type File = layer.File
 
 // Provision is one script, in Lima's shape.
 type Provision struct {
@@ -361,9 +349,12 @@ func (s *Spec) kargs() []string {
 	return append([]string{SerialKarg}, s.Kargs...)
 }
 
-// imageScripts and bootScripts split provision entries by when they run.
-func (s *Spec) imageScripts() []string { return s.scriptsFor(true) }
-func (s *Spec) bootScripts() []string  { return s.scriptsFor(false) }
+// ImageScripts and BootScripts split provision entries by when they run.
+func (s *Spec) ImageScripts() []string { return s.scriptsFor(true) }
+func (s *Spec) BootScripts() []string  { return s.scriptsFor(false) }
+
+func (s *Spec) imageScripts() []string { return s.ImageScripts() }
+func (s *Spec) bootScripts() []string  { return s.BootScripts() }
 
 func (s *Spec) scriptsFor(image bool) []string {
 	var out []string
@@ -378,13 +369,30 @@ func (s *Spec) scriptsFor(image bool) []string {
 	return out
 }
 
-// needsLayer reports whether anything asked for would change the image. When
+// NeedsLayer reports whether anything asked for would change the image. When
 // nothing does, the image under test is booted exactly as published.
-func (s *Spec) needsLayer() bool {
+func (s *Spec) NeedsLayer() bool {
 	return len(s.Users) > 0 || s.RootPassword != "" || len(s.Packages) > 0 ||
 		len(s.ExtraRun) > 0 || len(s.Files) > 0 ||
-		len(s.imageScripts()) > 0 || len(s.bootScripts()) > 0
+		len(s.ImageScripts()) > 0 || len(s.BootScripts()) > 0
 }
+
+func (s *Spec) needsLayer() bool { return s.NeedsLayer() }
+
+// PasswordLoginWanted reports whether any account got a password.
+func (s *Spec) PasswordLoginWanted() bool {
+	if s.RootPassword != "" {
+		return true
+	}
+	for _, u := range s.Users {
+		if u.Password != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Spec) passwordLoginWanted() bool { return s.PasswordLoginWanted() }
 
 // normalizeSize turns Lima's sizes into the ones pkg/qemu and bootc use:
 // "4GiB", "4GB" and "4G" are the same memory, and a bare number is mebibytes.
