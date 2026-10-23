@@ -25,7 +25,7 @@ require (
 
 // vSphere backend (RFC-0003): github.com/vmware/govmomi v0.56.0 (Apache-2.0, latest stable;
 // VMware's supported SDK for https://<vc>/sdk/vim25). Fixtures run against govmomi/simulator.
-require github.com/vmware/govmomi v0.56.0
+require github.com/vmware/govmomi v0.56.1
 
 require github.com/sigstore/sigstore-go v1.3.0
 
