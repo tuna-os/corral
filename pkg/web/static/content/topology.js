@@ -30,6 +30,9 @@ import { capabilityNodeBadges } from '../ui/capabilities.js';
 import { esc } from '../ui/dom.js';
 import { attachContextMenu } from '../ui/menu.js';
 import { keyed, reconcile } from '../ui/reconcile.js';
+import { registerScreen } from '../router.js';
+
+registerScreen('topology', (main) => renderTopology(main));
 
 const UNPLACED = '\u0000unplaced';
 

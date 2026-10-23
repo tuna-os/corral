@@ -7,6 +7,9 @@
 import { icon } from '../icons.js';
 import { state } from '../state.js';
 import { esc } from '../ui/dom.js';
+import { registerScreen } from '../router.js';
+
+registerScreen('storage', (main, sel) => renderStorage(main, sel.name));
 
 export function renderStorage(main, name) {
   // A "dv:<namespace>" selection is the imported-disk group rather than an

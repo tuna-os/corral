@@ -1,10 +1,12 @@
 // Multiview screen: several live VNC consoles in one persisted grid.
 
 import { vmKey, wsURL } from '../api.js';
-import { renderContent, select } from '../app.js';
 import { icon } from '../icons.js';
+import { registerScreen, renderContent, select } from '../router.js';
 import { state } from '../state.js';
 import { $, esc } from '../ui/dom.js';
+
+registerScreen('multiview', (main) => renderMultiview(main));
 
 // ── Multiview: persisted, rearrangeable live consoles ─────────────
 // Preset sizes make resizing keyboard-accessible; pointer users can also drag

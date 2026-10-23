@@ -4,6 +4,9 @@ import { api, sendJSON } from '../api.js';
 import { icon } from '../icons.js';
 import { MODES, setThemeMode, themeMode } from '../ui/theme.js';
 import { $, esc } from '../ui/dom.js';
+import { registerScreen } from '../router.js';
+
+registerScreen('settings', (main) => renderSettings(main));
 
 // ── Settings: theme & branding ────────────────────────────────────
 // Live-preview settings form: changes apply to the page immediately;

@@ -5,6 +5,9 @@ import { state } from '../state.js';
 import { esc } from '../ui/dom.js';
 import { bindCTTable, ctTable } from './ct.js';
 import { bindVMTable, vmTable } from './vm-table.js';
+import { registerScreen } from '../router.js';
+
+registerScreen('namespace', (main, sel) => renderNamespace(main, sel.name));
 
 // Namespace View's namespace detail — same shape as renderNode, grouped by
 // namespace instead of node.

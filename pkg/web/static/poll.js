@@ -1,6 +1,5 @@
 // The fleet poll's schedule: one refresh at a time, and the next one scheduled
-// from the end of the last. No DOM and no API here; app.js says what a refresh
-// does. Unit tests: pkg/web/jstest/poll.test.mjs.
+// from the end of the last. Unit tests: pkg/web/jstest/poll.test.mjs.
 //
 // This used to be `setInterval(refresh, 5000)`. refresh() is asynchronous and
 // awaits several endpoints in turn, so a fixed timer fires whether or not the
@@ -69,4 +68,115 @@ export function startPolling(refresh, {
     }
   };
   schedule(tick, interval);
+}
+
+// PollingState coordinates refresh timing, dedup, failure tracking, and deferred renders.
+//
+// Extracted from app.js (#605). It decouples the poll cadence and lifecycle
+// state from DOM rendering, making refresh logic independently testable.
+export class PollingState {
+  constructor({
+    interval = 5000,
+    fetchData = null,
+    fingerprint = () => '',
+    render = () => {},
+    shouldDefer = () => false,
+    shouldSkip = () => false,
+    onIdentityLost = null,
+    onOffline = null,
+    onError = null,
+  } = {}) {
+    this.interval = interval;
+    this.fetchData = fetchData;
+    this.fingerprint = fingerprint;
+    this.render = render;
+    this.shouldDefer = shouldDefer;
+    this.shouldSkip = shouldSkip;
+    this.onIdentityLost = onIdentityLost;
+    this.onOffline = onOffline;
+    this.onError = onError;
+
+    this.pending = false;
+    this.lastError = null;
+    this.lastFailure = '';
+    this.lastRenderFp = '';
+    this.renderDeferred = false;
+    this.identityLost = false;
+    this.offlineShown = false;
+
+    this._singleFlightPoll = singleFlight((force) => this._executePoll(force));
+  }
+
+  isPending() {
+    return this.pending;
+  }
+
+  markRendered() {
+    this.lastRenderFp = this.fingerprint();
+  }
+
+  async poll(force = false) {
+    return this._singleFlightPoll(force);
+  }
+
+  async _executePoll(force = false) {
+    this.pending = true;
+    try {
+      let wasIdentityLost = this.identityLost;
+      if (this.fetchData) {
+        await this.fetchData(force || wasIdentityLost);
+      }
+      this.identityLost = false;
+      this.lastError = null;
+      this.lastFailure = '';
+      this.offlineShown = false;
+
+      const fp = this.fingerprint();
+      if (!force && !wasIdentityLost && fp === this.lastRenderFp) return;
+      if (!force && !wasIdentityLost && this.shouldSkip()) return;
+      if (!force && !wasIdentityLost && this.shouldDefer()) {
+        this.renderDeferred = true;
+        return;
+      }
+
+      this.lastRenderFp = fp;
+      this.render(force || wasIdentityLost);
+    } catch (e) {
+      this.lastError = e;
+      if (e.status === 401) {
+        if (!this.identityLost) {
+          this.identityLost = true;
+          this.onIdentityLost?.(() => this.poll(true));
+        }
+        return;
+      }
+      if (!this.lastRenderFp && !this.offlineShown) {
+        this.offlineShown = true;
+        this.onOffline?.(e, () => {
+          this.offlineShown = false;
+          this.poll(true);
+        });
+      } else if (this.lastRenderFp && e.message !== this.lastFailure) {
+        this.onError?.(e);
+      }
+      this.lastFailure = e.message || String(e);
+    } finally {
+      this.pending = false;
+    }
+  }
+
+  onSettled() {
+    if (!this.renderDeferred) return;
+    this.renderDeferred = false;
+    return this.poll();
+  }
+
+  start({ hidden = () => false, now = Date.now, schedule = setTimeout } = {}) {
+    startPolling(() => this.poll(), {
+      interval: this.interval,
+      hidden,
+      now,
+      schedule,
+    });
+  }
 }

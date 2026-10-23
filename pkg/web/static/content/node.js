@@ -8,6 +8,9 @@ import { $, esc } from '../ui/dom.js';
 import { bindCTTable, ctTable } from './ct.js';
 import { chartWidget, topVMsWidget } from './datacenter.js';
 import { bindVMTable, vmTable } from './vm-table.js';
+import { registerScreen } from '../router.js';
+
+registerScreen('node', (main, sel) => renderNode(main, sel.name));
 
 // The node page shares one saved layout across nodes; the widgets are built
 // per node because they filter to it.

@@ -10,6 +10,17 @@ import { bindBreadcrumb, breadcrumb } from '../ui/breadcrumb.js';
 import { $, esc, toast } from '../ui/dom.js';
 import { attachContextMenu } from '../ui/menu.js';
 import { confirmDestroy } from '../ui/confirm.js';
+import { registerScreen } from '../router.js';
+
+registerScreen('ct', (main, sel, router) => {
+  const c = findCT(sel.key);
+  if (!c) {
+    router.state.selected = router.fallbackSelection();
+    return router.renderContent();
+  }
+  router.lastParentNode = c.node || '';
+  return renderCT(main, c);
+});
 
 export function ctTable(list) {
   if (!list.length) return '';

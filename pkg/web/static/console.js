@@ -3,7 +3,8 @@
 // each opened into a screen element and closed by disconnectConsoles().
 
 import { findVM, vmKey } from './api.js';
-import { markRendered, renderContent } from './app.js';
+import { markRendered } from './app.js';
+import { renderContent } from './router.js';
 import { openRDP } from './console/rdp.js';
 import { openTTY } from './console/tty.js';
 import { chordFor, openVNC } from './console/vnc.js';

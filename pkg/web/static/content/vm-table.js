@@ -2,7 +2,8 @@
 // Namespace screens share.
 
 import { api, findVM, vmKey, vmURL } from '../api.js';
-import { refresh, select, syncRoute } from '../app.js';
+import { refresh } from '../app.js';
+import { select, syncRoute } from '../router.js';
 import { mountGrid } from '../grid.js';
 import { icon } from '../icons.js';
 import { vmMenuItems } from '../menus.js';

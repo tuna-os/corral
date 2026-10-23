@@ -11,7 +11,10 @@ import { capabilityAlerts, capabilityLayout, capabilityWidgets } from '../ui/cap
 import { $, esc, toast } from '../ui/dom.js';
 import { bindTemplateTable, bindVMTable, templateTable, vmTable } from './vm-table.js';
 import { confirmDestroy } from '../ui/confirm.js';
+import { registerScreen } from '../router.js';
 import { pollWhileVisible } from '../ui/visibility.js';
+
+registerScreen('dc', (main) => renderDatacenter(main));
 
 // Tag the tree/list is filtered to, or null for "show all".
 let tagFilter = null;

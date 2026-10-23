@@ -4,6 +4,9 @@ import { api, sendJSON } from '../api.js';
 import { icon } from '../icons.js';
 import { $, esc, toast } from '../ui/dom.js';
 import { openSection, pluginContributions } from './pluginui.js';
+import { registerScreen } from '../router.js';
+
+registerScreen('extensions', (main) => renderExtensions(main));
 
 // What a plugin declares it adds to this UI, in words. Used for an installed
 // plugin and, from its marketplace entry, for one that is not installed yet,

@@ -3,6 +3,9 @@
 import { api, sendJSON } from '../api.js';
 import { icon } from '../icons.js';
 import { $, esc, toast } from '../ui/dom.js';
+import { registerScreen } from '../router.js';
+
+registerScreen('doctor', (main) => renderDoctor(main));
 
 export async function renderDoctor(main) {
   main.innerHTML = `<div class="page-head"><h1>${icon('health')} Cluster health</h1>

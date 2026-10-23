@@ -1,11 +1,12 @@
 // VM screen: the tab strip, every VM tab, and the VM actions.
 
-import { api, sendJSON, vmKey, vmURL } from '../api.js';
+import { api, findVM, sendJSON, vmKey, vmURL } from '../api.js';
 import { markRendered, refresh, select } from '../app.js';
 import { connectRDP, connectTTY, connectVNC, consoleGeneration, disconnectConsoles } from '../console.js';
 import { watchBuild } from '../create.js';
 import { timeChart } from '../dashboard.js';
 import { icon } from '../icons.js';
+import { registerScreen } from '../router.js';
 import { state } from '../state.js';
 import { bindBreadcrumb, breadcrumb } from '../ui/breadcrumb.js';
 import { openMenuFrom } from '../ui/menu.js';
@@ -13,6 +14,16 @@ import { bindTags, tagChips } from '../tags.js';
 import { $, esc, toast } from '../ui/dom.js';
 import { NO_SAMPLES } from './datacenter.js';
 import { confirmDestroy } from '../ui/confirm.js';
+
+registerScreen('vm', (main, sel, router) => {
+  const vm = findVM(sel.key);
+  if (!vm) {
+    router.state.selected = router.fallbackSelection();
+    return router.renderContent();
+  }
+  router.lastParentNode = vm.node || '';
+  return renderVM(main, vm);
+});
 
 // ── VM view ───────────────────────────────────────────────────────
 
