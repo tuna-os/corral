@@ -11,9 +11,10 @@ import (
 //
 // A fresh CI runner has no ~/.ssh, and the probe cannot answer a password
 // prompt, so a run that depends on the caller having a key fails on the machine
-// it matters most on. Every run therefore generates its own keypair into the
-// artifact directory and injects the public half at install time. The private
-// half is the run's, expires with it, and never has to be a repository secret.
+// it matters most on. Every run therefore generates its own keypair in a private
+// temporary directory outside the artifact directory and injects the public half
+// at install time. The private half is the run's, expires with it unless the
+// caller keeps the VM, and never has to be a repository secret.
 //
 // A key the caller already has is added as well, so a human can log into the
 // VM the run leaves behind with the key they normally use.
@@ -39,8 +40,8 @@ func (k Keypair) AuthorizedKeys() string {
 }
 
 // EnsureKeypair returns the run's keypair, generating one in dir if it is not
-// there already. Reused on a second run against the same artifact directory,
-// so a re-run does not invalidate a VM the first one left behind.
+// there already. Callers that retain the VM retain this private directory for
+// subsequent SSH access; it must not be placed under an uploaded artifact.
 func EnsureKeypair(dir string, extra ...string) (Keypair, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return Keypair{}, err
