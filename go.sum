@@ -378,6 +378,8 @@ github.com/vmware/govmomi v0.56.0 h1:4inXZOTGbXMIF29Xjboatp7sRp91WEpU25KzPkFLIUc
 github.com/vmware/govmomi v0.56.0/go.mod h1:XI+N/NkdbIz5rOAVzfg4wbNJVj2CXUAZmzEEA7RCMh4=
 github.com/vmware/govmomi v0.56.1 h1:vOnG+U3kVJ1jaRix8tkkPYCweLkh28bE5rjmzBZb6Tw=
 github.com/vmware/govmomi v0.56.1/go.mod h1:XI+N/NkdbIz5rOAVzfg4wbNJVj2CXUAZmzEEA7RCMh4=
+github.com/vmware/govmomi v0.56.2 h1:cCgoNrsi35Yka91004gmDYHTbsDtxs8RC4IkV+Wg81I=
+github.com/vmware/govmomi v0.56.2/go.mod h1:XI+N/NkdbIz5rOAVzfg4wbNJVj2CXUAZmzEEA7RCMh4=
 github.com/x448/float16 v0.8.4 h1:qLwI1I70+NjRFUR3zs1JPUCgaCXSh3SW62uAKT1mSBM=
 github.com/x448/float16 v0.8.4/go.mod h1:14CWIYCyZA/cWjXOioeEpHeN/83MdbZDRQHoFcYsOfg=
 github.com/xo/terminfo v1.0.0 h1:2ZpYzqWzyyytjk3TP6aJVDhkMAkc99/1xKQdA3TDTBY=
