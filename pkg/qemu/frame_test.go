@@ -3,6 +3,7 @@ package qemu
 import (
 	"image"
 	"image/color"
+	"image/png"
 	"os"
 	"path/filepath"
 	"strings"
@@ -97,6 +98,49 @@ func TestCapture_NoSocket(t *testing.T) {
 	_, err := Capture("never-started", "")
 	if err == nil || !strings.Contains(err.Error(), "QMP socket") {
 		t.Errorf("expected a missing-socket error, got %v", err)
+	}
+}
+
+// AnalyzePNG judges a PNG captured elsewhere (a KubeVirt VNC screenshot) with
+// the same measurements Capture reports.
+func TestAnalyzePNG(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 40, 30))
+	for y := range 30 {
+		for x := range 40 {
+			if x >= 20 {
+				img.Set(x, y, color.White)
+			} else {
+				img.Set(x, y, color.Black)
+			}
+		}
+	}
+	path := filepath.Join(t.TempDir(), "frame.png")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := png.Encode(f, img); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	frame, err := AnalyzePNG(path)
+	if err != nil {
+		t.Fatalf("AnalyzePNG: %v", err)
+	}
+	if frame.Path != path || frame.Width != 40 || frame.Height != 30 {
+		t.Errorf("frame = %+v, want %s at 40x30", frame, path)
+	}
+	if frame.StdDev != stdDev(img) || frame.Blank() {
+		t.Errorf("deviation %v: want %v and a painted verdict", frame.StdDev, stdDev(img))
+	}
+
+	if err := os.WriteFile(path, []byte("not a png"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := AnalyzePNG(path); err == nil {
+		t.Error("AnalyzePNG of a non-PNG should fail")
 	}
 }
 

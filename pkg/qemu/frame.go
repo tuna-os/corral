@@ -82,13 +82,33 @@ func Capture(name, outPath string) (Frame, error) {
 	if err := f.Close(); err != nil {
 		return Frame{}, fmt.Errorf("writing %s: %w", outPath, err)
 	}
+	return frameOf(outPath, img), nil
+}
+
+// AnalyzePNG reports what is in a PNG some other path already captured, such
+// as a KubeVirt VNC screenshot, with the same measurements and blank verdict
+// as Capture.
+func AnalyzePNG(path string) (Frame, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return Frame{}, err
+	}
+	defer func() { _ = f.Close() }()
+	img, err := png.Decode(f)
+	if err != nil {
+		return Frame{}, fmt.Errorf("decoding %s: %w", path, err)
+	}
+	return frameOf(path, img), nil
+}
+
+func frameOf(path string, img image.Image) Frame {
 	bounds := img.Bounds()
 	return Frame{
-		Path:   outPath,
+		Path:   path,
 		Width:  bounds.Dx(),
 		Height: bounds.Dy(),
 		StdDev: stdDev(img),
-	}, nil
+	}
 }
 
 // stdDev returns the standard deviation of the frame's luminance, normalised

@@ -638,6 +638,7 @@ func (LibvirtTarget) DomainXML(uri, name, diskPath string, opts CreateOpts) stri
     </interface>
     <graphics type='vnc' port='-1' listen='127.0.0.1'/>
     <video><model type='virtio'/></video>
+    <input type='tablet' bus='usb'/>
     <console type='pty'/>
   </devices>
 </domain>

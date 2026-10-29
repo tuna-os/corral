@@ -138,7 +138,7 @@ Use these commands and files too.
 | `corral logs NAME` | KubeVirt: the `compute` container log of the `virt-launcher` pod. Local QEMU: the systemd journal of the VM unit |
 | `corral logs NAME --serial --tail 100` | Local QEMU: the serial console of the guest, also when the guest never reaches SSH |
 | `corral diagnose NAME --bundle-dir ./diag` | Local QEMU: serial log, screenshot, journal, QMP status and host checks in one directory |
-| `corral screenshot NAME` | Local QEMU: a PNG of the screen. `--require-paint` fails when the screen is blank |
+| `corral screenshot NAME` | Local QEMU and KubeVirt: a PNG of the screen. `--require-paint` fails when the screen is blank |
 | `corral qmp NAME query-status` | Local QEMU: the raw state from the QEMU monitor |
 | `--json` | Machine-readable output for `corral list` and other commands |
 
@@ -229,6 +229,8 @@ If the VM starts but you cannot log in, read the console of the guest first.
   firmware on. `corral diagnose NAME` looks in it for a kernel panic or an
   emergency shell. `corral screenshot NAME` shows the screen.
 - KubeVirt: open the console in the web UI, or run `corral viewer NAME`.
+  `corral screenshot NAME` saves the screen as a PNG through `virtctl vnc
+  screenshot`.
 - Incus and libvirt: open the console in the web UI.
 
 | Error | Cause and fix |
@@ -341,7 +343,9 @@ for the gaps and for the native commands that you can use until then.
 
 Some commands work on local QEMU only. On another backend they stop with
 `diagnose is only supported for QEMU VMs` or a similar message. These are
-`diagnose`, `qmp`, `screenshot`, `type` and `key`.
+`diagnose`, `qmp`, `type` and `key`. `screenshot` also works on KubeVirt; on
+any other backend it stops with
+`screenshot is only supported for QEMU and KubeVirt VMs`.
 
 ## Environment variables
 

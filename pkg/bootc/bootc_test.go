@@ -493,6 +493,8 @@ func assertDomainShape(t *testing.T, doc string) {
 		"virtio boot disk": "bus='virtio'",
 		"the built disk":   "/disks/dev.qcow2",
 		"boot from disk":   "<boot dev='hd'/>",
+		// An absolute pointer, so VNC clicks land where they are aimed.
+		"USB tablet": "<input type='tablet' bus='usb'/>",
 	} {
 		if !strings.Contains(doc, want) {
 			t.Errorf("domain is missing the %s (%q)", what, want)

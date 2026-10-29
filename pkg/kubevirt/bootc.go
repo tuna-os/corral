@@ -793,6 +793,12 @@ func generateBootcVM(name, namespace, pvcName, imageURI, sshKey, mem string, cpu
 						"interfaces": []map[string]any{
 							{"name": "default", "masquerade": map[string]any{}},
 						},
+						// An absolute pointer, as GenerateVM gives every other VM:
+						// the default PS/2 mouse is relative, so noVNC clicks on a
+						// bootc desktop land far from where they were aimed.
+						"inputs": []map[string]any{
+							{"type": "tablet", "bus": "usb", "name": "tablet"},
+						},
 					},
 				},
 				"networks": []map[string]any{{"name": "default", "pod": map[string]any{}}},
