@@ -188,6 +188,8 @@ kubectl apply -f deploy/corral-web.yaml -f deploy/corral-web-tailscale-proxy.yam
 kubectl -n corral logs deploy/corral-web-tailscale | grep -m1 login.tailscale.com
 ```
 
+Without a key, the pod waits up to 24 hours (`TS_BOOT_TIMEOUT`) for you to open the login URL. Then it restarts and logs a new URL.
+
 The node state lives in the Secret `corral-web-tailscale-state`, so the name and certificate survive pod and node restarts. The Ingress in `corral-web.yaml` does nothing without the operator. Run one or the other, not both: both want the name `corral`.
 
 A name already held by an old offline device gives you `corral-1`. Delete the old device in the admin console before the first login.
