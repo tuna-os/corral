@@ -194,6 +194,71 @@ func TestTailscaleIngressManifest(t *testing.T) {
 	}
 }
 
+func TestTailscaleProxyManifest(t *testing.T) {
+	// The operator-less path must stay a Tailscale-only path to the
+	// corral-web Service: no Ingress of its own, one proxy pod at a time
+	// (two pods sharing a node identity fight), and node state in a Secret
+	// so the name survives restarts.
+	path := filepath.Join("..", "deploy", "corral-web-tailscale-proxy.yaml")
+	docs := loadManifests(t, path)
+	kinds := map[string]int{}
+	for _, doc := range docs {
+		kind, _ := doc["kind"].(string)
+		kinds[kind]++
+	}
+	if kinds["Ingress"] != 0 || kinds["Service"] != 0 {
+		t.Errorf("proxy manifest adds an Ingress or Service: %v", kinds)
+	}
+	if kinds["Deployment"] != 1 {
+		t.Errorf("found %d Deployments, want 1", kinds["Deployment"])
+	}
+	text, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"type: Recreate",
+		"TS_KUBE_SECRET",
+		"value: corral-web-tailscale-state",
+		`"Proxy": "http://corral-web.corral.svc.cluster.local:80"`,
+		`"443": {"HTTPS": true}`,
+		"optional: true",
+	} {
+		if !strings.Contains(string(text), want) {
+			t.Errorf("corral-web-tailscale-proxy.yaml missing %q", want)
+		}
+	}
+}
+
+func TestInClusterKubeconfigManifest(t *testing.T) {
+	// kubectl ignores its in-cluster config once a client flag such as
+	// --request-timeout (injected by pkg/shell on every read) is set, so
+	// the pod must carry an explicit kubeconfig built from its token.
+	for _, name := range []string{"corral-web.yaml", "corral-web-e2e.yaml"} {
+		text, err := os.ReadFile(filepath.Join("..", "deploy", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{
+			"name: KUBECONFIG",
+			"value: /etc/corral/kube/config",
+			"mountPath: /etc/corral/kube",
+			"name: corral-web-kubeconfig",
+		} {
+			if !strings.Contains(string(text), want) {
+				t.Errorf("%s missing %q", name, want)
+			}
+		}
+	}
+	text, err := os.ReadFile(filepath.Join("..", "deploy", "corral-web.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(text), "tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token") {
+		t.Error("corral-web-kubeconfig must use the service-account tokenFile")
+	}
+}
+
 func TestGeneratedWebUnitVerifies(t *testing.T) {
 	// Mode 4 (24/7 vs on-demand) documents `corral web service install`.
 	// The unit it installs must at least parse under systemd.

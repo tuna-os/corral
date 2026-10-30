@@ -97,7 +97,8 @@ marketplace/      Plugin registry (hosted at tuna-os/corral)
 └── index.json    plugin entries (name, description, version, platform download URLs)
 
 deploy/           On-cluster manifests
-├── corral-web.yaml             production namespace, RBAC, web Deployment, Service, Tailscale Ingress
+├── corral-web.yaml             production namespace, RBAC, in-cluster kubeconfig, web Deployment, Service, Tailscale Ingress
+├── corral-web-tailscale-proxy.yaml  tailscale pod serving corral.<tailnet>.ts.net when the operator is absent
 ├── corral-web-e2e.yaml         isolated web Deployment for live end-to-end tests
 ├── corral-web-servicemonitor.yaml  optional Prometheus Operator scrape config
 ├── corral-web-alerts.yaml      optional PrometheusRule alerts for collection health
