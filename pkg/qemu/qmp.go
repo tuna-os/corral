@@ -241,15 +241,27 @@ func qmpSimple(name, command, verb string) error {
 // passphrase that is quietly missing a character fails in a way that looks
 // like the guest's fault.
 func SendKeys(name, text string) error {
-	var combos [][]string
+	combos, err := TextKeys(text)
+	if err != nil {
+		return err
+	}
+	return sendKeyCombos(name, combos)
+}
+
+// TextKeys returns the QEMU key combination that types each character of
+// text on a US keyboard, shift included, or an error naming the first
+// character with no mapping. Every console-input path types through it, so
+// a character refused at one backend is refused at all of them.
+func TextKeys(text string) ([][]string, error) {
+	combos := make([][]string, 0, len(text))
 	for _, r := range text {
 		keys, ok := qcodesFor(r)
 		if !ok {
-			return fmt.Errorf("cannot type %q at the console: no US-keyboard mapping", r)
+			return nil, fmt.Errorf("cannot type %q at the console: no US-keyboard mapping", r)
 		}
 		combos = append(combos, keys)
 	}
-	return sendKeyCombos(name, combos)
+	return combos, nil
 }
 
 // SendKey presses one combination of named QEMU key codes together, e.g.

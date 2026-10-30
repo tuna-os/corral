@@ -236,6 +236,31 @@ type Execer interface {
 	Exec(name string, opts SSHOptions) ([]byte, error)
 }
 
+// Keyboarder sends keys to the guest's console: through the QMP monitor for
+// local QEMU, as RFB key events on the VNC console for KubeVirt. It reaches
+// what only a keyboard reaches — a greeter, a LUKS prompt, a guest with no
+// SSH. Keys are QEMU key names ("ret", "ctrl", "f2"); text is refused if a
+// character has no US-keyboard mapping (qemu.TextKeys). Not a Family, for the
+// same reason as Viewer: it drives the console rather than performing an
+// operation the matrix gates a row on.
+type Keyboarder interface {
+	// PressKeys presses one combination together, e.g. "ctrl", "alt", "f2".
+	PressKeys(name string, keys ...string) error
+	// TypeText types text one character at a time.
+	TypeText(name, text string) error
+}
+
+// Clicker moves the guest's pointer to an absolute position in framebuffer
+// pixels and clicks there. KubeVirt sends RFB pointer events and needs a
+// tablet in the VMI. Local QEMU has no Clicker: its VM has only the relative
+// PS/2 mouse, so an absolute position cannot be placed.
+type Clicker interface {
+	MovePointer(name string, x, y int) error
+	// Click clicks button ("left", "middle", "right") at (x, y), twice when
+	// double is set.
+	Click(name string, x, y int, button string, double bool) error
+}
+
 // ── the registry ──────────────────────────────────────────────────
 
 // Adapter is what For returns: a backend bound to one instance's context, which

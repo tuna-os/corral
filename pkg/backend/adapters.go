@@ -26,6 +26,7 @@ import (
 	"github.com/tuna-os/corral/pkg/nutanix"
 	"github.com/tuna-os/corral/pkg/proxmoxbe"
 	"github.com/tuna-os/corral/pkg/qemu"
+	"github.com/tuna-os/corral/pkg/rfb"
 	"github.com/tuna-os/corral/pkg/types"
 	"github.com/tuna-os/corral/pkg/virtualbox"
 	"github.com/tuna-os/corral/pkg/vsphere"
@@ -200,6 +201,42 @@ func (a kubevirtAdapter) Exec(name string, opts SSHOptions) ([]byte, error) {
 	return a.client.Exec(name, opts.User, opts.Identity, opts.Command, opts.Port)
 }
 
+// Console input goes over the VNC console as RFB events. Text is mapped by
+// qemu.TextKeys, so KubeVirt types and refuses exactly what local QEMU does.
+// Every key is mapped before the console opens, so a refused key or
+// character sends nothing.
+func (a kubevirtAdapter) PressKeys(name string, keys ...string) error {
+	syms, err := rfb.Keysyms(keys)
+	if err != nil {
+		return err
+	}
+	return a.client.PressKeysyms(name, [][]uint32{syms})
+}
+
+func (a kubevirtAdapter) TypeText(name, text string) error {
+	combos, err := qemu.TextKeys(text)
+	if err != nil {
+		return err
+	}
+	syms := make([][]uint32, 0, len(combos))
+	for i, r := range []rune(text) {
+		combo, err := rfb.CharKeysyms(r, combos[i])
+		if err != nil {
+			return err
+		}
+		syms = append(syms, combo)
+	}
+	return a.client.PressKeysyms(name, syms)
+}
+
+func (a kubevirtAdapter) MovePointer(name string, x, y int) error {
+	return a.client.MovePointer(name, x, y)
+}
+
+func (a kubevirtAdapter) Click(name string, x, y int, button string, double bool) error {
+	return a.client.Click(name, x, y, button, double)
+}
+
 // ── local QEMU ────────────────────────────────────────────────────
 //
 // Power plus a real restart. Everything else is a gap the matrix names: the unit
@@ -254,6 +291,11 @@ func (qemuAdapter) Exec(name string, opts SSHOptions) ([]byte, error) {
 	}
 	return qemu.Exec(name, opts.Command, execOpts)
 }
+
+// Console input goes through the QMP monitor's send-key. No Clicker: the unit
+// gives the guest no tablet, so an absolute position has nothing to land on.
+func (qemuAdapter) PressKeys(name string, keys ...string) error { return qemu.SendKey(name, keys...) }
+func (qemuAdapter) TypeText(name, text string) error            { return qemu.SendKeys(name, text) }
 
 // Events: journald already keeps the local backend's history, keyed by the
 // unit systemd started. This is the only backend outside KubeVirt and PVE
