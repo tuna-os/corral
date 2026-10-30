@@ -530,7 +530,7 @@ func handleBootcRebuild(w http.ResponseWriter, r *http.Request) {
 	task := tasks.start(r.Context(), id)
 	done := taskBegin(requestUser(r), "bootc rebuild", ns+"/"+name)
 	go func() {
-		err := kubevirt.BootcRebuild(name, ns, image, sshKey, "", task)
+		err := kubevirt.BootcRebuild(name, ns, image, sshKey, "", "", task)
 		if err == nil && store != nil {
 			store.Set(name, types.RegistryEntry{Backend: "kubevirt", Namespace: ns})
 		}

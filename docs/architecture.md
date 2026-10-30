@@ -234,6 +234,7 @@ corral bootc create dev --image quay.io/centos-bootc/...
   │
   ├─ kubevirt.BootcBuildDisk()           → block PVC + short-lived builder VM
   │   ├─ builder VM: bootc install to-disk (composefs/ostree auto-detected)
+  │   ├─ optional account provision script runs inside installed root
   │   └─ Progress streams to stderr / task log
   ├─ kubevirt.GenerateBootcVM()          → VM manifest (UEFI-boots the disk)
   ├─ kubevirt.Apply(vm)                  → kubectl apply

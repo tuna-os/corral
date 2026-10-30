@@ -380,6 +380,26 @@ corral start gate      # bootc creates the VM stopped
 corral wait gate --unit gdm.service --paint --timeout 15m
 ```
 
+To test a desktop image with a real login account from its first boot:
+
+```bash
+corral bootc create gate --image ghcr.io/tuna-os/yellowfin:gnome \
+  --user tester --password-prompt
+```
+
+For automation, pipe the password to `--password-stdin`. Corral reads the
+first line of stdin:
+
+```bash
+printf '%s\n' "$PASSWORD" | corral bootc create gate \
+  --image ghcr.io/tuna-os/yellowfin:gnome --user tester --password-stdin
+```
+
+You can also use `--password-hash` with a SHA-512 crypt value. Do not put a
+plaintext password on a command line. The account flags work on local and
+KubeVirt backends. The account goes into the installed deployment's `/etc`
+and `/var`, so the greeter shows it at the first boot.
+
 The build runs in a builder VM **on the cluster** (`bootc install to-disk`
 onto a PVC). This is the only way to install images whose filesystems the
 node kernel can't handle (btrfs/composefs on Talos, for example). Notes

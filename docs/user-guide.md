@@ -688,6 +688,34 @@ corral bootc create my-node --image quay.io/centos-bootc/centos-bootc:stream9
 - The VM gets a USB tablet, so clicks in the noVNC console land where you aim them.
 - Upgrade the OS image of a guest with `corral bootc upgrade <vm-name>`.
 
+For desktop images without a regular account, create one in the installed
+disk. Do not change the guest by hand:
+
+```bash
+corral bootc create my-node --image ghcr.io/tuna-os/marlin:tuna \
+  --user tuna --password-prompt
+```
+
+The account gets a home directory in `/var/home`, a Bash login shell, and
+the password. Corral writes it to the `/etc` and `/var` of the installed
+deployment. The account is there at the first boot, and the login screen
+shows it.
+
+Scripts cannot answer a prompt. Give the password on stdin with
+`--password-stdin`. Corral reads the first line and does not show it:
+
+```bash
+printf '%s\n' "$PASSWORD" | corral bootc create my-node \
+  --image ghcr.io/tuna-os/marlin:tuna --user tuna --password-stdin
+```
+
+You can also give a SHA-512 crypt value with `--password-hash`. Corral rejects
+`--password` in plaintext, because other users can read command lines. Use
+only one of `--password-prompt`, `--password-stdin`, and `--password-hash`.
+The same account flags work with `bootc rebuild`, `bootc upgrade`, and
+`bootc switch`. You cannot use `--resume` to add an account to a disk that
+is already installed.
+
 #### Testing a bootc image (`corral vmtest`)
 
 `corral vmtest` boots an image locally and tests it. It needs no plugin, and

@@ -338,6 +338,27 @@ VM that runs, without any local tooling:
 (Corral applies the SSH key again across the `--wipe`). Rebuild your OS in CI,
 `corral create` it as a VM in minutes.
 
+To make the greeter usable on a desktop image, create a login account before
+the first boot:
+
+```bash
+corral bootc create dev --image ghcr.io/tuna-os/marlin:tuna \
+  --user tuna --password-prompt
+# Scripts give the password as the first line of stdin:
+printf '%s\n' "$PASSWORD" | corral bootc create dev \
+  --image ghcr.io/tuna-os/marlin:tuna --user tuna --password-stdin
+# Or give a SHA-512 crypt hash:
+corral bootc create dev --image ghcr.io/tuna-os/marlin:tuna \
+  --user tuna --password-hash '$6$rounds=656000$<salt>$<hash>'
+```
+
+Corral hides the password prompt and rejects plaintext `--password`. The
+account goes into the installed deployment's `/etc`, with its home in
+`/var/home`, so it is there at the first boot. The `--user`,
+`--password-prompt`, `--password-stdin`, and `--password-hash` flags are also
+available on `bootc rebuild`, `bootc upgrade`, and `bootc switch`. A resumed
+build reuses an already-installed disk and cannot add an account.
+
 **Faster builds:** deploy `deploy/registry-cache.yaml` (an on-cluster
 pull-through cache for ghcr.io). The builder then pulls images through it
 automatically, with no config. To turn it off, set

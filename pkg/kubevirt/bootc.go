@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tuna-os/corral/pkg/bootc"
 	"github.com/tuna-os/corral/pkg/shell"
 )
 
@@ -54,8 +55,9 @@ func bootcBuildTimeout() time.Duration {
 // the VM (frees the RWO block disk) → delete the old disk PVC → build a fresh one
 // from the image → start. The final VM references the disk PVC by name and boots
 // it via UEFI, so no manifest patch is needed — the rebuilt disk just takes the
-// same name. Sizing/networks/node on the VM are preserved.
-func bootcRebuild(name, namespace, imageURI, sshPublicKey, diskSize string, progress io.Writer) error {
+// same name. Sizing/networks/node on the VM are preserved. provisionScript is
+// applied inside the newly installed root filesystem before the VM starts.
+func bootcRebuild(name, namespace, imageURI, sshPublicKey, diskSize, provisionScript string, progress io.Writer) error {
 	if progress == nil {
 		progress = os.Stderr
 	}
@@ -101,8 +103,9 @@ func bootcRebuild(name, namespace, imageURI, sshPublicKey, diskSize string, prog
 
 	// Rebuild keeps whatever storage class the existing PVC used — "" tells
 	// bootcBuildDisk to fall back to PreferredStorageClass(), same as before
-	// storageClass existed as an explicit override.
-	if _, err := bootcBuildDisk(name, namespace, imageURI, sshPublicKey, diskSize, "", "", nil, "", progress); err != nil {
+	// storageClass existed as an explicit override. The account provision
+	// script is applied after bootc installs the replacement disk.
+	if _, err := bootcBuildDisk(name, namespace, imageURI, sshPublicKey, diskSize, "", provisionScript, nil, "", progress); err != nil {
 		return fmt.Errorf("rebuild: %w", err)
 	}
 
@@ -276,6 +279,7 @@ func builderScript(imageURI, sshPublicKey, provisionScript string, kargs []strin
 		"__SSHKEY__", strings.TrimSpace(sshPublicKey),
 		"__MIRRORCONF__", builderMirrorConf(),
 		"__PROVISIONB64__", base64.StdEncoding.EncodeToString([]byte(provisionScript)),
+		"__RUNNERB64__", base64.StdEncoding.EncodeToString([]byte(bootc.InstalledRootRunner)),
 		"__KARGS__", BootcKargFlags(kargs),
 	).Replace(builderCloudInit)
 }
@@ -439,6 +443,8 @@ write_files:
     content: "__SSHKEY__"
   - path: /root/provision.b64
     content: "__PROVISIONB64__"
+  - path: /root/runner.b64
+    content: "__RUNNERB64__"
   - path: /root/build.sh
     permissions: '0755'
     content: |
@@ -543,18 +549,33 @@ write_files:
         done
         sync; umount /mnt/root 2>/dev/null
       fi
-      # Run custom provisioning script chrooted into the root filesystem.
-      # The script travels base64-encoded in its own write_files entry:
-      # embedding it verbatim here put its lines at column 0, which
-      # terminated this YAML block literal and broke the whole cloud-config.
-      mkdir -p /mnt/root; mount /dev/disk/by-id/virtio-target-part3 /mnt/root 2>/dev/null
-      base64 -d /root/provision.b64 > /mnt/root/tmp/provision.sh 2>/dev/null || true
-      if [ -s /mnt/root/tmp/provision.sh ]; then
-        chmod +x /mnt/root/tmp/provision.sh
-        chroot /mnt/root /bin/bash /tmp/provision.sh
+      # Run the provisioning script against the installed deployment. The
+      # script and its runner travel base64-encoded in their own write_files
+      # entries: embedding them verbatim here put their lines at column 0,
+      # which terminated this YAML block literal and broke the cloud-config.
+      # The runner executes in the image's own container (its /usr is the
+      # deployment's /usr) and assembles the booted view: deployment /etc,
+      # stateroot /var. The raw root partition is not a usable chroot.
+      if [ -s /root/provision.b64 ]; then
+        mkdir -p /root/corral-provision /mnt/root
+        base64 -d /root/provision.b64 > /root/corral-provision/provision.sh
+        base64 -d /root/runner.b64 > /root/corral-provision/runner.sh
+        chmod 0600 /root/corral-provision/provision.sh /root/corral-provision/runner.sh
+        mount /dev/disk/by-id/virtio-target-part3 /mnt/root || {
+          echo CORRAL_BUILD_FAIL rootmount
+          echo CORRAL_BUILD_FAIL rootmount > /dev/ttyS0 2>/dev/null || true
+          sync; sleep 2; poweroff; exit 1
+        }
+        if ! podman run --rm --privileged --network=none --security-opt label=type:unconfined_t \
+          -v /mnt/root:/corral-sysroot -v /root/corral-provision:/corral-provision:ro \
+          "$IMG" sh /corral-provision/runner.sh /corral-sysroot /corral-provision/provision.sh; then
+          echo CORRAL_BUILD_FAIL provision
+          echo CORRAL_BUILD_FAIL provision > /dev/ttyS0 2>/dev/null || true
+          sync; sleep 2; poweroff; exit 1
+        fi
+        rm -rf /root/corral-provision
+        sync; umount /mnt/root
       fi
-      rm -f /mnt/root/tmp/provision.sh
-      sync; umount /mnt/root 2>/dev/null
 
       echo CORRAL_BUILD_OK
       # Ensure the marker reaches the serial console even if the early

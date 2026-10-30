@@ -29,7 +29,7 @@ type BootcBuildResult struct {
 var (
 	bootcBuildFunc   func(name, namespace, imageURI, sshPublicKey, diskSize, storageClass, provisionScript string, kargs []string, node string, progress io.Writer) (*BootcBuildResult, error)
 	bootcVMFunc      func(name, namespace, pvcName, imageURI, sshKey, mem string, cpu int, node string) map[string]any
-	bootcRebuildFunc func(name, namespace, imageURI, sshPublicKey, diskSize string, progress io.Writer) error
+	bootcRebuildFunc func(name, namespace, imageURI, sshPublicKey, diskSize, provisionScript string, progress io.Writer) error
 	bootcResumeFunc  func(name, namespace string) (imageURI, pvcName string, ready, failed bool)
 	bootcCleanupFunc func(builderName, namespace string)
 )
@@ -52,9 +52,11 @@ func BootcImageOf(name, namespace string) string {
 // BootcBuildDisk runs the on-cluster bootc disk build. storageClass "" uses
 // PreferredStorageClass(). kargs go to `bootc install to-disk --karg`, so they
 // are in the boot entry from the first boot; the builder VM records them for
-// BootcBuiltKargs. node "" lets the scheduler place the builder; a
-// non-empty node pins it (so it co-locates with a node-bound local-path disk
-// and the final VM can mount it). Errors if the plugin isn't compiled in.
+// BootcBuiltKargs. node "" lets the scheduler place the builder; a non-empty
+// node pins it (so it co-locates with a node-bound local-path disk and the
+// final VM can mount it). provisionScript, when non-empty, runs inside the
+// installed root before the disk is handed to the final VM. Errors if the
+// plugin isn't compiled in.
 func BootcBuildDisk(name, namespace, imageURI, sshPublicKey, diskSize, storageClass, provisionScript string, kargs []string, node string, progress io.Writer) (*BootcBuildResult, error) {
 	if bootcBuildFunc == nil {
 		return nil, errBootcUnavailable()
@@ -129,15 +131,15 @@ func GenerateBootcVM(name, namespace, pvcName, imageURI, sshKey, mem string, cpu
 }
 
 // BootcRebuild rebuilds an existing bootc VM's disk from imageURI (the same
-// image to pull updates, or a different one to switch), then re-points the
-// VM's kernel boot at the fresh disk and restarts it. It preserves the VM's
-// sizing/networking — only the disk + kernelBoot change. Errors if the plugin
-// isn't compiled in.
-func BootcRebuild(name, namespace, imageURI, sshPublicKey, diskSize string, progress io.Writer) error {
+// image to pull updates, or a different one to switch), then re-points the VM
+// at the fresh disk and restarts it. It preserves the
+// sizing/networking — only the disk and optional provision script change.
+// Errors if the plugin isn't compiled in.
+func BootcRebuild(name, namespace, imageURI, sshPublicKey, diskSize, provisionScript string, progress io.Writer) error {
 	if bootcRebuildFunc == nil {
 		return errBootcUnavailable()
 	}
-	return bootcRebuildFunc(name, namespace, imageURI, sshPublicKey, diskSize, progress)
+	return bootcRebuildFunc(name, namespace, imageURI, sshPublicKey, diskSize, provisionScript, progress)
 }
 
 // BootcResumeState reports whether name has a completed-but-unfinished bootc
