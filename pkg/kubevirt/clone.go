@@ -15,6 +15,7 @@ func (c *Client) Clone(src, dst string) error {
 		"metadata": map[string]any{
 			"name":      fmt.Sprintf("clone-%s-%d", dst, time.Now().Unix()),
 			"namespace": c.Namespace,
+			"labels":    map[string]any{VMLabel: dst},
 		},
 		"spec": map[string]any{
 			"source": map[string]any{"apiGroup": "kubevirt.io", "kind": "VirtualMachine", "name": src},

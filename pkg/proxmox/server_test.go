@@ -347,12 +347,9 @@ func TestDeleteQemu(t *testing.T) {
 	ts, fake := newTestServer(t)
 	scriptCluster(fake)
 	fake.AddPrefixResponse("kubectl delete vm db -n tailvm", "deleted", nil)
-	fake.AddPrefixResponse("kubectl delete pvc", "", nil)
-	fake.AddPrefixResponse("kubectl delete svc", "", nil)
-	fake.AddPrefixResponse("kubectl delete deploy", "", nil)
-	fake.AddPrefixResponse("kubectl delete sa", "", nil)
-	fake.AddPrefixResponse("kubectl delete role", "", nil)
-	fake.AddPrefixResponse("kubectl delete rolebinding", "", nil)
+	fake.AddPrefixResponse("kubectl delete", "", nil)
+	fake.AddPrefixResponse("kubectl get pvc -n tailvm -l corral.dev/vm=db", "", nil)
+	fake.AddPrefixResponse("kubectl get datavolume -n tailvm -l corral.dev/vm=db", "", nil)
 
 	req, _ := http.NewRequest(http.MethodDelete,
 		ts.URL+"/api2/json/nodes/bihar/qemu/"+strconv.Itoa(VmidFor("db")), nil)

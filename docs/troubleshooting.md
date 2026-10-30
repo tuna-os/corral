@@ -289,6 +289,21 @@ KubeVirt VM, Corral saves the cloud-init password at create time.
 - `corral config` shows whether you set `TS_AUTHKEY` or
   `tailscale.auth_key`. No create path uses the key today.
 
+## Delete
+
+| Error | Cause and fix |
+|---|---|
+| `still present after 5m0s: persistentvolumeclaim/NAME` | `--wait` stopped before Kubernetes removed the object. A pod that uses the disk keeps the PVC. Run `kubectl get pod -n NAMESPACE` to find the pod, then run the delete again |
+| `delete pvc: ... is forbidden` | Your Kubernetes account cannot delete that kind of object. Corral continues with the other objects. Ask your cluster administrator for the `delete` permission |
+| `2 of 3 deletes failed` | Corral deleted the other names. The lines above the error give the cause for each name. With `--json`, the `error` field gives it |
+| `instance "NAME" does not exist` | No context has a VM with that name, and the default context has no objects for it. Run `corral list`, or add `--context` |
+
+An interrupted `corral bootc create` leaves a builder VM, `NAME-bootc-builder`,
+and a disk, `NAME-bootc-disk`. Do not delete these objects with `kubectl`.
+Run `corral delete NAME`. It removes the builder VM, its Secret and the disk
+in one step. To remove all old interrupted builds, run
+`corral gc --builders`.
+
 ## Move
 
 `corral move` runs a check before it changes anything. If the check fails,

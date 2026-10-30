@@ -25,6 +25,7 @@ package backend
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/tuna-os/corral/pkg/qemu"
 	"github.com/tuna-os/corral/pkg/types"
@@ -38,6 +39,18 @@ type Power interface {
 	Start(name string) error
 	Stop(name string) error
 	Delete(name string) error
+}
+
+// Purger is Power.Delete for a backend whose guest is spread over several
+// objects, as a KubeVirt VM is over disks, Secrets and proxies. Purge deletes
+// the guest and everything the backend created for it, including the debris
+// of an interrupted create, and names each object it removed. WaitRemoved
+// blocks until those objects are actually gone. Not a Family: the matrix
+// already gates delete on Power; this is what `corral delete --json` and
+// `--wait` ask for when a backend can answer.
+type Purger interface {
+	Purge(name string) (removed []string, err error)
+	WaitRemoved(removed []string, timeout time.Duration) error
 }
 
 // Restarter reboots a guest through the backend's own mechanism. Separate from

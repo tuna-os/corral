@@ -29,7 +29,7 @@ func (c *Client) Snapshot(vm, snap string) (string, error) {
 		"metadata": map[string]any{
 			"name":      snap,
 			"namespace": c.Namespace,
-			"labels":    map[string]any{"corral.dev/vm": vm},
+			"labels":    map[string]any{VMLabel: vm},
 		},
 		"spec": map[string]any{
 			"source": map[string]any{"apiGroup": "kubevirt.io", "kind": "VirtualMachine", "name": vm},
@@ -86,6 +86,7 @@ func (c *Client) RestoreSnapshot(vm, snap string) error {
 		"metadata": map[string]any{
 			"name":      fmt.Sprintf("%s-restore-%d", vm, time.Now().Unix()),
 			"namespace": c.Namespace,
+			"labels":    map[string]any{VMLabel: vm},
 		},
 		"spec": map[string]any{
 			"target":                     map[string]any{"apiGroup": "kubevirt.io", "kind": "VirtualMachine", "name": vm},

@@ -11,6 +11,8 @@ import (
 var (
 	gcDryRun      bool
 	gcDeleteAfter string
+	gcBuilders    bool
+	gcBuilderAge  time.Duration
 )
 
 var gcCmd = &cobra.Command{
@@ -29,7 +31,12 @@ plus orphaned-disk cleanup:
 
 Run it by hand, or on a schedule (e.g. a CronJob calling ` + "`corral gc`" + `).
 Non-ephemeral VMs are never touched (only their orphaned disks, once the VM
-is truly gone).`,
+is truly gone).
+
+--builders also collects interrupted ` + "`corral bootc create`" + ` runs: a bootc
+builder VM older than --builder-age (default 2h) whose final VM does not
+exist goes, with the disk and Secrets built for that VM. A finished build
+that was never resumed with --resume counts as interrupted.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		deleteAfter := kubevirt.GCDefaultDeleteAfter
 		if gcDeleteAfter != "" {
@@ -43,6 +50,14 @@ is truly gone).`,
 		result, err := kubevirt.GC(gcDryRun, deleteAfter)
 		if err != nil {
 			return err
+		}
+		if gcBuilders {
+			builders, err := kubevirt.GCBuilders(gcDryRun, gcBuilderAge)
+			if err != nil {
+				return err
+			}
+			result.OrphanedBuilders = builders.OrphanedBuilders
+			result.Errors = append(result.Errors, builders.Errors...)
 		}
 
 		verb := map[bool]string{true: "would stop", false: "stopped"}[gcDryRun]
@@ -75,6 +90,17 @@ is truly gone).`,
 			}
 		}
 
+		if gcBuilders {
+			if len(result.OrphanedBuilders) == 0 {
+				fmt.Println("No interrupted bootc builds (every builder has its VM or is still young).")
+			} else {
+				fmt.Printf("%s interrupted bootc builds (builder, disk and Secrets):\n", verb)
+				for _, b := range result.OrphanedBuilders {
+					fmt.Printf("  %s\n", b)
+				}
+			}
+		}
+
 		for _, e := range result.Errors {
 			fmt.Fprintf(cmd.ErrOrStderr(), "error: %s\n", e)
 		}
@@ -89,4 +115,6 @@ func init() {
 	rootCmd.AddCommand(gcCmd)
 	gcCmd.Flags().BoolVar(&gcDryRun, "dry-run", false, "Report what would happen without stopping/deleting anything")
 	gcCmd.Flags().StringVar(&gcDeleteAfter, "delete-after", "", "Grace period a gc-stopped VM sits before deletion (default 72h)")
+	gcCmd.Flags().BoolVar(&gcBuilders, "builders", false, "Also collect interrupted bootc builds (builder VM with no final VM)")
+	gcCmd.Flags().DurationVar(&gcBuilderAge, "builder-age", kubevirt.GCDefaultBuilderAge, "Minimum age of a bootc builder VM that --builders collects")
 }

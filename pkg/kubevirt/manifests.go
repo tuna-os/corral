@@ -388,6 +388,7 @@ func GenerateProxyService(name, namespace string, ports []int) map[string]any {
 		"metadata": map[string]any{
 			"name":        name + "-proxy",
 			"namespace":   namespace,
+			"labels":      map[string]string{VMLabel: name},
 			"annotations": proxyAnnotations(name),
 		},
 		"spec": map[string]any{
@@ -468,8 +469,9 @@ func GenerateProxyDeployment(name, namespace string, ports []int) map[string]any
 			"name":      name + "-proxy",
 			"namespace": namespace,
 			"labels": map[string]string{
-				"app": "corral-proxy",
-				"vm":  name,
+				"app":   "corral-proxy",
+				"vm":    name,
+				VMLabel: name,
 			},
 		},
 		"spec": map[string]any{
@@ -544,8 +546,9 @@ func GenerateLANService(name, namespace string, ports []int) map[string]any {
 			"name":      name + "-lan",
 			"namespace": namespace,
 			"labels": map[string]string{
-				"app": "corral-proxy",
-				"vm":  name,
+				"app":   "corral-proxy",
+				"vm":    name,
+				VMLabel: name,
 			},
 		},
 		"spec": map[string]any{
@@ -708,14 +711,18 @@ func GenerateProxyRBAC(name, ns string) string {
 	return fmt.Sprintf(`apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: corral-%s-proxy
-  namespace: %s
+  name: corral-%[1]s-proxy
+  namespace: %[2]s
+  labels:
+    %[3]s: %[1]q
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: corral-%s-proxy
-  namespace: %s
+  name: corral-%[1]s-proxy
+  namespace: %[2]s
+  labels:
+    %[3]s: %[1]q
 rules:
   - apiGroups: ["subresources.kubevirt.io"]
     resources: ["virtualmachineinstances/vnc"]
@@ -727,14 +734,16 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: corral-%s-proxy
-  namespace: %s
+  name: corral-%[1]s-proxy
+  namespace: %[2]s
+  labels:
+    %[3]s: %[1]q
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: corral-%s-proxy
+  name: corral-%[1]s-proxy
 subjects:
   - kind: ServiceAccount
-    name: corral-%s-proxy
-`, name, ns, name, ns, name, ns, name, name)
+    name: corral-%[1]s-proxy
+`, name, ns, VMLabel)
 }

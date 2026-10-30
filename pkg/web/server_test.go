@@ -453,23 +453,10 @@ func TestHandleDeleteVM_Success(t *testing.T) {
 	fx := NewTestFixture()
 	defer fx.Close()
 
-	// DeleteVM runs several commands; stub them all
-	fx.Runner.AddResponseKV("/fake/bin/virtctl",
-		[]string{"stop", "myvm", "-n", "tailvm"}, "", nil)
-	fx.Runner.AddResponseKV("kubectl",
-		[]string{"delete", "vm", "myvm", "-n", "tailvm", "--ignore-not-found"}, "", nil)
-	// DeleteVM also deletes DataVolumes and PVCs for each suffix
-	for _, suffix := range []string{"disk", "data", "iso", "bootc-disk"} {
-		pvc := "myvm-" + suffix
-		fx.Runner.AddResponseKV("kubectl",
-			[]string{"delete", "datavolume", pvc, "-n", "tailvm", "--ignore-not-found", "--wait=false"}, "", nil)
-		fx.Runner.AddResponseKV("kubectl",
-			[]string{"delete", "pvc", pvc, "-n", "tailvm", "--ignore-not-found", "--wait=false"}, "", nil)
-	}
-	fx.Runner.AddResponseKV("kubectl",
-		[]string{"delete", "pvc", "-n", "tailvm", "-l", "corral.dev/vm=myvm", "--ignore-not-found", "--wait=false"}, "", nil)
-	fx.Runner.AddResponseKV("kubectl",
-		[]string{"delete", "vmsnapshot", "-n", "tailvm", "-l", "corral.dev/vm=myvm", "--ignore-not-found", "--wait=false"}, "", nil)
+	// DeleteVM runs a delete per object kind and lists the labelled disks.
+	fx.Runner.AddPrefixResponse("kubectl delete", "", nil)
+	fx.Runner.AddPrefixResponse("kubectl get pvc -n tailvm -l corral.dev/vm=myvm", "", nil)
+	fx.Runner.AddPrefixResponse("kubectl get datavolume -n tailvm -l corral.dev/vm=myvm", "", nil)
 
 	resp := mustDelete(t, fx.Server.URL+"/api/vms/tailvm/myvm")
 	defer resp.Body.Close()
@@ -881,12 +868,9 @@ func TestHandleCreateDelete_RegistryRoundtrip(t *testing.T) {
 	}
 
 	// Now delete — should remove from registry
-	fx.Runner.AddResponseKV("/fake/bin/virtctl", []string{"stop", "web", "-n", "tailvm"}, "", nil)
-	fx.Runner.AddResponseKV("kubectl", []string{"delete", "vm", "web", "-n", "tailvm", "--ignore-not-found"}, "", nil)
-	fx.Runner.AddPrefixResponse("kubectl delete pvc web-", "", nil)
-	fx.Runner.AddPrefixResponse("kubectl delete datavolume web-", "", nil)
-	fx.Runner.AddResponseKV("kubectl", []string{"delete", "pvc", "-n", "tailvm", "-l", "corral.dev/vm=web", "--ignore-not-found"}, "", nil)
-	fx.Runner.AddResponseKV("kubectl", []string{"delete", "vmsnapshot", "-n", "tailvm", "-l", "corral.dev/vm=web", "--ignore-not-found"}, "", nil)
+	fx.Runner.AddPrefixResponse("kubectl delete", "", nil)
+	fx.Runner.AddPrefixResponse("kubectl get pvc -n tailvm -l corral.dev/vm=web", "", nil)
+	fx.Runner.AddPrefixResponse("kubectl get datavolume -n tailvm -l corral.dev/vm=web", "", nil)
 
 	req, _ := http.NewRequest("DELETE", fx.Server.URL+"/api/vms/tailvm/web", nil)
 	resp, err = http.DefaultClient.Do(req)
@@ -900,12 +884,6 @@ func TestHandleCreateDelete_RegistryRoundtrip(t *testing.T) {
 	}
 
 	// Verify registry was cleaned — try deleting again, should still succeed
-	fx.Runner.AddResponseKV("/fake/bin/virtctl", []string{"stop", "web", "-n", "tailvm"}, "", nil)
-	fx.Runner.AddResponseKV("kubectl", []string{"delete", "vm", "web", "-n", "tailvm", "--ignore-not-found"}, "", nil)
-	fx.Runner.AddPrefixResponse("kubectl delete pvc web-", "", nil)
-	fx.Runner.AddPrefixResponse("kubectl delete datavolume web-", "", nil)
-	fx.Runner.AddResponseKV("kubectl", []string{"delete", "pvc", "-n", "tailvm", "-l", "corral.dev/vm=web", "--ignore-not-found"}, "", nil)
-	fx.Runner.AddResponseKV("kubectl", []string{"delete", "vmsnapshot", "-n", "tailvm", "-l", "corral.dev/vm=web", "--ignore-not-found"}, "", nil)
 
 	req, _ = http.NewRequest("DELETE", fx.Server.URL+"/api/vms/tailvm/web", nil)
 	resp, err = http.DefaultClient.Do(req)
@@ -986,36 +964,31 @@ func TestHandleDeleteVM_RemovesLabeledPVCs(t *testing.T) {
 	fx := NewTestFixture()
 	defer fx.Close()
 
-	// All DeleteVM commands
-	fx.Runner.AddResponseKV("/fake/bin/virtctl", []string{"stop", "labeled", "-n", "tailvm"}, "", nil)
-	fx.Runner.AddResponseKV("kubectl", []string{"delete", "vm", "labeled", "-n", "tailvm", "--ignore-not-found"}, "", nil)
-	for _, suffix := range []string{"disk", "data", "iso", "bootc-disk"} {
-		pvc := "labeled-" + suffix
-		fx.Runner.AddResponseKV("kubectl", []string{"delete", "datavolume", pvc, "-n", "tailvm", "--ignore-not-found", "--wait=false"}, "", nil)
-		fx.Runner.AddResponseKV("kubectl", []string{"delete", "pvc", pvc, "-n", "tailvm", "--ignore-not-found", "--wait=false"}, "", nil)
-	}
-	fx.Runner.AddResponseKV("kubectl", []string{"delete", "pvc", "-n", "tailvm", "-l", "corral.dev/vm=labeled", "--ignore-not-found", "--wait=false"}, "", nil)
-	fx.Runner.AddResponseKV("kubectl", []string{"delete", "vmsnapshot", "-n", "tailvm", "-l", "corral.dev/vm=labeled", "--ignore-not-found"}, "", nil)
+	// DeleteVM lists the PVCs labelled for the VM and deletes the ones no
+	// other VM mounts.
+	fx.Runner.AddPrefixResponse("kubectl delete", "", nil)
+	fx.Runner.AddPrefixResponse("kubectl get datavolume -n tailvm -l corral.dev/vm=labeled", "", nil)
+	fx.Runner.AddPrefixResponse("kubectl get pvc -n tailvm -l corral.dev/vm=labeled", "labeled-hp-1\n", nil)
+	fx.Runner.AddResponseKV("kubectl", []string{"get", "vm", "-n", "tailvm", "-o", "json"}, `{"items":[]}`, nil)
 
 	resp := mustDelete(t, fx.Server.URL+"/api/vms/tailvm/labeled")
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("got %d, want 200", resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("got %d, want 200 — body: %s", resp.StatusCode, string(body))
 	}
 
-	// Verify the labeled PVC delete command was called
 	found := false
 	for _, call := range fx.Runner.Calls() {
-		if call.Name == "kubectl" && len(call.Args) >= 6 &&
-			call.Args[0] == "delete" && call.Args[1] == "pvc" &&
-			call.Args[4] == "-l" && call.Args[5] == "corral.dev/vm=labeled" {
+		if call.Name == "kubectl" && len(call.Args) >= 3 &&
+			call.Args[0] == "delete" && call.Args[1] == "pvc" && call.Args[2] == "labeled-hp-1" {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Error("expected kubectl delete pvc -l corral.dev/vm=labeled call, but it was not found in recorded calls")
+		t.Error("expected kubectl delete pvc labeled-hp-1, but it was not found in recorded calls")
 	}
 }
 

@@ -393,6 +393,13 @@ func TestViewerCmd_NonexistentVM(t *testing.T) {
 }
 
 func TestDeleteCmd_NonexistentVM(t *testing.T) {
+	// No reachable cluster: a delete of an unlisted name falls back to the
+	// default context, which must not be the developer's real one.
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("KUBECONFIG", "")
+	t.Setenv("CORRAL_KUBE_CONTEXT", "")
+	t.Setenv("CORRAL_DEFAULT_BACKEND", "")
 	oldStore := registryStore
 	dir := t.TempDir()
 	registryStore = registry.NewStoreAt(filepath.Join(dir, "registry.json"))

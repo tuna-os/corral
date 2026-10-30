@@ -70,13 +70,15 @@ rules:
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["get", "create", "delete"]
-  # User-defined custom image/ISO sources persist in a ConfigMap.
+  # User-defined custom image/ISO sources persist in a ConfigMap. VM delete
+  # removes a Windows VM's answer-file ConfigMap (<vm>-autounattend).
   - apiGroups: [""]
     resources: ["configmaps"]
-    verbs: ["get", "list", "create", "update", "patch"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
+  # VM delete removes a bootc build's leftover <vm>-sizecheck pod.
   - apiGroups: [""]
     resources: ["pods"]
-    verbs: ["get", "list"]
+    verbs: ["get", "list", "delete"]
   # Bootc builder reads pod logs to extract build variables.
   - apiGroups: [""]
     resources: ["pods/log"]
@@ -110,6 +112,12 @@ rules:
   - apiGroups: ["batch"]
     resources: ["jobs"]
     verbs: ["get", "list", "create", "delete"]
+  # VM delete removes the VM's scheduled start/stop, snapshot and backup
+  # CronJobs (corral-start-<vm>, corral-stop-<vm>, corral-snap-<vm>,
+  # corral-backup-<vm>), by name only.
+  - apiGroups: ["batch"]
+    resources: ["cronjobs"]
+    verbs: ["delete"]
   # Tailscale operator detection (ApplyProxy): tailscaleOperatorPresent() checks
   # for the `tailscale` IngressClass the operator registers.
   - apiGroups: ["networking.k8s.io"]

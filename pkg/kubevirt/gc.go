@@ -1,6 +1,7 @@
 package kubevirt
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -29,10 +30,11 @@ const GCDefaultDeleteAfter = 72 * time.Hour
 
 // GCResult reports what GC did (or, in dry-run, would do) this pass.
 type GCResult struct {
-	Stopped      []string // running past ExpiresAt -> stopped, PVCs kept
-	Deleted      []string // stopped by gc past deleteAfter -> fully deleted
-	OrphanedPVCs []string // "<ns>/<pvc>" disks whose owning VM is gone -> deleted
-	Errors       []string // "<vm>: <error>"
+	Stopped          []string // running past ExpiresAt -> stopped, PVCs kept
+	Deleted          []string // stopped by gc past deleteAfter -> fully deleted
+	OrphanedPVCs     []string // "<ns>/<pvc>" disks whose owning VM is gone -> deleted
+	OrphanedBuilders []string // "<ns>/<vm>" bootc builds whose VM never came -> purged (GCBuilders)
+	Errors           []string // "<vm>: <error>"
 }
 
 // pvcSuffixes are the disk-name suffixes corral appends to a VM name when it
@@ -237,9 +239,92 @@ func GC(dryRun bool, deleteAfter time.Duration) (GCResult, error) {
 	for _, vm := range vms {
 		if !deleted[gcKey(vm)] {
 			liveVMs[vm.Name] = true
+			// A bootc build's disk belongs to its builder until the final
+			// VM exists; collecting it would pull the disk from under the
+			// build.
+			liveVMs[strings.TrimSuffix(vm.Name, "-bootc-builder")] = true
 		}
 	}
 	collectOrphanPVCs(dryRun, liveVMs, &result)
 
+	return result, nil
+}
+
+// GCDefaultBuilderAge is how old a bootc builder VM without its final VM
+// must be before GCBuilders collects it. It is well past the default build
+// timeout (bootcBuildTimeout), so a build in progress is never collected.
+const GCDefaultBuilderAge = 2 * time.Hour
+
+// orphanBuilder is a bootc builder VM as GCBuilders sees it.
+type orphanBuilder struct {
+	Namespace string
+	Name      string // the final VM's name: the builder's minus -bootc-builder
+	Created   time.Time
+}
+
+// planOrphanBuilders is the pure decision core of GCBuilders: the builders
+// older than olderThan whose final VM does not exist in their namespace.
+func planOrphanBuilders(builders []orphanBuilder, vms map[string]bool, now time.Time, olderThan time.Duration) []orphanBuilder {
+	var orphans []orphanBuilder
+	for _, b := range builders {
+		if vms[b.Namespace+"/"+b.Name] || now.Sub(b.Created) < olderThan {
+			continue
+		}
+		orphans = append(orphans, b)
+	}
+	sort.Slice(orphans, func(i, j int) bool {
+		return orphans[i].Namespace+"/"+orphans[i].Name < orphans[j].Namespace+"/"+orphans[j].Name
+	})
+	return orphans
+}
+
+// GCBuilders collects what an interrupted `corral bootc create` left: each
+// bootc builder VM older than olderThan whose final VM does not exist, with
+// everything corral created under the final VM's name (PurgeVM), such as
+// the disk the builder installed. A build that finished but was not resumed
+// with `corral bootc create --resume` counts as interrupted. dryRun only
+// reports.
+func GCBuilders(dryRun bool, olderThan time.Duration) (GCResult, error) {
+	var result GCResult
+	out, err := getPackageRunner().Run("kubectl", "get", "vm", "-A", "-o", "json")
+	if err != nil {
+		return result, fmt.Errorf("listing VMs: %w", commandError(out, err))
+	}
+	var list struct {
+		Items []struct {
+			Metadata struct {
+				Name              string            `json:"name"`
+				Namespace         string            `json:"namespace"`
+				Labels            map[string]string `json:"labels"`
+				CreationTimestamp time.Time         `json:"creationTimestamp"`
+			} `json:"metadata"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(out, &list); err != nil {
+		return result, fmt.Errorf("listing VMs: %w", err)
+	}
+	vms := map[string]bool{}
+	var builders []orphanBuilder
+	for _, it := range list.Items {
+		m := it.Metadata
+		vms[m.Namespace+"/"+m.Name] = true
+		if _, ok := m.Labels["corral-bootc-builder"]; ok && strings.HasSuffix(m.Name, "-bootc-builder") {
+			builders = append(builders, orphanBuilder{
+				Namespace: m.Namespace,
+				Name:      strings.TrimSuffix(m.Name, "-bootc-builder"),
+				Created:   m.CreationTimestamp,
+			})
+		}
+	}
+	for _, b := range planOrphanBuilders(builders, vms, time.Now(), olderThan) {
+		ref := b.Namespace + "/" + b.Name
+		if !dryRun {
+			if _, err := NewClient(b.Namespace).PurgeVM(b.Name); err != nil {
+				result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", ref, err))
+				continue
+			}
+		}
+		result.OrphanedBuilders = append(result.OrphanedBuilders, ref)
+	}
 	return result, nil
 }

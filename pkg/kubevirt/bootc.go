@@ -136,7 +136,7 @@ func bootcBuildDisk(name, namespace, imageURI, sshPublicKey, diskSize, storageCl
 	fmt.Fprintf(progress, "  Disk:   pvc/%s (%s, block mode)\n", pvcName, diskSize)
 
 	// Step 1: block-mode target PVC the builder VM installs onto as a raw device.
-	pvc := generateBlockPVC(pvcName, namespace, diskSize, storageClass)
+	pvc := labelForVM(generateBlockPVC(pvcName, namespace, diskSize, storageClass), name)
 	data, err := json.Marshal(pvc)
 	if err != nil {
 		return nil, fmt.Errorf("marshaling PVC: %w", err)
@@ -152,7 +152,7 @@ func bootcBuildDisk(name, namespace, imageURI, sshPublicKey, diskSize, storageCl
 
 	// The cloud-init script is larger than KubeVirt's 2 KB inline userData limit,
 	// so deliver it via a Secret the VM references with cloudInitNoCloud.secretRef.
-	secret := generateBuilderSecret(builderName+"-cloudinit", namespace, imageURI, sshPublicKey, provisionScript, kargs)
+	secret := labelForVM(generateBuilderSecret(builderName+"-cloudinit", namespace, imageURI, sshPublicKey, provisionScript, kargs), name)
 	sdata, err := json.Marshal(secret)
 	if err != nil {
 		return nil, fmt.Errorf("marshaling builder secret: %w", err)
@@ -671,7 +671,7 @@ func bootcDiskSizeBytes(builderName, namespace string) int64 {
 
 	manifest := fmt.Sprintf(`{
 		"apiVersion": "v1", "kind": "Pod",
-		"metadata": {"name": %q, "namespace": %q},
+		"metadata": {"name": %q, "namespace": %q, "labels": {%q: %q}},
 		"spec": {
 			"restartPolicy": "Never",
 			"containers": [{"name": "c", "image": "busybox",
@@ -679,7 +679,7 @@ func bootcDiskSizeBytes(builderName, namespace string) int64 {
 				"volumeMounts": [{"name": "d", "mountPath": "/disk"}]}],
 			"volumes": [{"name": "d", "persistentVolumeClaim": {"claimName": %q}}]
 		}
-	}`, podName, namespace, pvcName)
+	}`, podName, namespace, VMLabel, base, pvcName)
 
 	cmd := shell.Command("kubectl", "apply", "-f", "-")
 	cmd.Stdin = strings.NewReader(manifest)

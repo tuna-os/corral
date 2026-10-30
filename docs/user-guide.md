@@ -191,6 +191,71 @@ dedicated CPUs or tags.
 The flags work on KubeVirt only. On other backends, Corral stops with an
 error and does not create the VM. You cannot use `--dedicated-cpus` with
 `--instancetype`, because the instancetype sets the CPU configuration.
+### Delete VMs and clean up
+
+```bash
+corral delete web db -f                  # two VMs, no question
+corral delete web -f --wait              # stop when all objects of the VM are gone
+corral delete web db -f --wait --json    # one result for each VM, for scripts
+corral gc --builders                     # remove bootc builds that stopped before the end
+```
+
+`corral delete` accepts one or more names. It asks one question for all the
+names. Use `-f` to delete without the question.
+
+On KubeVirt, `corral delete` removes the VM and all the objects that Corral
+made for it:
+
+- The VM and its VMI.
+- The disks: the DataVolumes and the PVCs.
+- The cloud-init Secret and the Windows answer-file ConfigMap.
+- The tailnet proxy and the LAN Service.
+- The snapshots, the restores and the clones of the VM.
+- The CronJobs of `corral schedule`, `corral snapsched` and `corral backup`.
+- The builder VM, the disk and the Secret of a `corral bootc create` that
+  stopped before the end.
+
+Corral finds an object by its name or by the label `corral.dev/vm=NAME`.
+Corral does not delete a labeled disk that a different VM uses. A clone gets
+the labels of the source disks, thus this rule keeps the disks of the clone.
+
+You can also delete a name that has only the objects of an interrupted
+build. For example, you stop `corral bootc create desk` before the VM exists.
+Then `corral delete desk` removes the builder VM and the disk. Corral looks
+for these objects in the default context. Use `--context` for a different
+context.
+
+A delete does not wait for Kubernetes finalizers. Add `--wait` to wait until
+the deleted objects are gone. `--timeout` sets the maximum time. The default
+is 5 minutes. If an object stays after that time, the command fails and
+names the object.
+
+With `--json`, the output is a list with one item for each name:
+
+```json
+[
+  {
+    "name": "web",
+    "deleted": true,
+    "removed": ["virtualmachine.kubevirt.io/web", "persistentvolumeclaim/web-disk"]
+  },
+  {
+    "name": "db",
+    "deleted": false,
+    "removed": [],
+    "error": "instance \"db\" does not exist"
+  }
+]
+```
+
+`removed` gives each object as `kind/name`. Other backends delete a VM as one
+unit, thus their list is empty. If one VM fails, Corral continues with the
+other names. The exit status is not zero when Corral cannot delete a VM.
+
+`corral gc --builders` removes a bootc builder VM that has no final VM and is
+older than `--builder-age`. The default age is 2 hours. Corral also removes
+the disk and the Secrets of that build. A build that completed but that you
+did not finish with `corral bootc create --resume` counts as interrupted.
 
 ### Clone a VM and use templates (KubeVirt)
 
