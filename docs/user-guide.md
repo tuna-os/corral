@@ -513,6 +513,52 @@ Corral provides single-command remote access to guest displays and shells:
 
 ![Local VM Framebuffer](screenshots/local-vm-console.png)
 
+#### Scripted console access
+
+Use `corral console <vm-name>` to get a console page for one VM. The page shows only the screen of the VM. Browser automation, for example Playwright, can use it without the dashboard.
+
+```bash
+corral console desk
+# Console of desk: http://127.0.0.1:41234/console/corral-vms/desk
+```
+
+The command finds the VM and starts a web server. It prints the URL, and then serves the page until it gets SIGINT or SIGTERM. The `--addr` flag sets the listen address. The default is `127.0.0.1:0`, and the OS selects a free port. The `--json` flag gives one line of JSON:
+
+```json
+{"vm":"desk","namespace":"corral-vms","url":"http://127.0.0.1:41234/console/corral-vms/desk","websocket":"ws://127.0.0.1:41234/api/vnc/corral-vms/desk"}
+```
+
+Each `corral web` server also has the page at `/console/<namespace>/<name>`. The URL does not change while the VM exists. The page has these properties:
+
+- It shows the screen at 1:1 scale. Add `?scale=fit` to scale the screen to the window.
+- `<body data-connected="true">` shows that the console is connected.
+- The canvas has the ID `vnc-canvas`. It gets keyboard focus, so key presses go to the guest.
+- The page connects again after a guest reboot or a logout.
+- The page uses the same websocket as the dashboard, with the same access checks.
+
+This Python example opens the console of `desk` with Playwright:
+
+```python
+import json
+import subprocess
+
+from playwright.sync_api import sync_playwright
+
+console = subprocess.Popen(["corral", "--json", "console", "desk"], stdout=subprocess.PIPE, text=True)
+url = json.loads(console.stdout.readline())["url"]
+try:
+    with sync_playwright() as p:
+        page = p.chromium.launch().new_page(viewport={"width": 1920, "height": 1080})
+        page.goto(url)
+        page.wait_for_selector("body[data-connected=true]", timeout=120_000)
+        page.keyboard.type("hello")
+        page.locator("#vnc-canvas").screenshot(path="desk.png")
+finally:
+    console.terminate()
+```
+
+`corral web --addr 127.0.0.1:0` also lets the OS select the port. The server writes the URL to stderr. With `--json`, it writes `{"url":"http://127.0.0.1:41234"}` to stdout.
+
 ---
 
 ### 3. Bootable Container Images (`bootc`)

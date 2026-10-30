@@ -7,10 +7,12 @@ package web
 import (
 	"context"
 	"embed"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/tuna-os/corral/pkg/config"
 	"github.com/tuna-os/corral/pkg/kubevirt"
@@ -85,11 +87,19 @@ var staticFS embed.FS
 
 var store *registry.Store
 
-// Serve starts the web UI on addr and blocks.
-func Serve(addr string, allowedHosts ...string) error {
+// Server is the web UI bound to its listener and ready to serve.
+type Server struct {
+	listener net.Listener
+	handler  http.Handler
+	url      string
+}
+
+// Listen prepares the web UI and binds addr. Port 0 lets the OS choose a
+// free port; URL reports the address the server actually took.
+func Listen(addr string, allowedHosts ...string) (*Server, error) {
 	state, err := NewServerState()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	// Sync ServerState into package globals for handlers that haven't migrated yet.
 	store = state.GetStore()
@@ -106,11 +116,11 @@ func Serve(addr string, allowedHosts ...string) error {
 
 	mux, err := newMux()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if len(allowedHosts) == 0 {
 		allowedHosts = loopbackAllowedHosts(addr, listener.Addr())
@@ -119,15 +129,57 @@ func Serve(addr string, allowedHosts ...string) error {
 		mux, err = enforceAllowedHosts(mux, allowedHosts)
 		if err != nil {
 			_ = listener.Close()
-			return err
+			return nil, err
 		}
 	}
+	return &Server{listener: listener, handler: mux, url: listenURL(addr, listener.Addr())}, nil
+}
+
+// listenURL is the base URL a client on this host uses to reach a listener
+// bound from bindAddr. It keeps the bind host, because a loopback bind pins
+// that exact Host value (see loopbackAllowedHosts), and takes the port from
+// the listener, because bindAddr can ask for port 0. A wildcard bind has no
+// host to keep, so it gets "localhost".
+func listenURL(bindAddr string, listenerAddr net.Addr) string {
+	host, _, err := net.SplitHostPort(bindAddr)
+	if err != nil {
+		host = ""
+	}
+	if ip := net.ParseIP(host); host == "" || (ip != nil && ip.IsUnspecified()) {
+		host = "localhost"
+	}
+	_, port, err := net.SplitHostPort(listenerAddr.String())
+	if err != nil {
+		return "http://" + listenerAddr.String()
+	}
+	return "http://" + net.JoinHostPort(host, port)
+}
+
+// URL is the server's base URL, for example http://127.0.0.1:8006.
+func (s *Server) URL() string { return s.url }
+
+// Serve starts the background samplers and serves requests until ctx ends.
+// Then it stops accepting connections and returns nil.
+func (s *Server) Serve(ctx context.Context) error {
 	startMetricSampler()
-	startVDIReclaim(context.Background())
+	startVDIReclaim(ctx)
 	if MetricsEnabled {
-		StartMetrics(context.Background())
+		StartMetrics(ctx)
 		fmt.Fprintln(os.Stderr, "Prometheus metrics on /metrics")
 	}
-	fmt.Fprintf(os.Stderr, "Corral web UI listening on http://%s\n", listener.Addr())
-	return (&http.Server{Handler: mux}).Serve(listener)
+	srv := &http.Server{Handler: s.handler}
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		<-ctx.Done()
+		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(shutdown)
+	}()
+	err := srv.Serve(s.listener)
+	if errors.Is(err, http.ErrServerClosed) {
+		<-stopped
+		return nil
+	}
+	return err
 }

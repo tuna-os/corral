@@ -218,6 +218,28 @@ test.describe('Corral web UI', () => {
     await expect(page.locator('#btn-create')).toBeVisible();
   });
 
+  // ── 0b. Standalone console page ────────────────────────────────────
+  // The page needs no VM to render: it sets its hooks and dials the VNC
+  // websocket of the VM in its URL. The connect itself needs a booted guest
+  // (the @live-only console test checks it; ui-smoke checks it in demo mode).
+  test('console page sets its hooks and dials the VNC websocket', async ({ page }) => {
+    const name = 'e2e-console-probe';
+    const dialed = page.waitForEvent('websocket', { predicate: (ws) => ws.url().includes('/api/vnc/'), timeout: 15_000 });
+    const resp = await page.goto(`${CORRAL_URL}/console/${NS}/${name}`);
+    expect(resp?.status()).toBe(200);
+    const body = page.locator('body');
+    await expect(body).toHaveAttribute('data-vm', name);
+    await expect(body).toHaveAttribute('data-namespace', NS);
+    await expect(body).toHaveAttribute('data-scale', 'one');
+    expect(new URL((await dialed).url()).pathname).toBe(`/api/vnc/${NS}/${name}`);
+    // No such VM, so the bridge closes and the page waits to connect again.
+    await expect(body).toHaveAttribute('data-connected', 'false');
+    await expect(page.locator('#console-status')).toContainText('Reconnecting', { timeout: 30_000 });
+
+    const bad = await page.request.get(`${CORRAL_URL}/console/${NS}/bad%22name`);
+    expect(bad.status()).toBe(404);
+  });
+
   // ── 1. Create wizard: every source type toggles its fields ────────
 
   test('create wizard fields toggle for every source type', async ({ page }) => {
@@ -654,6 +676,14 @@ test.describe('Corral web UI', () => {
     const tile = page.locator('.mv-tile').filter({ hasText: vm }).first();
     await expect(tile).toBeVisible({ timeout: 15_000 });
     await expect(tile.locator('canvas')).toBeVisible({ timeout: 30_000 });
+
+    // The standalone console page connects with no dashboard navigation.
+    const consolePage = await page.context().newPage();
+    await consolePage.goto(`${CORRAL_URL}/console/${NS}/${vm}`);
+    await expect(consolePage.locator('body[data-connected="true"]')).toHaveCount(1, { timeout: 60_000 });
+    await expect(consolePage.locator('#vnc-canvas')).toBeVisible();
+    expect(await consolePage.evaluate(() => document.activeElement?.id)).toBe('vnc-canvas');
+    await consolePage.close();
 
     await api(`/api/vms/${NS}/${vm}/stop`, { method: 'POST' });
     await waitFor(() => vmStatus(vm) === 'Stopped', 120_000, 4000, `${vm} Stopped`);

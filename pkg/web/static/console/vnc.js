@@ -48,6 +48,8 @@ export async function openVNC(screen, vm) {
       rfb.focus();
     },
     ctrlAltDel: () => rfb.sendCtrlAltDel(),
+    // Keyboard focus on the canvas, so keys go to the guest.
+    focus: () => rfb.focus(),
     close() {
       try { rfb.disconnect(); } catch { /* already gone */ }
     },
