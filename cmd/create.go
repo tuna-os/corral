@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -60,6 +61,9 @@ var (
 	createVsock             bool
 	createVsockCID          uint32
 	createTPM               bool
+	createDedicatedCPUs     bool
+	createIsolateEmulator   bool
+	createTags              []string
 )
 
 // limaFile is the Lima YAML format — corral reads Lima files natively.
@@ -235,14 +239,20 @@ admin panel). Two ways to fix that (see docs/kubevirt-proxmox-setup.md
       corral create myvm --kubevirt --image fedora --lan-service
 
 Boot a container image as a VM? Install the bootc extension:
-  corral plugin install bootc && corral bootc create myvm --image quay.io/centos-bootc/centos-bootc:stream9`,
+  corral plugin install bootc && corral bootc create myvm --image quay.io/centos-bootc/centos-bootc:stream9
+
+Matched VMs for performance comparisons: create each VM with the same
+--node, --cpu, --mem, and --disk, add --dedicated-cpus, and group the
+pair with --tag (stored as corral.dev/tag.<key> labels):
+  corral create gnome --kubevirt --image fedora --node n1 --cpu 4 --mem 6G --dedicated-cpus --tag pair=run42`,
 	Example: `  corral create myvm --kubevirt --image fedora
   corral create myvm --iso ./install.iso --disk 40G
   corral create scratch --kubevirt --image bluefin --ephemeral --ttl 2h
   corral create gate --bootc ghcr.io/tuna-os/yellowfin:gnome --wait-ssh --timeout 900
   corral create gate --bootc ghcr.io/tuna-os/yellowfin:gnome --karg tunaos.countme=0 --wait-ssh
   corral create builder --kubevirt --image fedora --lan   # direct LAN access via a Multus bridge NAD
-  corral create builder --kubevirt --image fedora --lan-service   # LAN access via LoadBalancer Service (Cilium/MetalLB)`,
+  corral create builder --kubevirt --image fedora --lan-service   # LAN access via LoadBalancer Service (Cilium/MetalLB)
+  corral create perf-a --kubevirt --image fedora --node n1 --dedicated-cpus --tag pair=run42 --tag desktop=gnome`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
@@ -277,6 +287,9 @@ func executeCreate(name string, kubevirtExplicit bool) error {
 	if err := kubevirt.ValidateKargs(createKargs); err != nil {
 		return err
 	}
+	if _, err := createPlacement(); err != nil {
+		return err
+	}
 	if existing := resolveBackend(name); existing != "" && !createForce {
 		return fmt.Errorf("VM %q already exists (backend: %s). Use --force to overwrite", name, existing)
 	}
@@ -291,6 +304,9 @@ func executeCreate(name string, kubevirtExplicit bool) error {
 		}
 		if useKubevirt {
 			return runKubevirtBootcCreate(name)
+		}
+		if err := refuseKubevirtOnlyFlags("qemu"); err != nil {
+			return err
 		}
 		if err := runLocalBootcCreate(name); err != nil {
 			return err
@@ -317,6 +333,15 @@ func executeCreate(name string, kubevirtExplicit bool) error {
 		backend = "kubevirt"
 	}
 	switch backend {
+	case "kubevirt":
+		return runKubevirtCreate(name)
+	}
+	// Every other backend: the KubeVirt-only placement flags are refused,
+	// not dropped.
+	if err := refuseKubevirtOnlyFlags(backend); err != nil {
+		return err
+	}
+	switch backend {
 	case "incus":
 		return runIncusCreate(name)
 	case "libvirt":
@@ -327,8 +352,6 @@ func executeCreate(name string, kubevirtExplicit bool) error {
 			return registryStore.Set(name, types.RegistryEntry{Backend: "libvirt"})
 		}
 		return nil
-	case "kubevirt":
-		return runKubevirtCreate(name)
 	case "qemu":
 		if err := runQemuCreate(name); err != nil {
 			return err
@@ -336,6 +359,46 @@ func executeCreate(name string, kubevirtExplicit bool) error {
 		return maybeStartAndWait(name)
 	}
 	return runAdapterCreate(name, backend, createContext(backend))
+}
+
+// createPlacement parses --dedicated-cpus, --isolate-emulator-thread, and
+// --tag. They are KubeVirt-only: executeCreate refuses them elsewhere.
+func createPlacement() (kubevirt.Placement, error) {
+	tags, err := kubevirt.ParseTags(createTags)
+	if err != nil {
+		return kubevirt.Placement{}, err
+	}
+	p := kubevirt.Placement{
+		DedicatedCPUs:         createDedicatedCPUs,
+		IsolateEmulatorThread: createIsolateEmulator,
+		Tags:                  tags,
+	}
+	if err := p.Validate(); err != nil {
+		return kubevirt.Placement{}, err
+	}
+	if p.DedicatedCPUs && createInstanceType != "" {
+		return kubevirt.Placement{}, fmt.Errorf("--dedicated-cpus cannot combine with --instancetype: the instancetype owns the CPU spec, so pick one that sets dedicatedCPUPlacement instead")
+	}
+	return p, nil
+}
+
+// refuseKubevirtOnlyFlags refuses the placement flags on a backend that
+// cannot honour them, rather than creating a VM without them.
+func refuseKubevirtOnlyFlags(backendName string) error {
+	var set []string
+	if createDedicatedCPUs {
+		set = append(set, "--dedicated-cpus")
+	}
+	if createIsolateEmulator {
+		set = append(set, "--isolate-emulator-thread")
+	}
+	if len(createTags) > 0 {
+		set = append(set, "--tag")
+	}
+	if len(set) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%s: supported on the KubeVirt backend only, not on backend %s", strings.Join(set, ", "), backendName)
 }
 
 // createContext names the context a create on backend lands in: the --context
@@ -431,6 +494,9 @@ func init() {
 	createCmd.Flags().BoolVar(&createVsock, "vsock", false, "[qemu] Enable AF_VSOCK via vhost-vsock-pci + SMBIOS credentials (fallback SSH for live ISOs, like tuna-os/tunaos iso-e2e.sh)")
 	createCmd.Flags().Uint32Var(&createVsockCID, "vsock-cid", 0, "[qemu] Guest CID for vsock (3..0xFFFFFFFF, 0=auto from name; implies --vsock)")
 	createCmd.Flags().BoolVar(&createTPM, "tpm", false, "[qemu] Enable emulated TPM 2.0 (swtpm + tpm-crb) for LUKS/measured-boot testing")
+	createCmd.Flags().BoolVar(&createDedicatedCPUs, "dedicated-cpus", false, "[kubevirt] Pin each vCPU to its own host CPU (dedicatedCpuPlacement, guaranteed QoS); needs a node labeled cpumanager=true")
+	createCmd.Flags().BoolVar(&createIsolateEmulator, "isolate-emulator-thread", false, "[kubevirt] Give the QEMU emulator thread one more dedicated host CPU (needs --dedicated-cpus)")
+	createCmd.Flags().StringArrayVar(&createTags, "tag", nil, "[kubevirt] Tag the VM as key=value (key alone means key=true), stored as label corral.dev/tag.<key> (repeatable)")
 }
 
 func runIncusCreate(name string) error {
@@ -454,6 +520,10 @@ func runKubevirtCreate(name string) error {
 	ns := createNamespace
 	if ns == "" {
 		ns = kubevirt.DefaultNamespace
+	}
+	placement, err := createPlacement()
+	if err != nil {
+		return err
 	}
 
 	containerDisk := createContainerDisk
@@ -500,6 +570,15 @@ func runKubevirtCreate(name string) error {
 		StorageClass:      createStorageClass,
 		Ephemeral:         createEphemeral,
 		TTL:               createTTL,
+
+		DedicatedCPUs:         placement.DedicatedCPUs,
+		IsolateEmulatorThread: placement.IsolateEmulatorThread,
+		Tags:                  placement.Tags,
+	}
+	if placement.DedicatedCPUs {
+		if err := kubevirt.CheckDedicatedCPUs(createNode); err != nil {
+			return err
+		}
 	}
 	if err := kubevirt.CreateVM(opts); err != nil {
 		return err
@@ -598,6 +677,17 @@ func runKubevirtBootcCreate(name string) error {
 	if size == "" {
 		size = "80Gi"
 	}
+	placement, err := createPlacement()
+	if err != nil {
+		return err
+	}
+	// Refuse before the build: it takes minutes, and its VM would never
+	// schedule.
+	if placement.DedicatedCPUs {
+		if err := kubevirt.CheckDedicatedCPUs(createNode); err != nil {
+			return err
+		}
+	}
 
 	// The bootc build pipeline is an optional plugin (kept out of the lean core
 	// binary — see pkg/kubevirt/bootc_core.go). When it isn't compiled in,
@@ -629,6 +719,7 @@ func runKubevirtBootcCreate(name string) error {
 		return err
 	}
 	vm := kubevirt.GenerateBootcVM(name, ns, build.PVCName, createBootc, sshKey, createMem, createCPU, createNode)
+	kubevirt.ApplyPlacement(vm, placement)
 	if err := kubevirt.Apply(vm); err != nil {
 		return err
 	}
@@ -658,7 +749,8 @@ func runKubevirtBootcCreate(name string) error {
 // bootcPluginArgs is the `corral bootc` command line that delegates a
 // KubeVirt bootc create to the plugin when the build is not compiled in.
 func bootcPluginArgs(name, ns, size string) []string {
-	args := []string{"create", name, "--image", createBootc, "-n", ns}
+	args := []string{"create", name, "--image", createBootc, "-n", ns,
+		"--cpu", strconv.Itoa(createCPU), "--mem", createMem}
 	if size != "" {
 		args = append(args, "--disk", size)
 	}
@@ -670,6 +762,15 @@ func bootcPluginArgs(name, ns, size string) []string {
 	}
 	for _, karg := range createKargs {
 		args = append(args, "--karg", karg)
+	}
+	if createDedicatedCPUs {
+		args = append(args, "--dedicated-cpus")
+	}
+	if createIsolateEmulator {
+		args = append(args, "--isolate-emulator-thread")
+	}
+	for _, tag := range createTags {
+		args = append(args, "--tag", tag)
 	}
 	return args
 }

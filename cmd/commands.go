@@ -117,10 +117,17 @@ var deleteCmd = &cobra.Command{
 }
 
 var infoCmd = &cobra.Command{
-	Use:     "info [name]",
-	Short:   "Show VM details",
-	Example: `  corral info myvm`,
-	Args:    cobra.MaximumNArgs(1),
+	Use:   "info [name]",
+	Short: "Show VM details",
+	Long: `Show VM details.
+
+Without --json, info prints the backend's own description of the VM. With
+--json, it prints one structured object: name, namespace, backend, status,
+node, CPU topology and pinning, memory, disks, input devices, firmware, IP
+addresses, tags, labels, and the bootc image if one is recorded.`,
+	Example: `  corral info myvm
+  corral info myvm --json | jq '{node, cpu, inputs}'`,
+	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name, err := requireOrPrompt(args, "view details for")
 		if err != nil {
@@ -135,6 +142,17 @@ var infoCmd = &cobra.Command{
 		adapter, err := instanceAdapter(name)
 		if err != nil {
 			return err
+		}
+		if jsonOutput {
+			detailer, ok := adapter.(backend.Detailer)
+			if !ok {
+				return unsupported(adapter, "info --json")
+			}
+			details, err := detailer.Details(name)
+			if err != nil {
+				return err
+			}
+			return printJSON(details)
 		}
 		describer, ok := adapter.(backend.Describer)
 		if !ok {

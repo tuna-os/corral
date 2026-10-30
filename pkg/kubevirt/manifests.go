@@ -218,12 +218,18 @@ func GenerateVM(opts types.CreateOpts) map[string]any {
 		}
 	}
 
-	return map[string]any{
+	vm := map[string]any{
 		"apiVersion": "kubevirt.io/v1",
 		"kind":       "VirtualMachine",
 		"metadata":   metadata,
 		"spec":       spec,
 	}
+	ApplyPlacement(vm, Placement{
+		DedicatedCPUs:         opts.DedicatedCPUs,
+		IsolateEmulatorThread: opts.IsolateEmulatorThread,
+		Tags:                  opts.Tags,
+	})
+	return vm
 }
 
 // ephemeralTTL parses opts.TTL (e.g. "4h", "30m"); an empty or invalid value

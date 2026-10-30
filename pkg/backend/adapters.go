@@ -177,6 +177,10 @@ func (a kubevirtAdapter) Logs(name string) error { return a.client.Logs(name) }
 
 func (a kubevirtAdapter) Describe(name string) ([]byte, error) { return a.client.VMInfo(name) }
 
+func (a kubevirtAdapter) Details(name string) (types.VMDetails, error) {
+	return a.client.Details(name)
+}
+
 func (a kubevirtAdapter) SSH(name string, opts SSHOptions) error {
 	return a.client.SSH(name, opts.User, opts.Identity, opts.Command, opts.Port, opts.Password, opts.LocalForwards)
 }

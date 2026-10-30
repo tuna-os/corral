@@ -57,7 +57,10 @@ type VM struct {
 	AgentConnected bool     `json:"agentConnected"` // qemu-guest-agent reachable
 	IsTemplate     bool     `json:"isTemplate"`     // labeled corral.dev/template=true
 	Bootc          bool     `json:"bootc"`          // kernel-boot VM (built by the bootc plugin)
-	Tags           []string `json:"tags,omitempty"` // from corral.dev/tag.<name> labels
+	Tags           []string `json:"tags,omitempty"` // from corral.dev/tag.<name>=true labels
+	// TagValues is every corral.dev/tag.<key> label, key to value: the
+	// key=value tags `corral create --tag` writes, plus the =true ones above.
+	TagValues map[string]string `json:"tagValues,omitempty"`
 
 	// Ephemeral GC (see pkg/kubevirt/gc.go): labeled corral.dev/ephemeral=true
 	// at create time with a TTL. `corral gc` stops (not deletes) the VM once
@@ -66,6 +69,67 @@ type VM struct {
 	Ephemeral bool   `json:"ephemeral,omitempty"`
 	ExpiresAt string `json:"expiresAt,omitempty"` // RFC3339; when running past this, gc stops it
 	StoppedAt string `json:"stoppedAt,omitempty"` // RFC3339; when gc stopped it (unset if user-stopped)
+}
+
+// VMDetails is one VM's placement and hardware as `corral info --json`
+// prints it: the facts a script would otherwise scrape from the backend's own
+// objects. A field the backend cannot report stays zero.
+type VMDetails struct {
+	Name      string `json:"name"`
+	Namespace string `json:"namespace,omitempty"`
+	Context   string `json:"context,omitempty"`
+	Backend   string `json:"backend"`
+	Status    string `json:"status"` // the backend's own state, e.g. Running, Stopped
+	Ready     bool   `json:"ready"`
+	// Node is where the VM runs; while it is stopped, the node it is pinned to.
+	Node     string     `json:"node,omitempty"`
+	CPU      VMCPU      `json:"cpu"`
+	Memory   string     `json:"memory,omitempty"`
+	Disks    []VMDisk   `json:"disks,omitempty"`
+	Inputs   []VMInput  `json:"inputs,omitempty"`
+	Firmware VMFirmware `json:"firmware"`
+	IPs      []string   `json:"ips,omitempty"`
+	// TagValues is every corral.dev/tag.<key> label, as in types.VM.
+	TagValues map[string]string `json:"tagValues,omitempty"`
+	Labels    map[string]string `json:"labels,omitempty"`
+	// Image is the bootc image the VM was built from, when recorded.
+	Image string `json:"image,omitempty"`
+}
+
+// VMCPU is a VM's vCPU topology and placement.
+type VMCPU struct {
+	VCPUs                 int    `json:"vcpus"`
+	Sockets               int    `json:"sockets"`
+	Cores                 int    `json:"cores"`
+	Threads               int    `json:"threads"`
+	Model                 string `json:"model,omitempty"`
+	DedicatedCPUPlacement bool   `json:"dedicatedCpuPlacement"`
+	IsolateEmulatorThread bool   `json:"isolateEmulatorThread"`
+}
+
+// VMDisk is one disk attached to a VM and what backs it.
+type VMDisk struct {
+	Name   string `json:"name"`
+	Type   string `json:"type"` // disk, cdrom, lun
+	Bus    string `json:"bus,omitempty"`
+	Source string `json:"source,omitempty"` // persistentVolumeClaim, dataVolume, containerDisk, cloudInitNoCloud, ...
+	Claim  string `json:"claim,omitempty"`  // PVC or DataVolume name
+	Image  string `json:"image,omitempty"`  // containerDisk image
+	Size   string `json:"size,omitempty"`   // PVC capacity, when known
+}
+
+// VMInput is one input device: a tablet on usb gives absolute pointing.
+type VMInput struct {
+	Name string `json:"name,omitempty"`
+	Type string `json:"type"`
+	Bus  string `json:"bus,omitempty"`
+}
+
+// VMFirmware is how the VM boots.
+type VMFirmware struct {
+	Type       string `json:"type"` // uefi, bios, kernelBoot
+	SecureBoot bool   `json:"secureBoot"`
+	Machine    string `json:"machine,omitempty"`
 }
 
 // InstanceRef identifies one instance without relying on globally unique
@@ -245,6 +309,12 @@ type CreateOpts struct {
 	StorageClass      string // overrides PreferredStorageClass() for this VM's disks; "" = default
 	Ephemeral         bool   // labels the VM for `corral gc` (see pkg/kubevirt/gc.go)
 	TTL               string // duration string (e.g. "4h"); with Ephemeral, sets corral.dev/expires-at
+	// DedicatedCPUs pins each vCPU to a dedicated host CPU (KubeVirt
+	// dedicatedCpuPlacement); IsolateEmulatorThread adds one more for the
+	// emulator thread. Tags become corral.dev/tag.<key>=<value> labels.
+	DedicatedCPUs         bool
+	IsolateEmulatorThread bool
+	Tags                  map[string]string
 	// ExistingDisk means the VM dir already holds a prepared disk.qcow2 (e.g.
 	// a bootc-built disk) — Create must boot it as-is, never recreate it.
 	ExistingDisk bool

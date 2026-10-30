@@ -186,6 +186,15 @@ type Describer interface {
 	Describe(name string) ([]byte, error)
 }
 
+// Detailer returns a guest's placement and hardware as a structured shape:
+// `corral info --json` prints it, so scripts read node, CPU topology and
+// pinning, disks, and input devices without parsing a backend's own object.
+// Not a Family, for the same reason as Describer. A backend without one makes
+// `corral info --json` refuse by name; its human `corral info` still works.
+type Detailer interface {
+	Details(name string) (types.VMDetails, error)
+}
+
 // SSHOptions carries `corral ssh`'s flags to whichever client a backend
 // shells in with. A backend uses what its client understands and ignores the
 // rest: `incus exec` has no user or identity, and only local QEMU has vsock.

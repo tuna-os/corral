@@ -27,7 +27,7 @@ func TestFinishVM_AppliesVMAndExposesConsole(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
 	err := finishVM("myvm", "tailvm", "myvm-bootc-disk",
-		"quay.io/centos-bootc/centos-bootc:stream9", "ssh-ed25519 AAAAtest", "4G", 2, "")
+		"quay.io/centos-bootc/centos-bootc:stream9", "ssh-ed25519 AAAAtest", "4G", 2, "", kubevirt.Placement{})
 	if err != nil {
 		t.Fatalf("finishVM: %v", err)
 	}
@@ -57,7 +57,7 @@ func TestFinishVM_RecordsRegistryEntry(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	if err := finishVM("myvm", "tailvm", "myvm-bootc-disk",
-		"quay.io/centos-bootc/centos-bootc:stream9", "ssh-ed25519 AAAAtest", "4G", 2, ""); err != nil {
+		"quay.io/centos-bootc/centos-bootc:stream9", "ssh-ed25519 AAAAtest", "4G", 2, "", kubevirt.Placement{}); err != nil {
 		t.Fatalf("finishVM: %v", err)
 	}
 
