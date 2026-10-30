@@ -145,19 +145,25 @@ corral vmtest desk --bootc "$IMAGE" --rm \
 corral matches the markers against the whole console, not one line at a
 time. Thus one `(?s)` pattern can need two lines in either order.
 
-You can also drive the console keyboard directly, which is the only way into a
-LUKS passphrase prompt or a greeter:
+You can also drive the console keyboard and pointer directly. This is the only
+way into a LUKS passphrase prompt, or into a greeter on an image with no sshd:
 
 ```bash
 corral screenshot desk -o greeter.png
+corral key desk ret
 corral type desk 'correct horse battery staple' --enter
 corral key desk ctrl alt f2
+corral pointer desk 1236 12 --click left
 ```
 
 `corral screenshot` also captures a KubeVirt VM, through KubeVirt's VNC
 screenshot subresource (`virtctl vnc screenshot`). It reports the same frame
 size and deviation, and `--require-paint` fails a blank KubeVirt frame the same
-way. `type` and `key` stay local-QEMU only.
+way.
+
+`type` and `key` work on local QEMU and KubeVirt VMs. `pointer` works on
+KubeVirt VMs that have a tablet input device. See
+[Console keyboard and pointer](user-guide.md#console-keyboard-and-pointer).
 
 ### Kernel arguments and the root filesystem
 

@@ -275,8 +275,9 @@ KubeVirt VM, Corral saves the cloud-init password at create time.
   not give `-u`. Try `corral ssh NAME -u fedora`.
 - **bootc.** Corral puts your public key on the `root` account. Use
   `corral ssh NAME -u root`.
-- **The guest has no SSH server.** Use the console in the web UI, or
-  `corral type` and `corral key` on a local QEMU VM.
+- **The guest has no SSH server.** Use the console in the web UI. Or use
+  `corral key`, `corral type` and `corral pointer` on a local QEMU or KubeVirt
+  VM.
 
 ### Tailscale
 
@@ -358,9 +359,12 @@ for the gaps and for the native commands that you can use until then.
 
 Some commands work on local QEMU only. On another backend they stop with
 `diagnose is only supported for QEMU VMs` or a similar message. These are
-`diagnose`, `qmp`, `type` and `key`. `screenshot` also works on KubeVirt. On
-any other backend it stops with
-`the NAME backend does not support screenshot yet`.
+`diagnose` and `qmp`.
+
+`screenshot`, `type` and `key` work on local QEMU and KubeVirt. `pointer`
+works on KubeVirt only, because a local QEMU VM has no tablet input device. On
+any other backend these commands stop with
+`the NAME backend does not support ACTION yet`.
 
 ## Environment variables
 

@@ -614,6 +614,9 @@ corral addnic <name>    [kubevirt] --network-nad ns/name --iface net1
 corral ssh <name>       [-u user] [-i key] [-c cmd] [-p port] [--password …]
                           [-L [bind:]port:host:hostport ...]  local port forward(s)
 corral viewer <name>    VNC via xdg-open
+corral key <name> <key>...  [qemu|kubevirt] press a key combination (ret, ctrl alt f2)
+corral type <name> <text>   [qemu|kubevirt] [--enter] type US-keyboard text
+corral pointer <name> <x> <y>  [kubevirt] [--click left|middle|right] [--double]
 corral logs <name>      journald (local) / virt-launcher (cluster)
 corral info <name>      raw JSON
 corral delete <name>…   [-f] [--wait [--timeout 5m]] [--json] removes each VM

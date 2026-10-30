@@ -673,6 +673,26 @@ finally:
 
 `corral web --addr 127.0.0.1:0` also lets the OS select the port. The server writes the URL to stderr. With `--json`, it writes `{"url":"http://127.0.0.1:41234"}` to stdout.
 
+#### Console keyboard and pointer
+
+Use these commands when the guest has no SSH, for example at a greeter or at a
+LUKS passphrase prompt. They work on local QEMU and KubeVirt VMs. You do not
+need a VNC client.
+
+```bash
+corral key <vm-name> ret                       # press one key
+corral key <vm-name> ctrl alt f2               # press a key combination
+corral type <vm-name> 'my passphrase' --enter  # type text, then press Return
+corral pointer <vm-name> 1236 12 --click left  # click at x=1236, y=12
+```
+
+- `corral key` uses QEMU key names: `ret`, `esc`, `tab`, `spc`, `backspace`, `delete`, `ctrl`, `alt`, `shift`, `meta_l` (the Super key), `f1` to `f24`, `up`, `down`, `left`, `right`, letters and digits. `corral key --help` shows more names. The keys go down in the given order and come up in the opposite order.
+- `corral type` types only the characters of a US keyboard. If the text has a different character, the command stops and types nothing.
+- `corral pointer` moves the pointer to a position on the screen. The position is in pixels from the top-left corner, and it must be in the screen that `corral screenshot` shows. Add `--click left`, `--click middle` or `--click right` to click there. Add `--double` to double-click. Only KubeVirt VMs support this command, and the VMI must have a tablet input device.
+- A local QEMU VM gets the keys through its QMP monitor. A KubeVirt VM gets them on its VNC console through `virtctl vnc`, thus `virtctl` must be on your `PATH`.
+- KubeVirt allows one VNC session for each VM. Each command closes the VNC session that you have open, for example the console in the web UI. Open the console again after the command.
+- With `--json`, each command prints what it sent. For example, `corral pointer` prints `{"vm": "desk", "action": "pointer", "x": 1236, "y": 12, "button": "left", "double": false}`. `corral type` prints the number of characters, not the text.
+
 ---
 
 ### 3. Bootable Container Images (`bootc`)

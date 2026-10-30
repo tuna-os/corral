@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"fmt"
+	"strconv"
+	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 	"github.com/tuna-os/corral/pkg/backend"
@@ -115,18 +117,75 @@ is a desktop gate.`,
 	},
 }
 
-// The console keyboard. A guest that cannot answer SSH is not out of reach:
-// QEMU injects scancodes at the emulated keyboard, which is the only way into a
-// LUKS passphrase prompt, a greeter, or a login shell on an image that ships
-// sshd off. TunaOS's published-media tests are driven this way.
+// The console keyboard and pointer. A guest that cannot answer SSH is not out
+// of reach: local QEMU injects keys at the emulated keyboard through QMP, and
+// a KubeVirt VM takes key and pointer events on its VNC console. That is the
+// only way into a LUKS passphrase prompt, a greeter, or a login shell on an
+// image that ships sshd off. TunaOS's published-media tests are driven this
+// way.
 
-var typeEnter bool
+var (
+	typeEnter     bool
+	pointerClick  string
+	pointerDouble bool
+)
+
+// keyboarderFor resolves the VM's adapter as a Keyboarder, or refuses by
+// backend name.
+func keyboarderFor(name, action string) (backend.Keyboarder, error) {
+	adapter, err := instanceAdapter(name)
+	if err != nil {
+		return nil, err
+	}
+	keyboarder, ok := adapter.(backend.Keyboarder)
+	if !ok {
+		return nil, unsupported(adapter, action)
+	}
+	return keyboarder, nil
+}
+
+// The --json results of `key`, `type`, and `pointer`: what was sent to which
+// VM. `type` reports how many characters it typed, never the text, because
+// the text is often a passphrase.
+type keyResult struct {
+	VM     string   `json:"vm"`
+	Action string   `json:"action"`
+	Keys   []string `json:"keys"`
+}
+
+type typeResult struct {
+	VM         string `json:"vm"`
+	Action     string `json:"action"`
+	Characters int    `json:"characters"`
+	Enter      bool   `json:"enter"`
+}
+
+type pointerResult struct {
+	VM     string `json:"vm"`
+	Action string `json:"action"`
+	X      int    `json:"x"`
+	Y      int    `json:"y"`
+	// Button is empty for a move without a click.
+	Button string `json:"button,omitempty"`
+	Double bool   `json:"double"`
+}
+
+// printConsoleInput prints a console-input result under --json; plain output
+// stays silent, as it always has for `key` and `type`.
+func printConsoleInput(result any) error {
+	if !jsonOutput {
+		return nil
+	}
+	return printJSON(result)
+}
 
 var typeCmd = &cobra.Command{
 	Use:   "type <name> <text>",
-	Short: "Type text at a QEMU VM's console",
-	Long: `Type text at a running QEMU VM's emulated keyboard, through its QMP
-monitor — no VNC client, and no SSH in the guest.
+	Short: "Type text at a VM's console",
+	Long: `Type text at a running VM's keyboard — no VNC client, and no SSH in
+the guest. A local QEMU VM gets the keys through its QMP monitor. A KubeVirt
+VM gets them as key events on its VNC console (virtctl vnc), so it needs
+virtctl; KubeVirt allows one VNC session, so an open web console disconnects.
 
 Use it to answer what only a keyboard can answer: a LUKS passphrase prompt, a
 greeter, a login on an image that ships sshd disabled. Pair it with
@@ -134,41 +193,133 @@ greeter, a login on an image that ships sshd disabled. Pair it with
 
 Only characters a US keyboard produces are typed; anything else is refused
 rather than silently dropped, because a passphrase missing one character fails
-as if the guest were at fault.`,
+as if the guest were at fault.
+
+With --json, prints {"vm", "action": "type", "characters", "enter"}. The text
+itself is not printed.`,
 	Example: `  corral screenshot vm -o before.png
   corral type vm 'correct horse battery staple' --enter
   corral key vm ctrl alt f2`,
 	Args: cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		name, err := qemuOnly(args[:1], "type")
+		name, err := requireOrPrompt(args[:1], "type")
 		if err != nil {
 			return err
 		}
-		if err := qemu.SendKeys(name, args[1]); err != nil {
+		keyboarder, err := keyboarderFor(name, "type")
+		if err != nil {
 			return err
 		}
+		text := args[1]
 		if typeEnter {
-			return qemu.SendKey(name, "ret")
+			// A newline types as Return, on the same connection as the text.
+			text += "\n"
 		}
-		return nil
+		if err := keyboarder.TypeText(name, text); err != nil {
+			return err
+		}
+		return printConsoleInput(typeResult{VM: name, Action: "type",
+			Characters: utf8.RuneCountInString(args[1]), Enter: typeEnter})
 	},
 }
 
 var keyCmd = &cobra.Command{
 	Use:   "key <name> <key>...",
-	Short: "Press a key combination at a QEMU VM's console",
-	Long: `Press one combination of QEMU key names together at a running QEMU
-VM's emulated keyboard, e.g. "ret", "esc", or "ctrl alt f2" to switch virtual
-console.`,
+	Short: "Press a key combination at a VM's console",
+	Long: `Press one combination of QEMU key names together at a running VM's
+keyboard, e.g. "ret", "esc", or "ctrl alt f2" to switch virtual console. The
+keys go down in the order given and come up in reverse.
+
+A local QEMU VM gets the keys through its QMP monitor. A KubeVirt VM gets them
+as key events on its VNC console (virtctl vnc); KubeVirt allows one VNC
+session, so an open web console disconnects.
+
+Key names: letters, digits, ret, esc, tab, spc, backspace, delete, insert,
+home, end, pgup, pgdn, up, down, left, right, f1 to f24, shift, shift_r, ctrl,
+ctrl_r, alt, alt_r, meta_l and meta_r (Super), menu, minus, equal,
+bracket_left, bracket_right, semicolon, apostrophe, grave_accent, backslash,
+comma, dot, slash, the kp_ keypad keys, print, sysrq, pause, and media keys
+such as volumeup and audiomute.
+
+With --json, prints {"vm", "action": "key", "keys"}.`,
 	Example: `  corral key vm ret
-  corral key vm ctrl alt delete`,
+  corral key vm ctrl alt delete
+  corral key vm meta_l`,
 	Args: cobra.MinimumNArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		name, err := qemuOnly(args[:1], "key")
+		name, err := requireOrPrompt(args[:1], "key")
 		if err != nil {
 			return err
 		}
-		return qemu.SendKey(name, args[1:]...)
+		keyboarder, err := keyboarderFor(name, "key")
+		if err != nil {
+			return err
+		}
+		if err := keyboarder.PressKeys(name, args[1:]...); err != nil {
+			return err
+		}
+		return printConsoleInput(keyResult{VM: name, Action: "key", Keys: args[1:]})
+	},
+}
+
+var pointerCmd = &cobra.Command{
+	Use:   "pointer <name> <x> <y>",
+	Short: "Move the pointer at a VM's console, and click",
+	Long: `Move the pointer of a running VM's display to (x, y), in screen
+pixels from the top-left corner, and click there with --click. The position
+must be inside the screen that ` + "`corral screenshot`" + ` shows.
+
+A KubeVirt VM gets the events on its VNC console (virtctl vnc); KubeVirt
+allows one VNC session, so an open web console disconnects. The VMI needs a
+tablet input device, which puts the pointer at an exact position; without one
+the command stops before it sends anything. Local QEMU VMs have no tablet, so
+this command does not support them.
+
+With --json, prints {"vm", "action": "pointer", "x", "y", "button", "double"}.`,
+	Example: `  corral pointer vm 640 400                 # move only
+  corral pointer vm 1236 12 --click left     # open GNOME quick settings
+  corral pointer vm 300 200 --double         # double-click with the left button`,
+	Args: cobra.ExactArgs(3),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		x, err := strconv.Atoi(args[1])
+		if err != nil || x < 0 {
+			return fmt.Errorf("x must be a pixel position of 0 or more, got %q", args[1])
+		}
+		y, err := strconv.Atoi(args[2])
+		if err != nil || y < 0 {
+			return fmt.Errorf("y must be a pixel position of 0 or more, got %q", args[2])
+		}
+		button := pointerClick
+		if pointerDouble && button == "" {
+			button = "left"
+		}
+		switch button {
+		case "", "left", "middle", "right":
+		default:
+			return fmt.Errorf("--click must be left, middle, or right, got %q", button)
+		}
+		name, err := requireOrPrompt(args[:1], "pointer")
+		if err != nil {
+			return err
+		}
+		adapter, err := instanceAdapter(name)
+		if err != nil {
+			return err
+		}
+		clicker, ok := adapter.(backend.Clicker)
+		if !ok {
+			return unsupported(adapter, "pointer")
+		}
+		if button == "" {
+			err = clicker.MovePointer(name, x, y)
+		} else {
+			err = clicker.Click(name, x, y, button, pointerDouble)
+		}
+		if err != nil {
+			return err
+		}
+		return printConsoleInput(pointerResult{VM: name, Action: "pointer",
+			X: x, Y: y, Button: button, Double: pointerDouble})
 	},
 }
 
@@ -630,8 +781,10 @@ var snapshotDeleteCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.AddCommand(restartCmd, pauseCmd, unpauseCmd, migrateCmd, scaleCmd, addDiskCmd, rmDiskCmd, exportCmd, snapshotCmd, templateCmd, screenshotCmd, typeCmd, keyCmd, networksCmd, addNicCmd, lanServiceCmd)
+	rootCmd.AddCommand(restartCmd, pauseCmd, unpauseCmd, migrateCmd, scaleCmd, addDiskCmd, rmDiskCmd, exportCmd, snapshotCmd, templateCmd, screenshotCmd, typeCmd, keyCmd, pointerCmd, networksCmd, addNicCmd, lanServiceCmd)
 	typeCmd.Flags().BoolVar(&typeEnter, "enter", false, "Press Return after the text")
+	pointerCmd.Flags().StringVar(&pointerClick, "click", "", "Click this button at the position: left, middle, or right")
+	pointerCmd.Flags().BoolVar(&pointerDouble, "double", false, "Double-click (the left button unless --click names another)")
 	templateCmd.AddCommand(templateMarkCmd, templateUnmarkCmd, templateListCmd, templateNewCmd)
 
 	migrateCmd.Flags().StringVar(&migrateNode, "node", "", "Target node (default: scheduler chooses)")
