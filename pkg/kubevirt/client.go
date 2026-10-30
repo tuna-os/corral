@@ -366,6 +366,7 @@ func parseVMList(out []byte, vmis map[string]vmiStatus, vendors map[string]strin
 			IsTemplate: vm.Metadata.Labels["corral.dev/template"] == "true",
 			Bootc:      kernelBoot,
 			Tags:       tagsFromLabels(vm.Metadata.Labels),
+			TagValues:  tagValuesFromLabels(vm.Metadata.Labels),
 			Ephemeral:  vm.Metadata.Labels["corral.dev/ephemeral"] == "true",
 			ExpiresAt:  vm.Metadata.Annotations["corral.dev/expires-at"],
 			StoppedAt:  vm.Metadata.Annotations["corral.dev/gc-stopped-at"],

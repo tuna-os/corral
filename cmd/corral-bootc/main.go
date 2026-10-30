@@ -37,11 +37,13 @@ import (
 // finishVM applies the final VM from a completed build's disk PVC, exposes
 // it on the tailnet, and records it in the registry — the part of `create`
 // that's shared between a fresh build and a resumed one (--resume).
-func finishVM(name, ns, pvcName, image, key, mem string, cpu int, node string) error {
+// placement adds dedicated CPUs and tags; the builder never gets them.
+func finishVM(name, ns, pvcName, image, key, mem string, cpu int, node string, placement kubevirt.Placement) error {
 	vm := kubevirt.GenerateBootcVM(name, ns, pvcName, image, key, mem, cpu, node)
 	if vm == nil {
 		return fmt.Errorf("bootc VM manifest unavailable")
 	}
+	kubevirt.ApplyPlacement(vm, placement)
 	if err := kubevirt.Apply(vm); err != nil {
 		return fmt.Errorf("creating VM: %w", err)
 	}
@@ -164,8 +166,10 @@ func newRootCmd() *cobra.Command {
 		contextName, filesystem                          string
 		kargs                                            []string
 		customize                                        []string
+		tags                                             []string
 		cpu                                              int
 		resume, useSudo                                  bool
+		dedicatedCPUs, isolateEmulator                   bool
 	)
 
 	create := &cobra.Command{
@@ -180,6 +184,14 @@ func newRootCmd() *cobra.Command {
 			if err := bootc.ValidateCustomize(customize); err != nil {
 				return err
 			}
+			parsedTags, err := kubevirt.ParseTags(tags)
+			if err != nil {
+				return err
+			}
+			placement := kubevirt.Placement{DedicatedCPUs: dedicatedCPUs, IsolateEmulatorThread: isolateEmulator, Tags: parsedTags}
+			if err := placement.Validate(); err != nil {
+				return err
+			}
 			ns := namespace
 			if ns == "" {
 				ns = kubevirt.DefaultNamespace
@@ -191,6 +203,9 @@ func newRootCmd() *cobra.Command {
 				return err
 			}
 			if target.Backend != "kubevirt" {
+				if dedicatedCPUs || isolateEmulator || len(tags) > 0 {
+					return fmt.Errorf("--dedicated-cpus, --isolate-emulator-thread, and --tag are supported on the KubeVirt backend only, not on backend %s", target.Backend)
+				}
 				image, _ := cmd.Flags().GetString("image")
 				return buildAndImport(name, target, image, sshKey, disk, mem, cpu, filesystem, kargs, customize, useSudo)
 			}
@@ -199,6 +214,13 @@ func newRootCmd() *cobra.Command {
 			}
 			if !kubevirt.BootcAvailable() {
 				return fmt.Errorf("this corral-bootc build lacks the bootc pipeline (build with -tags bootc)")
+			}
+			// Refuse before the build: it takes minutes, and a VM with
+			// dedicated CPUs on a node without the CPU manager never starts.
+			if dedicatedCPUs {
+				if err := kubevirt.CheckDedicatedCPUs(node); err != nil {
+					return err
+				}
 			}
 			kubevirt.EnsureNamespace(ns)
 
@@ -223,7 +245,7 @@ func newRootCmd() *cobra.Command {
 				if err := checkResumeKargs(name, kargs, kubevirt.BootcBuiltKargs(name, ns)); err != nil {
 					return err
 				}
-				if err := finishVM(name, ns, pvcName, image, key, mem, cpu, node); err != nil {
+				if err := finishVM(name, ns, pvcName, image, key, mem, cpu, node, placement); err != nil {
 					return err
 				}
 				kubevirt.BootcCleanupBuilder(name+"-bootc-builder", ns)
@@ -247,7 +269,7 @@ func newRootCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("bootc build: %w — if the builder actually finished after this failed, retry with --resume", err)
 			}
-			return finishVM(name, ns, build.PVCName, image, key, mem, cpu, node)
+			return finishVM(name, ns, build.PVCName, image, key, mem, cpu, node, placement)
 		},
 	}
 	create.Flags().String("image", "", "Bootc container image — catalog name or OCI ref")
@@ -262,6 +284,9 @@ func newRootCmd() *cobra.Command {
 	create.Flags().StringArrayVar(&customize, "customize", nil, "Script to run in the image before building the disk, e.g. to add users or packages (repeatable, local backends only)")
 	create.Flags().StringVar(&filesystem, "filesystem", "", "Override the root filesystem a local build would pick from the image (xfs for ostree, ext4 or btrfs for composefs)")
 	create.Flags().BoolVar(&useSudo, "sudo", false, "Run the local build's podman under sudo — bootc install needs root (off-cluster backends only)")
+	create.Flags().BoolVar(&dedicatedCPUs, "dedicated-cpus", false, "Pin each vCPU of the final VM to its own host CPU (dedicatedCpuPlacement, guaranteed QoS); needs a node labeled cpumanager=true (KubeVirt only)")
+	create.Flags().BoolVar(&isolateEmulator, "isolate-emulator-thread", false, "Give the final VM's QEMU emulator thread one more dedicated host CPU (needs --dedicated-cpus; KubeVirt only)")
+	create.Flags().StringArrayVar(&tags, "tag", nil, "Tag the VM as key=value (key alone means key=true), stored as label corral.dev/tag.<key> (repeatable; KubeVirt only)")
 
 	images := &cobra.Command{
 		Use:   "images",

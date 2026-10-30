@@ -1084,12 +1084,21 @@ func TestExecuteCreate_RejectsBadKargs(t *testing.T) {
 }
 
 func TestBootcPluginArgs_ForwardsKargs(t *testing.T) {
-	t.Cleanup(func() { createBootc, createStorageClass, createNode, createKargs = "", "", "", nil })
+	t.Cleanup(func() {
+		createBootc, createStorageClass, createNode, createKargs = "", "", "", nil
+		createCPU, createMem = 2, "4G"
+		createDedicatedCPUs, createIsolateEmulator, createTags = false, false, nil
+	})
 	createBootc, createStorageClass, createNode = "ghcr.io/tuna-os/yellowfin:gnome", "fast", "n1"
+	createCPU, createMem = 4, "6G"
 	createKargs = []string{"tunaos.countme=0", "console=ttyS0,115200n8"}
+	createDedicatedCPUs, createIsolateEmulator = true, true
+	createTags = []string{"pair=run42", "desktop=gnome"}
 
 	got := strings.Join(bootcPluginArgs("gate", "ci", "40Gi"), " ")
-	want := "create gate --image ghcr.io/tuna-os/yellowfin:gnome -n ci --disk 40Gi --storage-class fast --node n1 --karg tunaos.countme=0 --karg console=ttyS0,115200n8"
+	want := "create gate --image ghcr.io/tuna-os/yellowfin:gnome -n ci --cpu 4 --mem 6G --disk 40Gi --storage-class fast --node n1" +
+		" --karg tunaos.countme=0 --karg console=ttyS0,115200n8" +
+		" --dedicated-cpus --isolate-emulator-thread --tag pair=run42 --tag desktop=gnome"
 	if got != want {
 		t.Errorf("bootcPluginArgs = %q\nwant              %q", got, want)
 	}

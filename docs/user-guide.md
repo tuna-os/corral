@@ -125,6 +125,73 @@ corral delete web                        # asks first; -f does not ask
 When two contexts have an instance with the same name, give the ID from the
 `id:` line of `corral list` instead of the name.
 
+### Find VMs and read their facts
+
+```bash
+corral list --prefix tuna-q-                 # names that start with tuna-q-
+corral list --tag pair=run42 --json          # VMs with the tag pair=run42
+corral list --tag pair=run42 --tag desktop=gnome
+corral info web --json                       # one structured object for scripts
+```
+
+The `--prefix` and `--tag` filters apply to the table and to `--json`. When
+you give `--tag` two or more times, a VM must have all of the tags. A tag
+without a value, for example `--tag perf`, means `perf=true`. Only KubeVirt
+VMs have tags. In `corral list --json`, the `tagValues` field shows the tags
+of each VM.
+
+`corral info NAME --json` shows the name, namespace, backend, status, node,
+CPU topology, dedicated CPUs, memory, disks, input devices, firmware, IP
+addresses, tags, labels and the bootc image. Without `--json`, `corral info`
+shows the description from the backend. The structured output works on
+KubeVirt only. On other backends, `corral info NAME --json` stops with an
+error.
+
+### Make a matched pair of VMs for performance tests (KubeVirt)
+
+A performance comparison needs two VMs that are the same, except for the
+guest. Use these flags on `corral create` or `corral bootc create`:
+
+| Flag | Result |
+|---|---|
+| `--node NODE` | The two VMs run on the same node. |
+| `--cpu`, `--mem`, `--disk` | The two VMs have the same size. Use the same values for the two VMs. |
+| `--dedicated-cpus` | Each vCPU gets its own host CPU. The memory request is equal to the memory limit, thus the VM has the guaranteed QoS class. |
+| `--isolate-emulator-thread` | The QEMU emulator thread gets one more host CPU. You must also use `--dedicated-cpus`. |
+| `--tag KEY=VALUE` | Corral writes the label `corral.dev/tag.KEY=VALUE` on the VM. Use the same tag on the two VMs to make a group. |
+
+```bash
+corral bootc create gnome-vm --image ghcr.io/tuna-os/marlin:latest \
+  --node karnataka --cpu 4 --mem 6G --disk 40Gi \
+  --dedicated-cpus --tag pair=run42 --tag desktop=gnome
+corral bootc create tuna-vm --image ghcr.io/tuna-os/marlin:latest \
+  --node karnataka --cpu 4 --mem 6G --disk 40Gi \
+  --dedicated-cpus --tag pair=run42 --tag desktop=tuna
+corral list --tag pair=run42 --json
+corral info gnome-vm --json | jq '{node, cpu, memory}'
+```
+
+Make sure that the two VMs show the same `node`, `cpu.vcpus` and `memory`
+values, and `cpu.dedicatedCpuPlacement: true`.
+
+`--dedicated-cpus` needs a node with the label `cpumanager=true`. KubeVirt
+sets this label when two conditions are true:
+
+1. The kubelet on the node uses the static policy of the CPU manager
+   (`cpuManagerPolicy: static`) and keeps CPUs for the system
+   (`reservedSystemCPUs`).
+2. The KubeVirt CR enables the `CPUManager` feature gate.
+
+If the node does not have the label, Corral stops before it creates the VM,
+and the error names the node. If you do not give `--node`, Corral looks for
+one schedulable node with the label. For `corral bootc create`, Corral does
+this check before the disk build starts. The builder VM does not get
+dedicated CPUs or tags.
+
+The flags work on KubeVirt only. On other backends, Corral stops with an
+error and does not create the VM. You cannot use `--dedicated-cpus` with
+`--instancetype`, because the instancetype sets the CPU configuration.
+
 ### Clone a VM and use templates (KubeVirt)
 
 ```bash
