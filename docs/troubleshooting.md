@@ -343,9 +343,9 @@ for the gaps and for the native commands that you can use until then.
 
 Some commands work on local QEMU only. On another backend they stop with
 `diagnose is only supported for QEMU VMs` or a similar message. These are
-`diagnose`, `qmp`, `type` and `key`. `screenshot` also works on KubeVirt; on
+`diagnose`, `qmp`, `type` and `key`. `screenshot` also works on KubeVirt. On
 any other backend it stops with
-`screenshot is only supported for QEMU and KubeVirt VMs`.
+`the NAME backend does not support screenshot yet`.
 
 ## Environment variables
 

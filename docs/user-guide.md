@@ -441,7 +441,7 @@ Corral provides single-command remote access to guest displays and shells:
 ![VM Summary & VNC](screenshots/vm-summary.png)
 
 - **VNC Display**: `corral viewer <vm-name>` opens a VNC session. In the Web UI, `noVNC` shows the display in the browser, with nothing to install.
-- **Screenshot**: `corral screenshot <vm-name> -o screen.png` saves the display of a local QEMU or KubeVirt VM as a PNG and reports whether anything painted (`--require-paint` fails on a blank screen). KubeVirt captures go through `virtctl vnc screenshot`.
+- **Screenshot**: `corral screenshot <vm-name> -o screen.png` saves the display of a local QEMU or KubeVirt VM as a PNG. It also tells you if the screen is blank, and `--require-paint` fails on a blank screen. KubeVirt captures go through `virtctl vnc screenshot`.
 - **Interactive TTY / SSH**: `corral ssh <vm-name>` or `corral ct console <ct-name>` connects your terminal to a shell in the guest (through SSH, `virtctl ssh`, or `incus exec`).
 
 ![Local VM Framebuffer](screenshots/local-vm-console.png)

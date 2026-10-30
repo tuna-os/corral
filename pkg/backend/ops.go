@@ -26,6 +26,7 @@ package backend
 import (
 	"fmt"
 
+	"github.com/tuna-os/corral/pkg/qemu"
 	"github.com/tuna-os/corral/pkg/types"
 )
 
@@ -160,6 +161,14 @@ type Creator interface {
 // performing an operation the matrix could gate a row on.
 type Viewer interface {
 	View(name string) error
+}
+
+// Screenshotter saves the guest's framebuffer as a PNG and reports what it
+// shows: over the QMP monitor for local QEMU, through the vnc/screenshot
+// subresource for KubeVirt. Not a Family, for the same reason as Viewer. The
+// frame carries the blank verdict `corral screenshot --require-paint` gates on.
+type Screenshotter interface {
+	Screenshot(name, outPath string) (qemu.Frame, error)
 }
 
 // Logger shows the guest's log through the backend's own source of one: the

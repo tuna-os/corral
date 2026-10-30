@@ -85,26 +85,19 @@ is a desktop gate.`,
 		if err != nil {
 			return err
 		}
-		backend, err := requireBackend(name)
+		adapter, err := instanceAdapter(name)
 		if err != nil {
 			return err
+		}
+		shooter, ok := adapter.(backend.Screenshotter)
+		if !ok {
+			return unsupported(adapter, "screenshot")
 		}
 		out := screenshotOutput
 		if out == "" {
 			out = name + "-screenshot.png"
 		}
-		var frame qemu.Frame
-		switch backend {
-		case "qemu":
-			frame, err = qemu.Capture(name, out)
-		case "kubevirt":
-			ns, _ := resolveNamespace(name)
-			if err = kubevirt.NewClient(ns).Screenshot(name, out); err == nil {
-				frame, err = qemu.AnalyzePNG(out)
-			}
-		default:
-			return fmt.Errorf("screenshot is only supported for QEMU and KubeVirt VMs")
-		}
+		frame, err := shooter.Screenshot(name, out)
 		if err != nil {
 			return err
 		}

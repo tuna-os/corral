@@ -78,12 +78,12 @@ func TestScreenshotKubeVirtRequirePaintFailsBlank(t *testing.T) {
 	}
 }
 
-// Backends with neither a QMP monitor nor a VNC screenshot API are refused.
+// A backend without a Screenshotter is refused by name, not sent to QMP.
 func TestScreenshotRefusesOtherBackends(t *testing.T) {
 	remoteVMScratch(t, "web", types.RegistryEntry{Backend: "virtualbox"})
 	screenshotFlags(t, filepath.Join(t.TempDir(), "web.png"), false)
 	err := screenshotCmd.RunE(screenshotCmd, []string{"web"})
-	if err == nil || !strings.Contains(err.Error(), "only supported for QEMU and KubeVirt") {
+	if err == nil || !strings.Contains(err.Error(), "virtualbox backend does not support screenshot") {
 		t.Fatalf("screenshot of a VirtualBox VM = %v", err)
 	}
 }
