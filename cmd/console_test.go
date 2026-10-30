@@ -108,7 +108,7 @@ func TestConsole_JSONLineWithPortZero(t *testing.T) {
 		t.Fatalf("GET %s: %v", got.URL, err)
 	}
 	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `data-vm="desk"`) {
 		t.Errorf("GET %s = %d, want the console page:\n%s", got.URL, resp.StatusCode, body)
 	}
@@ -147,7 +147,7 @@ func TestWeb_JSONLineWithPortZero(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /healthz: %v", err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("GET /healthz = %d, want 200", resp.StatusCode)
 	}
