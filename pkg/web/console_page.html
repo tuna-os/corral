@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Name}} console · Corral</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; color: #ccc; font: 13px system-ui, sans-serif; }
+  #vnc-screen { position: fixed; inset: 0; overflow: auto; }
+  #console-status { position: fixed; top: 8px; left: 8px; z-index: 1; padding: 4px 8px;
+    background: rgba(0, 0, 0, .7); border-radius: 4px; pointer-events: none; }
+  body[data-connected="true"] #console-status { display: none; }
+</style>
+</head>
+<body data-vm="{{.Name}}" data-namespace="{{.Namespace}}" data-context="{{.Context}}" data-scale="{{.Scale}}" data-connected="false">
+<div id="console-status" role="status">Connecting…</div>
+<div id="vnc-screen" data-connected="false" aria-label="{{.Name}} console"></div>
+<script type="module" src="../../console-page.js"></script>
+</body>
+</html>

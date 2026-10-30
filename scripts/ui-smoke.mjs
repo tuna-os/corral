@@ -96,6 +96,30 @@ await consolePopup.screenshot({ path: 'test-results/console-popout.png' });
 await consolePopup.close();
 await page.click('[data-tab="summary"]');
 
+// Named acceptance check: console-page. /console/{ns}/{name} is the console
+// for scripts: it must connect with no dashboard navigation, show the screen
+// at 1:1, and give the canvas keyboard focus.
+{
+  const vms = await (await page.request.get(new URL('/api/vms', BASE).href)).json();
+  const vm = vms.find((v) => v.name === 'web-prod');
+  const consolePage = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  consolePage.on('pageerror', (e) => pageErrors.push(e.message));
+  const sockets = [];
+  consolePage.on('websocket', (ws) => sockets.push(new URL(ws.url()).pathname));
+  await consolePage.goto(new URL(`/console/${vm.namespace}/${vm.name}`, BASE).href);
+  await consolePage.waitForSelector('body[data-connected="true"]', { timeout: 10000 }).catch(() => {});
+  check(await consolePage.locator('body[data-connected="true"]').count() === 1, 'console-page connects with no dashboard navigation');
+  check(sockets.includes(`/api/vnc/${vm.namespace}/${vm.name}`), 'console-page uses the VNC websocket of the VM');
+  const canvas = consolePage.locator('#vnc-canvas');
+  check(
+    await canvas.count() === 1 && await canvas.evaluate((el) => el.width === 800 && Math.round(el.getBoundingClientRect().width) === 800),
+    'console-page shows the screen at 1:1',
+  );
+  check(await consolePage.evaluate(() => document.activeElement?.id) === 'vnc-canvas', 'console-page focuses the canvas');
+  await consolePage.screenshot({ path: `${SHOTS}/console-page.png` });
+  await consolePage.close();
+}
+
 // Stateful action: toggle power and watch the status flip. State-agnostic so
 // the script also works against an already-toggled long-running server.
 const wasRunning = (await page.textContent('.page-head')).includes('Running');

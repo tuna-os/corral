@@ -1,6 +1,14 @@
 package cmd
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"os/signal"
+	"syscall"
+
 	"github.com/spf13/cobra"
 	"github.com/tuna-os/corral/pkg/web"
 )
@@ -47,10 +55,43 @@ you can explore the dashboard — or develop on it — with no cluster at all.`,
 		if rootDemo {
 			web.EnableDemo()
 		}
-		// CLI flags override config file; the theme is assembled inside web.Serve.
+		// CLI flags override config file; the theme is assembled inside web.Listen.
 		web.SetCLITheme(webAccent, webBrandTitle, webBrandEmoji, webBrandSubtitle, webCustomCSS)
-		return web.Serve(webAddr, webAllowedHosts...)
+		ctx, stop := signalContext(cmd.Context())
+		defer stop()
+		return runWeb(ctx, os.Stdout, os.Stderr, webAddr, webAllowedHosts)
 	},
+}
+
+// webListening is what `corral --json web` prints once it listens.
+type webListening struct {
+	URL string `json:"url"`
+}
+
+// runWeb binds addr and reports the URL it took: a line on errOut, or one
+// JSON line on out with --json. Then it serves until ctx ends.
+func runWeb(ctx context.Context, out, errOut io.Writer, addr string, allowedHosts []string) error {
+	srv, err := web.Listen(addr, allowedHosts...)
+	if err != nil {
+		return err
+	}
+	if jsonOutput {
+		err = json.NewEncoder(out).Encode(webListening{URL: srv.URL()})
+	} else {
+		_, err = fmt.Fprintf(errOut, "Corral web UI listening on %s\n", srv.URL())
+	}
+	if err != nil {
+		return err
+	}
+	return srv.Serve(ctx)
+}
+
+// signalContext ends on SIGINT or SIGTERM, so a server can stop cleanly.
+func signalContext(parent context.Context) (context.Context, context.CancelFunc) {
+	if parent == nil {
+		parent = context.Background()
+	}
+	return signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 }
 
 func init() {

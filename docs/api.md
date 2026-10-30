@@ -608,6 +608,27 @@ the browser.
 Upgrade to WebSocket → bridges `virtctl console`. Use with xterm.js in the
 browser.
 
+### `GET /console/{ns}/{name}`
+
+An HTML page that shows only the VNC console of one VM. Scripts and browser automation use it. The page connects through `/api/vnc/{ns}/{name}`, so the same origin, identity, and VDI checks apply.
+
+| Query | Effect |
+|---|---|
+| *(default)* | Shows the screen at 1:1 scale. |
+| `?scale=fit` | Scales the screen to the window. |
+| `?context=<name>` | Sends the backend context to the websocket. |
+
+The page sets these hooks:
+
+- `<body data-connected>` has the value `true` while the console has a connection, and `false` at other times. `#vnc-screen` has the same attribute.
+- `<body>` has `data-vm`, `data-namespace`, and `data-scale`.
+- `#vnc-canvas` is the noVNC canvas. It gets keyboard focus at each connect.
+
+After a disconnect, the page connects again. The wait starts at 1 second and increases to 5 seconds.
+
+- `400`: the `scale` value is not `one` or `fit`.
+- `404`: the namespace or the name is not 1–253 letters, digits, `.`, `_`, or `-` that start with a letter or a digit.
+
 ### `GET /api/vms/{ns}/{name}/export`
 
 Download a VM disk backup. Stop the VM first (the RWO disk is busy while

@@ -15,6 +15,7 @@ cmd/              Cobra CLI (root, subcommands, TUI)
 ├── images.go     corral images (list catalog + imported datavolumes)
 ├── config.go     corral config (show, set auth key)
 ├── web.go        corral web (--addr, serve embedded SPA)
+├── console.go    corral console (one VM's console page on a free local port, URL printed for scripts)
 ├── tui.go        Bubble Tea TUI root model (state, Update loop, list/doctor/detail views, context filter)
 ├── tui_items.go  TUI list items (VMs, CTs, actions) and which actions apply to each
 ├── tui_actions.go TUI action dispatch (run selected action, SSH/viewer/export/clone)

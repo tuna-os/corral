@@ -46,6 +46,9 @@ func routes(useDemoConsole bool) (*http.ServeMux, error) {
 		fileServer.ServeHTTP(w, r)
 	})
 
+	// One VM's console on its own page, for scripts and browser automation.
+	mux.HandleFunc("GET /console/{ns}/{name}", handleConsolePage)
+
 	// Proxmox API compatibility — expose /api2/json/… alongside the
 	// corral REST API so ecosystem tools can manage VMs through the
 	// same corral web deployment.
