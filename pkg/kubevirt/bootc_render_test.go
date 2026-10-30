@@ -131,6 +131,20 @@ func TestRenderBootcFinalVM(t *testing.T) {
 	}
 }
 
+// The final bootc VM gets the same absolute USB tablet as GenerateVM. Without
+// it the guest has QEMU's relative PS/2 mouse and noVNC clicks on a bootc
+// desktop land far from where they were aimed.
+func TestRenderBootcFinalVM_HasUSBTablet(t *testing.T) {
+	vm := generateBootcVM("dak", "corral-vms", "dak-bootc-disk", "image", "key", "4G", 2, "")
+	inputs, ok := getNested(t, vm, "spec", "template", "spec", "domain", "devices", "inputs").([]map[string]any)
+	if !ok || len(inputs) != 1 {
+		t.Fatalf("final bootc VM inputs = %v, want one USB tablet", inputs)
+	}
+	if in := inputs[0]; in["type"] != "tablet" || in["bus"] != "usb" {
+		t.Errorf("final bootc VM input = %v, want a USB tablet", in)
+	}
+}
+
 // The builder cloud-init must stay valid YAML no matter what the provision
 // script contains — embedding it verbatim once put script lines at column 0,
 // which silently terminated the `content: |` block and cloud-init dropped the

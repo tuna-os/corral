@@ -154,6 +154,11 @@ corral type desk 'correct horse battery staple' --enter
 corral key desk ctrl alt f2
 ```
 
+`corral screenshot` also captures a KubeVirt VM, through KubeVirt's VNC
+screenshot subresource (`virtctl vnc screenshot`). It reports the same frame
+size and deviation, and `--require-paint` fails a blank KubeVirt frame the same
+way. `type` and `key` stay local-QEMU only.
+
 ### Kernel arguments and the root filesystem
 
 `--karg` (repeatable, `kargs:` in the file) puts a kernel argument into the

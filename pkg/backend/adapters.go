@@ -173,6 +173,16 @@ func (a kubevirtAdapter) Events(name string) ([]Event, error) {
 }
 
 func (a kubevirtAdapter) View(name string) error { return a.client.Viewer(name) }
+
+// Screenshot has virtctl write the PNG, then judges it with the same analysis
+// as a QMP capture, so --require-paint means the same thing on both backends.
+func (a kubevirtAdapter) Screenshot(name, outPath string) (qemu.Frame, error) {
+	if err := a.client.Screenshot(name, outPath); err != nil {
+		return qemu.Frame{}, err
+	}
+	return qemu.AnalyzePNG(outPath)
+}
+
 func (a kubevirtAdapter) Logs(name string) error { return a.client.Logs(name) }
 
 func (a kubevirtAdapter) Describe(name string) ([]byte, error) { return a.client.VMInfo(name) }
@@ -212,6 +222,10 @@ func (qemuAdapter) Metrics(name string) (map[string]string, error) { return qemu
 func (qemuAdapter) View(name string) error                 { return qemu.Viewer(name) }
 func (qemuAdapter) Logs(name string) error                 { return qemu.Logs(name) }
 func (qemuAdapter) SerialLogs(name string, tail int) error { return qemu.LogsSerial(name, tail) }
+
+func (qemuAdapter) Screenshot(name, outPath string) (qemu.Frame, error) {
+	return qemu.Capture(name, outPath)
+}
 
 func (qemuAdapter) Describe(name string) ([]byte, error) { return qemu.Info(name) }
 

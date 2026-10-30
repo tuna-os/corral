@@ -441,6 +441,7 @@ Corral provides single-command remote access to guest displays and shells:
 ![VM Summary & VNC](screenshots/vm-summary.png)
 
 - **VNC Display**: `corral viewer <vm-name>` opens a VNC session. In the Web UI, `noVNC` shows the display in the browser, with nothing to install.
+- **Screenshot**: `corral screenshot <vm-name> -o screen.png` saves the display of a local QEMU or KubeVirt VM as a PNG. It also tells you if the screen is blank, and `--require-paint` fails on a blank screen. KubeVirt captures go through `virtctl vnc screenshot`.
 - **Interactive TTY / SSH**: `corral ssh <vm-name>` or `corral ct console <ct-name>` connects your terminal to a shell in the guest (through SSH, `virtctl ssh`, or `incus exec`).
 
 ![Local VM Framebuffer](screenshots/local-vm-console.png)
@@ -457,6 +458,7 @@ corral bootc create my-node --image quay.io/centos-bootc/centos-bootc:stream9
 ```
 
 - Builds a bootable OS disk on the cluster with `bootc install to-disk`.
+- The VM gets a USB tablet, so clicks in the noVNC console land where you aim them.
 - Upgrade the OS image of a guest with `corral bootc upgrade <vm-name>`.
 
 #### Testing a bootc image (`corral vmtest`)

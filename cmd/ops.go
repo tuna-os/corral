@@ -63,32 +63,41 @@ func qemuOnly(args []string, action string) (string, error) {
 
 var screenshotCmd = &cobra.Command{
 	Use:   "screenshot [name]",
-	Short: "Capture a screenshot of a QEMU VM's framebuffer",
-	Long: `Capture the current framebuffer of a running QEMU VM over its QMP
-monitor socket and save it as a PNG — no VNC client needed. Useful as boot
-evidence in CI.
+	Short: "Capture a screenshot of a QEMU or KubeVirt VM's framebuffer",
+	Long: `Capture the current framebuffer of a running VM and save it as a PNG —
+no VNC client needed. Useful as boot evidence in CI.
+
+A local QEMU VM is captured over its QMP monitor socket. A KubeVirt VM is
+captured through KubeVirt's VNC screenshot subresource (virtctl vnc
+screenshot), so it needs virtctl and shows what the web UI console shows.
 
 The capture reports the frame's size and the standard deviation of its
 luminance. A deviation at or under the blank threshold means nothing painted:
 the guest is up and the compositor never drew, which is the failure a passing
 SSH probe hides. --require-paint turns that into a nonzero exit, so one command
-is a desktop gate.
-
-KubeVirt VMs aren't supported here — use ` + "`corral viewer`" + ` for VNC instead.`,
+is a desktop gate.`,
 	Example: `  corral screenshot myvm
   corral screenshot myvm -o boot-evidence.png
   corral screenshot myvm --require-paint   # fail if the screen is blank`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		name, err := qemuOnly(args, "screenshot")
+		name, err := requireOrPrompt(args, "screenshot")
 		if err != nil {
 			return err
+		}
+		adapter, err := instanceAdapter(name)
+		if err != nil {
+			return err
+		}
+		shooter, ok := adapter.(backend.Screenshotter)
+		if !ok {
+			return unsupported(adapter, "screenshot")
 		}
 		out := screenshotOutput
 		if out == "" {
 			out = name + "-screenshot.png"
 		}
-		frame, err := qemu.Capture(name, out)
+		frame, err := shooter.Screenshot(name, out)
 		if err != nil {
 			return err
 		}
