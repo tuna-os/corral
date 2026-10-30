@@ -223,6 +223,8 @@ func TestTailscaleProxyManifest(t *testing.T) {
 		`"Proxy": "http://corral-web.corral.svc.cluster.local:80"`,
 		`"443": {"HTTPS": true}`,
 		"optional: true",
+		// Interactive login needs longer than containerboot's 60s default.
+		"name: TS_BOOT_TIMEOUT",
 	} {
 		if !strings.Contains(string(text), want) {
 			t.Errorf("corral-web-tailscale-proxy.yaml missing %q", want)

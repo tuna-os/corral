@@ -126,6 +126,12 @@ spec:
                   name: corral-web-tailscale-auth
                   key: TS_AUTHKEY
                   optional: true
+            # containerboot gives up on `tailscale up` after 60s by default.
+            # Without a key that is too short for a person to open the login
+            # URL, and each restart prints a new one. Wait up to a day; the
+            # wait only covers boot, tailscaled itself never times out.
+            - name: TS_BOOT_TIMEOUT
+              value: 24h
             - name: TS_SERVE_CONFIG
               value: /config/serve.json
             # /healthz answers 200 once the node has tailnet IPs.
