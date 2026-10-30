@@ -2,7 +2,14 @@
 # Image: built from the corral repo Containerfile, pushed to
 # ghcr.io/tuna-os/corral (public — no pull secret needed).
 # Reachable at https://corral.<tailnet>.ts.net via the Tailscale operator
-# (Ingress with ingressClassName: tailscale terminates HTTPS).
+# (Ingress with ingressClassName: tailscale terminates HTTPS). No operator
+# (it needs an OAuth client)? Apply deploy/corral-web-tailscale-proxy.yaml
+# next to this file instead; it serves the same name from a tailscale pod.
+#
+# Updates: the image tracks main (:latest, pulled Always). After a release,
+#   kubectl -n corral rollout restart deploy/corral-web
+# Rollback or pin: kubectl -n corral set image deploy/corral-web \
+#   corral-web=ghcr.io/tuna-os/corral@sha256:<digest>
 ---
 apiVersion: v1
 kind: Namespace
@@ -168,6 +175,8 @@ spec:
       serviceAccountName: corral-web
       containers:
         - name: corral-web
+          # :latest is what main publishes; Always makes each rollout
+          # restart pull the newest build (see the header for the update path).
           image: ghcr.io/tuna-os/corral:latest
           imagePullPolicy: Always
           # --metrics starts the background fleet collector and serves

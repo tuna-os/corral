@@ -194,6 +194,42 @@ func TestTailscaleIngressManifest(t *testing.T) {
 	}
 }
 
+func TestTailscaleProxyManifest(t *testing.T) {
+	// The operator-less path must stay a Tailscale-only path to the
+	// corral-web Service: no Ingress of its own, one proxy pod at a time
+	// (two pods sharing a node identity fight), and node state in a Secret
+	// so the name survives restarts.
+	path := filepath.Join("..", "deploy", "corral-web-tailscale-proxy.yaml")
+	docs := loadManifests(t, path)
+	kinds := map[string]int{}
+	for _, doc := range docs {
+		kind, _ := doc["kind"].(string)
+		kinds[kind]++
+	}
+	if kinds["Ingress"] != 0 || kinds["Service"] != 0 {
+		t.Errorf("proxy manifest adds an Ingress or Service: %v", kinds)
+	}
+	if kinds["Deployment"] != 1 {
+		t.Errorf("found %d Deployments, want 1", kinds["Deployment"])
+	}
+	text, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"type: Recreate",
+		"TS_KUBE_SECRET",
+		"value: corral-web-tailscale-state",
+		`"Proxy": "http://corral-web.corral.svc.cluster.local:80"`,
+		`"443": {"HTTPS": true}`,
+		"optional: true",
+	} {
+		if !strings.Contains(string(text), want) {
+			t.Errorf("corral-web-tailscale-proxy.yaml missing %q", want)
+		}
+	}
+}
+
 func TestGeneratedWebUnitVerifies(t *testing.T) {
 	// Mode 4 (24/7 vs on-demand) documents `corral web service install`.
 	// The unit it installs must at least parse under systemd.

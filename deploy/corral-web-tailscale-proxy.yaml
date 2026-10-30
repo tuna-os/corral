@@ -1,0 +1,162 @@
+# Tailscale proxy for corral-web on clusters WITHOUT the Tailscale Kubernetes
+# operator. Apply it next to deploy/corral-web.yaml instead of installing the
+# operator; it puts https://corral.<tailnet>.ts.net on the tailnet itself.
+#
+# Why a hand-run proxy: the operator needs an OAuth client (devices:core and
+# auth_keys write). This needs only an auth key, or one interactive login.
+# It is the same shape the operator would build for the Ingress: one
+# tailscale/tailscale pod that serves HTTPS on :443 and proxies to the
+# corral-web Service. It keeps corral-web.yaml's single-path rule: Tailscale is
+# the only way in, and `tailscale serve` sets the Tailscale-User-Login header
+# that CORRAL_ADMINS trusts (docs/adr/0003-identity-source.md). The Ingress in
+# corral-web.yaml stays inert without the operator; delete it if you like.
+#
+# Node identity (keys, hostname, certs) lives in the Secret
+# corral-web-tailscale-state, so the device survives pod and node restarts.
+#
+# Join, either way:
+#   1. Auth key (tagged + reusable is best). Pass it from a file, never argv:
+#        kubectl -n corral create secret generic corral-web-tailscale-auth \
+#          --from-file=TS_AUTHKEY=/path/to/authkey-file
+#   2. No key: apply as is, then open the URL the pod logs once:
+#        kubectl -n corral logs deploy/corral-web-tailscale | grep -m1 login.tailscale.com
+#
+#   kubectl apply -f deploy/corral-web.yaml -f deploy/corral-web-tailscale-proxy.yaml
+#
+# The hostname is `corral`. If an old offline device already holds that name,
+# Tailscale hands out corral-1. Delete the old device in the admin console
+# first. See docs/runbooks/corral-web-health.md.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: corral-web-tailscale
+  namespace: corral
+---
+# containerboot keeps tailscaled state in a Secret and posts Events about it.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: corral-web-tailscale
+  namespace: corral
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["corral-web-tailscale-state"]
+    verbs: ["get", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: corral-web-tailscale
+  namespace: corral
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: corral-web-tailscale
+subjects:
+  - kind: ServiceAccount
+    name: corral-web-tailscale
+    namespace: corral
+---
+# HTTPS on :443 with the node's own ts.net certificate, proxied to the
+# corral-web Service. containerboot fills in ${TS_CERT_DOMAIN}. The proxy
+# passes WebSocket upgrades through, so noVNC and the serial console work.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: corral-web-tailscale-serve
+  namespace: corral
+data:
+  serve.json: |
+    {
+      "TCP": {"443": {"HTTPS": true}},
+      "Web": {
+        "${TS_CERT_DOMAIN}:443": {
+          "Handlers": {"/": {"Proxy": "http://corral-web.corral.svc.cluster.local:80"}}
+        }
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: corral-web-tailscale
+  namespace: corral
+  labels:
+    app: corral-web-tailscale
+spec:
+  replicas: 1
+  # Two pods sharing one node identity fight over it; never overlap them.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: corral-web-tailscale
+  template:
+    metadata:
+      labels:
+        app: corral-web-tailscale
+    spec:
+      serviceAccountName: corral-web-tailscale
+      containers:
+        - name: tailscale
+          image: ghcr.io/tailscale/tailscale:v1.104.4
+          env:
+            - name: TS_HOSTNAME
+              value: corral
+            - name: TS_KUBE_SECRET
+              value: corral-web-tailscale-state
+            # Userspace networking: no NET_ADMIN, no /dev/net/tun.
+            - name: TS_USERSPACE
+              value: "true"
+            # Log in only when the state Secret holds no node key yet, so a
+            # restart never burns a one-off key.
+            - name: TS_AUTH_ONCE
+              value: "true"
+            - name: TS_AUTHKEY
+              valueFrom:
+                secretKeyRef:
+                  name: corral-web-tailscale-auth
+                  key: TS_AUTHKEY
+                  optional: true
+            - name: TS_SERVE_CONFIG
+              value: /config/serve.json
+            # /healthz answers 200 once the node has tailnet IPs.
+            - name: TS_LOCAL_ADDR_PORT
+              value: "[::]:9002"
+            - name: TS_ENABLE_HEALTH_CHECK
+              value: "true"
+          ports:
+            - containerPort: 9002
+              name: health
+          # Readiness only: before the first login /healthz is 503 and the pod
+          # must stay up to show the login URL. A crashed tailscaled exits the
+          # container, which restartPolicy Always already covers.
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 9002
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+          volumeMounts:
+            - name: serve
+              mountPath: /config
+              readOnly: true
+      volumes:
+        - name: serve
+          configMap:
+            name: corral-web-tailscale-serve

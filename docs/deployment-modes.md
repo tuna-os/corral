@@ -175,12 +175,41 @@ kubectl -n corral set env deploy/corral-web CORRAL_ADMINS="alice@github"
 
 The pod reads `Tailscale-User-Login` from the proxy and grants admin rights to listed logins only. Unlisted tailnet users see a read-only UI.
 
-### Preflight without live infra
+### Without the operator
 
-`TestTailscaleIngressManifest` guards the trust base in CI. It asserts one `Ingress`, class `tailscale`, live `/healthz` and `/readyz` probes, and the no-second-path note.
+The operator needs a Tailscale OAuth client. If you have none, run the proxy that `deploy/corral-web-tailscale-proxy.yaml` ships. It is one `tailscale/tailscale` pod named `corral`. It serves HTTPS on :443 with its own `ts.net` certificate and proxies to the `corral-web` Service. WebSockets pass through, so noVNC works. `tailscale serve` sets the same `Tailscale-User-Login` header the operator does.
 
 ```bash
-go test ./cmd/ -run TestTailscaleIngressManifest -count=1
+# Optional: a reusable, tagged auth key, read from a file (never argv).
+kubectl -n corral create secret generic corral-web-tailscale-auth \
+  --from-file=TS_AUTHKEY=/path/to/authkey-file
+kubectl apply -f deploy/corral-web.yaml -f deploy/corral-web-tailscale-proxy.yaml
+# No key? Open the login URL once:
+kubectl -n corral logs deploy/corral-web-tailscale | grep -m1 login.tailscale.com
+```
+
+The node state lives in the Secret `corral-web-tailscale-state`, so the name and certificate survive pod and node restarts. The Ingress in `corral-web.yaml` does nothing without the operator. Run one or the other, not both: both want the name `corral`.
+
+A name already held by an old offline device gives you `corral-1`. Delete the old device in the admin console before the first login.
+
+### Updating
+
+The Deployment runs `ghcr.io/tuna-os/corral:latest` with `imagePullPolicy: Always`. Main publishes that tag. Pull the newest build with a restart:
+
+```bash
+kubectl -n corral rollout restart deploy/corral-web
+kubectl -n corral rollout status deploy/corral-web
+kubectl -n corral get pod -l app=corral-web -o jsonpath='{.items[0].status.containerStatuses[0].imageID}'
+```
+
+Pin or roll back with `kubectl -n corral set image deploy/corral-web corral-web=ghcr.io/tuna-os/corral@sha256:<digest>`. The next `kubectl apply -f deploy/corral-web.yaml` returns it to `:latest`.
+
+### Preflight without live infra
+
+`TestTailscaleIngressManifest` guards the trust base in CI. It asserts one `Ingress`, class `tailscale`, live `/healthz` and `/readyz` probes, and the no-second-path note. `TestTailscaleProxyManifest` pins the operator-less proxy: no `Ingress` or `Service` of its own, one `Recreate` pod, state in a Secret, and HTTPS proxied to `corral-web`.
+
+```bash
+go test ./cmd/ -run 'TestTailscale(Ingress|Proxy)Manifest' -count=1
 ```
 
 Manual gate: the steps above need a live tailnet and a cluster. The test pins the manifest. A person still must apply it and open the MagicDNS URL.
