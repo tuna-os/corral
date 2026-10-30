@@ -75,6 +75,7 @@ The `error` field in the `/readyz` response body distinguishes the two cases. `"
 **Root Causes:**
 1. The cluster's API server is unreachable, a network partition occurred, or the kubeconfig context has a wrong configuration.
 2. Target backend (KubeVirt/libvirt/Incus/Proxmox) endpoint down or authentication token expired.
+3. The pod has no `KUBECONFIG`. The UI lists no VMs, `/api/doctor` says "no Kubernetes cluster answered", and `/api/cts` says "cluster unreachable (a recent kubectl call timed out ...)". kubectl skips its in-cluster config once Corral adds `--request-timeout`, so it dials `localhost:8080`. Check with `kubectl -n corral exec deploy/corral-web -- kubectl get ns default --request-timeout=5s`.
 
 **Diagnostic Steps:**
 1. Query the doctor diagnostic endpoint:
@@ -89,6 +90,7 @@ The `error` field in the `/readyz` response body distinguishes the two cases. `"
 **Mitigation:**
 1. Run fixable doctor reconciliations via `POST /api/doctor/fix` or CLI `corral doctor --fix`.
 2. Check network connectivity and Tailscale status on target peer/backend nodes.
+3. For cause 3, re-apply `deploy/corral-web.yaml`. It ships the `corral-web-kubeconfig` ConfigMap and mounts it.
 
 ---
 

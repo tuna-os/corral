@@ -155,6 +155,37 @@ subjects:
     name: corral-web
     namespace: corral
 ---
+# kubectl drops its in-cluster fallback as soon as any client flag is set,
+# and corral adds --request-timeout to every read (pkg/shell): with no
+# kubeconfig, each read dialled localhost:8080 and the UI listed no VMs.
+# This kubeconfig is the in-cluster config written out: the pod's own
+# service-account token and CA, re-read by every kubectl run.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: corral-web-kubeconfig
+  namespace: corral
+data:
+  config: |
+    apiVersion: v1
+    kind: Config
+    clusters:
+      - name: in-cluster
+        cluster:
+          server: https://kubernetes.default.svc
+          certificate-authority: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    users:
+      - name: corral-web
+        user:
+          tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+    contexts:
+      - name: in-cluster
+        context:
+          cluster: in-cluster
+          user: corral-web
+          namespace: corral
+    current-context: in-cluster
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -193,6 +224,8 @@ spec:
             # Override with CORRAL_NAMESPACE=custom-ns if needed.
             - name: CORRAL_NAMESPACE
               value: corral-vms
+            - name: KUBECONFIG
+              value: /etc/corral/kube/config
             # Admin allowlist (comma-separated tailnet logins). When unset,
             # the UI is single-user/open. When set, only these logins may
             # perform mutating actions; everyone else is read-only. Identity
@@ -223,6 +256,14 @@ spec:
               memory: 64Mi
             limits:
               memory: 256Mi
+          volumeMounts:
+            - name: kubeconfig
+              mountPath: /etc/corral/kube
+              readOnly: true
+      volumes:
+        - name: kubeconfig
+          configMap:
+            name: corral-web-kubeconfig
 ---
 apiVersion: v1
 kind: Service

@@ -45,6 +45,9 @@ spec:
               value: kubevirt
             - name: CORRAL_NAMESPACE
               value: corral-e2e
+            # corral-web.yaml's ConfigMap; see the note there.
+            - name: KUBECONFIG
+              value: /etc/corral/kube/config
           ports:
             - containerPort: 8006
               name: http
@@ -66,6 +69,14 @@ spec:
               memory: 64Mi
             limits:
               memory: 256Mi
+          volumeMounts:
+            - name: kubeconfig
+              mountPath: /etc/corral/kube
+              readOnly: true
+      volumes:
+        - name: kubeconfig
+          configMap:
+            name: corral-web-kubeconfig
 ---
 apiVersion: v1
 kind: Service

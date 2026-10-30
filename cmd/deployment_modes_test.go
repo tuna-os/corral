@@ -230,6 +230,35 @@ func TestTailscaleProxyManifest(t *testing.T) {
 	}
 }
 
+func TestInClusterKubeconfigManifest(t *testing.T) {
+	// kubectl ignores its in-cluster config once a client flag such as
+	// --request-timeout (injected by pkg/shell on every read) is set, so
+	// the pod must carry an explicit kubeconfig built from its token.
+	for _, name := range []string{"corral-web.yaml", "corral-web-e2e.yaml"} {
+		text, err := os.ReadFile(filepath.Join("..", "deploy", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{
+			"name: KUBECONFIG",
+			"value: /etc/corral/kube/config",
+			"mountPath: /etc/corral/kube",
+			"name: corral-web-kubeconfig",
+		} {
+			if !strings.Contains(string(text), want) {
+				t.Errorf("%s missing %q", name, want)
+			}
+		}
+	}
+	text, err := os.ReadFile(filepath.Join("..", "deploy", "corral-web.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(text), "tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token") {
+		t.Error("corral-web-kubeconfig must use the service-account tokenFile")
+	}
+}
+
 func TestGeneratedWebUnitVerifies(t *testing.T) {
 	// Mode 4 (24/7 vs on-demand) documents `corral web service install`.
 	// The unit it installs must at least parse under systemd.
