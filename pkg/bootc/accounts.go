@@ -86,7 +86,7 @@ if ! id "$name" >/dev/null 2>&1; then
 fi
 mkdir -p "$home"
 chmod 0700 "$home"
-chown "$name" "$home"
+chown "$name:$(id -g "$name")" "$home"
 if [ -n "$hash" ]; then
   if command -v usermod >/dev/null 2>&1; then
     usermod -p "$hash" "$name"

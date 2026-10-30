@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tuna-os/corral/pkg/bootc"
 	yaml "gopkg.in/yaml.v3"
 )
 
@@ -188,5 +189,66 @@ func TestBootcVMPreservesGiBMemory(t *testing.T) {
 	}
 	if !strings.Contains(string(data), `"guest":"6144Mi"`) {
 		t.Fatalf("6Gi did not become 6GiB of guest memory: %s", data)
+	}
+}
+
+// A --user build carries the account script and the installed-root runner as
+// base64 write_files entries. The builder applies them in the image's own
+// container against the mounted root partition, never by chrooting into the
+// raw partition (an ostree or composefs root has no shell to chroot into).
+// The password hash appears only inside the encoded script.
+func TestBuilderScript_AccountProvisioning(t *testing.T) {
+	t.Setenv("CORRAL_REGISTRY_MIRROR", "off")
+	const hash = "$6$saltsalt$abcdefghijklmnopqrstuvwxyz"
+	account, err := bootc.AccountProvisionScript("tuna-test", hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := builderScript("ghcr.io/tuna-os/marlin:tuna", "ssh-ed25519 AAAA", account, nil)
+
+	var doc struct {
+		WriteFiles []struct {
+			Path    string `yaml:"path"`
+			Content string `yaml:"content"`
+		} `yaml:"write_files"`
+	}
+	if err := yaml.Unmarshal([]byte(script), &doc); err != nil {
+		t.Fatalf("builder cloud-config with an account is not valid YAML: %v", err)
+	}
+	files := map[string]string{}
+	for _, f := range doc.WriteFiles {
+		files[f.Path] = f.Content
+	}
+	decode := func(path string) string {
+		t.Helper()
+		raw, err := base64.StdEncoding.DecodeString(files[path])
+		if err != nil {
+			t.Fatalf("%s is not base64: %v", path, err)
+		}
+		return string(raw)
+	}
+	if got := decode("/root/provision.b64"); got != account {
+		t.Errorf("provision.b64 does not round-trip the account script:\n%s", got)
+	}
+	if got := decode("/root/runner.b64"); got != bootc.InstalledRootRunner {
+		t.Errorf("runner.b64 does not carry bootc.InstalledRootRunner")
+	}
+	build := files["/root/build.sh"]
+	for _, want := range []string{
+		`if [ -s /root/provision.b64 ]; then`,
+		`mount /dev/disk/by-id/virtio-target-part3 /mnt/root ||`,
+		`-v /mnt/root:/corral-sysroot -v /root/corral-provision:/corral-provision:ro`,
+		`"$IMG" sh /corral-provision/runner.sh /corral-sysroot /corral-provision/provision.sh`,
+		"CORRAL_BUILD_FAIL provision",
+	} {
+		if !strings.Contains(build, want) {
+			t.Errorf("build.sh missing %q", want)
+		}
+	}
+	if strings.Contains(build, "chroot /mnt/root") {
+		t.Error("build.sh must not chroot into the raw root partition")
+	}
+	if strings.Contains(script, hash) {
+		t.Error("the password hash must travel only inside the base64 account script")
 	}
 }

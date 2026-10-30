@@ -409,10 +409,10 @@ func (b LocalBuilder) provisionArgs(req BuildRequest, scriptPath string) []strin
 	return append(args, req.Image, "sh", "-c", provisionDiskScript)
 }
 
-// provisionDiskScript mounts the installed root partition and executes the
-// supplied script in its namespace. It identifies the root by content rather
-// than assuming a partition number; composefs and ostree layouts differ.
-const provisionDiskScript = `set -eu
+// provisionDiskScript finds the installed root partition and hands it to
+// InstalledRootRunner. It identifies the root by content rather than by a
+// partition number, because composefs and ostree layouts differ.
+var provisionDiskScript = "run_installed_root() (\n" + InstalledRootRunner + ")\n" + `set -eu
 LOOP=$(losetup --find --show --partscan /target.img)
 MNT=$(mktemp -d)
 ROOT=0
@@ -423,12 +423,8 @@ for _ in 1 2 3 4 5 6 7 8 9 10; do
 done
 for part in "${LOOP}"p*; do
   mount "$part" "$MNT" 2>/dev/null || continue
-  if [ -f "$MNT/etc/os-release" ] || [ -d "$MNT/state/os/default" ]; then
-    mkdir -p "$MNT/tmp"
-    cp /provision.sh "$MNT/tmp/corral-provision.sh"
-    chmod 0700 "$MNT/tmp/corral-provision.sh"
-    chroot "$MNT" /bin/bash /tmp/corral-provision.sh
-    rm -f "$MNT/tmp/corral-provision.sh"
+  if [ -d "$MNT/ostree/deploy" ] || [ -d "$MNT/state/os/default" ]; then
+    run_installed_root "$MNT" /provision.sh
     ROOT=1
     umount "$MNT"
     break

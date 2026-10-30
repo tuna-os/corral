@@ -344,13 +344,18 @@ the first boot:
 ```bash
 corral bootc create dev --image ghcr.io/tuna-os/marlin:tuna \
   --user tuna --password-prompt
-# Non-interactive automation can provide a SHA-512 crypt hash instead:
+# Scripts give the password as the first line of stdin:
+printf '%s\n' "$PASSWORD" | corral bootc create dev \
+  --image ghcr.io/tuna-os/marlin:tuna --user tuna --password-stdin
+# Or give a SHA-512 crypt hash:
 corral bootc create dev --image ghcr.io/tuna-os/marlin:tuna \
   --user tuna --password-hash '$6$rounds=656000$<salt>$<hash>'
 ```
 
 Corral hides the password prompt and rejects plaintext `--password`. The
-`--user`, `--password-prompt`, and `--password-hash` flags are also
+account goes into the installed deployment's `/etc`, with its home in
+`/var/home`, so it is there at the first boot. The `--user`,
+`--password-prompt`, `--password-stdin`, and `--password-hash` flags are also
 available on `bootc rebuild`, `bootc upgrade`, and `bootc switch`. A resumed
 build reuses an already-installed disk and cannot add an account.
 
