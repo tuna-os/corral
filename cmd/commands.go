@@ -15,7 +15,6 @@ import (
 )
 
 var (
-	forceDelete      bool
 	sshUser          string
 	sshIdentity      string
 	sshCommand       string
@@ -70,49 +69,6 @@ var stopCmd = &cobra.Command{
 			return err
 		}
 		return power.Stop(name)
-	},
-}
-
-var deleteCmd = &cobra.Command{
-	Use:   "delete [name]",
-	Short: "Delete a VM and its disks",
-	Example: `  corral delete myvm       # asks to confirm
-  corral delete myvm -f    # skip the confirmation`,
-	Args: cobra.MaximumNArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		name, err := requireOrPrompt(args, "delete")
-		if err != nil {
-			return err
-		}
-		p, peer, peerErr := resolvePeerTarget(name)
-		if peerErr != nil {
-			return peerErr
-		}
-		var power backend.Power
-		if !peer {
-			power, err = instancePower(name)
-			if err != nil {
-				return err
-			}
-		}
-		if !forceDelete {
-			fmt.Fprintf(os.Stderr, "Delete VM %q and its disks? [y/N] ", name)
-			var resp string
-			fmt.Fscanln(os.Stdin, &resp)
-			if resp != "y" && resp != "Y" && resp != "yes" {
-				return fmt.Errorf("aborted")
-			}
-		}
-		if peer {
-			return p.action("DELETE", "")
-		}
-		if err := power.Delete(name); err != nil {
-			return err
-		}
-		if registryStore != nil {
-			registryStore.Remove(name)
-		}
-		return nil
 	},
 }
 
@@ -328,13 +284,11 @@ This is the log iso-e2e.sh gates on; corral diagnose bundles it.`,
 func init() {
 	rootCmd.AddCommand(startCmd)
 	rootCmd.AddCommand(stopCmd)
-	rootCmd.AddCommand(deleteCmd)
 	rootCmd.AddCommand(infoCmd)
 	rootCmd.AddCommand(viewerCmd)
 	rootCmd.AddCommand(sshCmd)
 	rootCmd.AddCommand(logsCmd)
 
-	deleteCmd.Flags().BoolVarP(&forceDelete, "force", "f", false, "Skip confirmation")
 	sshCmd.Flags().StringVarP(&sshUser, "user", "u", "", "SSH username (default: $USER)")
 	sshCmd.Flags().StringVarP(&sshIdentity, "identity", "i", "", "Path to SSH private key")
 	sshCmd.Flags().StringVarP(&sshCommand, "command", "c", "", "Command to execute (non-interactive)")

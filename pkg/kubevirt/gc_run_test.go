@@ -228,17 +228,18 @@ func TestDeleteVM_RemovesProxyThroughClientRunner(t *testing.T) {
 	t.Cleanup(func() { SetDefaultRunner(nil); SetPackageRunner(shell.DefaultKubectl) })
 	r.AddPrefixResponse("/fake/bin/virtctl", "", nil)
 	r.AddPrefixResponse("kubectl delete", "", nil)
+	r.AddPrefixResponse("kubectl get", "", nil)
 	if err := c.DeleteVM("web"); err != nil {
 		t.Fatal(err)
 	}
 	muts := mutations(r)
+	const flags = " -n tailvm --ignore-not-found --wait=false -o name"
 	for _, want := range []string{
-		"kubectl delete deploy web-proxy -n tailvm --ignore-not-found",
-		"kubectl delete svc web-proxy -n tailvm --ignore-not-found",
-		"kubectl delete sa corral-web-proxy -n tailvm --ignore-not-found",
-		"kubectl delete role corral-web-proxy -n tailvm --ignore-not-found",
-		"kubectl delete rolebinding corral-web-proxy -n tailvm --ignore-not-found",
-		"kubectl delete svc web-lan -n tailvm --ignore-not-found",
+		"kubectl delete deployment web-proxy" + flags,
+		"kubectl delete service web-proxy web-lan" + flags,
+		"kubectl delete serviceaccount corral-web-proxy" + flags,
+		"kubectl delete role corral-web-proxy" + flags,
+		"kubectl delete rolebinding corral-web-proxy" + flags,
 	} {
 		if !slices.Contains(muts, want) {
 			t.Errorf("DeleteVM did not run %q through the client runner; got %v", want, muts)

@@ -573,6 +573,8 @@ corral create <name>    --kubevirt | (default: local qemu)
 corral gc               [kubevirt] [--dry-run] [--delete-after 72h]
                         stop --ephemeral VMs past their --ttl (PVCs kept),
                         delete them once stopped past --delete-after
+                        --builders [--builder-age 2h]: also purge interrupted
+                          bootc builds (builder VM with no final VM)
 corral clone <src> <dst>  [kubevirt] clone a VM's disk + config to a new name
 corral plugin           search | install <name> | list | remove <name>   (extensions)
 corral start|stop <name>
@@ -593,7 +595,9 @@ corral ssh <name>       [-u user] [-i key] [-c cmd] [-p port] [--password …]
 corral viewer <name>    VNC via xdg-open
 corral logs <name>      journald (local) / virt-launcher (cluster)
 corral info <name>      raw JSON
-corral delete <name>    [-f] removes VM, disks, proxy, registry entry
+corral delete <name>…   [-f] [--wait [--timeout 5m]] [--json] removes each VM
+                          and every object corral made for it (disks, Secrets,
+                          proxy, snapshots, leftover bootc builder), registry entry
 
 corral ct create <name>  --image … [--cpu 1] [--mem 512Mi] [--disk 5Gi]
                           [--privileged]  (distrobox-style persistent rootfs)

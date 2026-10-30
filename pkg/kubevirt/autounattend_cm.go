@@ -20,6 +20,7 @@ func GenerateAutounattendConfigMap(vmName, ns, xml string) map[string]any {
 		"metadata": map[string]any{
 			"name":      AutounattendConfigMapName(vmName),
 			"namespace": ns,
+			"labels":    map[string]any{VMLabel: vmName},
 		},
 		"data": map[string]any{
 			"autounattend.xml": xml,

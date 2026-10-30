@@ -2,6 +2,7 @@ package kubevirt
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -65,17 +66,23 @@ func TestClient_StopVM(t *testing.T) {
 	}
 }
 
+// DeleteVM is PurgeVM without the report: it deletes the same objects and
+// returns the same error.
 func TestClient_DeleteVM(t *testing.T) {
 	c, r := newFakeClient()
-	r.AddResponseKV("/fake/bin/virtctl", []string{"stop", "testvm", "-n", "tailvm"}, "", nil)
-	r.AddResponseKV("kubectl", []string{"delete", "vm", "testvm", "-n", "tailvm", "--ignore-not-found"}, "", nil)
-	r.AddPrefixResponse("kubectl delete pvc testvm-", "", nil)
-	r.AddPrefixResponse("kubectl delete datavolume testvm-", "", nil)
-	r.AddResponseKV("kubectl", []string{"delete", "pvc", "-n", "tailvm", "-l", "corral.dev/vm=testvm", "--ignore-not-found", "--wait=false"}, "", nil)
-	r.AddResponseKV("kubectl", []string{"delete", "vmsnapshot", "-n", "tailvm", "-l", "corral.dev/vm=testvm", "--ignore-not-found"}, "", nil)
-
+	r.AddPrefixResponse("kubectl delete", "", nil)
+	r.AddPrefixResponse("kubectl get", "", nil)
 	if err := c.DeleteVM("testvm"); err != nil {
 		t.Fatalf("DeleteVM: %v", err)
+	}
+	if !hasMutation(mutations(r), "kubectl delete vm testvm -n tailvm") {
+		t.Errorf("DeleteVM did not delete the VM; calls %v", r.Calls())
+	}
+
+	r.AddResponseKV("kubectl", []string{"delete", "vm", "testvm", "-n", "tailvm", "--ignore-not-found", "--wait=false", "-o", "name"},
+		"Error from server (Forbidden)", errors.New("exit status 1"))
+	if err := c.DeleteVM("testvm"); err == nil || !strings.Contains(err.Error(), "Forbidden") {
+		t.Errorf("DeleteVM err = %v, want the kubectl failure", err)
 	}
 }
 

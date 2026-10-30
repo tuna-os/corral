@@ -237,16 +237,9 @@ func TestDeletePool_DeletesAllMembers(t *testing.T) {
 		{"metadata":{"name":"devpool-1","namespace":"corral-vms"},"status":{"printableStatus":"Running"}},
 		{"metadata":{"name":"devpool-2","namespace":"corral-vms"},"status":{"printableStatus":"Stopped"}}
 	]}`, nil)
-	fake.AddResponseKV("/fake/bin/virtctl", []string{"stop", "devpool-1", "-n", "corral-vms"}, "", nil)
-	fake.AddResponseKV("/fake/bin/virtctl", []string{"stop", "devpool-2", "-n", "corral-vms"}, "", nil)
-	fake.AddResponseKV("kubectl", []string{"delete", "vm", "devpool-1", "-n", "corral-vms", "--ignore-not-found"}, "", nil)
-	fake.AddResponseKV("kubectl", []string{"delete", "vm", "devpool-2", "-n", "corral-vms", "--ignore-not-found"}, "", nil)
-	for _, name := range []string{"devpool-1", "devpool-2"} {
-		for _, suffix := range []string{"disk", "data", "iso", "bootc-disk"} {
-			fake.AddPrefixResponse("kubectl delete pvc,datavolume "+name+"-"+suffix, "", nil)
-		}
-	}
-	fake.AddPrefixResponse("kubectl delete", "", nil) // catch-all for the rest of DeleteVM's cleanup calls
+	fake.AddPrefixResponse("kubectl delete", "", nil) // DeleteVM's delete per object kind
+	fake.AddPrefixResponse("kubectl get pvc -n corral-vms -l corral.dev/vm=", "", nil)
+	fake.AddPrefixResponse("kubectl get datavolume -n corral-vms -l corral.dev/vm=", "", nil)
 
 	if err := DeletePool("corral-vms", "devpool"); err != nil {
 		t.Fatalf("DeletePool: %v", err)

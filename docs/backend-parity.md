@@ -107,7 +107,9 @@ stays covered.
 **2. Generalise the adapter contract.** *Done:* `pkg/backend/ops.go` defines a
 small interface per operation family — `Power`, `Restarter`, `Suspender`,
 `Sizer`, `Storer`, `Mover`, `Cloner`, `Templater`, `Tagger`, `Observer`,
-`Exporter`, plus `Addresser`. `pkg/backend/adapters.go` holds one adapter per
+`Exporter`, plus `Addresser` and `Purger`. `Purger` is the full form of
+`Power.Delete`: it names each object that a delete removes, for
+`corral delete --json` and `--wait`. `pkg/backend/adapters.go` holds one adapter per
 backend. It is the only place where code translates a backend's own signature. A surface
 calls `backend.For(ref)` and asserts the family it needs; it never switches on a
 backend name again.

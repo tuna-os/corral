@@ -18,8 +18,7 @@ func (c *Client) AddVolume(name, size string) (string, error) {
 		size = "10Gi"
 	}
 	pvcName := fmt.Sprintf("%s-hp-%d", name, time.Now().Unix())
-	pvc := GeneratePVCWithClass(pvcName, c.Namespace, size, PreferredStorageClass())
-	pvc["metadata"].(map[string]any)["labels"] = map[string]any{"corral.dev/vm": name}
+	pvc := labelForVM(GeneratePVCWithClass(pvcName, c.Namespace, size, PreferredStorageClass()), name)
 	if err := Apply(pvc); err != nil {
 		return "", fmt.Errorf("creating disk PVC: %w", err)
 	}

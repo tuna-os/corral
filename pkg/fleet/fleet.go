@@ -93,12 +93,20 @@ func Resolve(vms []types.VM, selector string) (types.VM, error) {
 		}
 	}
 	if len(matches) == 0 {
-		return types.VM{}, fmt.Errorf("instance %q does not exist", selector)
+		return types.VM{}, NotFoundError{Selector: selector}
 	}
 	if len(matches) > 1 {
 		return types.VM{}, fmt.Errorf("instance name %q is ambiguous; use one of the fully-scoped IDs shown by corral list", selector)
 	}
 	return matches[0], nil
+}
+
+// NotFoundError is Resolve's answer when no listed instance matches the
+// selector, as opposed to one that matches several.
+type NotFoundError struct{ Selector string }
+
+func (e NotFoundError) Error() string {
+	return fmt.Sprintf("instance %q does not exist", e.Selector)
 }
 
 // listContext inventories one context through its backend's Lister, bound to

@@ -547,42 +547,11 @@ func (c *Client) StopVM(name string) error {
 	return err
 }
 
-// DeleteVM deletes a KubeVirt VM and its PVCs/DataVolumes/proxy resources.
+// DeleteVM deletes a KubeVirt VM and everything corral created for it. See
+// PurgeVM for the list; DeleteVM drops the report of what went.
 func (c *Client) DeleteVM(name string) error {
-	// Stop first
-	virtctl, _ := c.ensureVirtctl()
-	if virtctl != "" {
-		c.runner().Run(virtctl, "stop", name, "-n", c.Namespace)
-	}
-
-	// Delete VM
-	c.runner().Run("kubectl", "delete", "vm", name, "-n", c.Namespace, "--ignore-not-found")
-
-	// Delete DataVolumes and PVCs. The DataVolume goes first: while a CDI
-	// importer pod still has the PVC mounted, deleting the PVC blocks on the
-	// pvc-protection finalizer until that pod exits, so a VM deleted mid-import
-	// used to hang this call for as long as the download took. Removing the
-	// DataVolume tears the importer down and garbage-collects its PVC.
-	// --wait=false keeps the call from blocking on finalizers either way —
-	// deletion still completes, we just don't sit on the request while it does.
-	for _, suffix := range []string{"disk", "data", "iso", "bootc-disk"} {
-		pvc := name + "-" + suffix
-		c.runner().Run("kubectl", "delete", "datavolume", pvc, "-n", c.Namespace, "--ignore-not-found", "--wait=false")
-		c.runner().Run("kubectl", "delete", "pvc", pvc, "-n", c.Namespace, "--ignore-not-found", "--wait=false")
-	}
-
-	// Delete hotplug disks and snapshots labeled for this VM
-	c.runner().Run("kubectl", "delete", "pvc", "-n", c.Namespace,
-		"-l", "corral.dev/vm="+name, "--ignore-not-found", "--wait=false")
-	c.runner().Run("kubectl", "delete", "vmsnapshot", "-n", c.Namespace,
-		"-l", "corral.dev/vm="+name, "--ignore-not-found")
-
-	// Delete proxy resources if any, in this client's context — the package
-	// DeleteProxy targets CORRAL_KUBE_CONTEXT, which may be another cluster.
-	for _, args := range proxyDeleteArgs(name, c.Namespace) {
-		_, _ = c.runner().Run("kubectl", args...) // best effort: absent proxies are fine
-	}
-	return nil
+	_, err := c.PurgeVM(name)
+	return err
 }
 
 // Logs tails the virt-launcher pod logs for a VM.
@@ -812,26 +781,26 @@ func CreateVM(opts types.CreateOpts) error {
 	}
 
 	if hasISO {
-		if err := Apply(GenerateDataVolume(name+"-iso", ns, opts.ISO, DetectISOSize(opts.ISO))); err != nil {
+		if err := Apply(labelForVM(GenerateDataVolume(name+"-iso", ns, opts.ISO, DetectISOSize(opts.ISO)), name)); err != nil {
 			return fmt.Errorf("creating ISO DataVolume: %w", err)
 		}
 		fmt.Fprintf(os.Stderr, "ISO DataVolume: %s-iso (importing from %s)\n", name, opts.ISO)
-		if err := Apply(GeneratePVCWithClass(name+"-disk", ns, diskSize, sc)); err != nil {
+		if err := Apply(labelForVM(GeneratePVCWithClass(name+"-disk", ns, diskSize, sc), name)); err != nil {
 			return fmt.Errorf("creating boot PVC: %w", err)
 		}
 		fmt.Fprintf(os.Stderr, "Boot PVC: %s-disk (%s)\n", name, diskSize)
 	} else if hasImport {
 		// CDI imports the qcow2/raw image straight into the boot disk PVC.
-		if err := Apply(GenerateBootDataVolume(name+"-disk", ns, opts.ImportURL, diskSize, sc)); err != nil {
+		if err := Apply(labelForVM(GenerateBootDataVolume(name+"-disk", ns, opts.ImportURL, diskSize, sc), name)); err != nil {
 			return fmt.Errorf("creating import DataVolume: %w", err)
 		}
 		fmt.Fprintf(os.Stderr, "Importing %s → %s-disk (%s)\n", opts.ImportURL, name, diskSize)
 	} else if hasContainer && opts.Disk != "" {
-		if err := Apply(GeneratePVCWithClass(name+"-data", ns, opts.Disk, sc)); err != nil {
+		if err := Apply(labelForVM(GeneratePVCWithClass(name+"-data", ns, opts.Disk, sc), name)); err != nil {
 			return fmt.Errorf("creating data PVC: %w", err)
 		}
 	} else if !hasPVC && !hasContainer {
-		if err := Apply(GeneratePVCWithClass(name+"-disk", ns, diskSize, sc)); err != nil {
+		if err := Apply(labelForVM(GeneratePVCWithClass(name+"-disk", ns, diskSize, sc), name)); err != nil {
 			return fmt.Errorf("creating boot PVC: %w", err)
 		}
 	}
@@ -843,7 +812,7 @@ func CreateVM(opts types.CreateOpts) error {
 	// userData in a Secret and reference it via userDataSecretRef.
 	if userData, ok := extractUserData(volumesFromVM(vm)); ok && len(userData) > 2048 {
 		secretName := name + "-cloudinit"
-		if err := createCloudInitSecret(secretName, ns, userData); err != nil {
+		if err := createCloudInitSecret(secretName, ns, name, userData); err != nil {
 			return fmt.Errorf("creating cloud-init Secret: %w", err)
 		}
 		replaceUserDataWithSecret(volumesFromVM(vm), secretName)
@@ -893,14 +862,15 @@ func replaceUserDataWithSecret(volumes []map[string]any, secretName string) {
 	}
 }
 
-// createCloudInitSecret creates a Secret containing the cloud-init userData.
-func createCloudInitSecret(name, ns, userData string) error {
+// createCloudInitSecret creates a Secret containing vm's cloud-init userData.
+func createCloudInitSecret(name, ns, vm, userData string) error {
 	secret := map[string]any{
 		"apiVersion": "v1",
 		"kind":       "Secret",
 		"metadata": map[string]any{
 			"name":      name,
 			"namespace": ns,
+			"labels":    map[string]any{VMLabel: vm},
 		},
 		"data": map[string]any{
 			"userData": base64.StdEncoding.EncodeToString([]byte(userData)),

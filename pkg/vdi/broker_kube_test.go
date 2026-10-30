@@ -324,6 +324,8 @@ func scriptRecycle(fake interface {
 }) {
 	fake.AddPrefixResponse("/fake/bin/virtctl stop devpool-1", "", nil)
 	fake.AddPrefixResponse("kubectl delete", "", nil)
+	fake.AddPrefixResponse("kubectl get pvc -n corral-vms -l corral.dev/vm=devpool-1", "", nil)
+	fake.AddPrefixResponse("kubectl get datavolume -n corral-vms -l corral.dev/vm=devpool-1", "", nil)
 	fake.AddResponseKV("kubectl", []string{"apply", "-f", "-"}, "applied", nil)
 	fake.AddResponseKV("kubectl", []string{"get", "vm", "devpool-1", "-n", "corral-vms", "-o", "name"}, "vm/devpool-1", nil)
 	fake.AddPrefixResponse("kubectl label vm devpool-1", "", nil)
@@ -343,7 +345,7 @@ func TestRelease_EphemeralMemberIsRecreatedFromGolden(t *testing.T) {
 	for _, c := range fake.Calls() {
 		all := strings.Join(c.Args, " ")
 		switch {
-		case strings.HasPrefix(all, "delete vm devpool-1"):
+		case strings.HasPrefix(all, "delete vm devpool-1 "): // the member, not its bootc builder
 			deletedVM++
 		case strings.HasPrefix(all, "apply") && strings.Contains(c.Stdin, `"name":"golden"`) && strings.Contains(c.Stdin, "devpool-1"):
 			cloned++

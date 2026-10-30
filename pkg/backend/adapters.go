@@ -96,6 +96,11 @@ func (a kubevirtAdapter) Start(name string) error  { return a.client.StartVM(nam
 func (a kubevirtAdapter) Stop(name string) error   { return a.client.StopVM(name) }
 func (a kubevirtAdapter) Delete(name string) error { return a.client.DeleteVM(name) }
 
+func (a kubevirtAdapter) Purge(name string) ([]string, error) { return a.client.PurgeVM(name) }
+func (a kubevirtAdapter) WaitRemoved(removed []string, timeout time.Duration) error {
+	return a.client.WaitRemoved(removed, timeout)
+}
+
 func (a kubevirtAdapter) Restart(name string) error { return a.client.RestartVM(name) }
 
 func (a kubevirtAdapter) Pause(name string) error  { return a.client.PauseVM(name) }
