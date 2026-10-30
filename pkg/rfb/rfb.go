@@ -32,7 +32,18 @@ type Client struct {
 	Name string
 
 	bytesPerPixel int
+	// pointerMode is what QEMU last reported through its pointer type
+	// change pseudo-encoding; pointerUnknown until it says.
+	pointerMode pointerMode
 }
+
+type pointerMode int
+
+const (
+	pointerUnknown pointerMode = iota
+	pointerAbsolute
+	pointerRelative
+)
 
 // Security types and message numbers from RFC 6143.
 const (
@@ -50,6 +61,10 @@ const (
 	msgServerCutText       = 3
 
 	encodingRaw = 0
+	// encodingPointerTypeChange is QEMU's pseudo-encoding that reports
+	// whether the guest reads an absolute device (a tablet) or a relative
+	// mouse. A rectangle of it carries 1 or 0 in its x field.
+	encodingPointerTypeChange = -257
 )
 
 // HandshakeTimeout bounds the handshake and each Sync, so a proxy that
@@ -163,8 +178,13 @@ func (c *Client) handshake() error {
 	c.bytesPerPixel = int(init.BitsPerPixel) / 8
 
 	// Ask for Raw only, so the one update Sync reads has a size this client
-	// can compute without decoding anything.
-	setEncodings := []byte{msgSetEncodings, 0, 0, 1, 0, 0, 0, encodingRaw}
+	// can compute without decoding anything, plus QEMU's pointer type
+	// report, so a pointer event is never sent while the server would read
+	// it as relative motion.
+	pointerType := int32(encodingPointerTypeChange)
+	setEncodings := []byte{msgSetEncodings, 0, 0, 2}
+	setEncodings = binary.BigEndian.AppendUint32(setEncodings, encodingRaw)
+	setEncodings = binary.BigEndian.AppendUint32(setEncodings, uint32(pointerType))
 	if _, err := c.conn.Write(setEncodings); err != nil {
 		return fmt.Errorf("rfb: sending SetEncodings: %w", err)
 	}
@@ -242,50 +262,97 @@ func (c *Client) Sync() error {
 		return fmt.Errorf("rfb: sending update request: %w", err)
 	}
 	for {
-		kind, err := c.reader.ReadByte()
+		// A pointer type report is an update of its own; the reply to the
+		// request is the one that carries pixels.
+		pixels, err := c.readMessage()
 		if err != nil {
 			return fmt.Errorf("rfb: waiting for the server to confirm input: %w", err)
 		}
-		switch kind {
-		case msgFramebufferUpdate:
-			return c.skipUpdate()
-		case msgSetColourMapEntries:
-			var head struct {
-				_            uint8
-				First, Count uint16
-			}
-			if err := binary.Read(c.reader, binary.BigEndian, &head); err != nil {
-				return fmt.Errorf("rfb: reading colour map: %w", err)
-			}
-			if err := c.discard(6 * int(head.Count)); err != nil {
-				return err
-			}
-		case msgBell:
-		case msgServerCutText:
-			var head struct {
-				_      [3]byte
-				Length uint32
-			}
-			if err := binary.Read(c.reader, binary.BigEndian, &head); err != nil {
-				return fmt.Errorf("rfb: reading cut text: %w", err)
-			}
-			if err := c.discard(int(head.Length)); err != nil {
-				return err
-			}
-		default:
-			return fmt.Errorf("rfb: server sent unknown message type %d", kind)
+		if pixels {
+			return nil
 		}
 	}
 }
 
-// skipUpdate reads past one FramebufferUpdate of Raw rectangles.
-func (c *Client) skipUpdate() error {
+// AbsoluteWait bounds how long RequireAbsolute waits for QEMU to report an
+// absolute pointer. A var so tests fail fast.
+var AbsoluteWait = 5 * time.Second
+
+// RequireAbsolute returns nil once the server reads pointer events as
+// absolute positions. QEMU reports its pointer type right after
+// SetEncodings, and again on each change. A guest that does not read its
+// tablet at that moment (it is still starting its session, say) puts QEMU
+// in relative mode, where a pointer event is motion from wherever the
+// cursor is, so the click would land somewhere else. RequireAbsolute waits
+// AbsoluteWait for the guest to take the tablet, then refuses. A server
+// that never reports a pointer type is not QEMU, and is trusted.
+func (c *Client) RequireAbsolute() error {
+	if c.pointerMode == pointerAbsolute {
+		return nil
+	}
+	_ = c.conn.SetReadDeadline(time.Now().Add(AbsoluteWait))
+	defer func() { _ = c.conn.SetReadDeadline(time.Time{}) }()
+	for c.pointerMode != pointerAbsolute {
+		if _, err := c.readMessage(); err != nil {
+			var timeout net.Error
+			if !errors.As(err, &timeout) || !timeout.Timeout() {
+				return fmt.Errorf("rfb: waiting for the pointer type: %w", err)
+			}
+			if c.pointerMode == pointerRelative {
+				return errors.New("the VM's pointer is in relative mode: the guest is not reading its tablet, " +
+					"so a position cannot be placed exactly; wait until the desktop is up, then try again")
+			}
+			// No report at all: not QEMU's server, so there is nothing to
+			// wait for.
+			return nil
+		}
+	}
+	return nil
+}
+
+// readMessage reads one server message. It reports whether the message was
+// a framebuffer update with pixels in it, and records a pointer type report.
+func (c *Client) readMessage() (pixels bool, err error) {
+	kind, err := c.reader.ReadByte()
+	if err != nil {
+		return false, err
+	}
+	switch kind {
+	case msgFramebufferUpdate:
+		return c.readUpdate()
+	case msgSetColourMapEntries:
+		var head struct {
+			_            uint8
+			First, Count uint16
+		}
+		if err := binary.Read(c.reader, binary.BigEndian, &head); err != nil {
+			return false, fmt.Errorf("reading colour map: %w", err)
+		}
+		return false, c.discard(6 * int(head.Count))
+	case msgBell:
+		return false, nil
+	case msgServerCutText:
+		var head struct {
+			_      [3]byte
+			Length uint32
+		}
+		if err := binary.Read(c.reader, binary.BigEndian, &head); err != nil {
+			return false, fmt.Errorf("reading cut text: %w", err)
+		}
+		return false, c.discard(int(head.Length))
+	}
+	return false, fmt.Errorf("server sent unknown message type %d", kind)
+}
+
+// readUpdate reads one FramebufferUpdate of Raw rectangles and pointer type
+// reports.
+func (c *Client) readUpdate() (pixels bool, err error) {
 	var head struct {
 		_     uint8
 		Rects uint16
 	}
 	if err := binary.Read(c.reader, binary.BigEndian, &head); err != nil {
-		return fmt.Errorf("rfb: reading framebuffer update: %w", err)
+		return false, fmt.Errorf("reading framebuffer update: %w", err)
 	}
 	for range int(head.Rects) {
 		var rect struct {
@@ -293,16 +360,24 @@ func (c *Client) skipUpdate() error {
 			Encoding   int32
 		}
 		if err := binary.Read(c.reader, binary.BigEndian, &rect); err != nil {
-			return fmt.Errorf("rfb: reading update rectangle: %w", err)
+			return false, fmt.Errorf("reading update rectangle: %w", err)
 		}
-		if rect.Encoding != encodingRaw {
-			return fmt.Errorf("rfb: server sent encoding %d, which was not requested", rect.Encoding)
-		}
-		if err := c.discard(int(rect.W) * int(rect.H) * c.bytesPerPixel); err != nil {
-			return err
+		switch rect.Encoding {
+		case encodingRaw:
+			pixels = true
+			if err := c.discard(int(rect.W) * int(rect.H) * c.bytesPerPixel); err != nil {
+				return false, err
+			}
+		case encodingPointerTypeChange:
+			c.pointerMode = pointerRelative
+			if rect.X != 0 {
+				c.pointerMode = pointerAbsolute
+			}
+		default:
+			return false, fmt.Errorf("server sent encoding %d, which was not requested", rect.Encoding)
 		}
 	}
-	return nil
+	return pixels, nil
 }
 
 func (c *Client) discard(n int) error {

@@ -83,6 +83,9 @@ func (c *Client) MovePointer(name string, x, y int) error {
 		return err
 	}
 	return c.withVNC(name, func(session *rfb.Client) error {
+		if err := session.RequireAbsolute(); err != nil {
+			return err
+		}
 		return session.PointerEvent(x, y, 0)
 	})
 }
@@ -98,6 +101,9 @@ func (c *Client) Click(name string, x, y int, button string, double bool) error 
 		return err
 	}
 	return c.withVNC(name, func(session *rfb.Client) error {
+		if err := session.RequireAbsolute(); err != nil {
+			return err
+		}
 		return session.Click(x, y, mask, double)
 	})
 }

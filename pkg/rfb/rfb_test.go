@@ -75,9 +75,11 @@ func (s *fakeServer) handshake38() byte {
 	s.write([]byte{0, 0, 0, 0}) // SecurityResult OK
 	shared := s.read(1)[0]
 	s.serverInit()
-	if got := s.read(8); got[0] != msgSetEncodings || binary.BigEndian.Uint16(got[2:]) != 1 ||
-		binary.BigEndian.Uint32(got[4:]) != encodingRaw {
-		s.t.Errorf("SetEncodings = %v, want Raw only", got)
+	got := s.read(12)
+	if got[0] != msgSetEncodings || binary.BigEndian.Uint16(got[2:]) != 2 ||
+		binary.BigEndian.Uint32(got[4:]) != encodingRaw ||
+		int32(binary.BigEndian.Uint32(got[8:])) != encodingPointerTypeChange {
+		s.t.Errorf("SetEncodings = %v, want Raw and QEMU's pointer type change", got)
 	}
 	return shared
 }
@@ -169,7 +171,7 @@ func TestHandshake33(t *testing.T) {
 		s.read(1)
 		s.width, s.height = 1024, 768
 		s.serverInit()
-		s.read(8)
+		s.read(12)
 	})
 	if err != nil {
 		t.Fatalf("Handshake: %v", err)
@@ -304,6 +306,100 @@ func TestPointerOutsideTheScreenIsRefused(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "outside the 1280x800 screen") {
 			t.Errorf("Click%v = %v, want an outside-the-screen refusal", pos, err)
 		}
+	}
+}
+
+// pointerTypeUpdate is QEMU's report of the pointer type: one rectangle of
+// encoding -257 with x = 1 for absolute.
+func pointerTypeUpdate(absolute bool) []byte {
+	x := byte(0)
+	if absolute {
+		x = 1
+	}
+	return []byte{msgFramebufferUpdate, 0, 0, 1, 0, x, 0, 0, 5, 0, 3, 32, 0xff, 0xff, 0xfe, 0xff}
+}
+
+// handshakeThen completes a 3.8 handshake and runs serve on the server side
+// while the test drives the client.
+func handshakeThen(t *testing.T, serve func(*fakeServer)) *Client {
+	t.Helper()
+	s, conn := newSession(t)
+	go func() {
+		s.handshake38()
+		serve(s)
+	}()
+	c, err := Handshake(conn)
+	if err != nil {
+		t.Fatalf("Handshake: %v", err)
+	}
+	return c
+}
+
+func shortAbsoluteWait(t *testing.T) {
+	t.Helper()
+	old := AbsoluteWait
+	AbsoluteWait = 100 * time.Millisecond
+	t.Cleanup(func() { AbsoluteWait = old })
+}
+
+func TestRequireAbsolute(t *testing.T) {
+	shortAbsoluteWait(t)
+
+	t.Run("absolute", func(t *testing.T) {
+		c := handshakeThen(t, func(s *fakeServer) { s.write(pointerTypeUpdate(true)) })
+		if err := c.RequireAbsolute(); err != nil {
+			t.Fatalf("RequireAbsolute = %v", err)
+		}
+	})
+
+	// QEMU in relative mode would move the cursor by the difference from
+	// its last position, so the click lands elsewhere: refuse.
+	t.Run("relative", func(t *testing.T) {
+		c := handshakeThen(t, func(s *fakeServer) { s.write(pointerTypeUpdate(false)) })
+		err := c.RequireAbsolute()
+		if err == nil || !strings.Contains(err.Error(), "relative mode") {
+			t.Fatalf("RequireAbsolute = %v, want a relative-mode refusal", err)
+		}
+	})
+
+	// The guest takes its tablet a moment later: QEMU reports the change.
+	t.Run("becomes absolute", func(t *testing.T) {
+		c := handshakeThen(t, func(s *fakeServer) {
+			s.write(pointerTypeUpdate(false))
+			time.Sleep(20 * time.Millisecond)
+			s.write(pointerTypeUpdate(true))
+		})
+		if err := c.RequireAbsolute(); err != nil {
+			t.Fatalf("RequireAbsolute = %v", err)
+		}
+	})
+
+	// A server that never reports is not QEMU; nothing to wait for.
+	t.Run("unreported", func(t *testing.T) {
+		c := handshakeThen(t, func(*fakeServer) {})
+		if err := c.RequireAbsolute(); err != nil {
+			t.Fatalf("RequireAbsolute = %v", err)
+		}
+	})
+}
+
+// Sync skips a pointer type report and waits for the update with pixels.
+// (The server reads the request first: a net.Pipe write blocks until the
+// other side reads, where a socket would buffer.)
+func TestSyncSkipsPointerTypeReports(t *testing.T) {
+	c := handshakeThen(t, func(s *fakeServer) {
+		if req := s.read(10); req[0] != msgFramebufferUpdateRequest {
+			t.Errorf("Sync sent %v, want an update request", req)
+		}
+		s.write(pointerTypeUpdate(true))
+		update := []byte{msgFramebufferUpdate, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0}
+		s.write(append(update, 0, 0, 0, 0))
+	})
+	if err := c.Sync(); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if c.pointerMode != pointerAbsolute {
+		t.Errorf("pointer mode = %d, want the report recorded", c.pointerMode)
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"net"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tuna-os/corral/pkg/rfb"
 	"github.com/tuna-os/corral/pkg/rfb/rfbtest"
@@ -104,5 +105,25 @@ func TestClickAndMoveWithATablet(t *testing.T) {
 	}
 	if err := c.Click("desk", 1, 1, "back", false); err == nil || !strings.Contains(err.Error(), "unknown button") {
 		t.Errorf("Click with an unknown button = %v, want a refusal", err)
+	}
+}
+
+// QEMU in relative mode (the guest is not reading its tablet yet) would move
+// the cursor by deltas from wherever it is: refuse instead of misclicking.
+func TestClickRefusesARelativePointer(t *testing.T) {
+	d := withVNCServer(t)
+	d.server.Relative = true
+	old := rfb.AbsoluteWait
+	rfb.AbsoluteWait = 50 * time.Millisecond
+	t.Cleanup(func() { rfb.AbsoluteWait = old })
+	c, r := newFakeClient()
+	r.AddResponseKV("kubectl", []string{"get", "vmi", "desk", "-n", "tailvm", "-o", inputsQuery}, "tablet", nil)
+
+	err := c.Click("desk", 10, 10, "left", false)
+	if err == nil || !strings.Contains(err.Error(), "relative mode") {
+		t.Fatalf("Click with a relative pointer = %v, want a refusal", err)
+	}
+	if events := d.server.Events(); len(events) != 0 {
+		t.Errorf("sent %v to a relative pointer", events)
 	}
 }

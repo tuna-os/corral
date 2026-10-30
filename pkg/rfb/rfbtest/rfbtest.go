@@ -37,6 +37,9 @@ func (e Event) String() string {
 // Server records every session opened against it.
 type Server struct {
 	Width, Height int
+	// Relative makes the server report a relative pointer, as QEMU does
+	// while the guest is not reading its tablet.
+	Relative bool
 
 	mu       sync.Mutex
 	events   []Event
@@ -81,23 +84,31 @@ func (s *Server) serve(conn net.Conn) {
 		_, err := io.ReadFull(r, b)
 		return b, err
 	}
+	// Writes go through their own goroutine, as through a socket buffer: a
+	// net.Pipe write blocks until the client reads, and a client sends its
+	// events before it reads anything.
+	out := make(chan []byte, 64)
+	defer close(out)
+	go func() {
+		for b := range out {
+			if _, err := conn.Write(b); err != nil {
+				for range out {
+				}
+				return
+			}
+		}
+	}()
 
 	// ProtocolVersion, security None, SecurityResult OK.
-	if _, err := conn.Write([]byte("RFB 003.008\n")); err != nil {
-		return
-	}
+	out <- []byte("RFB 003.008\n")
 	if _, err := read(12); err != nil {
 		return
 	}
-	if _, err := conn.Write([]byte{1, 1}); err != nil {
-		return
-	}
+	out <- []byte{1, 1}
 	if _, err := read(1); err != nil {
 		return
 	}
-	if _, err := conn.Write([]byte{0, 0, 0, 0}); err != nil {
-		return
-	}
+	out <- []byte{0, 0, 0, 0}
 	// ClientInit, then ServerInit with a 32-bit pixel format.
 	if _, err := read(1); err != nil {
 		return
@@ -108,9 +119,7 @@ func (s *Server) serve(conn net.Conn) {
 	binary.BigEndian.PutUint16(init[2:], uint16(s.Height))
 	init[4], init[5] = 32, 24
 	binary.BigEndian.PutUint32(init[20:], uint32(len(name)))
-	if _, err := conn.Write(append(init, name...)); err != nil {
-		return
-	}
+	out <- append(init, name...)
 
 	for {
 		kind, err := r.ReadByte()
@@ -118,21 +127,25 @@ func (s *Server) serve(conn net.Conn) {
 			return
 		}
 		switch kind {
-		case 2: // SetEncodings
+		case 2: // SetEncodings: QEMU reports the pointer type at once.
 			head, err := read(3)
 			if err != nil {
 				return
 			}
-			if _, err := read(4 * int(binary.BigEndian.Uint16(head[1:]))); err != nil {
+			encodings, err := read(4 * int(binary.BigEndian.Uint16(head[1:])))
+			if err != nil {
 				return
 			}
-		case 3: // FramebufferUpdateRequest: answer with one empty update.
+			for i := 0; i < len(encodings); i += 4 {
+				if int32(binary.BigEndian.Uint32(encodings[i:])) == -257 {
+					out <- s.pointerType()
+				}
+			}
+		case 3: // FramebufferUpdateRequest: one Raw pixel.
 			if _, err := read(9); err != nil {
 				return
 			}
-			if _, err := conn.Write([]byte{0, 0, 0, 0}); err != nil {
-				return
-			}
+			out <- []byte{0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0}
 		case 4: // KeyEvent
 			b, err := read(7)
 			if err != nil {
@@ -149,6 +162,20 @@ func (s *Server) serve(conn net.Conn) {
 			return
 		}
 	}
+}
+
+// pointerType is QEMU's pointer type change update: one rectangle of
+// encoding -257 whose x is 1 for absolute, 0 for relative.
+func (s *Server) pointerType() []byte {
+	absolute := byte(1)
+	if s.Relative {
+		absolute = 0
+	}
+	msg := []byte{0, 0, 0, 1, 0, absolute, 0, 0}
+	msg = binary.BigEndian.AppendUint16(msg, uint16(s.Width))
+	msg = binary.BigEndian.AppendUint16(msg, uint16(s.Height))
+	pointerType := int32(-257)
+	return binary.BigEndian.AppendUint32(msg, uint32(pointerType))
 }
 
 func (s *Server) record(e Event) {
