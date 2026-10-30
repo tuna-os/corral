@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/tuna-os/corral/pkg/incus"
 	"github.com/tuna-os/corral/pkg/kubevirt"
@@ -195,6 +196,10 @@ func (a kubevirtAdapter) SSH(name string, opts SSHOptions) error {
 	return a.client.SSH(name, opts.User, opts.Identity, opts.Command, opts.Port, opts.Password, opts.LocalForwards)
 }
 
+func (a kubevirtAdapter) Exec(name string, opts SSHOptions) ([]byte, error) {
+	return a.client.Exec(name, opts.User, opts.Identity, opts.Command, opts.Port)
+}
+
 // ── local QEMU ────────────────────────────────────────────────────
 //
 // Power plus a real restart. Everything else is a gap the matrix names: the unit
@@ -238,6 +243,16 @@ func (qemuAdapter) SSH(name string, opts SSHOptions) error {
 		return qemu.SSHViaVsock(name, opts.User, opts.Command)
 	}
 	return qemu.SSH(name, opts.User, opts.Identity, opts.Command, opts.Port, opts.Password, opts.LocalForwards)
+}
+
+// Exec probes loopback or vsock the way a CI harness does, so a guest with
+// no tailnet address still answers.
+func (qemuAdapter) Exec(name string, opts SSHOptions) ([]byte, error) {
+	execOpts := qemu.ExecOpts{User: opts.User, IdentityFile: opts.Identity, Timeout: 10 * time.Second}
+	if opts.Vsock {
+		return qemu.ExecViaVsock(name, opts.Command, execOpts)
+	}
+	return qemu.Exec(name, opts.Command, execOpts)
 }
 
 // Events: journald already keeps the local backend's history, keyed by the
@@ -285,6 +300,10 @@ func (a incusAdapter) Describe(name string) ([]byte, error) { return a.client.In
 // so user, identity, and password do not apply.
 func (a incusAdapter) SSH(name string, opts SSHOptions) error {
 	return a.client.SSH(name, opts.Command)
+}
+
+func (a incusAdapter) Exec(name string, opts SSHOptions) ([]byte, error) {
+	return a.client.Exec(name, opts.Command)
 }
 
 func (a incusAdapter) Address(name string) (string, error) {

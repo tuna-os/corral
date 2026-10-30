@@ -621,6 +621,28 @@ func (c *Client) SSH(name, username, identityFile, command string, port int, pas
 	return cmd.Run()
 }
 
+// Exec runs command in the guest through virtctl ssh with no terminal and
+// returns its combined output; a nonzero exit is the error. BatchMode keeps a
+// guest without the key from waiting on a password prompt, and the keepalive
+// options end the call when the guest reboots under it.
+func (c *Client) Exec(name, username, identityFile, command string, port int) ([]byte, error) {
+	virtctl, err := c.ensureVirtctl()
+	if err != nil {
+		return nil, err
+	}
+	args := virtctlSSHArgs(c.Namespace, username, identityFile, command, port, nil, name)
+	target := args[len(args)-1]
+	args = append(args[:len(args)-1],
+		"--local-ssh-opts=-o BatchMode=yes",
+		"--local-ssh-opts=-o ConnectTimeout=10",
+		"--local-ssh-opts=-o ServerAliveInterval=5",
+		"--local-ssh-opts=-o ServerAliveCountMax=3",
+		"--local-ssh-opts=-o LogLevel=ERROR",
+		target,
+	)
+	return c.runner().Run(virtctl, args...)
+}
+
 // WaitSSH starts name (if not already running), waits for the VMI to reach
 // Running, then polls a non-interactive SSH probe until it succeeds or timeout
 // elapses. It's the KubeVirt twin of qemu.WaitSSH, so `corral create --bootc

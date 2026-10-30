@@ -361,12 +361,23 @@ check "systemctl --failed --no-legend"         # empty, or a known allowlist
 check "bootc status --format json | jq -r '.status.booted.image.image.image'"
 ```
 
+Each `check` runs one time. To wait until a condition is true, use `corral wait`.
+It works on local QEMU and on KubeVirt, and it fails with the name of the
+condition that is not true:
+
+```bash
+corral wait gate --boot-complete --unit gdm.service --paint --timeout 15m
+```
+
+See [Wait until a VM is ready](user-guide.md#wait-until-a-vm-is-ready).
+
 ## KubeVirt backend (clusters, heavy images, local dev parity)
 
 ```bash
 corral bootc create gate --image ghcr.io/tuna-os/yellowfin:gnome -n corral-vms
 # or: corral create gate --kubevirt --bootc <image> [-s <storage-class>]
 corral start gate      # bootc creates the VM stopped
+corral wait gate --unit gdm.service --paint --timeout 15m
 ```
 
 The build runs in a builder VM **on the cluster** (`bootc install to-disk`
