@@ -4,7 +4,7 @@ This runbook helps an operator to diagnose and resolve availability, probe failu
 
 ## 1. Architecture Overview
 
-`corral-web` is the Proxmox-style web UI for Corral. It is also the unified management daemon for multiple backends. In Kubernetes deployments (see `deploy/corral-web.yaml`), it runs as a deployment in the `corral` namespace. The Tailscale operator Ingress exposes it, or, without the operator, the `corral-web-tailscale` proxy pod from `deploy/corral-web-tailscale-proxy.yaml`.
+`corral-web` is the Proxmox-style web UI for Corral. It is also the unified management daemon for multiple backends. In Kubernetes deployments (see `deploy/corral-web.yaml`), it runs as a deployment in the `corral` namespace. The Ingress of the Tailscale operator exposes it. Without the operator, the `corral-web-tailscale` proxy pod from `deploy/corral-web-tailscale-proxy.yaml` exposes it.
 
 Key Endpoints:
 - `GET /healthz`: Liveness probe. Returns HTTP `200 OK` (`ok\n`) when the server process and HTTP multiplexer are alive.
@@ -75,7 +75,7 @@ The `error` field in the `/readyz` response body distinguishes the two cases. `"
 **Root Causes:**
 1. The cluster's API server is unreachable, a network partition occurred, or the kubeconfig context has a wrong configuration.
 2. Target backend (KubeVirt/libvirt/Incus/Proxmox) endpoint down or authentication token expired.
-3. The pod has no `KUBECONFIG`. The UI lists no VMs, `/api/doctor` says "no Kubernetes cluster answered", and `/api/cts` says "cluster unreachable (a recent kubectl call timed out ...)". kubectl skips its in-cluster config once Corral adds `--request-timeout`, so it dials `localhost:8080`. Check with `kubectl -n corral exec deploy/corral-web -- kubectl get ns default --request-timeout=5s`.
+3. The pod has no `KUBECONFIG`. The UI lists no VMs, `/api/doctor` says "no Kubernetes cluster answered", and `/api/cts` reports that the cluster is unreachable. kubectl skips its in-cluster config once Corral adds `--request-timeout`, so it dials `localhost:8080`. Check with `kubectl -n corral exec deploy/corral-web -- kubectl get ns default --request-timeout=5s`.
 
 **Diagnostic Steps:**
 1. Query the doctor diagnostic endpoint:
@@ -115,7 +115,7 @@ The `error` field in the `/readyz` response body distinguishes the two cases. `"
 **Mitigation:**
 1. Open the logged login URL, or create the `corral-web-tailscale-auth` Secret from an auth key file and restart: `kubectl -n corral rollout restart deploy/corral-web-tailscale`.
 2. Delete the stale offline `corral` device in the admin console (Machines). Then rename the new one to `corral`, or delete the state and join again: `kubectl -n corral delete secret corral-web-tailscale-state && kubectl -n corral rollout restart deploy/corral-web-tailscale`.
-3. Retry after a minute. The certificate is cached in the state Secret after that.
+3. Retry after a minute. After that, the state Secret keeps the certificate.
 
 ---
 
