@@ -192,6 +192,55 @@ The flags work on KubeVirt only. On other backends, Corral stops with an
 error and does not create the VM. You cannot use `--dedicated-cpus` with
 `--instancetype`, because the instancetype sets the CPU configuration.
 
+### Wait until a VM is ready
+
+Use `corral wait` in scripts. Do not write a loop around `corral ssh`. The
+command stops when all the conditions that you name are true:
+
+```bash
+corral wait vm --unit gdm.service --paint --timeout 15m
+```
+
+| Flag | The condition is true when |
+|---|---|
+| `--running` | The backend shows that the VM runs. Corral always does this check first |
+| `--ssh` | The guest runs a command over SSH as `--ssh-user` (default `root`) |
+| `--boot-complete` | `systemctl is-system-running` shows `running` or `degraded` |
+| `--unit NAME` | `systemctl is-active NAME` shows `active`. You can use this flag more than one time |
+| `--exec CMD` | The command `CMD` in the guest exits with 0. You can use this flag more than one time |
+| `--paint` | A screenshot of the console is not blank |
+| `--boot-id ID` | The guest has a boot ID that is not `ID` |
+
+Corral does the checks in the order of the table, one time each
+`--interval` (default `5s`). It writes each condition to stderr when the
+condition becomes true. `--boot-complete`, `--unit`, `--exec` and `--boot-id`
+use SSH, so they also add the SSH condition. The backend must support
+`corral screenshot` for `--paint`.
+
+Each SSH check also reads the boot ID of the guest. If the boot ID changes,
+the guest restarted, and Corral does the guest checks again. After
+`corral restart`, the old boot can still answer for some seconds. To prevent
+this, give the boot ID from before the restart:
+
+```bash
+old=$(corral --json wait vm --ssh | jq -r .boot_id)
+corral restart vm
+corral wait vm --boot-id "$old" --unit gdm.service --paint --timeout 15m
+```
+
+If a condition is not true before `--timeout` (default `10m`), the command
+exits with a value that is not 0. The message gives the condition and the
+last result of its check. With `--json`, the command writes one object to
+stdout:
+
+```json
+{"vm": "vm", "ready": true, "elapsed_seconds": 95.2, "boot_id": "b5daeddb-…",
+ "conditions": [{"name": "unit:gdm.service", "ok": true, "elapsed_seconds": 80.1, "observed": "active"}]}
+```
+
+`elapsed_seconds` of a condition is the time at which it became true. A
+condition that Corral did not check has no `observed` value.
+
 ### Clone a VM and use templates (KubeVirt)
 
 ```bash

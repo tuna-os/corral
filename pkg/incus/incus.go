@@ -413,6 +413,12 @@ func (c Client) SSH(name, command string) error {
 	return cmd.Run()
 }
 
+// Exec runs command in the instance through `incus exec` with no terminal
+// and returns its combined output; a nonzero exit is the error.
+func (c Client) Exec(name, command string) ([]byte, error) {
+	return c.runner().Run("incus", "exec", c.target(name), "--", "sh", "-c", command)
+}
+
 // Metrics reports an instance's live CPU and memory usage.
 //
 // Read from the REST API via `incus query` rather than parsed out of

@@ -226,6 +226,16 @@ type Sheller interface {
 	SSH(name string, opts SSHOptions) error
 }
 
+// Execer runs one command in the guest with no terminal and hands back its
+// combined output, for a caller that is a program rather than a person:
+// `corral wait` asking whether a unit is active. opts.Command is the command;
+// LocalForwards and Password do not apply, because nothing can answer a
+// prompt. A nonzero exit, of the command or of the client that carries it, is
+// the error. Not a Family, for the same reason as Sheller.
+type Execer interface {
+	Exec(name string, opts SSHOptions) ([]byte, error)
+}
+
 // ── the registry ──────────────────────────────────────────────────
 
 // Adapter is what For returns: a backend bound to one instance's context, which

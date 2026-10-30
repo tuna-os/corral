@@ -200,3 +200,17 @@ func TestPackageLifecycleWrappers(t *testing.T) {
 		t.Fatalf("Info(): %v", err)
 	}
 }
+
+// Exec runs the command through sh -c in the instance and returns its output.
+func TestExec_CapturesOutput(t *testing.T) {
+	f := fakeRemote(t, "[]")
+	f.AddPrefixResponse("incus exec", "active\n", nil)
+	out, err := NewClient("lab").Exec("vm1", "systemctl is-active gdm")
+	if err != nil || string(out) != "active\n" {
+		t.Fatalf("Exec = %q, %v", out, err)
+	}
+	want := "incus exec lab:vm1 -- sh -c systemctl is-active gdm"
+	if got := strings.Join(append([]string{f.LastCall().Name}, f.LastCall().Args...), " "); got != want {
+		t.Errorf("Exec ran %q, want %q", got, want)
+	}
+}

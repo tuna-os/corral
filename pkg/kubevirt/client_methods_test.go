@@ -351,6 +351,37 @@ func TestVirtctlSSHArgs_IdentityCommandPort(t *testing.T) {
 	}
 }
 
+// Exec is virtctl ssh with no terminal: the command, then batch options so a
+// missing key fails at once instead of waiting on a prompt, and the target last.
+func TestClient_Exec(t *testing.T) {
+	c, r := newFakeClient()
+	r.AddPrefixResponse("/fake/bin/virtctl ssh", "active\n", nil)
+	out, err := c.Exec("myvm", "root", "", "systemctl is-active gdm", 22)
+	if err != nil || string(out) != "active\n" {
+		t.Fatalf("Exec = %q, %v", out, err)
+	}
+	args := r.LastCall().Args
+	joined := strings.Join(args, " ")
+	for _, want := range []string{"--namespace=tailvm", "--username=root", "--command=systemctl is-active gdm",
+		"--local-ssh-opts=-o BatchMode=yes", "--local-ssh-opts=-o ServerAliveInterval=5"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("Exec args missing %q: %v", want, args)
+		}
+	}
+	if args[len(args)-1] != "vm/myvm" {
+		t.Errorf("expected vm/myvm as the final arg, got %v", args)
+	}
+}
+
+func TestClient_Exec_NonzeroExitIsTheError(t *testing.T) {
+	c, r := newFakeClient()
+	r.AddPrefixResponse("/fake/bin/virtctl ssh", "inactive\n", errSimulated)
+	out, err := c.Exec("myvm", "root", "", "systemctl is-active gdm", 22)
+	if err == nil || string(out) != "inactive\n" {
+		t.Fatalf("Exec = %q, %v; want the output and the error", out, err)
+	}
+}
+
 var errSimulated = errTestSentinel
 
 var errTestSentinel = &testError{"simulated"}
