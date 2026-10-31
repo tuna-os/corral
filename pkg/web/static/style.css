@@ -386,14 +386,25 @@ body.read-only .menu-mutate { display: none !important; }
 .card .num { font-size: 1.6rem; font-weight: 700; }
 .card .label { color: var(--muted); font-size: .8rem; }
 
-table { width: 100%; border-collapse: collapse; font-size: .88rem; }
-th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--border); }
-th { color: var(--muted); font-weight: 500; font-size: .78rem; text-transform: uppercase; letter-spacing: .04em; }
+table { width: 100%; border-collapse: collapse; font-size: var(--tbl-font-size, .88rem); }
+th, td { text-align: left; padding: var(--tbl-pad, 9px 12px); border-bottom: 1px solid var(--border); }
+th { color: var(--muted); font-weight: 500; font-size: var(--tbl-th-font-size, .78rem); text-transform: uppercase; letter-spacing: .04em; }
 tbody tr { cursor: pointer; }
 tbody tr:hover { background: var(--panel-2); }
 th.check, td.check { width: 1px; padding-right: 0; cursor: default; }
 td.check input, th.check input { cursor: pointer; vertical-align: middle; }
 .tree-vm-check { flex: none; margin: 0 2px 0 0; }
+
+[data-density="compact"] {
+  --tbl-pad: 5px 8px;
+  --tbl-font-size: .82rem;
+  --tbl-th-font-size: .74rem;
+}
+[data-density="roomy"] {
+  --tbl-pad: 13px 16px;
+  --tbl-font-size: .94rem;
+  --tbl-th-font-size: .82rem;
+}
 
 /* Reusable inventory grid: the table remains native for screen readers while
    its toolbar supplies keyboard equivalents for drag resizing/reordering. */

@@ -42,9 +42,11 @@ import { decodeSelection, encodeSelection, onRouteChange, readRoute, writeRoute 
 import { $, esc, toast } from './ui/dom.js';
 import { activeContextMenu, attachContextMenu } from './ui/menu.js';
 import { initInteractionTracking, interacting, onSettled } from './ui/interaction.js';
-import { cycleThemeMode, themeMode } from './ui/theme.js';
+import { cycleThemeMode, initThemePreferences, themeMode } from './ui/theme.js';
 import { onPageVisible, pageHidden } from './ui/visibility.js';
 import { initWorkspace, resetWorkspaceLayout, toggleTree } from './ui/workspace.js';
+
+initThemePreferences();
 
 // A console deep link is also the pop-out contract. It uses the canonical VM
 // key rather than only a name, so duplicate names on peers/contexts are safe.

@@ -13,6 +13,17 @@
   try {
     var m = localStorage.getItem('corral.theme');
     if (m === 'light' || m === 'dark') document.documentElement.setAttribute('data-theme', m);
+    var d = localStorage.getItem('corral.density');
+    if (d === 'compact' || d === 'roomy') document.documentElement.setAttribute('data-density', d);
+    var a = localStorage.getItem('corral.accent');
+    if (a) {
+      document.documentElement.style.setProperty('--accent', a);
+      var hex = a.replace('#', '');
+      if (hex.length === 6) {
+        var dim = function(c) { return Math.round(parseInt(c, 16) * 0.875).toString(16).padStart(2, '0'); };
+        document.documentElement.style.setProperty('--accent-2', '#' + dim(hex.slice(0, 2)) + dim(hex.slice(2, 4)) + dim(hex.slice(4, 6)));
+      }
+    }
   } catch (e) { /* private mode: fall back to the system preference */ }
 </script>
 <link rel="stylesheet" href="style.css">
