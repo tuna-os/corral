@@ -1,6 +1,7 @@
 package vmtest
 
 import (
+	"fmt"
 	"io"
 	"time"
 
@@ -99,7 +100,23 @@ type hostImage struct{}
 func (hostImage) Preflight(spec *Spec) ([]string, error) { return Preflight(spec) }
 func (hostImage) Keypair(dir string) (Keypair, error)    { return EnsureKeypair(dir, operatorKey()) }
 func (hostImage) Layer(spec *Spec, authorizedKeys, dir string, progress func(string)) (Layered, error) {
-	return BuildLayer(spec, authorizedKeys, dir, progress)
+	if !spec.needsLayer() {
+		if err := fetchBase(spec.Bootc, spec.Sudo, progress); err != nil {
+			return Layered{}, err
+		}
+	}
+	layer, err := BuildLayer(spec, authorizedKeys, dir, progress)
+	if err == nil {
+		if !layer.Derived {
+			layer.BaseDigest, layer.ImageID = inspectImage(layer.Image, spec.Sudo)
+		}
+		// Install the inspected immutable image, not a tag that can move.
+		if layer.ImageID == "" {
+			return layer, fmt.Errorf("tested image identity is unavailable")
+		}
+		layer.Image = layer.ImageID
+	}
+	return layer, err
 }
 func (hostImage) BuildAndImport(spec *Spec, layered Layered, keys Keypair, progress func(string)) error {
 	return buildAndImport(spec, layered, keys, progress)

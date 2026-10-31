@@ -73,7 +73,8 @@ Artifacts (in --artifacts, default ` + vmtest.DefaultArtifactDir + `):
   result.json      the whole run, machine-readable
   serial.log       the guest's console, from the firmware on
   frames/          one screenshot per --screenshot-interval while booting
-  ready.png        the screen when the guest became ready (failure.png if not)
+  capture-*/       an exclusive final capture directory (ready.png or failure.png)
+  publication/     allowlisted receipt; final.png only with screenshots.publishFinal
   timelapse.webm   the boot as a video (--video, needs ffmpeg)
   diagnostics/     failed units, bootc status, journal warnings
   layer/           the generated Containerfile and overlay, when one was built
@@ -81,7 +82,7 @@ Artifacts (in --artifacts, default ` + vmtest.DefaultArtifactDir + `):
 
 Exit codes: 0 passed, 1 bad spec, 2 this host cannot run it, 3 layer build
 failed, 4 disk build failed, 5 VM would not start, 6 never became ready,
-7 post-boot hook failed, 8 a check failed, 9 nothing was ever painted.`,
+7 post-boot hook failed, 8 a check failed, 9 required capture failed, 10 evidence could not be written.`,
 		Example: `  # A boot gate: does this image come up at all?
   corral vmtest --bootc quay.io/fedora/fedora-bootc:41 --rm
 

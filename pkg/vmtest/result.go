@@ -40,10 +40,15 @@ const (
 	// ExitBlank is a guest that booted and never painted anything, where the
 	// spec required paint.
 	ExitBlank = 9
+	// ExitEvidence is a receipt or publication failure.
+	ExitEvidence = 10
 )
 
 // Result is the whole run, written to result.json.
 type Result struct {
+	Evidence    EvidenceReceipt `json:"evidence"`
+	captureData []byte
+
 	Name    string  `json:"name"`
 	Image   string  `json:"image"`
 	Layer   Layered `json:"layer"`
@@ -134,6 +139,9 @@ func (r *Result) Note(format string, args ...any) {
 // fail marks the result failed with a code, and returns the error so a caller
 // can `return r.fail(...)` in one line.
 func (r *Result) fail(code int, err error) error {
+	if r.Status == "failed" {
+		return err
+	}
 	r.Status = "failed"
 	r.ExitCode = code
 	r.Failure = err.Error()
@@ -151,7 +159,9 @@ const ResultFile = "result.json"
 
 // Write saves the result. Called even when the run failed — especially then.
 func (r *Result) Write(dir string) (path string, retErr error) {
-	r.Finished = time.Now()
+	if r.Finished.IsZero() {
+		r.Finished = time.Now()
+	}
 	if r.Status == "" {
 		// A run that neither passed nor failed crashed somewhere that did not
 		// set a code. Say so rather than reporting a blank verdict.

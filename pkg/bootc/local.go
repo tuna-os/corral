@@ -229,11 +229,11 @@ func installError(out []byte, err error) error {
 var probeCommand = []string{"/corral-probe-does-not-execute"}
 
 // IsLocalRef reports whether a reference names an image that exists only in
-// local storage, which no registry can serve.
+// local storage, including an immutable local image ID.
 func IsLocalRef(image string) bool { return isLocalRef(image) }
 
 func isLocalRef(image string) bool {
-	return strings.HasPrefix(image, "localhost/") || strings.HasPrefix(image, "containers-storage:")
+	return strings.HasPrefix(image, "localhost/") || strings.HasPrefix(image, "containers-storage:") || strings.HasPrefix(image, "sha256:")
 }
 
 // imageExists reports whether podman already has the image.

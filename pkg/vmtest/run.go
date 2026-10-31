@@ -1,6 +1,7 @@
 package vmtest
 
 import (
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
@@ -35,7 +36,7 @@ func Run(spec *Spec, out io.Writer) (*Result, error) {
 }
 
 // Run executes spec with r's collaborators. See the package-level Run.
-func (r *Runner) Run(spec *Spec, out io.Writer) (*Result, error) {
+func (r *Runner) Run(spec *Spec, out io.Writer) (returned *Result, runErr error) {
 	if out == nil {
 		out = io.Discard
 	}
@@ -62,13 +63,33 @@ func (r *Runner) Run(spec *Spec, out io.Writer) (*Result, error) {
 		Started:   r.Clock.Now(),
 		Artifacts: artifacts,
 	}
+	result.Evidence = newReceipt(spec, "run-"+rand.Text(), result.Started)
 	// The artifacts are the point of the run, so they are written whatever
 	// happens — including a panic-free early return three lines from here.
 	defer func() {
+		result.Finished = r.Clock.Now()
+		result.Evidence.Finished = result.Finished
+		if result.Status == "" {
+			_ = result.fail(ExitEvidence, fmt.Errorf("run did not finalize"))
+		}
+		prepareEvidence(spec, result)
 		if path, err := result.Write(artifacts); err != nil {
+			if result.Status != "failed" {
+				runErr = result.fail(ExitEvidence, fmt.Errorf("writing result: %w", err))
+			}
 			_, _ = fmt.Fprintf(out, "warning: could not write the result file: %v\n", err)
 		} else {
 			progress("result: " + path)
+		}
+		if err := exportEvidence(artifacts, spec, result); err != nil {
+			result.Note("evidence export failed: %v", err)
+			if result.Status != "failed" {
+				runErr = result.fail(ExitEvidence, fmt.Errorf("evidence export failed: %w", err))
+			}
+			prepareEvidence(spec, result)
+			result.Evidence.PublishedCapture = false
+			// Best effort: the original failure already determines the gate.
+			_, _ = result.Write(artifacts)
 		}
 	}()
 
@@ -89,6 +110,9 @@ func (r *Runner) Run(spec *Spec, out io.Writer) (*Result, error) {
 
 	layered, err := r.Image.Layer(spec, keys.AuthorizedKeys(), filepath.Join(artifacts, "layer"), progress)
 	result.Layer = layered
+	result.Evidence.OriginalDigest = layered.BaseDigest
+	result.Evidence.TestedImageID = layered.ImageID
+	result.Evidence.Derived = layered.Derived
 	if err != nil {
 		return result, result.fail(ExitLayer, err)
 	}
@@ -100,6 +124,7 @@ func (r *Runner) Run(spec *Spec, out io.Writer) (*Result, error) {
 		}
 		return result, result.fail(code, err)
 	}
+	result.Evidence.Cleanup = "retained-on-failure"
 	r.Registry.Record(spec, out)
 
 	// Capture starts before the VM does, so the first frames show the firmware
@@ -111,6 +136,7 @@ func (r *Runner) Run(spec *Spec, out io.Writer) (*Result, error) {
 	}()
 
 	bootStarted := r.Clock.Now()
+	result.Evidence.BootID = result.Evidence.RunID + "/boot-1"
 	progress("starting " + spec.Name)
 	if err := r.VM.Start(spec.Name); err != nil {
 		return result, result.fail(ExitStart, fmt.Errorf("starting the VM: %w", err))
@@ -126,7 +152,7 @@ func (r *Runner) Run(spec *Spec, out io.Writer) (*Result, error) {
 	}
 	if readyErr != nil {
 		frames.stop()
-		result.FinalFrame = r.Evidence.CaptureFinal(spec, artifacts, "failure", result)
+		r.capture(spec, artifacts, "failure", result)
 		return result, result.fail(ExitNotReady, readyErr)
 	}
 	result.Ready = true
@@ -143,7 +169,7 @@ func (r *Runner) Run(spec *Spec, out io.Writer) (*Result, error) {
 	// is not worth the disk.
 	frames.stop()
 	result.Frames = frames.frames()
-	result.FinalFrame = r.Evidence.CaptureFinal(spec, artifacts, "ready", result)
+	r.capture(spec, artifacts, "ready", result)
 	if video, err := r.Evidence.AssembleVideo(spec, artifacts); err != nil {
 		result.Note("no timelapse: %v", err)
 	} else if video != "" {
@@ -177,10 +203,13 @@ func (r *Runner) Run(spec *Spec, out io.Writer) (*Result, error) {
 		result.Note("skipped %d checks: SSH never answered", len(spec.Checks))
 	}
 
+	result.Evidence.Cleanup = "kept"
 	result.Kept = spec.Keep
 	if !spec.Keep {
+		result.Evidence.Cleanup = "deleted"
 		progress("deleting " + spec.Name)
 		if err := r.VM.Delete(spec.Name); err != nil {
+			result.Evidence.Cleanup = "failed"
 			result.Note("could not delete the VM: %v", err)
 		}
 	}
@@ -214,10 +243,11 @@ func verdict(spec *Spec, result *Result, sshReachable bool) error {
 			return result.fail(ExitCheck, fmt.Errorf("check failed: %s", check.Command))
 		}
 	}
-	if spec.Screenshots.RequirePaint && result.FinalFrame != nil && result.FinalFrame.Blank() {
-		return result.fail(ExitBlank, fmt.Errorf(
-			"the guest booted but never painted anything (framebuffer deviation %.4f, at or under %.2f) — see %s",
-			result.FinalFrame.StdDev, qemu.BlankStdDev, result.FinalFrame.Path))
+	if len(result.Checks) != len(spec.Checks) {
+		return result.fail(ExitCheck, fmt.Errorf("required checks missing results"))
+	}
+	if spec.Screenshots.RequirePaint && result.Evidence.Paint.Outcome != "passed" {
+		return result.fail(ExitBlank, fmt.Errorf("required paint failed: %s", result.Evidence.Paint.Reason))
 	}
 	result.pass()
 	return nil

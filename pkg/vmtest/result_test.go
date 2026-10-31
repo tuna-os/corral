@@ -120,7 +120,7 @@ func TestExitCodesAreDistinct(t *testing.T) {
 	for name, code := range map[string]int{
 		"ok": ExitOK, "spec": ExitSpec, "host": ExitHost, "layer": ExitLayer,
 		"build": ExitBuild, "start": ExitStart, "not-ready": ExitNotReady,
-		"hook": ExitHook, "check": ExitCheck, "blank": ExitBlank,
+		"hook": ExitHook, "check": ExitCheck, "blank": ExitBlank, "evidence": ExitEvidence,
 	} {
 		if other, clash := seen[code]; clash {
 			t.Errorf("%s and %s share exit code %d", name, other, code)
