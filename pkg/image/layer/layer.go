@@ -236,14 +236,14 @@ func accountScript(config *LayerConfig, authorizedKey string) (string, error) {
 	b.WriteString(accountHelpers)
 
 	if key := strings.TrimSpace(authorizedKey); key != "" {
-		b.WriteString(fmt.Sprintf("corral_authorize root /root %s\n", shellQuote(key)))
+		b.WriteString(fmt.Sprintf("corral_authorize root /root %s\n", ShellQuote(key)))
 	}
 	if config.RootPassword != "" {
 		hash, err := hashPassword(config.RootPassword)
 		if err != nil {
 			return "", err
 		}
-		b.WriteString(fmt.Sprintf("corral_setpass root %s\n", shellQuote(hash)))
+		b.WriteString(fmt.Sprintf("corral_setpass root %s\n", ShellQuote(hash)))
 	}
 
 	for _, u := range config.Users {
@@ -252,13 +252,13 @@ func accountScript(config *LayerConfig, authorizedKey string) (string, error) {
 			shell = "/bin/bash"
 		}
 		b.WriteString(fmt.Sprintf("\ncorral_adduser %s %s %s\n",
-			shellQuote(u.Name), shellQuote(shell), shellQuote(strings.Join(u.Groups, ","))))
+			ShellQuote(u.Name), ShellQuote(shell), ShellQuote(strings.Join(u.Groups, ","))))
 		if u.Password != "" {
 			hash, err := hashPassword(u.Password)
 			if err != nil {
 				return "", err
 			}
-			b.WriteString(fmt.Sprintf("corral_setpass %s %s\n", shellQuote(u.Name), shellQuote(hash)))
+			b.WriteString(fmt.Sprintf("corral_setpass %s %s\n", ShellQuote(u.Name), ShellQuote(hash)))
 		}
 		keys := append([]string{}, u.SSHAuthorizedKeys...)
 		if key := strings.TrimSpace(authorizedKey); key != "" {
@@ -269,12 +269,12 @@ func accountScript(config *LayerConfig, authorizedKey string) (string, error) {
 				continue
 			}
 			b.WriteString(fmt.Sprintf("corral_authorize %s /var/home/%s %s\n",
-				shellQuote(u.Name), u.Name, shellQuote(strings.TrimSpace(key))))
+				ShellQuote(u.Name), u.Name, ShellQuote(strings.TrimSpace(key))))
 		}
 		if u.Sudo {
 			// corral_admin resolves the base image's own administrator group,
 			// which is why it happens in the guest and not in this string.
-			b.WriteString(fmt.Sprintf("corral_admin %s\n", shellQuote(u.Name)))
+			b.WriteString(fmt.Sprintf("corral_admin %s\n", ShellQuote(u.Name)))
 		}
 	}
 	return b.String(), nil
@@ -672,8 +672,8 @@ func cryptSalt() (string, error) {
 	return "$6$" + string(buf) + "$", nil
 }
 
-// shellQuote wraps a value in single quotes so a key, a hash or a name with
+// ShellQuote wraps a value in single quotes so a key, a hash or a name with
 // anything in it survives the shell.
-func shellQuote(value string) string {
+func ShellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
 }

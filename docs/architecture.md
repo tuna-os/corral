@@ -321,8 +321,8 @@ executable bit, and places it in the plugin dir.
 It has no dependency on `pkg/vmtest`, VM backends or command runners.
 `NewBuildContext` computes the overlay and scripts; `BuildContext.Write` writes
 them to disk. `BuiltinContainerfile` and `RemoraManifest` render the same
-context for the two layer engines. Callers validate account names and file
-paths before composition.
+context for the two layer engines. The caller must validate the names of
+accounts and the file paths before composition.
 
 `pkg/vmtest` translates its manifest users, files and provision modes into
 `LayerConfig`. It still chooses the engine, probes the base image, invokes
