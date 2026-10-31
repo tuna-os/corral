@@ -81,14 +81,39 @@ func (r *Runner) Run(spec *Spec, out io.Writer) (*Result, error) {
 		progress(note)
 	}
 
-	keys, err := r.Image.Keypair(filepath.Join(artifacts, "ssh"))
+	keyDir, err := os.MkdirTemp("", "corral-vmtest-ssh-")
+	if err != nil {
+		return result, result.fail(ExitHost, fmt.Errorf("creating temporary SSH key directory: %w", err))
+	}
+	keepKeyDir := false
+	defer func() {
+		if keepKeyDir {
+			return
+		}
+		if err := os.RemoveAll(keyDir); err != nil {
+			result.Note("could not remove temporary SSH identity: %v", err)
+		}
+	}()
+	keys, err := r.Image.Keypair(keyDir)
 	if err != nil {
 		return result, result.fail(ExitHost, err)
 	}
 	result.SSH.IdentityFile = keys.PrivatePath
 
-	layered, err := r.Image.Layer(spec, keys.AuthorizedKeys(), filepath.Join(artifacts, "layer"), progress)
+	layerDir, err := os.MkdirTemp("", "corral-vmtest-layer-")
+	if err != nil {
+		return result, result.fail(ExitHost, fmt.Errorf("creating temporary layer context: %w", err))
+	}
+	defer func() {
+		if err := os.RemoveAll(layerDir); err != nil {
+			result.Note("could not remove temporary layer context: %v", err)
+		}
+	}()
+	layered, err := r.Image.Layer(spec, keys.AuthorizedKeys(), layerDir, progress)
 	result.Layer = layered
+	// The generated context can contain account hashes and user-supplied files.
+	// Keep it out of the result and remove it after the build.
+	result.Layer.ContextDir = ""
 	if err != nil {
 		return result, result.fail(ExitLayer, err)
 	}
@@ -132,10 +157,8 @@ func (r *Runner) Run(spec *Spec, out io.Writer) (*Result, error) {
 	result.Ready = true
 	result.BootSeconds = r.Clock.Now().Sub(bootStarted).Seconds()
 	progress(fmt.Sprintf("%s is ready after %.0fs (%s)", spec.Name, result.BootSeconds, result.ReadyBy))
-
 	if endpoint, err := r.VM.SSHEndpoint(spec.Name); err == nil {
 		result.SSH.User, result.SSH.Host, result.SSH.Port = spec.SSHUser, endpoint.Host, endpoint.Port
-		result.SSH.Password = spec.passwordFor(spec.SSHUser)
 		result.SSH.Command = fmt.Sprintf("ssh -i %s -p %d %s@%s", keys.PrivatePath, endpoint.Port, spec.SSHUser, endpoint.Host)
 	}
 
@@ -178,6 +201,7 @@ func (r *Runner) Run(spec *Spec, out io.Writer) (*Result, error) {
 	}
 
 	result.Kept = spec.Keep
+	keepKeyDir = spec.Keep
 	if !spec.Keep {
 		progress("deleting " + spec.Name)
 		if err := r.VM.Delete(spec.Name); err != nil {
@@ -520,19 +544,6 @@ func copySerialLog(name, artifacts string) (string, error) {
 		return "", err
 	}
 	return path, nil
-}
-
-// passwordFor returns the password the spec set for a user, if any.
-func (s *Spec) passwordFor(user string) string {
-	if user == "root" {
-		return s.RootPassword
-	}
-	for _, u := range s.Users {
-		if u.Name == user {
-			return u.Password
-		}
-	}
-	return ""
 }
 
 // operatorKey returns the caller's own public key, so the VM the run leaves
