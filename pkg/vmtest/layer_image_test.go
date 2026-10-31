@@ -28,6 +28,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/tuna-os/corral/pkg/image/layer"
 )
 
 // layerEngine returns the container engine to build with, or skips.
@@ -82,16 +84,16 @@ func TestE2ELayer_BuildsInTheRealImage(t *testing.T) {
 	spec.WithDefaults()
 
 	dir := t.TempDir()
-	ctx, err := newBuildContext(spec, image, "ssh-ed25519 AAAAprobekey corral-vmtest")
+	ctx, err := layer.NewBuildContext(spec.layerConfig(), image, "ssh-ed25519 AAAAprobekey corral-vmtest")
 	if err != nil {
-		t.Fatalf("newBuildContext: %v", err)
+		t.Fatalf("NewBuildContext: %v", err)
 	}
-	if err := ctx.write(dir); err != nil {
+	if err := ctx.Write(dir); err != nil {
 		t.Fatalf("writing the build context: %v", err)
 	}
 	// No packages: a package install is dnf's business, not this test's, and it
 	// would put a network fetch between the code and the answer.
-	containerfile := builtinContainerfile(ctx, packageManager{})
+	containerfile := layer.BuiltinContainerfile(ctx, packageManager{})
 	if err := os.WriteFile(filepath.Join(dir, "Containerfile"), []byte(containerfile), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -151,11 +153,11 @@ func TestE2ELayer_HookRunsInTheImage(t *testing.T) {
 	spec.WithDefaults()
 
 	dir := t.TempDir()
-	ctx, err := newBuildContext(spec, image, "")
+	ctx, err := layer.NewBuildContext(spec.layerConfig(), image, "")
 	if err != nil {
-		t.Fatalf("newBuildContext: %v", err)
+		t.Fatalf("NewBuildContext: %v", err)
 	}
-	if err := ctx.write(dir); err != nil {
+	if err := ctx.Write(dir); err != nil {
 		t.Fatal(err)
 	}
 	hook := filepath.Join(dir, "system_files", "usr", "libexec", "corral-postboot")
@@ -189,11 +191,11 @@ func TestE2ELayer_HookReportsAFailure(t *testing.T) {
 	spec.WithDefaults()
 
 	dir := t.TempDir()
-	ctx, err := newBuildContext(spec, image, "")
+	ctx, err := layer.NewBuildContext(spec.layerConfig(), image, "")
 	if err != nil {
-		t.Fatalf("newBuildContext: %v", err)
+		t.Fatalf("NewBuildContext: %v", err)
 	}
-	if err := ctx.write(dir); err != nil {
+	if err := ctx.Write(dir); err != nil {
 		t.Fatal(err)
 	}
 	hook := filepath.Join(dir, "system_files", "usr", "libexec", "corral-postboot")
@@ -225,11 +227,11 @@ func TestE2ELayer_HookReportsWhenKilled(t *testing.T) {
 	spec.WithDefaults()
 
 	dir := t.TempDir()
-	ctx, err := newBuildContext(spec, image, "")
+	ctx, err := layer.NewBuildContext(spec.layerConfig(), image, "")
 	if err != nil {
-		t.Fatalf("newBuildContext: %v", err)
+		t.Fatalf("NewBuildContext: %v", err)
 	}
-	if err := ctx.write(dir); err != nil {
+	if err := ctx.Write(dir); err != nil {
 		t.Fatal(err)
 	}
 	hook := filepath.Join(dir, "system_files", "usr", "libexec", "corral-postboot")

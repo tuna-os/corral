@@ -1,6 +1,10 @@
 package vmtest
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/tuna-os/corral/pkg/image/layer"
+)
 
 // guestChecks translates the optional suite into ordinary SSH checks. Each
 // scenario stands alone so result.json retains its output even if another fails.
@@ -25,7 +29,7 @@ printf '%s\n' "$units" | grep -F systemd-journald.service`,
 . /etc/os-release
 printf 'ID=%%s VERSION_ID=%%s NAME=%%s PRETTY_NAME=%%s\n' "${ID-}" "${VERSION_ID-}" "${NAME-}" "${PRETTY_NAME-}"
 [ "${ID-}" = %s ] || { echo 'unexpected os-release ID' >&2; exit 1; }
-[ -n "${NAME-}" ] && [ -n "${PRETTY_NAME-}" ] || { echo 'os-release NAME or PRETTY_NAME missing' >&2; exit 1; }%s`, shellQuote(g.ID), versionCheck(g.VersionID)),
+[ -n "${NAME-}" ] && [ -n "${PRETTY_NAME-}" ] || { echo 'os-release NAME or PRETTY_NAME missing' >&2; exit 1; }%s`, layer.ShellQuote(g.ID), versionCheck(g.VersionID)),
 	}
 	if d := g.Desktop; d != nil {
 		checks = append(checks,
@@ -35,10 +39,10 @@ target=$(systemctl get-default) || exit $?
 printf 'default target: %s\n' "$target"
 [ "$target" = graphical.target ] || { echo 'expected graphical.target' >&2; exit 1; }`,
 			fmt.Sprintf(`# Scenario: the desktop session command is installed
-command -v %s || { echo 'required desktop command missing' >&2; exit 1; }`, shellQuote(d.SessionCommand)),
+command -v %s || { echo 'required desktop command missing' >&2; exit 1; }`, layer.ShellQuote(d.SessionCommand)),
 			fmt.Sprintf(`# Scenario: the display manager is active
 command -v systemctl >/dev/null || { echo 'required tool missing: systemctl' >&2; exit 1; }
-systemctl is-active %s`, shellQuote(d.DisplayManagerUnit)),
+systemctl is-active %s`, layer.ShellQuote(d.DisplayManagerUnit)),
 		)
 	}
 	return checks
@@ -48,5 +52,5 @@ func versionCheck(version string) string {
 	if version == "" {
 		return ""
 	}
-	return fmt.Sprintf("\n[ \"${VERSION_ID-}\" = %s ] || { echo 'unexpected os-release VERSION_ID' >&2; exit 1; }", shellQuote(version))
+	return fmt.Sprintf("\n[ \"${VERSION_ID-}\" = %s ] || { echo 'unexpected os-release VERSION_ID' >&2; exit 1; }", layer.ShellQuote(version))
 }
