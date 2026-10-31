@@ -316,8 +316,8 @@ func TestShellQuote(t *testing.T) {
 		"a b":      "'a b'",
 		"$(rm -r)": "'$(rm -r)'",
 	} {
-		if got := shellQuote(in); got != want {
-			t.Errorf("shellQuote(%q) = %s, want %s", in, got, want)
+		if got := ShellQuote(in); got != want {
+			t.Errorf("ShellQuote(%q) = %s, want %s", in, got, want)
 		}
 	}
 }
@@ -404,7 +404,7 @@ func TestAccountScript_SurvivesADanglingHomeSymlink(t *testing.T) {
 	}
 
 	script := "#!/usr/bin/env bash\nset -euo pipefail\n" + accountHelpers +
-		"corral_authorize root " + shellQuote(home) + " 'ssh-ed25519 AAAAkey corral'\n"
+		"corral_authorize root " + ShellQuote(home) + " 'ssh-ed25519 AAAAkey corral'\n"
 	path := filepath.Join(root, "accounts.sh")
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
