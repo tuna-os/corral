@@ -145,11 +145,10 @@ jobs:
 
   publish-image:
     # corral-web image: the web UI served on the cluster (deploy/corral-web.yaml)
-    # Not on pull requests: there it built both arches and pushed nothing,
-    # which web-image-smoke (same Containerfile, amd64, plus the probes) and
-    # its arm64 cross-build step already cover — one runner per PR push saved.
+    # Only main may publish the rolling image. Manual dispatches on catalog
+    # branches run verification without replacing production.
     needs: test
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     concurrency:
       group: ${{ github.workflow }}-publish-image-${{ github.ref }}
       cancel-in-progress: false

@@ -242,9 +242,13 @@ For a per-user unit to run after you log out, enable linger:
 
 Development tasks run through [`just`](https://github.com/casey/just), and a
 bare `just` lists them. They include `build`, `test`, `vet`, `ci` (the
-pre-push gate), and `regen-catalog`. That last one refreshes the Universal
-Blue / Bluefin / TunaOS bootc catalog from ghcr. It drops any image with no
-rebuild in ~60 days.
+pre-push gate), and `regen-catalog`. It checks bootc images on public GHCR
+and candidate installer ISOs. New entries and aliases need an upstream rebuild
+within 60 days. The script keeps stale or unavailable entries for manual review.
+
+Each week, the catalog-refresh workflow opens a PR and dispatches CI. Repository
+Actions settings must allow GitHub Actions to create pull requests. Renovate
+also tracks versions of the selected containerdisks.
 
 ## Try it in 30 seconds — no cluster needed
 

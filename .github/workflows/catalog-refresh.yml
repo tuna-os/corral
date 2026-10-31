@@ -1,0 +1,100 @@
+name: Catalog refresh
+
+on:
+  pull_request:
+    paths:
+      - scripts/regen-catalog.py
+      - scripts/test_regen_catalog.py
+      - renovate.json
+      - .github/workflows/catalog-refresh.yml
+  schedule:
+    - cron: "37 6 * * 2"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: catalog-refresh-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  generator-tests:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Test catalog generator
+        run: python3 -m unittest discover -s scripts -p test_regen_catalog.py
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+      - name: Validate Renovate configuration
+        env:
+          RENOVATE_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx --yes --package renovate@44.190.0 renovate-config-validator --strict
+
+  refresh:
+    needs: generator-tests
+    if: github.event_name != 'pull_request' && github.repository == 'tuna-os/corral' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-26.04
+    permissions:
+      actions: write
+      contents: write
+      pull-requests: write
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+
+      - name: Refresh and check generated catalog
+        run: |
+          python3 scripts/regen-catalog.py
+          gofmt -w pkg/catalog/catalog_generated.go
+          go build ./...
+          go test ./pkg/catalog/...
+
+      - name: Open or update a reviewable PR
+        id: pr
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "chore: refresh generated image catalog"
+          title: "chore: refresh generated image catalog"
+          body: |
+            Refreshes the GHCR and installer ISO catalog from upstream feeds.
+            Upstream OCI digests and ISO timestamps make changes to mutable
+            references reviewable. Existing entries are retained even when stale
+            or absent; removals require separate manual review. Check provenance,
+            aliases, timestamps and any new entries before merging.
+
+            The refresh job builds and tests the generated catalog before
+            opening this PR, then explicitly dispatches CI on the PR branch
+            because GITHUB_TOKEN does not trigger pull_request workflows.
+            Review the changes and required checks before merging.
+          branch: automation/catalog-refresh
+          delete-branch: true
+          add-paths: pkg/catalog/catalog_generated.go
+
+      # workflow_dispatch is allowed to trigger from GITHUB_TOKEN; ordinary
+      # pull_request/push events from that token do not start other workflows.
+      # CI restricts its publish jobs to main, so this branch run cannot publish.
+      - name: Run CI on the refresh branch
+        if: steps.pr.outputs.pull-request-number != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref automation/catalog-refresh
+
+      # The repository/organization must allow GitHub Actions to create PRs.
+      # Do not silently skip a failed PR: the refresh must be actionable.
+      - name: Explain refresh failure
+        if: failure()
+        run: |
+          echo '::error::Catalog refresh, PR creation or CI dispatch failed. Check the preceding error; PR creation requires repository/organization Actions policy "Allow GitHub Actions to create and approve pull requests" and workflow contents/pull-requests write permission; CI dispatch requires actions:write.'

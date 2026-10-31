@@ -18,7 +18,9 @@ import (
 // matter for sequencing and cleanup, so Runner.Run's invariants are tested
 // with no VM, no bootc and no registry.
 type fakeHost struct {
-	calls []string
+	calls    []string
+	keyDir   string
+	layerDir string
 
 	preflightErr error
 	keyErr       error
@@ -44,13 +46,15 @@ func (f *fakeHost) Preflight(*Spec) ([]string, error) {
 	f.call("preflight")
 	return []string{"a note"}, f.preflightErr
 }
-func (f *fakeHost) Keypair(string) (Keypair, error) {
+func (f *fakeHost) Keypair(dir string) (Keypair, error) {
 	f.call("keypair")
+	f.keyDir = dir
 	return Keypair{PrivatePath: "/keys/id", PublicKey: "ssh-ed25519 AAAA"}, f.keyErr
 }
-func (f *fakeHost) Layer(spec *Spec, _, _ string, _ func(string)) (Layered, error) {
+func (f *fakeHost) Layer(spec *Spec, _, dir string, _ func(string)) (Layered, error) {
 	f.call("layer")
-	return Layered{Image: spec.Bootc, Base: spec.Bootc, Derived: f.derived}, f.layerErr
+	f.layerDir = dir
+	return Layered{Image: spec.Bootc, Base: spec.Bootc, Derived: f.derived, ContextDir: dir}, f.layerErr
 }
 func (f *fakeHost) BuildAndImport(*Spec, Layered, Keypair, func(string)) error {
 	f.call("import")
@@ -259,6 +263,35 @@ func TestRunner_Run(t *testing.T) {
 			// The result file is written on every path.
 			if _, statErr := os.Stat(filepath.Join(spec.Artifacts, ResultFile)); statErr != nil {
 				t.Errorf("no result file: %v", statErr)
+			}
+			data, readErr := os.ReadFile(filepath.Join(spec.Artifacts, ResultFile))
+			if readErr != nil {
+				t.Errorf("reading result file: %v", readErr)
+			} else if strings.Contains(string(data), `"contextDir"`) {
+				t.Errorf("result file exposes the private layer context")
+			}
+			if host.keyDir != "" {
+				rel, relErr := filepath.Rel(spec.Artifacts, host.keyDir)
+				if relErr != nil || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))) {
+					t.Errorf("SSH key directory %q is inside artifacts %q", host.keyDir, spec.Artifacts)
+				}
+				if tc.keep {
+					if _, statErr := os.Stat(host.keyDir); statErr != nil {
+						t.Errorf("kept SSH key directory %q: %v", host.keyDir, statErr)
+					}
+					t.Cleanup(func() { _ = os.RemoveAll(host.keyDir) })
+				} else if _, statErr := os.Stat(host.keyDir); !os.IsNotExist(statErr) {
+					t.Errorf("temporary SSH key directory %q still exists: %v", host.keyDir, statErr)
+				}
+			}
+			if host.layerDir != "" {
+				rel, relErr := filepath.Rel(spec.Artifacts, host.layerDir)
+				if relErr != nil || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))) {
+					t.Errorf("layer context %q is inside artifacts %q", host.layerDir, spec.Artifacts)
+				}
+				if _, statErr := os.Stat(host.layerDir); !os.IsNotExist(statErr) {
+					t.Errorf("temporary layer context %q still exists: %v", host.layerDir, statErr)
+				}
 			}
 		})
 	}

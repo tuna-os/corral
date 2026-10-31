@@ -102,9 +102,6 @@ type SSHAccess struct {
 	IdentityFile string `json:"identityFile"`
 	// Command is a ready-to-paste ssh invocation.
 	Command string `json:"command"`
-	// Password is the account password the spec asked for, repeated here
-	// because a console login needs it and the spec may have generated it.
-	Password string `json:"password,omitempty"`
 }
 
 // HookResult is what the post-boot hook reported.
@@ -177,8 +174,7 @@ func (r *Result) Write(dir string) (path string, retErr error) {
 			retErr = err
 		}
 	}()
-	// OpenFile does not change the mode of an existing result. Correct it before
-	// writing because the JSON may contain the password for a still-running VM.
+	// Keep the result private because it contains host-local identity paths.
 	if err := f.Chmod(0o600); err != nil {
 		return "", err
 	}

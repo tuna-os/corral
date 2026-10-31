@@ -745,8 +745,11 @@ it is what a CI pipeline should call:
 corral vmtest gate --bootc ghcr.io/tuna-os/yellowfin:latest \
   --user tester --password hunter2 --sudo-user \
   --check 'systemctl --failed --no-legend'
-ssh -i corral-vmtest-out/ssh/id_ed25519 -p 2242 tester@127.0.0.1
 ```
+
+With the default `--keep` behavior, use the SSH command printed in the
+summary. Its private key stays outside the artifact directory, so the uploaded
+evidence does not expose it.
 
 The run leaves the VM up, so the next step tests a real machine over SSH.
 It also writes the guest's serial console, a screenshot of every stage of the
