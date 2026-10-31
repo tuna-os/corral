@@ -33,7 +33,7 @@ jobs:
           go-version-file: go.mod
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 24
+          node-version: 26
 
       # Before the Playwright step: its `npm init` writes a package.json at the
       # root, and that would make Node load the client's .js files as CommonJS.
