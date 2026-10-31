@@ -8,8 +8,21 @@ import (
 	"strings"
 
 	"github.com/tuna-os/corral/pkg/bootc"
+	"github.com/tuna-os/corral/pkg/image/layer"
 	"github.com/tuna-os/corral/pkg/shell"
 )
+
+type packageManager = layer.PackageManager
+
+// packageManagers are probed in this order. dnf before yum, apt before apk:
+// only the first match is used, so a base with both is treated as the newer.
+var packageManagers = []packageManager{
+	{Name: "dnf", Probe: "/usr/bin/dnf", Install: "dnf -y install %s && dnf clean all"},
+	{Name: "zypper", Probe: "/usr/bin/zypper", Install: "zypper --non-interactive install -y %s && zypper clean -a"},
+	{Name: "apt", Probe: "/usr/bin/apt-get", Install: "apt-get update && apt-get install -y --no-install-recommends %s && rm -rf /var/lib/apt/lists/*"},
+	{Name: "pacman", Probe: "/usr/bin/pacman", Install: "pacman -Sy --noconfirm %s && pacman -Scc --noconfirm"},
+	{Name: "apk", Probe: "/sbin/apk", Install: "apk add --no-cache %s"},
+}
 
 // Building the derived image: podman, and remora when it is installed.
 
@@ -73,11 +86,11 @@ func BuildLayer(spec *Spec, authorizedKey, contextDir string, progress func(stri
 		return result, nil
 	}
 
-	ctx, err := newBuildContext(spec, spec.Bootc, authorizedKey)
+	ctx, err := layer.NewBuildContext(spec.layerConfig(), spec.Bootc, authorizedKey)
 	if err != nil {
 		return result, err
 	}
-	if err := ctx.write(contextDir); err != nil {
+	if err := ctx.Write(contextDir); err != nil {
 		return result, fmt.Errorf("writing the build context: %w", err)
 	}
 	result.ContextDir = contextDir
@@ -111,7 +124,7 @@ func BuildLayer(spec *Spec, authorizedKey, contextDir string, progress func(stri
 		}
 	}
 	if engine == EngineBuiltin {
-		containerfile := builtinContainerfile(ctx, pm)
+		containerfile := layer.BuiltinContainerfile(ctx, pm)
 		if err := os.WriteFile(filepath.Join(contextDir, "Containerfile"), []byte(containerfile), 0o644); err != nil {
 			return result, err
 		}
@@ -136,8 +149,8 @@ func BuildLayer(spec *Spec, authorizedKey, contextDir string, progress func(stri
 // writes, so the context needs nothing else. What remora adds is package
 // managers (portage among them), per-manager cache mounts, and a resolved
 // lockfile that makes an unchanged rebuild free.
-func generateWithRemora(ctx *buildContext, pm packageManager, contextDir string, progress func(string)) error {
-	manifest, err := remoraManifest(ctx)
+func generateWithRemora(ctx *layer.BuildContext, pm packageManager, contextDir string, progress func(string)) error {
+	manifest, err := layer.RemoraManifest(ctx)
 	if err != nil {
 		return err
 	}

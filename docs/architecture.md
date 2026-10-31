@@ -35,6 +35,8 @@ cmd/              Cobra CLI (root, subcommands, TUI)
 └── corral-bootc/   plugin binary (built with -tags bootc, separate from core)
 
 pkg/              Library code (importable)
+├── image/layer/  Spec-free derived-image context composition (accounts, files, scripts, Containerfile/remora rendering)
+├── vmtest/       VM test manifest, image builds and local QEMU test orchestration
 ├── catalog/      curated OS image catalog (containerdisks)
 ├── config/       ~/.config/tailvm/config.yaml reader (Tailscale auth key)
 ├── cronops/      shared CronJob/RBAC manifest builders for scheduled-op plugins (backup, snapsched, schedule)
@@ -312,3 +314,17 @@ The marketplace is the `marketplace/index.json` file in the repo, fetched
 from GitHub raw at runtime. Each entry has a name, description, version, and
 platform-specific download URLs. Installation downloads the binary, sets the
 executable bit, and places it in the plugin dir.
+
+## VM test layer composition
+
+`pkg/image/layer` composes a derived bootc image from its own `LayerConfig`.
+It has no dependency on `pkg/vmtest`, VM backends or command runners.
+`NewBuildContext` computes the overlay and scripts; `BuildContext.Write` writes
+them to disk. `BuiltinContainerfile` and `RemoraManifest` render the same
+context for the two layer engines. Callers validate account names and file
+paths before composition.
+
+`pkg/vmtest` translates its manifest users, files and provision modes into
+`LayerConfig`. It still chooses the engine, probes the base image, invokes
+podman/remora and orchestrates the VM. Guest hook markers and paths remain
+available through the existing vmtest constants.
