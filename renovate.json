@@ -3,5 +3,31 @@
   "extends": [
     "local>tuna-os/.github",
     "helpers:pinGitHubActionDigests"
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Track curated default containerdisk release tags",
+      "managerFilePatterns": ["/^pkg\\/catalog\\/catalog\\.go$/"],
+      "matchStrings": [
+        "// renovate: datasource=(?<datasource>docker) depName=(?<depName>quay\\.io/containerdisks/[a-z0-9-]+)\\s+[A-Za-z][A-Za-z0-9]*\\s*=\\s*\"(?<currentValue>[0-9]+(?:\\.[0-9]+)?)\""
+      ],
+      "versioningTemplate": "regex:^(?<major>\\d+)(?:\\.(?<minor>\\d+))?$"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "Catalog changes require review; tags are not digests",
+      "matchManagers": ["custom.regex"],
+      "matchPackageNames": ["quay.io/containerdisks/**"],
+      "automerge": false,
+      "pinDigests": false
+    },
+    {
+      "description": "Ubuntu's default is an even-year April LTS release",
+      "matchManagers": ["custom.regex"],
+      "matchPackageNames": ["quay.io/containerdisks/ubuntu"],
+      "allowedVersions": "/^[0-9]*[02468]\\.04$/"
+    }
   ]
 }

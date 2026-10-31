@@ -126,6 +126,38 @@ func TestCatalog_OfficialSources(t *testing.T) {
 	}
 }
 
+func TestStaticCatalogTrackedVersions(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		version string
+	}{
+		{"fedora", fedoraVersion},
+		{"ubuntu", ubuntuVersion},
+		{"debian", debianVersion},
+		{"almalinux", almaLinuxVersion},
+		{"opensuse-leap", openSUSELeapVersion},
+	} {
+		img := Find(tc.name)
+		if img == nil {
+			t.Errorf("Find(%q) returned nil", tc.name)
+			continue
+		}
+		if !strings.HasSuffix(img.ContainerDisk, ":"+tc.version) || !strings.Contains(img.Description, tc.version) {
+			t.Errorf("%s: description %q and containerdisk %q must use version %q", tc.name, img.Description, img.ContainerDisk, tc.version)
+		}
+	}
+}
+
+func TestRockyUsesOfficialCloudImage(t *testing.T) {
+	img := Find("rocky")
+	if img == nil {
+		t.Fatal("Find(rocky) returned nil")
+	}
+	if img.Kind() != "import" || img.DefaultUser != "rocky" || !strings.HasPrefix(img.URL, "https://download.rockylinux.org/") {
+		t.Errorf("rocky must use the official cloud image and its rocky user: %+v", img)
+	}
+}
+
 func TestBootcCatalog(t *testing.T) {
 	if len(BootcImages) == 0 {
 		t.Fatal("BootcImages catalog is empty")
