@@ -47,6 +47,12 @@ func (r *Runner) Run(spec *Spec, out io.Writer) (*Result, error) {
 		return result, result.fail(ExitSpec, err)
 	}
 
+	// Keep generated scenarios local to this run: reusing a Spec must not
+	// append them again or modify the caller's checks.
+	runSpec := *spec
+	runSpec.Checks = append(append([]string(nil), spec.Checks...), guestChecks(spec.GuestAssertions)...)
+	spec = &runSpec
+
 	artifacts, err := filepath.Abs(spec.Artifacts)
 	if err != nil {
 		return nil, err

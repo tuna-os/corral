@@ -231,6 +231,65 @@ A flag beats the file, and only when you pass it. An unknown field in the file
 is an error, not a warning: a misspelled `packages:` that installs nothing
 wastes the whole run.
 
+### Guest behavior assertions
+
+The guest suite is optional. It adapts the boot, identity and graphical scenarios from
+[Frostyard's smoke features](https://github.com/frostyard/testsuite/tree/4cd5e6096b4daca53c24d0eb3523013e07521d16/tests/smoke/features).
+It uses the same spec and SSH `checks:` machinery, not a BDD runner or a
+container test. For a headless image, omit `desktop`:
+
+```yaml
+bootc: quay.io/fedora/fedora-bootc:41
+guestAssertions:
+  id: fedora              # exact /etc/os-release ID
+  versionId: "41"         # optional exact VERSION_ID
+```
+
+For a desktop image, specify the installed session executable and the
+display-manager unit that systemd must show as active (names differ by distribution):
+
+```yaml
+bootc: ghcr.io/tuna-os/yellowfin:gnome-testing
+guestAssertions:
+  id: fedora              # replace with the image's actual ID
+  desktop:
+    sessionCommand: gnome-shell
+    displayManagerUnit: gdm.service
+screenshots:
+  requirePaint: true
+```
+
+The suite checks the system bus, journal, systemd service inventory and
+os-release identity and human-readable names. A desktop check also needs a
+graphical default target, the specified executable and an active manager.
+Missing tools and failed scenarios fail the run; their commands and
+output are in `result.json` alongside the serial log and other artifacts.
+Other `checks:` still run. A headless configuration makes no claim about the
+absence of a desktop.
+
+Add image-specific checks (including any failed-unit
+allowlist or provenance requirements) separately; the suite does not assume
+Frostyard's distribution or packages. A painted frame is useful evidence but
+not proof of a successful user login.
+
+These checks run only after the QEMU guest reports ready and SSH answers. A
+container-only layer test is not evidence that the VM booted. For real-boot
+regression coverage on a prepared KVM host, configure both images and run:
+
+```bash
+export CORRAL_VMTEST_HEADLESS_IMAGE=quay.io/fedora/fedora-bootc:41
+export CORRAL_VMTEST_HEADLESS_ID=fedora CORRAL_VMTEST_HEADLESS_VERSION=41
+export CORRAL_VMTEST_DESKTOP_IMAGE=your-desktop-bootc-image
+export CORRAL_VMTEST_DESKTOP_ID=your-os-id
+export CORRAL_VMTEST_DESKTOP_COMMAND=gnome-shell CORRAL_VMTEST_DESKTOP_UNIT=gdm.service
+sudo -E go test -tags e2evmtest -timeout 90m -count=1 -v ./pkg/vmtest/ -run 'TestE2E_GuestAssertion'
+```
+
+This also boots the headless image with a deliberately incorrect identity and
+asserts an `ExitCheck` failure with check output, serial log and result file.
+A test skips a case when you do not configure its image or when the host does not
+have a VM prerequisite. Read the test output: a skipped case is not boot evidence.
+
 ### GitHub Actions
 
 ```yaml

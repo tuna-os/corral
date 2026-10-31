@@ -118,6 +118,9 @@ type Spec struct {
 	// zero. They are the assertions: "is the desktop up", "did any unit fail".
 	Checks []string `yaml:"checks"`
 
+	// GuestAssertions enables the optional, VM-only boot and identity suite.
+	GuestAssertions *GuestAssertions `yaml:"guestAssertions"`
+
 	// Screenshots controls framebuffer capture.
 	Screenshots Screenshots `yaml:"screenshots"`
 
@@ -168,6 +171,20 @@ type Provision struct {
 // ImageMode is the Provision mode that runs at build time rather than in the
 // booted guest. It is corral's own: Lima has no build step to name.
 const ImageMode = "image"
+
+// GuestAssertions parameterizes the guest suite without a separate test manifest.
+// Desktop is nil for a headless image; otherwise its checks are required.
+type GuestAssertions struct {
+	ID        string             `yaml:"id"`
+	VersionID string             `yaml:"versionId"`
+	Desktop   *DesktopAssertions `yaml:"desktop"`
+}
+
+// DesktopAssertions describes the desktop binaries and service to check.
+type DesktopAssertions struct {
+	SessionCommand     string `yaml:"sessionCommand"`
+	DisplayManagerUnit string `yaml:"displayManagerUnit"`
+}
 
 // Screenshots controls framebuffer capture during the run.
 type Screenshots struct {
@@ -322,6 +339,19 @@ func (s *Spec) Validate() error {
 	for i, f := range s.Files {
 		if !strings.HasPrefix(f.Path, "/") {
 			problems = append(problems, fmt.Sprintf("files[%d] path %q is not absolute", i, f.Path))
+		}
+	}
+	if g := s.GuestAssertions; g != nil {
+		if strings.TrimSpace(g.ID) == "" {
+			problems = append(problems, "guestAssertions.id is required")
+		}
+		if g.Desktop != nil {
+			if strings.TrimSpace(g.Desktop.SessionCommand) == "" || strings.ContainsAny(g.Desktop.SessionCommand, " /\t\r\n") || strings.HasPrefix(g.Desktop.SessionCommand, "-") {
+				problems = append(problems, "guestAssertions.desktop.sessionCommand must be a command name")
+			}
+			if strings.TrimSpace(g.Desktop.DisplayManagerUnit) == "" || strings.ContainsAny(g.Desktop.DisplayManagerUnit, " /\t\r\n") || strings.HasPrefix(g.Desktop.DisplayManagerUnit, "-") {
+				problems = append(problems, "guestAssertions.desktop.displayManagerUnit must be a unit name")
+			}
 		}
 	}
 	switch s.LayerEngine {
