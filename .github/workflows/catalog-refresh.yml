@@ -30,7 +30,7 @@ jobs:
         run: python3 -m unittest discover -s scripts -p test_regen_catalog.py
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 24
+          node-version: 26
       - name: Validate Renovate configuration
         env:
           RENOVATE_TOKEN: ${{ secrets.GITHUB_TOKEN }}
