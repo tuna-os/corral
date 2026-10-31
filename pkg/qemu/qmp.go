@@ -35,6 +35,12 @@ func qmpDial(sockPath string) (net.Conn, *bufio.Reader, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("connecting to QMP socket %s: %w (is the VM running?)", sockPath, err)
 	}
+	// Bound the greeting and command reads too, not only the connect. A
+	// stale or foreign local listener must not hang cancellation forever.
+	if err := conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		conn.Close()
+		return nil, nil, err
+	}
 	reader := bufio.NewReader(conn)
 
 	// Greeting arrives unprompted on connect.

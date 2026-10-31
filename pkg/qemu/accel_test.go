@@ -20,8 +20,8 @@ func TestAccelArgsFor_Matrix(t *testing.T) {
 	}{
 		{"linux", "amd64", true, "host", "q35,accel=kvm"},
 		{"linux", "amd64", false, "max", "q35,accel=tcg"},
-		{"linux", "arm64", true, "host", "q35,accel=kvm"},
-		{"linux", "arm64", false, "max", "q35,accel=tcg"},
+		{"linux", "arm64", true, "host", "virt,accel=kvm"},
+		{"linux", "arm64", false, "max", "virt,accel=tcg"},
 		{"darwin", "amd64", false, "host", "q35,accel=hvf"},
 		{"darwin", "arm64", false, "host", "virt,accel=hvf"},
 		// KVM presence is meaningless on macOS: hvf either way.

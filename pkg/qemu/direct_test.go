@@ -2,18 +2,28 @@ package qemu
 
 import (
 	"errors"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/tuna-os/corral/pkg/testenv"
 )
 
 // directVM points the package at a throwaway state directory, says there is no
 // systemd user session, and returns the VM's directory.
 func directVM(t *testing.T, name string) string {
 	t.Helper()
-	home := t.TempDir()
+	// Native macOS TMPDIR plus the test name exceeds AF_UNIX's path limit.
+	home, err := os.MkdirTemp("/tmp", "corral-qmp-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(home) })
 	SetStateDirs(home, t.TempDir())
 	original := userSystemd
 	SetUserSystemd(func() bool { return false })
@@ -94,19 +104,27 @@ func TestReadLaunchCommand_Missing(t *testing.T) {
 
 func TestStartDirect_RunsAndStops(t *testing.T) {
 	dir := directVM(t, "gate")
-	// `sleep` stands in for QEMU: the harness only needs a process that stays
-	// alive, holds a pid, and dies when signalled.
-	sleep, err := exec.LookPath("sleep")
+	// Use native QEMU, not a sleep/stub process: Stop must identify the
+	// QMP endpoint and retire the process that owns it.
+	binary, err := exec.LookPath(qemuSystemBinary())
 	if err != nil {
-		t.Skipf("no sleep binary: %v", err)
+		testenv.Skip(t, "qemu", err.Error())
 	}
-	if err := writeLaunchCommand(dir, sleep, []string{"120"}); err != nil {
+	args := []string{"-name", "gate", "-machine", "none", "-S", "-display", "none",
+		"-qmp", "unix:" + filepath.Join(dir, "qmp.sock") + ",server=on,wait=off"}
+	if err := writeLaunchCommand(dir, binary, args); err != nil {
 		t.Fatal(err)
 	}
 
 	if err := Start("gate"); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
+	t.Cleanup(func() {
+		if pid, alive := directPID("gate"); alive {
+			process, _ := os.FindProcess(pid)
+			_ = process.Kill()
+		}
+	})
 	pid, alive := directPID("gate")
 	if !alive || pid <= 0 {
 		t.Fatalf("expected a live process, got pid %d alive %v", pid, alive)
@@ -133,6 +151,91 @@ func TestStartDirect_RunsAndStops(t *testing.T) {
 	}
 	if IsRunning("gate") {
 		t.Error("IsRunning should report a stopped VM as stopped")
+	}
+}
+
+func TestStopDirect_RejectsForeignPIDAndPreservesDisk(t *testing.T) {
+	dir := directVM(t, "foreign")
+	child := exec.Command("sleep", "120")
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = child.Process.Kill()
+		_ = child.Wait()
+	})
+	path := filepath.Join(dir, pidFile)
+	if err := os.WriteFile(path, []byte(strconv.Itoa(child.Process.Pid)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	disk := filepath.Join(dir, "disk.qcow2")
+	if err := os.WriteFile(disk, []byte("owned-disk"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Stop("foreign"); err == nil {
+		t.Fatal("Stop accepted an unverified PID")
+	}
+	if err := Delete("foreign"); err == nil {
+		t.Fatal("Delete ignored the failed stop")
+	}
+	if _, alive := directPID("foreign"); !alive {
+		t.Fatal("an unrelated process was signalled")
+	}
+	for _, retained := range []string{path, disk} {
+		if _, err := os.Stat(retained); err != nil {
+			t.Fatalf("failed cleanup discarded %s: %v", retained, err)
+		}
+	}
+}
+
+func TestStopDirect_RejectsOtherQEMUName(t *testing.T) {
+	dir := directVM(t, "expected")
+	binary, err := exec.LookPath(qemuSystemBinary())
+	if err != nil {
+		testenv.Skip(t, "qemu", err.Error())
+	}
+	args := []string{"-name", "different", "-machine", "none", "-S", "-display", "none",
+		"-qmp", "unix:" + filepath.Join(dir, "qmp.sock") + ",server=on,wait=off"}
+	if err := writeLaunchCommand(dir, binary, args); err != nil {
+		t.Fatal(err)
+	}
+	if err := Start("expected"); err != nil {
+		t.Fatal(err)
+	}
+	pid, _ := directPID("expected")
+	t.Cleanup(func() {
+		process, _ := os.FindProcess(pid)
+		_ = process.Kill()
+	})
+	if err := Stop("expected"); err == nil {
+		t.Fatal("Stop quit a different QEMU")
+	}
+	if _, alive := directPID("expected"); !alive {
+		t.Fatal("the other QEMU was stopped")
+	}
+}
+
+func TestStartDirect_PIDWriteFailureRetiresChild(t *testing.T) {
+	dir := directVM(t, "record-failure")
+	binary, err := exec.LookPath(qemuSystemBinary())
+	if err != nil {
+		testenv.Skip(t, "qemu", err.Error())
+	}
+	socket := filepath.Join(dir, "qmp.sock")
+	args := []string{"-name", "record-failure", "-machine", "none", "-S", "-display", "none",
+		"-qmp", "unix:" + socket + ",server=on,wait=off"}
+	if err := writeLaunchCommand(dir, binary, args); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, pidFile), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := Start("record-failure"); err == nil || !strings.Contains(err.Error(), "recording the QEMU pid") {
+		t.Fatalf("expected PID recording failure, got %v", err)
+	}
+	if conn, err := net.DialTimeout("unix", socket, time.Second); err == nil {
+		conn.Close()
+		t.Fatal("untracked QEMU child retained a listener")
 	}
 }
 

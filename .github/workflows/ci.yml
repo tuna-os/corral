@@ -31,6 +31,60 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  native-qemu-lifecycle:
+    name: Native QEMU lifecycle (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-26.04, macos-15]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+      - name: Install native QEMU
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == macOS ]]; then
+            brew install qemu
+          else
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq qemu-system-x86
+          fi
+      - name: Record native tool and source identities
+        shell: bash
+        run: |
+          mkdir -p native-qemu-evidence
+          {
+            git rev-parse HEAD
+            uname -a
+            go version
+            if [[ "$(uname -m)" == arm64 ]]; then
+              qemu-system-aarch64 --version
+              shasum -a 256 "$(command -v qemu-system-aarch64)"
+            else
+              qemu-system-x86_64 --version
+              shasum -a 256 "$(command -v qemu-system-x86_64)"
+            fi
+          } | tee native-qemu-evidence/identities.txt
+      # This drives real native QEMU's QMP and OS process retirement, not a
+      # stub or cross-compile. It is diskless backend qualification, NOT a
+      # claim of Tuna image boot, graphical readiness or browser admission.
+      - name: Exercise native process ownership and retirement
+        env:
+          CORRAL_REQUIRE_TOOLS: qemu
+        shell: bash
+        run: |
+          set -o pipefail
+          go test -json -count=1 -timeout 90s ./pkg/qemu -run 'Test(StartDirect_|StopDirect_|AccelArgsFor_)' | tee native-qemu-evidence/tests.jsonl
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: native-qemu-${{ matrix.os }}
+          path: native-qemu-evidence/
+
   test:
     concurrency:
       group: ${{ github.workflow }}-test-${{ github.event.pull_request.number || github.ref }}

@@ -291,6 +291,23 @@ corral ct console devbox
 corral ct create myproj --devcontainer ./myproj
 ```
 
+Local QEMU uses the host architecture: x86_64 gets the `q35` board, arm64
+gets `virt`; Linux uses KVM when available (otherwise TCG), while macOS uses
+Hypervisor.framework. UEFI firmware must match the host/guest architecture.
+To import an already verified boot disk without building it locally, use
+`corral --backend qemu create NAME --qcow /absolute/path/disk.qcow2 --firmware uefi`.
+Corral does not authenticate that disk's publisher or qualification: its
+product-specific consumer must verify the release artifact first.
+
+Without a systemd user session, Corral records a direct QEMU process. Stop
+identifies that VM over its private QMP socket and requests `quit`; a PID file
+alone never authorizes signalling a process. If identity or retirement cannot
+be established, stop fails and delete retains the disk and PID state for
+diagnosis. Older direct VMs without QMP must be stopped by their actual
+supervisor before recreation. The native CI lifecycle lane exercises real
+QEMU on Linux and macOS, but is diskless: it does not qualify a Tuna guest,
+the desktop launcher, or a browser session.
+
 ## How VMs are reached
 
 | | Local (qemu) | Cluster (kubevirt) |
@@ -682,7 +699,9 @@ Full design document: [SPEC.md](SPEC.md).
 
 ## Requirements
 
-- Local backend: `qemu-system-x86_64` + KVM, systemd user session
+- Local backend: matching `qemu-system-x86_64` or `qemu-system-aarch64`,
+  KVM on Linux or Hypervisor.framework on macOS, architecture-matched UEFI
+  firmware for UEFI guests. A systemd user session is optional.
 - Cluster backend: `kubectl` context with KubeVirt (+ CDI for ISO import),
   `virtctl`; Tailscale operator for published ports
 - `tailscale` on the host; `sshpass` only if you use password SSH

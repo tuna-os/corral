@@ -483,7 +483,9 @@ func Delete(name string) error {
 	}
 	// A directly started VM has no unit to stop, and leaving the process
 	// running while its disk is deleted is the worst of both.
-	_ = stopDirect(name)
+	if err := stopDirect(name); err != nil {
+		return err
+	}
 	svc := "corral-" + name
 	systemctlRun("stop", svc)
 	systemctlRun("disable", svc)
@@ -908,17 +910,17 @@ func accelArgs(cpu int) []string {
 // virt board on Apple Silicon, q35 on Intel.
 func accelArgsFor(goos, arch string, hasKVM bool, cpu int) []string {
 	smp := fmt.Sprintf("%d", cpu)
+	machine := "q35"
+	if arch == "arm64" {
+		machine = "virt"
+	}
 	if goos == "darwin" {
-		machine := "q35,accel=hvf"
-		if arch == "arm64" {
-			machine = "virt,accel=hvf"
-		}
-		return []string{"-cpu", "host", "-smp", smp, "-machine", machine}
+		return []string{"-cpu", "host", "-smp", smp, "-machine", machine + ",accel=hvf"}
 	}
 	if hasKVM {
-		return []string{"-cpu", "host", "-smp", smp, "-machine", "q35,accel=kvm"}
+		return []string{"-cpu", "host", "-smp", smp, "-machine", machine + ",accel=kvm"}
 	}
-	return []string{"-cpu", "max", "-smp", smp, "-machine", "q35,accel=tcg"}
+	return []string{"-cpu", "max", "-smp", smp, "-machine", machine + ",accel=tcg"}
 }
 
 func generateUnit(opts generateUnitOpts) string {
