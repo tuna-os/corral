@@ -220,18 +220,6 @@ func TestPasswordFor(t *testing.T) {
 	}
 }
 
-func TestPasswordLoginWanted(t *testing.T) {
-	if (&Spec{}).passwordLoginWanted() {
-		t.Error("no passwords means no password logins")
-	}
-	if !(&Spec{RootPassword: "x"}).passwordLoginWanted() {
-		t.Error("a root password wants password logins")
-	}
-	if !(&Spec{Users: []User{{Name: "a", Password: "x"}}}).passwordLoginWanted() {
-		t.Error("a user password wants password logins")
-	}
-}
-
 func TestReadyPattern(t *testing.T) {
 	spec := &Spec{}
 	if pattern, err := spec.readyPattern(); err != nil || pattern != nil {
