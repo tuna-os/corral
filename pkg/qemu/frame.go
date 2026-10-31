@@ -1,6 +1,7 @@
 package qemu
 
 import (
+	"bytes"
 	"fmt"
 	"image"
 	"image/png"
@@ -99,6 +100,15 @@ func AnalyzePNG(path string) (Frame, error) {
 		return Frame{}, fmt.Errorf("decoding %s: %w", path, err)
 	}
 	return frameOf(path, img), nil
+}
+
+// AnalyzePNGData analyzes a bounded byte snapshot supplied by an evidence adapter.
+func AnalyzePNGData(data []byte) (Frame, error) {
+	img, err := png.Decode(bytes.NewReader(data))
+	if err != nil {
+		return Frame{}, err
+	}
+	return frameOf("", img), nil
 }
 
 func frameOf(path string, img image.Image) Frame {

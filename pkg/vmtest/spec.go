@@ -22,7 +22,8 @@
 //   - **The published image is not modified.** Users, passwords, packages and
 //     hooks go into a *derived* local image (see layer.go), built on top of the
 //     reference under test. With no customisation requested, nothing is
-//     derived and the image boots exactly as published.
+//     derived. The disk harness still injects an SSH key and kernel arguments;
+//     its receipt labels that run as a modified canary.
 //   - **Every failure leaves evidence.** The serial console, the framebuffer
 //     and the post-boot hook's own output are captured as the run goes, not
 //     collected at the end, because the failures worth debugging are the ones
@@ -171,6 +172,10 @@ const ImageMode = "image"
 
 // Screenshots controls framebuffer capture during the run.
 type Screenshots struct {
+	// PublishFinal explicitly declares that the final screen contains no secrets.
+	// All other frames and videos remain operational only.
+	PublishFinal bool `yaml:"publishFinal"`
+
 	// Interval between frames while the guest boots. Zero uses
 	// DefaultFrameInterval; a negative value turns capture off.
 	Interval Duration `yaml:"interval"`
@@ -379,7 +384,7 @@ func (s *Spec) scriptsFor(image bool) []string {
 }
 
 // needsLayer reports whether anything asked for would change the image. When
-// nothing does, the image under test is booted exactly as published.
+// nothing does, no OCI layer is built; disk-level harness injections remain.
 func (s *Spec) needsLayer() bool {
 	return len(s.Users) > 0 || s.RootPassword != "" || len(s.Packages) > 0 ||
 		len(s.ExtraRun) > 0 || len(s.Files) > 0 ||

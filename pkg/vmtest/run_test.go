@@ -545,16 +545,16 @@ func TestVerdict(t *testing.T) {
 		{
 			name:          "a blank final frame fails when RequirePaint is set",
 			spec:          &Spec{Screenshots: Screenshots{RequirePaint: true}},
-			result:        &Result{FinalFrame: blankFrame},
+			result:        &Result{FinalFrame: blankFrame, Evidence: EvidenceReceipt{Paint: Assertion{Outcome: "failed", Reason: "capture-blank"}}},
 			sshReachable:  true,
 			wantExitCode:  ExitBlank,
 			wantStatus:    "failed",
-			wantErrSubstr: "never painted anything",
+			wantErrSubstr: "capture-blank",
 		},
 		{
 			name:         "a painted final frame passes even with RequirePaint set",
 			spec:         &Spec{Screenshots: Screenshots{RequirePaint: true}},
-			result:       &Result{FinalFrame: paintedFrame},
+			result:       &Result{FinalFrame: paintedFrame, Evidence: EvidenceReceipt{Paint: Assertion{Outcome: "passed"}}},
 			sshReachable: true,
 			wantExitCode: ExitOK,
 			wantStatus:   "passed",
@@ -562,7 +562,7 @@ func TestVerdict(t *testing.T) {
 		{
 			name:         "a passing check and a painted frame both clear",
 			spec:         &Spec{Checks: []string{"a"}, Screenshots: Screenshots{RequirePaint: true}},
-			result:       &Result{Checks: []CheckResult{{Command: "a", Passed: true}}, FinalFrame: paintedFrame},
+			result:       &Result{Checks: []CheckResult{{Command: "a", Passed: true}}, FinalFrame: paintedFrame, Evidence: EvidenceReceipt{Paint: Assertion{Outcome: "passed"}}},
 			sshReachable: true,
 			wantExitCode: ExitOK,
 			wantStatus:   "passed",

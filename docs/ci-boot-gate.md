@@ -41,15 +41,15 @@ Add `--rm` for a pure gate, where nothing runs after it.
 ### What it writes
 
 Every run fills an artifact directory (`--artifacts`, default
-`corral-vmtest-out/`). Upload it from CI and a failure is diagnosable without
-a second run:
+`corral-vmtest-out/`). Keep this operational directory private. CI uploads
+only its `publication/` child (see the publication boundary below):
 
 | File | What it tells you |
 |---|---|
 | `result.json` | the whole run: verdict, boot time, each check, each frame |
 | `serial.log` | the guest console, from the firmware to the readiness marker |
 | `frames/f*.png` | one screenshot per `--screenshot-interval` during the boot |
-| `ready.png` / `failure.png` | the screen at the moment the run ended |
+| `capture-*/ready.png` / `capture-*/failure.png` | the screen at the moment the run ended |
 | `timelapse.webm` | the boot as a video (`--video`, needs ffmpeg) |
 | `diagnostics/` | failed units, `bootc status`, journal warnings |
 | `layer/Containerfile` | exactly what the run added to the image |
@@ -70,7 +70,8 @@ One code per failure class, so a pipeline can branch on the answer:
 | 6 | the guest never became ready |
 | 7 | the post-boot hook failed |
 | 8 | a check failed |
-| 9 | the guest painted nothing, and `--require-paint` was set |
+| 9 | required paint capture failed |
+| 10 | result or publication failed |
 
 Code 2 is the important one. It separates a broken runner from a broken image,
 which is the distinction a red pipeline usually hides.
@@ -79,8 +80,9 @@ which is the distinction a red pipeline usually hides.
 
 Anything the spec asks for goes into a thin image layer built **on top of** the
 reference under test. The published image is never modified. With no
-customisation asked for, corral builds no layer at all and boots the image
-exactly as published.
+customisation asked for, corral builds no OCI layer. The disk harness still
+injects an SSH key and kernel arguments, so receipts label the run as a
+modified canary.
 
 The layer adds:
 
@@ -251,6 +253,7 @@ jobs:
         run: |
           sudo -E "$(which corral)" vmtest gate --bootc "$IMAGE" \
             --check 'systemctl --failed --no-legend' \
+            --artifacts "corral-vmtest-out/${{ github.run_id }}-${{ github.run_attempt }}" \
             --video --rm
 
       - name: Upload the evidence
@@ -258,7 +261,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: boot-gate
-          path: corral-vmtest-out/
+          path: corral-vmtest-out/${{ github.run_id }}-${{ github.run_attempt }}/publication/
 ```
 
 `sudo` is not optional: `bootc install` partitions a disk and installs a
@@ -442,7 +445,76 @@ that matter in practice:
 | `vmtest` exits 6 and the console stops in dracut | the root filesystem or the boot files are wrong for the image's backend. A composefs image needs a filesystem with fs-verity (ext4, else btrfs), and its kernel and initrd restored on the ESP after the install. The local builder does both — check the build log for `composefs: restoring the kernel and initrd`. An image that needs another filesystem takes `--filesystem` |
 | `vmtest` exits 7 | the first-boot hook failed. Its own output is in `result.json` under `hook.log`, and on the console between the `CORRAL_POSTBOOT_FAIL` and `CORRAL_VM_READY` markers |
 | `vmtest` exits 7 and the console shows the hook starting and nothing after | the hook waits for something that waits for the hook. `systemctl is-system-running --wait` is the usual one. Assert a unit's state instead of waiting for the boot |
-| `vmtest` exits 9 | the guest booted and painted nothing. Look at `ready.png` and the last frames: a greeter that crashed looks exactly like this |
+| `vmtest` exits 9 | required capture was missing, invalid, stale or blank. The paint assertion gives the reason; local captures are under `capture-*/` |
+| `vmtest` exits 10 | result or publication could not be written; require a fresh artifact root and inspect local diagnostics |
 
 Every row above was hit for real while gating TunaOS images — this table is
 field notes, not speculation.
+
+### Publication boundary and evidence receipts
+
+`--artifacts` is operational storage. It contains SSH keys, account access,
+credential-bearing layer inputs, raw guest logs and `result.json`. Keep it
+private. Upload **only `publication/`**, which is created exclusively at the
+end of the existing lifecycle. Use a fresh artifact root for every invocation
+(for Actions, include both `github.run_id` and `github.run_attempt`). Reusing
+an existing publication directory fails with exit 10; it is never swept into
+or overwritten by a new export. Upload consumers must require the current run's
+receipt and successful gate, rather than treating the directory's existence as
+success.
+
+The allowlist is `receipt.json` and, only when a YAML spec explicitly sets
+`screenshots.publishFinal: true`, `final.png`. That opt-in declares the final
+screen safe for publication: never enable it for a secret-entry checkpoint.
+Intermediate frames, videos, raw logs, recipes, configuration, SSH state and
+disks are excluded. Opaque text is sanitized by omission, including guest
+output, commands, image references, account names and error messages. The
+receipt retains fixed assertion reasons, numbered guest checks, the first
+failure's exit code and warnings that detailed diagnostics remain local.
+Capture publication is limited to 16 MiB, 16 million decoded pixels; receipts
+to 256 KiB and 256 guest checks. The exporter uses rooted filesystem access,
+exclusive files and no recursive copies. Capture paths must be regular files
+inside the exclusive capture directory; symlinks and escapes fail validation.
+
+`corral.vmtest.evidence/v1` is a local adapter to the visual checkpoint
+acceptance vocabulary in **tuna-os/tunaOS#3475 (2026-10-29 extension)**. That
+owner has not published a finalized visual receipt schema or canonical corpus;
+this identifier does not assert compatibility with a future shared schema.
+Changes to this local shape require a new version or an additive compatible
+field and updated fixtures (`go test ./pkg/vmtest`). No shared library or
+second runner is introduced. Product state, branding and behavioral assertions
+remain the responsibility of product adapters.
+
+The receipt records source revision (explicitly `unknown` for unstamped test
+binaries), harness/schema/environment versions, a random invocation identity,
+its attempt and boot identity, original resolved OCI digest, the actual tested
+image's immutable local ID, modification counts, assertion outcomes, capture
+hash and capture-call timestamps, warnings and cleanup disposition. Each CLI
+invocation is one attempt and one boot; rerunning creates a new invocation.
+Images are inspected locally and the disk build receives the immutable tested
+ID. Missing original provenance is explicitly `unknown`. All runs are
+conservatively **modified-canary** evidence, even without an OCI layer: the
+harness injects an SSH key and serial-console kernel arguments. None qualifies
+an untouched shipped-image claim.
+
+Required paint succeeds only after the current capture call returns a readable,
+bounded, nonblank PNG from its new directory. Metadata supplied by the transport
+is not a substitute for decoding the captured bytes. Missing/error, empty,
+unreadable, blank, stale and wrong-run captures fail with exit 9 and a specific
+paint assertion reason. Optional unavailable capture is `unsupported` with a
+reason and `required: false`; an unattempted capture is `not-run`. A nonblank
+frame establishes paint only, not desktop readiness or product correctness.
+The receipt hashes the same byte snapshot used for validation and publication.
+Fresh directory ownership and timestamps bind transport output to the capture
+call; hashes are integrity checks, not producer authentication or an in-guest
+boot-ID attestation. File timestamp checks allow filesystem rounding within a
+second; the exclusive capture directory supplies the run boundary.
+
+Finalization follows frame-recorder shutdown and the existing VM cleanup
+policy. Failed/early runs may intentionally retain the VM for diagnosis;
+`cleanup` distinguishes not-created, retained-on-failure, kept, deleted and
+failed. Required evidence or receipt failures cannot turn an earlier failure
+into success or overwrite its cause. Exit 10 reports publication/result-write
+failure when no earlier failure already determines the exit code. Unit fixtures
+exercise this boundary without pulling images or starting privileged guests;
+they do not constitute exact-image runtime qualification.

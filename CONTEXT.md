@@ -215,7 +215,9 @@ owns it: image reference in, booted and asserted system out, evidence on disk.
 **Customisation is a derived image, not an edited disk.** Accounts, passwords,
 packages, files and the post-boot hook become one layer built `FROM` the
 reference under test. A spec that asks for nothing builds no layer, so the
-default run tests the published bytes. Passwords are hashed on the host — a
+default run adds no OCI layer. The disk harness still injects an SSH key and
+kernel arguments, so its evidence is classified as a modified canary rather
+than an untouched shipped-image qualification. Passwords are hashed on the host — a
 plain one would sit in the image. Home directories go under `/var/home`,
 because `/home` on a bootc system is a symlink into `/var` and only the image's
 `/var` reaches the installed disk.

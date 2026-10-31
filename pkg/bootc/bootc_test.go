@@ -633,10 +633,12 @@ func TestFetch_FailsWhenThePullFailsAndNothingIsLocal(t *testing.T) {
 
 func TestIsLocalRef(t *testing.T) {
 	for ref, want := range map[string]bool{
-		"localhost/corral-vmtest/gate:latest": true,
-		"containers-storage:localhost/x":      true,
-		"quay.io/fedora/fedora-bootc:41":      false,
-		"ghcr.io/tuna-os/yellowfin:latest":    false,
+		"localhost/corral-vmtest/gate:latest":                   true,
+		"containers-storage:localhost/x":                        true,
+		"sha256:" + strings.Repeat("a", 64):                     true,
+		"registry.example/os@sha256:" + strings.Repeat("a", 64): false,
+		"quay.io/fedora/fedora-bootc:41":                        false,
+		"ghcr.io/tuna-os/yellowfin:latest":                      false,
 	} {
 		if got := isLocalRef(ref); got != want {
 			t.Errorf("isLocalRef(%q) = %v, want %v", ref, got, want)
@@ -781,5 +783,17 @@ func TestQEMUTarget_ForcesUEFI(t *testing.T) {
 	}
 	if !got.UEFI {
 		t.Error("Import inherited UEFI=false — the VM would hang at SeaBIOS instead of booting its UEFI bootloader")
+	}
+}
+
+func TestFetchImmutableLocalIDDoesNotPull(t *testing.T) {
+	fake := shell.NewFake()
+	SetRunner(fake)
+	t.Cleanup(func() { SetRunner(shell.Real{}) })
+	if err := (LocalBuilder{}).fetch("sha256:"+strings.Repeat("a", 64), nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.Calls()) != 0 {
+		t.Fatal("attempted a registry pull for local ID")
 	}
 }

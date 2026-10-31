@@ -32,6 +32,7 @@ type fakeHost struct {
 	deleteErr    error
 	hook         *HookResult
 	checks       []CheckResult
+	captureFn    func(string) *qemu.Frame
 	finalFrame   *qemu.Frame
 
 	framesStopped int
@@ -87,8 +88,11 @@ func (f *fakeHost) StartFrames(*Spec, string) FrameSource {
 	return &fakeFrames{host: f}
 }
 func (f *fakeHost) CopySerialLog(string, string) (string, error) { return "", errors.New("no log") }
-func (f *fakeHost) CaptureFinal(_ *Spec, _, label string, _ *Result) *qemu.Frame {
+func (f *fakeHost) CaptureFinal(_ *Spec, dir, label string, _ *Result) *qemu.Frame {
 	f.call("capture-" + label)
+	if f.captureFn != nil {
+		return f.captureFn(dir)
+	}
 	return f.finalFrame
 }
 func (f *fakeHost) AssembleVideo(*Spec, string) (string, error) { return "", nil }
@@ -257,7 +261,7 @@ func TestRunner_Run(t *testing.T) {
 				t.Errorf("frame capture stopped %d times, want %d", host.framesStopped, tc.framesStopped)
 			}
 			// The result file is written on every path.
-			if _, statErr := os.Stat(filepath.Join(spec.Artifacts, ResultFile)); statErr != nil {
+			if _, statErr := os.Stat(filepath.Join(result.Artifacts, ResultFile)); statErr != nil {
 				t.Errorf("no result file: %v", statErr)
 			}
 		})

@@ -133,7 +133,7 @@ jobs:
             --check 'id tester' \
             --check 'sudo -u tester sudo -n true' \
             --check 'bootc status --format json' \
-            --artifacts vmtest-out \
+            --artifacts "vmtest-out/${{ github.run_id }}-${{ github.run_attempt }}" \
             --video \
             --timeout ${{ steps.kvm.outputs.boot-timeout }} \
             --rm
@@ -151,7 +151,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: vmtest-evidence
-          path: vmtest-out/
+          path: vmtest-out/${{ github.run_id }}-${{ github.run_attempt }}/publication/
           retention-days: 14
 
       - name: Summarise
@@ -160,6 +160,6 @@ jobs:
           {
             echo '### corral vmtest'
             echo '```json'
-            cat vmtest-out/result.json 2>/dev/null || echo '{}'
+            cat vmtest-out/${{ github.run_id }}-${{ github.run_attempt }}/publication/receipt.json 2>/dev/null || echo '{}'
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"

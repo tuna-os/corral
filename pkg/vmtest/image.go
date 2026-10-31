@@ -47,8 +47,11 @@ func podmanCmd(sudo bool, args ...string) (string, []string) {
 
 // Layered describes what the layering step produced.
 type Layered struct {
-	// Image is what to install: the derived tag, or the original reference
-	// when nothing had to be layered.
+	BaseDigest string `json:"baseDigest"`
+	ImageID    string `json:"imageID"`
+
+	// Image is what to install. The production preparer pins it to ImageID
+	// before handing it to the disk builder.
 	Image string `json:"image"`
 	// Base is the reference under test, always.
 	Base string `json:"base"`
@@ -69,7 +72,7 @@ type Layered struct {
 func BuildLayer(spec *Spec, authorizedKey, contextDir string, progress func(string)) (Layered, error) {
 	result := Layered{Image: spec.Bootc, Base: spec.Bootc}
 	if !spec.needsLayer() {
-		report(progress, "no users, packages or hooks requested — testing %s exactly as published", spec.Bootc)
+		report(progress, "no users, packages or hooks requested — testing %s without a derived layer", spec.Bootc)
 		return result, nil
 	}
 
@@ -88,6 +91,11 @@ func BuildLayer(spec *Spec, authorizedKey, contextDir string, progress func(stri
 		return result, err
 	}
 
+	var baseID string
+	result.BaseDigest, baseID = inspectImage(spec.Bootc, spec.Sudo)
+	if baseID != "" {
+		ctx.Base = baseID
+	}
 	pm, err := DetectPackageManager(spec.Bootc, spec.Sudo)
 	if err != nil && len(spec.Packages) > 0 {
 		return result, fmt.Errorf("%w — set packages: [] or name the manager the base uses", err)
@@ -120,12 +128,29 @@ func BuildLayer(spec *Spec, authorizedKey, contextDir string, progress func(stri
 
 	tag := DerivedTag(spec.Name)
 	report(progress, "building %s from %s (%s engine)", tag, spec.Bootc, engine)
-	name, args := podmanCmd(spec.Sudo, "build", "--tag", tag, "--file",
+	idFile, err := os.CreateTemp(contextDir, ".image-id-")
+	if err != nil {
+		return result, err
+	}
+	idPath := idFile.Name()
+	if err := idFile.Close(); err != nil {
+		return result, err
+	}
+	defer func() { _ = os.Remove(idPath) }()
+	name, args := podmanCmd(spec.Sudo, "build", "--tag", tag, "--iidfile", idPath, "--file",
 		filepath.Join(contextDir, "Containerfile"), contextDir)
 	if out, err := runner.Run(name, args...); err != nil {
 		return result, fmt.Errorf("building the derived image: %s", commandOutput(out, err))
 	}
 	result.Image = tag
+	// The build's own ID file binds this output even if another build moves
+	// the tag between completion and inspection.
+	if data, err := os.ReadFile(idPath); err == nil {
+		id := strings.TrimSpace(string(data))
+		if digestPattern.MatchString(id) {
+			result.ImageID = id
+		}
+	}
 	return result, nil
 }
 
@@ -261,4 +286,22 @@ func report(progress func(string), format string, args ...any) {
 	if progress != nil {
 		progress(fmt.Sprintf(format, args...))
 	}
+}
+
+// inspectImage resolves digest and local ID from the same inspection. Unknown
+// identity stays empty; the caller never invents provenance from a mutable tag.
+func inspectImage(image string, sudo bool) (digest, id string) {
+	name, args := podmanCmd(sudo, "image", "inspect", "--format", "{{.Digest}}|{{.Id}}", image)
+	out, err := runner.Run(name, args...)
+	if err != nil {
+		return "", ""
+	}
+	digest, id, ok := strings.Cut(strings.TrimSpace(string(out)), "|")
+	if !ok || !digestPattern.MatchString(id) {
+		return "", ""
+	}
+	if !digestPattern.MatchString(digest) {
+		digest = ""
+	}
+	return digest, id
 }
