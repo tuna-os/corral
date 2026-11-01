@@ -44,7 +44,7 @@ Opening the page or upgrading a websocket does not report readiness. Keep
 the command alive while using its console; SIGINT or SIGTERM stops it.`,
 	Example: `  corral console desk
   corral --json console desk   # one JSON line for scripts (Playwright, etc.)
-  corral --json console //local/desk --notify-ready`,
+  corral --json console qemu//local/desk --notify-ready`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		vm, err := resolveVM(args[0])
