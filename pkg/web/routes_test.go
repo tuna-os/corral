@@ -15,7 +15,7 @@ import (
 // must be registered and must be the one a matching request resolves to, so a
 // dropped route or a new pattern shadowing an existing one fails here.
 func TestRoutes_PatternTable(t *testing.T) {
-	mux, err := routes(false)
+	mux, err := routes(false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

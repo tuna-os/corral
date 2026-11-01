@@ -32,13 +32,21 @@ concurrency:
 
 jobs:
   native-qemu-lifecycle:
-    name: Native QEMU lifecycle (${{ matrix.os }})
+    name: Native QEMU lifecycle (${{ matrix.os }} / ${{ matrix.arch }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-26.04, macos-15]
+        include:
+          - os: ubuntu-24.04
+            arch: amd64
+          - os: ubuntu-24.04-arm
+            arch: arm64
+          - os: macos-15-intel
+            arch: amd64
+          - os: macos-15
+            arch: arm64
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
@@ -51,7 +59,10 @@ jobs:
             brew install qemu
           else
             sudo apt-get update -qq
-            sudo apt-get install -y -qq qemu-system-x86
+            sudo apt-get install -y -qq qemu-system-x86 qemu-utils
+            if [[ "$RUNNER_ARCH" == ARM64 ]]; then
+              sudo apt-get install -y -qq qemu-system-arm
+            fi
           fi
       - name: Record native tool and source identities
         shell: bash
@@ -61,7 +72,9 @@ jobs:
             git rev-parse HEAD
             uname -a
             go version
-            if [[ "$(uname -m)" == arm64 ]]; then
+            go env GOOS GOARCH
+            test "$(go env GOARCH)" = "${{ matrix.arch }}"
+            if [[ "$(uname -m)" == arm64 || "$(uname -m)" == aarch64 ]]; then
               qemu-system-aarch64 --version
               shasum -a 256 "$(command -v qemu-system-aarch64)"
             else

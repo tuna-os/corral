@@ -206,7 +206,7 @@ func stopDirect(name string) error {
 	if err != nil {
 		return fmt.Errorf("refusing to signal an unverified PID for VM %q: %w", name, err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	raw, err := qmpExecute(conn, reader, "query-name", nil)
 	if err != nil {
 		return fmt.Errorf("identifying QEMU for %q: %w", name, err)

@@ -19,10 +19,30 @@ export function retryDelay(attempt) {
 }
 
 // open is openVNC, or a fake in the tests; schedule is setTimeout.
-export function runConsolePage({ body, screen, status, open, schedule = setTimeout }) {
+export function runConsolePage({ body, screen, status, open, schedule = setTimeout, request = globalThis.fetch }) {
   const vm = { namespace: body.dataset.namespace, name: body.dataset.vm, context: body.dataset.context || '' };
   const scale = body.dataset.scale === 'fit' ? 'fit' : 'one';
   let attempt = 0;
+  let notified = false;
+
+  const notifyReady = () => {
+    const nonce = body.dataset.readyNonce;
+    if (!nonce || notified) return;
+    notified = true;
+    const path = `/api/console-ready/${encodeURIComponent(vm.namespace)}/${encodeURIComponent(vm.name)}`;
+    // Only the real RFB connect callback calls this; a successful opener or
+    // websocket upgrade is not readiness. No cross-origin callback is accepted.
+    Promise.resolve().then(() => request(path, {
+      method: 'POST',
+      mode: 'same-origin',
+      credentials: 'same-origin',
+      redirect: 'error',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nonce, context: vm.context }),
+    })).catch(() => {
+      // Failure leaves the consumer waiting rather than claiming readiness.
+    });
+  };
 
   const setConnected = (on) => {
     body.dataset.connected = String(on);
@@ -49,10 +69,12 @@ export function runConsolePage({ body, screen, status, open, schedule = setTimeo
     if (canvas) canvas.id = 'vnc-canvas';
     let ended = false;
     session.on('connect', () => {
+      if (ended) return;
       attempt = 0;
       setConnected(true);
       status.textContent = 'Connected.';
       session.focus();
+      notifyReady();
     });
     session.on('disconnect', () => {
       if (ended) return;

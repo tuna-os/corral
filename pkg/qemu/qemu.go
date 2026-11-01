@@ -158,6 +158,10 @@ func RecordCreating(name string, opts types.CreateOpts) error {
 	if err := ValidateVMName(name); err != nil {
 		return err
 	}
+	arch, err := resolveGuestArch(opts.Arch)
+	if err != nil {
+		return err
+	}
 	vmDir := filepath.Join(VMHome(), name)
 	if err := os.MkdirAll(vmDir, 0755); err != nil {
 		return err
@@ -175,11 +179,12 @@ func RecordCreating(name string, opts types.CreateOpts) error {
 		diskSize = "20G"
 	}
 	meta := map[string]any{
-		"name":      name,
-		"cpu":       cpu,
-		"memory":    mem,
-		"disk_size": diskSize,
-		"status":    "Creating",
+		"name":         name,
+		"cpu":          cpu,
+		"memory":       mem,
+		"disk_size":    diskSize,
+		"status":       "Creating",
+		"architecture": arch,
 	}
 	data, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {
@@ -194,10 +199,22 @@ func Create(opts types.CreateOpts) error {
 	if err := ValidateVMName(name); err != nil {
 		return err
 	}
+	arch, err := resolveGuestArch(opts.Arch)
+	if err != nil {
+		return err
+	}
+	if arch == types.ArchARM64 && !opts.UEFI {
+		return fmt.Errorf("arm64 guests require UEFI firmware; use --firmware uefi")
+	}
 	vmDir := filepath.Join(VMHome(), name)
 
 	if Exists(name) && !opts.Force {
 		return fmt.Errorf("VM %q already exists. Use --force to overwrite", name)
+	}
+	if opts.Force {
+		if previous, err := readMetadata(name); err == nil && previous.Arch != "" && previous.Arch != arch {
+			return fmt.Errorf("VM %q has architecture %s, not %s; use a new name or explicitly delete the stopped VM before recreating it", name, previous.Arch, arch)
+		}
 	}
 
 	if err := os.MkdirAll(vmDir, 0755); err != nil {
@@ -205,7 +222,7 @@ func Create(opts types.CreateOpts) error {
 	}
 
 	// Find QEMU binaries
-	qemuPath, qemuImgPath, err := findQEMU()
+	qemuPath, qemuImgPath, err := findQEMU(arch)
 	if err != nil {
 		return err
 	}
@@ -264,10 +281,13 @@ func Create(opts types.CreateOpts) error {
 	vncPort := 5900 + vncDisplay
 	sshPort := 2200 + vncDisplay // host port forwarded to guest :22
 
-	// Tailscale IP
-	tailscaleIP, err := tailscaleIPv4()
-	if err != nil {
-		tailscaleIP = "127.0.0.1"
+	// An explicit local-only launch must not expose an unauthenticated VNC
+	// console on the user's tailnet merely because Tailscale is installed.
+	tailscaleIP := "127.0.0.1"
+	if !opts.Loopback {
+		if ip, err := tailscaleIPv4(); err == nil {
+			tailscaleIP = ip
+		}
 	}
 
 	// QMP monitor socket — lets `corral screenshot` (and anything else that
@@ -287,7 +307,7 @@ func Create(opts types.CreateOpts) error {
 	var uefiCode, uefiVars string
 	firmware := "bios"
 	if opts.UEFI {
-		code, varsTmpl, err := FindUEFIFirmware()
+		code, varsTmpl, err := FindUEFIFirmwareForArch(arch)
 		if err != nil {
 			return fmt.Errorf("UEFI requested: %w", err)
 		}
@@ -340,24 +360,28 @@ func Create(opts types.CreateOpts) error {
 	}
 
 	// Systemd unit
+	_, kvmErr := os.Stat("/dev/kvm")
+	acceleration := acceleratorFor(runtime.GOOS, runtime.GOARCH, arch, kvmErr == nil)
 	unitOpts := generateUnitOpts{
-		Name:        name,
-		QemuPath:    qemuPath,
-		Mem:         mem,
-		CPU:         cpu,
-		DiskPath:    diskPath,
-		ISOPath:     isoPath,
-		HasISO:      hasISO,
-		TailscaleIP: tailscaleIP,
-		VncDisplay:  vncDisplay,
-		SSHPort:     sshPort,
-		QMPSocket:   qmpSocket,
-		SerialLog:   serialLog,
-		UEFICode:    uefiCode,
-		UEFIVars:    uefiVars,
-		VsockCID:    vsockCID,
-		VsockArgs:   vsockArgs,
-		TPMArgs:     tpmArgs,
+		Name:         name,
+		QemuPath:     qemuPath,
+		Arch:         arch,
+		Acceleration: acceleration,
+		Mem:          mem,
+		CPU:          cpu,
+		DiskPath:     diskPath,
+		ISOPath:      isoPath,
+		HasISO:       hasISO,
+		TailscaleIP:  tailscaleIP,
+		VncDisplay:   vncDisplay,
+		SSHPort:      sshPort,
+		QMPSocket:    qmpSocket,
+		SerialLog:    serialLog,
+		UEFICode:     uefiCode,
+		UEFIVars:     uefiVars,
+		VsockCID:     vsockCID,
+		VsockArgs:    vsockArgs,
+		TPMArgs:      tpmArgs,
 	}
 	unit := generateUnit(unitOpts)
 
@@ -392,6 +416,8 @@ func Create(opts types.CreateOpts) error {
 		"has_iso":      hasISO,
 		"serial_log":   serialLog,
 		"firmware":     firmware,
+		"architecture": arch,
+		"acceleration": acceleration,
 		"vsock":        opts.Vsock,
 		"vsock_cid":    vsockCID,
 		"tpm":          opts.TPM,
@@ -521,8 +547,8 @@ func SSH(name, username, identityFile, command string, port int, password string
 	}
 
 	host := meta.Tailscale
-	if host == "" || host == "127.0.0.1" {
-		return fmt.Errorf("VM %q has no Tailscale IP — is Tailscale running?", name)
+	if host == "" {
+		host = "127.0.0.1"
 	}
 
 	// Default to the forwarded SSH port; -p overrides
@@ -618,19 +644,21 @@ func WaitSSH(name, username string, timeout time.Duration) error {
 
 // vmMetadata is the on-disk metadata.json schema.
 type vmMetadata struct {
-	Name      string `json:"name"`
-	CPU       int    `json:"cpu"`
-	Memory    string `json:"memory"`
-	Disk      string `json:"disk_size"`
-	VncPort   int    `json:"vnc_port"`
-	SSHPort   int    `json:"ssh_port"`
-	Tailscale string `json:"tailscale_ip"`
-	SerialLog string `json:"serial_log"`
-	Firmware  string `json:"firmware,omitempty"`
-	Status    string `json:"status,omitempty"`
-	VsockCID  uint32 `json:"vsock_cid,omitempty"`
-	Vsock     bool   `json:"vsock,omitempty"`
-	TPM       bool   `json:"tpm,omitempty"`
+	Name         string          `json:"name"`
+	CPU          int             `json:"cpu"`
+	Memory       string          `json:"memory"`
+	Disk         string          `json:"disk_size"`
+	VncPort      int             `json:"vnc_port"`
+	SSHPort      int             `json:"ssh_port"`
+	Tailscale    string          `json:"tailscale_ip"`
+	SerialLog    string          `json:"serial_log"`
+	Firmware     string          `json:"firmware,omitempty"`
+	Arch         types.GuestArch `json:"architecture,omitempty"`
+	Acceleration string          `json:"acceleration,omitempty"`
+	Status       string          `json:"status,omitempty"`
+	VsockCID     uint32          `json:"vsock_cid,omitempty"`
+	Vsock        bool            `json:"vsock,omitempty"`
+	TPM          bool            `json:"tpm,omitempty"`
 }
 
 // readMetadata parses the VM metadata.json file.
@@ -670,7 +698,7 @@ func VNCAddr(name string) (string, error) {
 // Available reports whether this host can run local VMs (QEMU binaries
 // found). The web UI gates its "create on this host" target on it (#91).
 func Available() bool {
-	_, _, err := findQEMU()
+	_, _, err := findQEMU("")
 	return err == nil
 }
 
@@ -763,17 +791,35 @@ func SSHViaVsock(name, username, command string) error {
 	return cmd.Run()
 }
 
-func qemuSystemBinary() string {
-	// Apple Silicon (and aarch64 Linux) run the aarch64 system emulator;
-	// everything else keeps the x86_64 one.
-	if runtime.GOARCH == "arm64" {
-		return "qemu-system-aarch64"
+func resolveGuestArch(arch types.GuestArch) (types.GuestArch, error) {
+	if arch == "" {
+		arch = types.GuestArch(runtime.GOARCH)
 	}
-	return "qemu-system-x86_64"
+	if err := arch.Validate(); err != nil {
+		return "", err
+	}
+	return arch, nil
 }
 
-func findQEMU() (qemu, qemuImg string, err error) {
-	qemuBin := qemuSystemBinary()
+func qemuSystemBinary(arch types.GuestArch) string {
+	switch arch {
+	case "":
+		return qemuSystemBinary(types.GuestArch(runtime.GOARCH))
+	case types.ArchAMD64:
+		return "qemu-system-x86_64"
+	case types.ArchARM64:
+		return "qemu-system-aarch64"
+	default:
+		return ""
+	}
+}
+
+func findQEMU(arch types.GuestArch) (qemu, qemuImg string, err error) {
+	arch, err = resolveGuestArch(arch)
+	if err != nil {
+		return "", "", err
+	}
+	qemuBin := qemuSystemBinary(arch)
 	// PATH first — covers any install location (and lets tests inject fakes).
 	if q, e1 := exec.LookPath(qemuBin); e1 == nil {
 		if qi, e2 := exec.LookPath("qemu-img"); e2 == nil {
@@ -789,13 +835,13 @@ func findQEMU() (qemu, qemuImg string, err error) {
 	} {
 		qemuPath := filepath.Join(base, qemuBin)
 		qemuImgPath := filepath.Join(base, "qemu-img")
-		if _, e := os.Stat(qemuPath); e == nil {
-			if _, e := os.Stat(qemuImgPath); e == nil {
-				return qemuPath, qemuImgPath, nil
+		if q, e := exec.LookPath(qemuPath); e == nil {
+			if qi, e := exec.LookPath(qemuImgPath); e == nil {
+				return q, qi, nil
 			}
 		}
 	}
-	return "", "", fmt.Errorf("QEMU not found. Install: brew install qemu")
+	return "", "", fmt.Errorf("%s and qemu-img not found for %s guest (install QEMU)", qemuBin, arch)
 }
 
 func tailscaleIPv4() (string, error) {
@@ -816,6 +862,8 @@ func hashDisplay(name string) int {
 
 type generateUnitOpts struct {
 	Name, QemuPath, Mem, DiskPath, ISOPath, TailscaleIP string
+	Arch                                                types.GuestArch
+	Acceleration                                        string
 	CPU                                                 int
 	HasISO                                              bool
 	VncDisplay                                          int
@@ -840,11 +888,27 @@ func qemuArgs(opts generateUnitOpts) []string {
 	}
 
 	args := []string{"-name", opts.Name, "-m", mem}
-	args = append(args, accelArgs(opts.CPU)...)
+	arch := opts.Arch
+	if arch == "" {
+		arch = types.GuestArch(runtime.GOARCH)
+	}
+	acceleration := opts.Acceleration
+	if acceleration == "" {
+		_, kvmErr := os.Stat("/dev/kvm")
+		acceleration = acceleratorFor(runtime.GOOS, runtime.GOARCH, arch, kvmErr == nil)
+	}
+	args = append(args, machineArgs(arch, acceleration, opts.CPU)...)
 	args = append(args,
 		"-drive", fmt.Sprintf("file=%s,if=virtio,format=qcow2", opts.DiskPath),
 		"-vnc", fmt.Sprintf("%s:%d", opts.TailscaleIP, opts.VncDisplay),
-		"-vga", "virtio",
+	)
+	if arch == types.ArchARM64 {
+		args = append(args, "-device", "virtio-gpu-pci",
+			"-device", "qemu-xhci", "-device", "usb-kbd", "-device", "usb-tablet")
+	} else {
+		args = append(args, "-vga", "virtio")
+	}
+	args = append(args,
 		"-display", "none",
 	)
 
@@ -866,7 +930,13 @@ func qemuArgs(opts generateUnitOpts) []string {
 	)
 
 	if opts.HasISO && opts.ISOPath != "" {
-		args = append(args, "-cdrom", opts.ISOPath, "-boot", "once=d,menu=on")
+		if arch == types.ArchARM64 {
+			args = append(args, "-device", "virtio-scsi-pci,id=scsi0",
+				"-drive", fmt.Sprintf("file=%s,if=none,id=cdrom,media=cdrom,readonly=on", opts.ISOPath),
+				"-device", "scsi-cd,drive=cdrom,bootindex=1", "-boot", "menu=on")
+		} else {
+			args = append(args, "-cdrom", opts.ISOPath, "-boot", "once=d,menu=on")
+		}
 	}
 	if opts.QMPSocket != "" {
 		// server,nowait: QEMU listens and accepts connect/disconnect any
@@ -891,36 +961,47 @@ func qemuArgs(opts generateUnitOpts) []string {
 	return args
 }
 
-// accelArgs picks the accelerator and the CPU model together, because they are
-// one decision: KVM can pass the host CPU through, TCG cannot model it at all
-// and needs "max" instead.
-//
-// A runner with no /dev/kvm is the case that matters. Hard-coding accel=kvm
-// there produces a VM that will not start, and `-cpu host` under TCG produces
-// one that starts and then cannot find its CPU model — both read as a broken
-// image rather than a machine that cannot nest.
-func accelArgs(cpu int) []string {
-	_, kvmErr := os.Stat("/dev/kvm")
-	return accelArgsFor(runtime.GOOS, runtime.GOARCH, kvmErr == nil, cpu)
+// Hardware acceleration is valid only when guest and host instruction sets
+// match. Cross-architecture guests deliberately use TCG and its emulated CPU.
+func acceleratorFor(goos, hostArch string, guestArch types.GuestArch, hasKVM bool) string {
+	if guestArch == "" {
+		guestArch = types.GuestArch(hostArch)
+	}
+	if string(guestArch) == hostArch {
+		if goos == "darwin" {
+			return "hvf"
+		}
+		if goos == "linux" && hasKVM {
+			return "kvm"
+		}
+	}
+	return "tcg"
 }
 
-// accelArgsFor is the pure platform matrix behind accelArgs, so the darwin
-// and fallback combinations are unit-testable without their hardware.
-// macOS has no /dev/kvm: Hypervisor.framework (hvf) is the accelerator, the
-// virt board on Apple Silicon, q35 on Intel.
-func accelArgsFor(goos, arch string, hasKVM bool, cpu int) []string {
-	smp := fmt.Sprintf("%d", cpu)
+func machineArgs(arch types.GuestArch, acceleration string, cpu int) []string {
 	machine := "q35"
-	if arch == "arm64" {
+	if arch == types.ArchARM64 {
 		machine = "virt"
 	}
-	if goos == "darwin" {
-		return []string{"-cpu", "host", "-smp", smp, "-machine", machine + ",accel=hvf"}
+	model := "max"
+	if acceleration == "kvm" || acceleration == "hvf" {
+		model = "host"
 	}
-	if hasKVM {
-		return []string{"-cpu", "host", "-smp", smp, "-machine", machine + ",accel=kvm"}
+	return []string{"-cpu", model, "-smp", fmt.Sprintf("%d", cpu),
+		"-machine", machine + ",accel=" + acceleration}
+}
+
+func accelArgs(cpu int, arch types.GuestArch) []string {
+	_, kvmErr := os.Stat("/dev/kvm")
+	return accelArgsFor(runtime.GOOS, runtime.GOARCH, arch, kvmErr == nil, cpu)
+}
+
+// accelArgsFor is the platform matrix used by the recorded runtime command.
+func accelArgsFor(goos, hostArch string, guestArch types.GuestArch, hasKVM bool, cpu int) []string {
+	if guestArch == "" {
+		guestArch = types.GuestArch(hostArch)
 	}
-	return []string{"-cpu", "max", "-smp", smp, "-machine", machine + ",accel=tcg"}
+	return machineArgs(guestArch, acceleratorFor(goos, hostArch, guestArch, hasKVM), cpu)
 }
 
 func generateUnit(opts generateUnitOpts) string {

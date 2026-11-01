@@ -291,21 +291,52 @@ corral ct console devbox
 corral ct create myproj --devcontainer ./myproj
 ```
 
-Local QEMU uses the host architecture: x86_64 gets the `q35` board, arm64
-gets `virt`; Linux uses KVM when available (otherwise TCG), while macOS uses
-Hypervisor.framework. UEFI firmware must match the host/guest architecture.
-To import an already verified boot disk without building it locally, use
-`corral --backend qemu create NAME --qcow /absolute/path/disk.qcow2 --firmware uefi`.
-Corral does not authenticate that disk's publisher or qualification: its
-product-specific consumer must verify the release artifact first.
+Local QEMU defaults to the host architecture. `--arch amd64|arm64` selects
+the **guest** architecture independently of the Corral binary: amd64 uses
+`qemu-system-x86_64` and the `q35` board; arm64 uses
+`qemu-system-aarch64` and `virt`. Native guests use KVM on Linux when available
+(otherwise TCG), or Hypervisor.framework on macOS. Cross-architecture guests
+always use TCG with an emulated CPU, never KVM/HVF or the host CPU model.
+For example, an amd64 guest on an Apple Silicon Mac uses the x86_64 emulator,
+`q35`, amd64 UEFI, and TCG; this is slower than native virtualization.
+
+To import an already verified amd64 boot disk without building it locally:
+```bash
+corral --backend qemu create NAME --qcow /absolute/path/disk.qcow2 --firmware uefi --arch amd64 --loopback
+```
+UEFI search follows the **guest** architecture, including Homebrew's amd64
+firmware on Apple Silicon; it does not substitute host ARM firmware. ARM64
+guests require `--firmware uefi`. If `CORRAL_OVMF_CODE`/`CORRAL_OVMF_VARS`
+override firmware discovery, those files must match the selected guest.
+Corral records the guest `architecture` and selected `acceleration` in VM info
+and saves the exact emulator command for subsequent starts. `--arch` is local
+QEMU-create-only: other backends and the separate `--bootc` image builders
+reject it rather than silently ignoring it.
+`--loopback` binds the guest VNC console and forwarded SSH to `127.0.0.1`,
+even when Tailscale is active; it is also local-QEMU-create-only.
+
+`corral --json console //local/NAME --addr 127.0.0.1:0 --notify-ready` first
+reports its own bound console URL, then emits an `rfb-connected` event after
+the standalone noVNC page reports a real RFB connection. The report is scoped
+to that listener, VM and backend context with a one-shot nonce and exact
+same-origin/Host checks. This proves browser/transport readiness only, not OS
+boot completion or an authenticated Tuna session.
+
+Corral does not authenticate the disk's publisher or qualification: its
+product-specific consumer must verify the release artifact first. Argument
+and metadata tests are not proof that a particular guest boots on macOS;
+actual native-host disk and browser qualification is still required.
 
 Without a systemd user session, Corral records a direct QEMU process. Stop
 identifies that VM over its private QMP socket and requests `quit`; a PID file
 alone never authorizes signalling a process. If identity or retirement cannot
 be established, stop fails and delete retains the disk and PID state for
 diagnosis. Older direct VMs without QMP must be stopped by their actual
-supervisor before recreation. The native CI lifecycle lane exercises real
-QEMU on Linux and macOS, but is diskless: it does not qualify a Tuna guest,
+supervisor before recreation. The native CI lifecycle lane is configured for
+Linux and macOS on both amd64 and ARM64 hosts. It exercises real QEMU process
+retirement, loopback RFB ownership, and a 200-character QMP typing sequence
+lasting more than five seconds. Its created disk is empty: these are diskless
+lifecycle regressions with no guest OS, not qualification of a Tuna guest,
 the desktop launcher, or a browser session.
 
 ## How VMs are reached
@@ -699,9 +730,10 @@ Full design document: [SPEC.md](SPEC.md).
 
 ## Requirements
 
-- Local backend: matching `qemu-system-x86_64` or `qemu-system-aarch64`,
-  KVM on Linux or Hypervisor.framework on macOS, architecture-matched UEFI
-  firmware for UEFI guests. A systemd user session is optional.
+- Local backend: guest-matched `qemu-system-x86_64` or `qemu-system-aarch64`,
+  KVM on Linux or Hypervisor.framework on macOS for native guests (TCG for
+  cross-architecture guests), guest-matched UEFI firmware for UEFI guests.
+  A systemd user session is optional.
 - Cluster backend: `kubectl` context with KubeVirt (+ CDI for ISO import),
   `virtctl`; Tailscale operator for published ports
 - `tailscale` on the host; `sshpass` only if you use password SSH

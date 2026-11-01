@@ -38,7 +38,7 @@ func qmpDial(sockPath string) (net.Conn, *bufio.Reader, error) {
 	// Bound the greeting and command reads too, not only the connect. A
 	// stale or foreign local listener must not hang cancellation forever.
 	if err := conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
-		conn.Close()
+		_ = conn.Close()
 		return nil, nil, err
 	}
 	reader := bufio.NewReader(conn)
@@ -76,6 +76,11 @@ func readQMPMessage(reader *bufio.Reader) (*qmpResponse, error) {
 }
 
 func qmpExecute(conn net.Conn, reader *bufio.Reader, command string, args map[string]any) (json.RawMessage, error) {
+	// A sequence such as typing shares one connection for many seconds.
+	// Bound each exchange, not the lifetime of that connection.
+	if err := conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		return nil, err
+	}
 	req := map[string]any{"execute": command}
 	if args != nil {
 		req["arguments"] = args

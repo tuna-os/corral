@@ -53,6 +53,7 @@ func TestGenerateUnit_WithISO(t *testing.T) {
 	unit := generateUnit(generateUnitOpts{
 		Name:        "testvm",
 		QemuPath:    "/usr/bin/qemu-system-x86_64",
+		Arch:        types.ArchAMD64,
 		Mem:         "8G",
 		CPU:         4,
 		DiskPath:    "/tmp/test.qcow2",
@@ -141,6 +142,7 @@ func TestGenerateUnit_AllFields(t *testing.T) {
 	unit := generateUnit(generateUnitOpts{
 		Name:        "fulltest",
 		QemuPath:    "/custom/qemu",
+		Arch:        types.ArchAMD64,
 		Mem:         "16G",
 		CPU:         8,
 		DiskPath:    "/data/disk.qcow2",
@@ -451,7 +453,7 @@ func TestVMHome_CustomHome(t *testing.T) {
 
 func TestFindQEMU_NotFound(t *testing.T) {
 	// In a temp dir with no qemu binaries, findQEMU should error
-	_, _, err := findQEMU()
+	_, _, err := findQEMU("")
 	if err == nil {
 		t.Log("findQEMU succeeded (qemu found on this system)")
 	} else {
@@ -518,6 +520,7 @@ func TestCreate_WithFakeBinaries(t *testing.T) {
 
 	opts := types.CreateOpts{
 		Name: "fakevm",
+		Arch: types.ArchAMD64,
 		CPU:  2,
 		Mem:  "4G",
 		Disk: "10G",
@@ -552,6 +555,7 @@ func TestCreate_WithISO(t *testing.T) {
 
 	opts := types.CreateOpts{
 		Name: "isovm",
+		Arch: types.ArchAMD64,
 		CPU:  1,
 		Mem:  "2G",
 		ISO:  "/fake/path/test.iso",
@@ -577,7 +581,7 @@ func TestStart_WithFakeBinaries(t *testing.T) {
 	t.Setenv("HOME", tmp)
 
 	// First create the VM
-	opts := types.CreateOpts{Name: "startvm", CPU: 1, Mem: "1G", Disk: "5G"}
+	opts := types.CreateOpts{Name: "startvm", Arch: types.ArchAMD64, CPU: 1, Mem: "1G", Disk: "5G"}
 	_ = Create(opts)
 
 	err := Start("startvm")
@@ -603,7 +607,7 @@ func TestStop_WithFakeBinaries(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 
-	_ = Create(types.CreateOpts{Name: "stopvm", CPU: 1, Mem: "1G", Disk: "5G"})
+	_ = Create(types.CreateOpts{Name: "stopvm", Arch: types.ArchAMD64, CPU: 1, Mem: "1G", Disk: "5G"})
 
 	err := Stop("stopvm")
 	// Fake systemctl will run successfully
@@ -617,7 +621,7 @@ func TestDelete_WithFakeBinaries(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 
-	_ = Create(types.CreateOpts{Name: "delvm", CPU: 1, Mem: "1G", Disk: "5G"})
+	_ = Create(types.CreateOpts{Name: "delvm", Arch: types.ArchAMD64, CPU: 1, Mem: "1G", Disk: "5G"})
 
 	err := Delete("delvm")
 	if err != nil {
@@ -683,7 +687,7 @@ func TestCreate_ExistingDiskIsNotClobbered(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := Create(types.CreateOpts{Name: "bootcvm", Force: true, ExistingDisk: true})
+	err := Create(types.CreateOpts{Name: "bootcvm", Arch: types.ArchAMD64, Force: true, ExistingDisk: true})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -702,7 +706,7 @@ func TestCreate_ExistingDiskMissingFails(t *testing.T) {
 	t.Setenv("HOME", tmp)
 	fakeQemuBin(t)
 
-	err := Create(types.CreateOpts{Name: "novm", Force: true, ExistingDisk: true})
+	err := Create(types.CreateOpts{Name: "novm", Arch: types.ArchAMD64, Force: true, ExistingDisk: true})
 	if err == nil {
 		t.Fatal("expected error when ExistingDisk is set but no disk exists")
 	}
@@ -718,7 +722,7 @@ func TestCreate_QCOWTemplateCopied(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := Create(types.CreateOpts{Name: "tmplvm", Force: true, QCOW: template, Disk: "40G"}); err != nil {
+	if err := Create(types.CreateOpts{Name: "tmplvm", Arch: types.ArchAMD64, Force: true, QCOW: template, Disk: "40G"}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
@@ -878,6 +882,7 @@ func TestCreate_UEFI(t *testing.T) {
 
 	opts := types.CreateOpts{
 		Name: "uefivm",
+		Arch: types.ArchAMD64,
 		CPU:  2,
 		Mem:  "4G",
 		Disk: "10G",

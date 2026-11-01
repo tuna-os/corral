@@ -58,6 +58,8 @@ var (
 	createBridgeIface       string
 	createLANService        bool
 	createFirmware          string
+	createArch              string
+	createLoopback          bool
 	createVsock             bool
 	createVsockCID          uint32
 	createTPM               bool
@@ -281,6 +283,9 @@ pair with --tag (stored as corral.dev/tag.<key> labels):
 // (the CLI's --kubevirt flag, or the TUI's backend picker); it governs bootc's
 // otherwise-automatic backend selection.
 func executeCreate(name string, kubevirtExplicit bool) error {
+	if err := validateCreateGuestOptions("qemu"); err != nil {
+		return err
+	}
 	if len(createKargs) > 0 && createBootc == "" {
 		return fmt.Errorf("--karg needs --bootc: only a bootc install puts kernel arguments into the boot entry")
 	}
@@ -295,6 +300,11 @@ func executeCreate(name string, kubevirtExplicit bool) error {
 	}
 
 	if createBootc != "" {
+		// The bootc builders choose their image architecture independently.
+		// Do not pretend an emulator flag also selects a build architecture.
+		if err := validateCreateGuestOptions("bootc"); err != nil {
+			return err
+		}
 		// Backend auto-selection: honor an explicit KubeVirt choice, otherwise
 		// use KubeVirt when a cluster is reachable and fall back to local
 		// QEMU. One command, right backend, no flag juggling.
@@ -332,6 +342,9 @@ func executeCreate(name string, kubevirtExplicit bool) error {
 	if backend == "qemu" && !createIncus && (createImage != "" || createImport != "" || createContainerDisk != "" || createPVC != "") {
 		backend = "kubevirt"
 	}
+	if err := validateCreateGuestOptions(backend); err != nil {
+		return err
+	}
 	switch backend {
 	case "kubevirt":
 		return runKubevirtCreate(name)
@@ -359,6 +372,26 @@ func executeCreate(name string, kubevirtExplicit bool) error {
 		return maybeStartAndWait(name)
 	}
 	return runAdapterCreate(name, backend, createContext(backend))
+}
+
+// Guest architecture is currently implemented only for direct local QEMU create.
+// Refuse unsupported combinations before dispatch instead of dropping the flag.
+func validateCreateGuestOptions(backend string) error {
+	if err := types.GuestArch(createArch).Validate(); err != nil {
+		return err
+	}
+	switch createFirmware {
+	case "", "uefi", "bios":
+	default:
+		return fmt.Errorf("unsupported firmware %q: use uefi or bios", createFirmware)
+	}
+	if createArch != "" && backend != "qemu" {
+		return fmt.Errorf("--arch is not supported on backend %s; use local QEMU create with a prepared disk or ISO", backend)
+	}
+	if createLoopback && backend != "qemu" {
+		return fmt.Errorf("--loopback is supported only on local QEMU create")
+	}
+	return nil
 }
 
 // createPlacement parses --dedicated-cpus, --isolate-emulator-thread, and
@@ -461,6 +494,8 @@ func init() {
 	createCmd.Flags().BoolVarP(&createKubevirt, "kubevirt", "k", false, "Use KubeVirt backend")
 	createCmd.Flags().BoolVar(&createIncus, "incus", false, "Use Incus backend")
 	createCmd.Flags().StringVar(&createFirmware, "firmware", "", "Firmware boot type: uefi (default) or bios")
+	createCmd.Flags().StringVar(&createArch, "arch", "", "[qemu] Guest architecture: amd64 or arm64 (default: host architecture)")
+	createCmd.Flags().BoolVar(&createLoopback, "loopback", false, "[qemu] Bind VNC and forwarded SSH only to 127.0.0.1")
 	createCmd.Flags().StringVar(&createMem, "mem", "4G", "Memory allocation")
 	createCmd.Flags().IntVar(&createCPU, "cpu", 2, "CPU cores")
 	createCmd.Flags().StringVar(&createDisk, "disk", "", "Disk size (default: 20G)")
@@ -638,6 +673,9 @@ func attachLANBridge(ns, name string) error {
 }
 
 func runQemuCreate(name string) error {
+	if err := validateCreateGuestOptions("qemu"); err != nil {
+		return err
+	}
 	useUEFI := createFirmware == "uefi"
 	vsock := createVsock || createVsockCID != 0
 	if createVsockCID != 0 {
@@ -645,6 +683,8 @@ func runQemuCreate(name string) error {
 	}
 	if err := qemu.Create(types.CreateOpts{
 		Name:     name,
+		Arch:     types.GuestArch(createArch),
+		Loopback: createLoopback,
 		Mem:      createMem,
 		CPU:      createCPU,
 		Disk:     createDisk,
