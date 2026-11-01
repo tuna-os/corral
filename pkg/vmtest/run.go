@@ -311,7 +311,7 @@ func recordInRegistry(spec *Spec, out io.Writer) {
 		return
 	}
 	entry := types.RegistryEntry{Backend: "qemu", Password: spec.RootPassword}
-	if err := store.SetRef(types.InstanceRef{Backend: "qemu", Name: spec.Name}, entry); err != nil {
+	if err := store.SetRef(types.InstanceRef{Backend: "qemu", Namespace: "local", Name: spec.Name}, entry); err != nil {
 		_, _ = fmt.Fprintf(out, "warning: %s is not in the registry: %v\n", spec.Name, err)
 	}
 }

@@ -175,6 +175,7 @@ func handleDeleteVM(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ref := snapshotRef(r)
+	ref.Namespace = ns // Registry identities follow inventory, not snapshot adapter inputs.
 	if ns == "incus" {
 		if err := incus.NewClient(ref.Context).WithContext(r.Context()).Delete(name); err != nil {
 			errResp(w, 500, err)

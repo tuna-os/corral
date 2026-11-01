@@ -523,7 +523,7 @@ func TestHandleClone(t *testing.T) {
 		"get", "vm", "testvm", "-n", "tailvm", "-o", "json",
 	}, `{"metadata":{"name":"testvm"},"spec":{"template":{"spec":{"volumes":[{"name":"disk","persistentVolumeClaim":{"claimName":"testvm-disk"}}]}}}}`, nil)
 	fx.Runner.AddResponseKV("kubectl", []string{"apply", "-f", "-"}, "applied", nil)
-	foreign := types.InstanceRef{Backend: "qemu", Name: "testvm-clone"}
+	foreign := types.InstanceRef{Backend: "qemu", Namespace: "local", Name: "testvm-clone"}
 	if err := store.SetRef(foreign, types.RegistryEntry{Password: "keep"}); err != nil {
 		t.Fatal(err)
 	}

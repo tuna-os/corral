@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -515,14 +516,22 @@ func handleAddNIC(w http.ResponseWriter, r *http.Request) {
 // build log, like the initial bootc create.
 func handleBootcRebuild(w http.ResponseWriter, r *http.Request) {
 	ns, name := r.PathValue("ns"), r.PathValue("name")
+	// The legacy rebuild orchestrator's clients and streaming commands use the
+	// server's default cluster. A package-runner scope cannot retarget them all.
+	context := config.KubeContext()
+	query, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil || len(query["context"]) > 1 {
+		errResp(w, http.StatusBadRequest, fmt.Errorf("bootc rebuild requires a valid single context selector"))
+		return
+	}
+	if requested := query.Get("context"); requested != "" && requested != context {
+		errResp(w, http.StatusBadRequest, fmt.Errorf("bootc rebuild does not support a non-default context; no rebuild operation was started"))
+		return
+	}
 	if !kubevirt.BootcAvailable() {
 		errResp(w, http.StatusBadRequest,
 			fmt.Errorf("bootc support is not enabled on this server (optional plugin)"))
 		return
-	}
-	context := r.URL.Query().Get("context")
-	if context == "" {
-		context = config.KubeContext()
 	}
 	var b struct {
 		Image string `json:"image"`
@@ -533,10 +542,7 @@ func handleBootcRebuild(w http.ResponseWriter, r *http.Request) {
 		// The durable corral.bootc/image annotation on the VM, not the local
 		// registry (which is lost on server-pod restart and not the source
 		// of truth for this — see kubevirt.BootcImageOf).
-		_ = kubevirt.WithContext(context, func() error {
-			image = kubevirt.BootcImageOf(name, ns)
-			return nil
-		})
+		image = kubevirt.BootcImageOf(name, ns)
 	}
 	if image == "" {
 		errResp(w, http.StatusBadRequest,
@@ -549,9 +555,7 @@ func handleBootcRebuild(w http.ResponseWriter, r *http.Request) {
 	task := tasks.start(r.Context(), id)
 	done := taskBegin(requestUser(r), "bootc rebuild", ns+"/"+name)
 	go func() {
-		err := kubevirt.WithContext(context, func() error {
-			return kubevirt.BootcRebuild(name, ns, image, sshKey, "", "", task)
-		})
+		err := kubevirt.BootcRebuild(name, ns, image, sshKey, "", "", task)
 		if err == nil && store != nil {
 			ref := types.InstanceRef{Backend: "kubevirt", Context: context, Namespace: ns, Name: name}
 			store.SetRef(ref, types.RegistryEntry{Backend: "kubevirt", Namespace: ns})

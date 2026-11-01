@@ -127,6 +127,11 @@ jobs:
           trap 'exit 129' HUP
           created=1
           "$corral" --backend qemu create "$name" --firmware uefi --arch "$guest_arch" --loopback --disk 64M --mem 256M --cpu 1
+          python3 - "$ref" <<'PY'
+          import json, pathlib, sys
+          registry = pathlib.Path.home() / ".local/share/corral/registry.json"
+          assert sys.argv[1] in json.loads(registry.read_text()), "actual CLI create omitted its inventory-scoped registry identity"
+          PY
           if [[ "$guest_arch" == arm64 ]]; then
             # No firmware override or OS image: exercise production Intel
             # Homebrew discovery and its private, copied ARM variable store.
@@ -192,6 +197,11 @@ jobs:
           "$corral" --backend qemu delete "$ref" --force
           test ! -e "$HOME/.local/share/corral/vms/$name"
           test ! -e "$HOME/.config/systemd/user/corral-$name.service"
+          python3 - "$ref" <<'PY'
+          import json, pathlib, sys
+          registry = pathlib.Path.home() / ".local/share/corral/registry.json"
+          assert sys.argv[1] not in json.loads(registry.read_text()), "actual CLI delete retained its scoped registry data"
+          PY
           created=0
           printf '{"ref":"%s","stopped":true,"deleted":true,"vmDirectoryRemoved":true,"unitRemoved":true}\n' "$ref" >"$evidence/cli-cleanup.json"
           done

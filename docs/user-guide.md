@@ -744,6 +744,12 @@ The same account flags work with `bootc rebuild`, `bootc upgrade`, and
 `bootc switch`. You cannot use `--resume` to add an account to a disk that
 is already installed.
 
+The web API's bootc rebuild currently supports only the server's effective
+default KubeVirt context. A different, malformed or repeated `context` selector
+is rejected before image lookup or any stop, deletion or build. It is not
+silently retried against another cluster; saved credentials retain the actual
+default target identity.
+
 #### Testing a bootc image (`corral vmtest`)
 
 `corral vmtest` boots an image locally and tests it. It needs no plugin, and
