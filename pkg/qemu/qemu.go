@@ -360,8 +360,7 @@ func Create(opts types.CreateOpts) error {
 	}
 
 	// Systemd unit
-	_, kvmErr := os.Stat("/dev/kvm")
-	acceleration := acceleratorFor(runtime.GOOS, runtime.GOARCH, arch, kvmErr == nil)
+	acceleration := hostAccelerator(arch)
 	unitOpts := generateUnitOpts{
 		Name:         name,
 		QemuPath:     qemuPath,
@@ -894,8 +893,7 @@ func qemuArgs(opts generateUnitOpts) []string {
 	}
 	acceleration := opts.Acceleration
 	if acceleration == "" {
-		_, kvmErr := os.Stat("/dev/kvm")
-		acceleration = acceleratorFor(runtime.GOOS, runtime.GOARCH, arch, kvmErr == nil)
+		acceleration = hostAccelerator(arch)
 	}
 	args = append(args, machineArgs(arch, acceleration, opts.CPU)...)
 	args = append(args,
@@ -961,6 +959,24 @@ func qemuArgs(opts generateUnitOpts) []string {
 	return args
 }
 
+// Check the caller's actual device access, not mere node presence. A fresh
+// desktop account may not yet belong to kvm; choose and record TCG explicitly.
+func hostAccelerator(arch types.GuestArch) string {
+	hasKVM := false
+	if runtime.GOOS == "linux" && (arch == "" || string(arch) == runtime.GOARCH) {
+		hasKVM = kvmDeviceAccessible("/dev/kvm")
+	}
+	return acceleratorFor(runtime.GOOS, runtime.GOARCH, arch, hasKVM)
+}
+
+func kvmDeviceAccessible(path string) bool {
+	device, err := os.OpenFile(path, os.O_RDWR, 0)
+	if err != nil {
+		return false
+	}
+	return device.Close() == nil
+}
+
 // Hardware acceleration is valid only when guest and host instruction sets
 // match. Cross-architecture guests deliberately use TCG and its emulated CPU.
 func acceleratorFor(goos, hostArch string, guestArch types.GuestArch, hasKVM bool) string {
@@ -992,8 +1008,10 @@ func machineArgs(arch types.GuestArch, acceleration string, cpu int) []string {
 }
 
 func accelArgs(cpu int, arch types.GuestArch) []string {
-	_, kvmErr := os.Stat("/dev/kvm")
-	return accelArgsFor(runtime.GOOS, runtime.GOARCH, arch, kvmErr == nil, cpu)
+	if arch == "" {
+		arch = types.GuestArch(runtime.GOARCH)
+	}
+	return machineArgs(arch, hostAccelerator(arch), cpu)
 }
 
 // accelArgsFor is the platform matrix used by the recorded runtime command.

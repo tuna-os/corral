@@ -2,6 +2,8 @@ package qemu
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
 	"runtime"
 	"testing"
@@ -37,6 +39,31 @@ func TestAccelArgsFor_Matrix(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestAccelArgsFor_DeviceAccessRequiresReadWrite(t *testing.T) {
+	// Real filesystem permission boundary only, not a claim of KVM hardware.
+	path := filepath.Join(t.TempDir(), "device")
+	if kvmDeviceAccessible(path) {
+		t.Fatal("missing device admitted")
+	}
+	if err := os.WriteFile(path, []byte("device-access-fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if !kvmDeviceAccessible(path) {
+		t.Fatal("caller-readable/writable descriptor refused")
+	}
+	t.Run("present-but-not-writable", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("root bypasses this DAC boundary; native qualification runs unprivileged")
+		}
+		if err := os.Chmod(path, 0400); err != nil {
+			t.Fatal(err)
+		}
+		if kvmDeviceAccessible(path) {
+			t.Fatal("mere node presence admitted without caller write access")
+		}
+	})
 }
 
 func TestQemuSystemBinary(t *testing.T) {

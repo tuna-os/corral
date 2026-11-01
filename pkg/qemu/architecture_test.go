@@ -66,8 +66,11 @@ func TestCreateGuestArchitectureRecordsRuntime(t *testing.T) {
 			if err := json.Unmarshal(data, &meta); err != nil {
 				t.Fatal(err)
 			}
-			_, kvmErr := os.Stat("/dev/kvm")
-			wantAccel := acceleratorFor(runtime.GOOS, runtime.GOARCH, effective, kvmErr == nil)
+			kvmAccessible := false
+			if device, err := os.OpenFile("/dev/kvm", os.O_RDWR, 0); err == nil {
+				kvmAccessible = device.Close() == nil
+			}
+			wantAccel := acceleratorFor(runtime.GOOS, runtime.GOARCH, effective, kvmAccessible)
 			if meta.Arch != effective || meta.Acceleration != wantAccel || meta.Firmware != "uefi" {
 				t.Fatalf("metadata does not describe guest runtime: %+v", meta)
 			}

@@ -294,8 +294,9 @@ corral ct create myproj --devcontainer ./myproj
 Local QEMU defaults to the host architecture. `--arch amd64|arm64` selects
 the **guest** architecture independently of the Corral binary: amd64 uses
 `qemu-system-x86_64` and the `q35` board; arm64 uses
-`qemu-system-aarch64` and `virt`. Native guests use KVM on Linux when available
-(otherwise TCG), or Hypervisor.framework on macOS. Cross-architecture guests
+`qemu-system-aarch64` and `virt`. Native guests use KVM on Linux only when
+the caller can open `/dev/kvm` read/write (otherwise explicitly recorded TCG),
+or Hypervisor.framework on macOS. Cross-architecture guests
 always use TCG with an emulated CPU, never KVM/HVF or the host CPU model.
 For example, an amd64 guest on an Apple Silicon Mac uses the x86_64 emulator,
 `q35`, amd64 UEFI, and TCG; this is slower than native virtualization.

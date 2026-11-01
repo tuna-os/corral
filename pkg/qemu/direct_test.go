@@ -318,9 +318,10 @@ func TestAccelArgs(t *testing.T) {
 		if !strings.Contains(args, "accel=hvf") || !strings.Contains(args, "-cpu host") {
 			t.Errorf("on macOS: %s", args)
 		}
-	} else if _, err := os.Stat("/dev/kvm"); err == nil {
+	} else if device, err := os.OpenFile("/dev/kvm", os.O_RDWR, 0); err == nil {
+		_ = device.Close()
 		if !strings.Contains(args, "accel=kvm") || !strings.Contains(args, "-cpu host") {
-			t.Errorf("with KVM present: %s", args)
+			t.Errorf("with caller-accessible KVM: %s", args)
 		}
 	} else {
 		// The CI case. -cpu host cannot be modelled by TCG, so the pair has to
