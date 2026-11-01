@@ -1305,7 +1305,11 @@ func TestWebRegistryMutationReportsActualFilesystemFailure(t *testing.T) {
 				fx.Runner.AddPrefixResponse("kubectl get datavolume -n team -l corral.dev/vm=owned", "", nil)
 				response = mustDelete(t, fx.Server.URL+"/api/vms/team/owned")
 			}
-			defer response.Body.Close()
+			defer func() {
+				if err := response.Body.Close(); err != nil {
+					t.Errorf("close actual HTTP response: %v", err)
+				}
+			}()
 			var result map[string]string
 			if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
 				t.Fatal(err)

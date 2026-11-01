@@ -1196,7 +1196,11 @@ func TestLocalWebRetirement_UsesInventoryScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	response := mustDelete(t, fx.Server.URL+"/api/vms/local/"+name)
-	defer response.Body.Close()
+	defer func() {
+		if err := response.Body.Close(); err != nil {
+			t.Errorf("close actual HTTP response: %v", err)
+		}
+	}()
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("actual local HTTP deletion: HTTP %d", response.StatusCode)
 	}

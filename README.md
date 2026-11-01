@@ -328,12 +328,14 @@ The server checks a one-shot nonce, the exact Origin and Host, and the VM
 and backend context for that listener. This proves browser/transport
 readiness only, not OS boot completion or an authenticated Tuna session.
 
-The report is a scoped self-service POST, not a VM administration action:
-an authenticated console-authorized viewer need not be in `CORRAL_ADMINS`,
-but a claimed VDI desktop still requires its holder or an admin. Only the
-exact clean console-report path is eligible; the existing authentication,
-same-VM authorization and all nonce/origin checks remain required. Other
-non-admin VM mutations remain forbidden.
+This self-service POST reports a console connection. It does not administer VMs.
+A viewer with access to the console need not be in `CORRAL_ADMINS`.
+For a claimed VDI desktop, the caller must be its holder or an admin.
+
+Only the exact path for the console report is eligible.
+That path must have no encoded or extra segments.
+The server still checks authentication, access to that VM and all nonce/origin rules.
+The server refuses other VM mutations from non-admins.
 
 Corral does not authenticate the disk's publisher or qualification: its
 product-specific consumer must verify the release artifact first. Argument
@@ -353,9 +355,10 @@ A 200-character QMP sequence takes more than five seconds.
 The CLI also creates and starts an empty disk.
 It waits for firmware pixels with `qemu//local/NAME`, then stops and deletes
 the VM. CI keeps the frame and checks that Corral removed its own files.
-All four hosts retain the amd64-guest UEFI case. The Intel macOS job also
-runs an ARM64 empty-disk guest using Homebrew firmware and checks QMP's
-guest architecture, live TCG translation state, and attached firmware files.
+
+All four hosts retain the amd64-guest UEFI case.
+The Intel macOS job also runs an empty ARM64 guest with Homebrew firmware.
+It checks QMP's guest architecture, live TCG translation state and attached firmware files.
 Both cases keep runtime and owned-cleanup receipts with the firmware frame.
 
 These checks qualify backend/CLI behavior, not a Tuna guest or the desktop

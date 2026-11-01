@@ -225,18 +225,20 @@ Then `corral delete desk` removes the builder VM and the disk. Corral looks
 for these objects in the default context. Use `--context` for a different
 context.
 
-Successful deletion also retires saved credentials for that exact backend,
-context, namespace, and peer identity. Older name-only registry entries without
-a recorded remote context are retained with a warning: Corral cannot prove which
-cluster owns them. They are not reused as credentials for a different target,
-and saved registry data alone never establishes that a VM still exists. Keep or
-remove such legacy data manually in `~/.local/share/corral/registry.json` after
-checking its ownership; changing the default context does not migrate it.
+After deletion, Corral removes saved credentials for that backend, context,
+namespace and peer. Corral keeps old entries that lack a remote context.
+It warns because it cannot prove which cluster owns each entry.
+Corral does not use those entries for another target.
 
-If a backend operation has already completed but registry persistence fails,
-Corral reports that partial state explicitly. It does not delete VM or pool
-data as an automatic rollback; an SSH username-cache failure is a warning and
-does not discard the explicit username for the current connection.
+Data in the registry does not prove that a VM exists.
+Check each entry's owner before you keep or remove it in
+`~/.local/share/corral/registry.json`. A new default context does not migrate
+these entries.
+
+Corral reports failures to save data in the registry even after the backend
+operation has finished. It does not delete VM or pool data to undo that operation.
+If Corral cannot save an SSH username, it warns you.
+It still uses the username you supplied for this connection.
 
 A delete does not wait for Kubernetes finalizers. Add `--wait` to wait until
 the deleted objects are gone. `--timeout` sets the maximum time. The default
@@ -749,11 +751,10 @@ The same account flags work with `bootc rebuild`, `bootc upgrade`, and
 `bootc switch`. You cannot use `--resume` to add an account to a disk that
 is already installed.
 
-The web API's bootc rebuild currently supports only the server's effective
-default KubeVirt context. A different, malformed or repeated `context` selector
-is rejected before image lookup or any stop, deletion or build. It is not
-silently retried against another cluster; saved credentials retain the actual
-default target identity.
+The web API can rebuild a bootc disk only in the server's default KubeVirt context.
+It rejects a different, malformed or repeated `context` selector before it
+looks up the image or stops, deletes or builds resources.
+It does not try another cluster. Credentials keep the identity of that default target.
 
 #### Testing a bootc image (`corral vmtest`)
 
