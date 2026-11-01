@@ -8,7 +8,8 @@
 // registers its screen, tree row and palette entry with ui/capabilities.js.
 
 import { api } from '../api.js';
-import { refresh, select } from '../app.js';
+import { refresh } from '../refresh.js';
+import { select } from '../router.js';
 import { icon } from '../icons.js';
 import { state } from '../state.js';
 import { treeRow } from '../tree.js';

@@ -19,8 +19,9 @@
 // - Nothing is drawn as a graph with lines. At fleet sizes a wall of cards that
 //   reflows to the window stays readable where a node-and-edge drawing does not.
 
+import { registerScreen } from '../ui/screens.js';
 import { vmKey } from '../api.js';
-import { select } from '../app.js';
+import { select } from '../router.js';
 import { icon } from '../icons.js';
 import { vmMenuItems } from '../menus.js';
 import { makeDraggable } from '../pools.js';
@@ -193,3 +194,5 @@ export function renderTopology(main) {
   }
 }
 
+
+registerScreen('topology', renderTopology);

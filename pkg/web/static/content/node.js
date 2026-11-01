@@ -1,5 +1,6 @@
 // Node screen: per-node dashboard and VM list.
 
+import { registerScreen } from '../ui/screens.js';
 import { mountDashboard } from '../dashboard.js';
 import { icon } from '../icons.js';
 import { state } from '../state.js';
@@ -75,3 +76,4 @@ export function renderNode(main, name) {
   bindVMTable(rest, nodeVMs);
   bindCTTable(rest);
 }
+registerScreen('node', renderNode);

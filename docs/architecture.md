@@ -78,7 +78,11 @@ pkg/              Library code (importable)
     │                     doctor, plugins, NADs, NICs, images, instancetypes, datavolumes, boot options, ISO upload
     └── static/
         ├── index.html    dark SPA shell, create dialog (6 source types), CT create dialog, build dialog
-        ├── app.js        entry module: poll loop, content router, boot, mobile drawer
+        ├── app.js        entry module: boot and lifecycle wiring
+        ├── refresh.js    fleet loading, failure recovery and render coordination
+        ├── refresh-state.js shared render fingerprint and refresh status
+        ├── poll.js       single-flight schedule and DOM-free render policy
+        ├── router.js     selection, deep links and registered screen dispatch
         ├── state.js      shared state store and event bus (select, inventory, tasks)
         ├── api.js        fetch wrapper, VM/CT API URLs and selection keys
         ├── tree.js       sidebar tree (Server/Namespace/Pool views, VMs+CTs merged), filter, multi-select
