@@ -307,14 +307,14 @@ To import a verified amd64 boot disk without a local disk build:
 ```bash
 corral --backend qemu create NAME --qcow /absolute/path/disk.qcow2 --firmware uefi --arch amd64 --loopback
 ```
-UEFI search follows the **guest** architecture. Homebrew supplies amd64
-firmware for Apple Silicon; Corral does not replace it with firmware for ARM.
+UEFI search follows the **guest** architecture. Firmware for amd64 comes from
+Homebrew on Apple Silicon; Corral does not replace it with firmware for ARM.
 ARM64 guests need `--firmware uefi`. Files from `CORRAL_OVMF_CODE` and
 `CORRAL_OVMF_VARS` must match the selected guest architecture.
 
 Corral records the guest `architecture` and `acceleration` in VM info.
 It saves the exact emulator command for subsequent starts.
-Only local QEMU creation accepts `--arch`. Other backends reject it.
+`--arch` works only for QEMU on the local host. Other backends reject it.
 The `--bootc` path also rejects it.
 `--loopback` binds the guest VNC console and forwarded SSH to `127.0.0.1`,
 even when Tailscale is active; it is also local-QEMU-create-only.
@@ -333,8 +333,8 @@ actual native-host disk and browser qualification is still required.
 
 Without a systemd user session, Corral records a direct QEMU process.
 Stop identifies that VM over its private QMP socket and requests `quit`.
-A PID file alone never permits a signal to a process.
-If Corral cannot prove identity or retirement, stop fails.
+A PID file alone is not enough to send a signal to a process.
+If Corral cannot prove the identity or the retirement, stop fails.
 Delete then retains the disk and PID state for diagnosis.
 For an older direct VM without QMP, its actual supervisor must stop it first.
 
