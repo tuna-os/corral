@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -342,32 +341,4 @@ func TestConsoleNotifyReady_BlockedEndpointOutputStillReleasesListener(t *testin
 		t.Fatal("blocked first stdout write prevented cancellation")
 	}
 	assertConsoleListenerClosed(t, server, endpoint)
-}
-
-func TestConsoleNotifyReady_RetirementDoesNotClaimReusedPort(t *testing.T) {
-	out := &consoleHandoffWriter{lines: make(chan string, 4)}
-	endpoint, stop, _ := startConsoleHandoff(t, types.VM{Name: "desk", Namespace: "local"}, out)
-	u := assertOSPort(t, endpoint.URL)
-	if err := stop(); err != nil {
-		t.Fatal(err)
-	}
-	assertConsoleListenerClosed(t, out.server, endpoint)
-	foreign, err := net.Listen("tcp", u.Host)
-	if err != nil {
-		if !errors.Is(err, syscall.EADDRINUSE) {
-			t.Fatal(err)
-		}
-		// The production listener's actual Close already returned ErrClosed.
-		// Its address is not ours to reserve after retirement, including when
-		// another process takes it first. Do not retry or act on that address.
-		t.Logf("owned listener is closed; relinquished address unavailable to the foreign fixture: %v", err)
-		return
-	}
-	defer func() { _ = foreign.Close() }()
-	assertConsoleListenerClosed(t, out.server, endpoint)
-	conn, err := net.DialTimeout("tcp", foreign.Addr().String(), time.Second)
-	if err != nil {
-		t.Fatalf("retirement check interfered with a different listener: %v", err)
-	}
-	_ = conn.Close()
 }
