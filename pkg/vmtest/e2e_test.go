@@ -13,8 +13,8 @@
 //	sudo -E go test -tags e2evmtest -timeout 45m ./pkg/vmtest/
 //	CORRAL_VMTEST_SUDO=1 go test -tags e2evmtest -timeout 45m ./pkg/vmtest/
 //
-// Everything lands in t.TempDir(): the VM is named per test and deleted at the
-// end, so a failed run leaves no VM behind and a passing one leaves no state.
+// Artifacts land in t.TempDir() unless CORRAL_VMTEST_ARTIFACTS names a persistent
+// directory. VMs are named per test and deleted at the end.
 
 package vmtest
 
@@ -40,10 +40,19 @@ func e2eImage() string {
 
 func e2eSpec(t *testing.T, name string) *Spec {
 	t.Helper()
+	return e2eImageSpec(t, name, e2eImage())
+}
+
+func e2eImageSpec(t *testing.T, name, image string) *Spec {
+	t.Helper()
+	artifacts := os.Getenv("CORRAL_VMTEST_ARTIFACTS")
+	if artifacts == "" {
+		artifacts = t.TempDir()
+	}
 	spec := &Spec{
 		Name:      name,
-		Bootc:     e2eImage(),
-		Artifacts: filepath.Join(t.TempDir(), "out"),
+		Bootc:     image,
+		Artifacts: filepath.Join(artifacts, name),
 		Sudo:      os.Getenv("CORRAL_VMTEST_SUDO") != "",
 		Timeout:   Duration(20 * time.Minute),
 	}
@@ -155,12 +164,15 @@ func TestE2E_GuestAssertions(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			image, id := os.Getenv(tc.imageEnv), os.Getenv(tc.idEnv)
 			if image == "" || id == "" {
-				t.Skipf("set %s and %s to exercise this image", tc.imageEnv, tc.idEnv)
+				testenv.Skip(t, "guest-images", "set "+tc.imageEnv+" and "+tc.idEnv+" to exercise this image")
 			}
-			spec := e2eSpec(t, "corral-e2e-guest-"+tc.name)
-			spec.Bootc = image
+			spec := e2eImageSpec(t, "corral-e2e-guest-"+tc.name, image)
 			spec.GuestAssertions = &GuestAssertions{ID: id, VersionID: os.Getenv(tc.versionEnv)}
 			if tc.desktop {
+				// Build the existing test layer to enable SSH on images that
+				// normally ship with it disabled; keep the desktop unchanged.
+				spec.Disk = "32G"
+				spec.Provision = []Provision{{Mode: ImageMode, Script: "true"}}
 				spec.GuestAssertions.Desktop = &DesktopAssertions{
 					SessionCommand:     os.Getenv("CORRAL_VMTEST_DESKTOP_COMMAND"),
 					DisplayManagerUnit: os.Getenv("CORRAL_VMTEST_DESKTOP_UNIT"),
@@ -170,9 +182,10 @@ func TestE2E_GuestAssertions(t *testing.T) {
 			if err != nil {
 				t.Fatalf("suite: %v; result: %+v", err, result)
 			}
-			if !result.Ready || result.ExitCode != ExitOK || len(result.Checks) < 4 {
+			if !result.Ready || result.ExitCode != ExitOK || len(result.Checks) != len(guestChecks(spec.GuestAssertions)) {
 				t.Fatalf("suite did not run: %+v", result)
 			}
+			assertGuestEvidence(t, spec)
 		})
 	}
 }
@@ -180,15 +193,28 @@ func TestE2E_GuestAssertions(t *testing.T) {
 func TestE2E_GuestAssertionFailureEvidence(t *testing.T) {
 	image := os.Getenv("CORRAL_VMTEST_HEADLESS_IMAGE")
 	if image == "" {
-		t.Skip("set CORRAL_VMTEST_HEADLESS_IMAGE to exercise failure evidence")
+		testenv.Skip(t, "guest-images", "set CORRAL_VMTEST_HEADLESS_IMAGE to exercise failure evidence")
 	}
-	spec := e2eSpec(t, "corral-e2e-guest-broken")
-	spec.Bootc = image
+	spec := e2eImageSpec(t, "corral-e2e-guest-broken", image)
 	spec.GuestAssertions = &GuestAssertions{ID: "corral-deliberately-invalid-id"}
 	result, err := Run(spec, os.Stderr)
 	if err == nil || result.ExitCode != ExitCheck || !result.Ready {
 		t.Fatalf("expected a booted guest and failing check: %+v, %v", result, err)
 	}
+	stored := assertGuestEvidence(t, spec)
+	if stored.ExitCode != ExitCheck || len(stored.Checks) != 4 || !strings.Contains(stored.Checks[3].Output, "unexpected os-release ID") {
+		t.Fatalf("identity failure evidence missing: %+v", stored)
+	}
+	for i, check := range stored.Checks {
+		if check.Passed != (i != 3) {
+			t.Errorf("check %d: passed=%v, output=%s", i, check.Passed, check.Output)
+		}
+	}
+}
+
+// Read the persisted result as a consumer of the uploaded evidence would.
+func assertGuestEvidence(t *testing.T, spec *Spec) Result {
+	t.Helper()
 	for _, name := range []string{"serial.log", ResultFile} {
 		info, err := os.Stat(filepath.Join(spec.Artifacts, name))
 		if err != nil || info.Size() == 0 {
@@ -203,9 +229,10 @@ func TestE2E_GuestAssertionFailureEvidence(t *testing.T) {
 	if err := json.Unmarshal(data, &stored); err != nil {
 		t.Fatal(err)
 	}
-	if stored.ExitCode != ExitCheck || len(stored.Checks) < 4 || !strings.Contains(stored.Checks[3].Output, "unexpected os-release ID") {
-		t.Fatalf("identity failure evidence missing: %s", data)
+	if !stored.Ready || stored.Image != spec.Bootc || len(stored.Checks) != len(guestChecks(spec.GuestAssertions)) {
+		t.Fatalf("guest evidence incomplete: %s", data)
 	}
+	return stored
 }
 
 func tail(s string, lines int) string {
