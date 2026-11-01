@@ -59,7 +59,7 @@ jobs:
             brew install qemu
           else
             sudo apt-get update -qq
-            sudo apt-get install -y -qq qemu-system-x86 qemu-utils
+            sudo apt-get install -y -qq qemu-system-x86 qemu-utils ovmf
             if [[ "$RUNNER_ARCH" == ARM64 ]]; then
               sudo apt-get install -y -qq qemu-system-arm
             fi
@@ -92,7 +92,7 @@ jobs:
         run: |
           set -o pipefail
           go test -json -count=1 -timeout 90s ./pkg/qemu -run 'Test(StartDirect_|StopDirect_|AccelArgsFor_)' | tee native-qemu-evidence/tests.jsonl
-      - name: Exercise canonical CLI wait and owned empty-disk retirement
+      - name: Exercise canonical CLI wait and owned UEFI retirement
         shell: bash
         run: |
           set -euo pipefail
@@ -114,7 +114,7 @@ jobs:
           trap 'exit 130' INT
           trap 'exit 143' TERM
           trap 'exit 129' HUP
-          "$corral" --backend qemu create "$name" --arch amd64 --loopback --disk 64M --mem 128M --cpu 1
+          "$corral" --backend qemu create "$name" --firmware uefi --arch amd64 --loopback --disk 64M --mem 256M --cpu 1
           created=1
           "$corral" --backend qemu start "$ref"
           # The actual firmware framebuffer is sufficient for this API regression;
@@ -122,6 +122,39 @@ jobs:
           "$corral" --backend qemu --json wait "$ref" --paint --timeout 30s --interval 100ms >native-qemu-evidence/cli-wait.json
           "$corral" --backend qemu info "$ref" >native-qemu-evidence/cli-info.json
           "$corral" --backend qemu qmp "$ref" query-target >native-qemu-evidence/cli-target.json
+          "$corral" --backend qemu qmp "$ref" query-kvm >native-qemu-evidence/cli-kvm.json
+          "$corral" --backend qemu qmp "$ref" query-block >native-qemu-evidence/cli-blocks.json
+          python3 - "$corral" <<'PY'
+          import hashlib, json, os, pathlib, shutil, sys
+          root = pathlib.Path("native-qemu-evidence")
+          info = json.loads((root / "cli-info.json").read_text())
+          target = json.loads((root / "cli-target.json").read_text())
+          kvm = json.loads((root / "cli-kvm.json").read_text())
+          blocks = json.loads((root / "cli-blocks.json").read_text())
+          assert info["architecture"] == "amd64" and target["arch"] == "x86_64"
+          assert info["firmware"] == "uefi"
+          if os.environ["RUNNER_ARCH"] == "ARM64":
+              assert info["acceleration"] == "tcg"
+          elif os.environ["RUNNER_OS"] == "macOS":
+              assert info["acceleration"] == "hvf"
+          else:
+              assert info["acceleration"] in {"kvm", "tcg"}
+          assert kvm["enabled"] is (info["acceleration"] == "kvm")
+          code = [item["inserted"]["image"]["filename"] for item in blocks
+                  if item.get("inserted", {}).get("ro") is True
+                  and item["inserted"].get("drv") == "raw"
+                  and item["inserted"].get("image", {}).get("filename", "").endswith(".fd")]
+          assert len(code) == 1, "running VM lacks one actual read-only UEFI flash image"
+          firmware = pathlib.Path(code[0])
+          qemu = pathlib.Path(shutil.which("qemu-system-x86_64")).resolve()
+          receipt = {"host": os.environ["RUNNER_OS"], "hostArchitecture": os.environ["RUNNER_ARCH"],
+                     "guestArchitecture": target["arch"], "acceleration": info["acceleration"],
+                     "firmwareCode": str(firmware), "firmwareCodeSha256": hashlib.sha256(firmware.read_bytes()).hexdigest(),
+                     "qemuSha256": hashlib.sha256(qemu.read_bytes()).hexdigest(),
+                     "corralSha256": hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest(),
+                     "scope": "native CLI and UEFI execution only; no guest OS, Tuna login or browser proof"}
+          (root / "cli-runtime.json").write_text(json.dumps(receipt, indent=2) + "\n")
+          PY
           "$corral" --backend qemu screenshot "$ref" --require-paint -o native-qemu-evidence/cli-firmware.png
           "$corral" --backend qemu stop "$ref"
           "$corral" --backend qemu delete "$ref" --force
