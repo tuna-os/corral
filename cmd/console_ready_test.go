@@ -53,12 +53,16 @@ func nextConsoleHandoffLine(t *testing.T, lines <-chan string) string {
 	}
 }
 
-func startConsoleHandoff(t *testing.T, vm types.VM, out *consoleHandoffWriter) (consoleEndpoint, func() error, <-chan struct{}) {
+func startConsoleHandoff(t *testing.T, vm types.VM, out *consoleHandoffWriter, requireAuth bool) (consoleEndpoint, func() error, <-chan struct{}) {
 	t.Helper()
 	withJSONOutput(t, true)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("CORRAL_AUTH_REQUIRED", "")
 	t.Setenv("CORRAL_ADMINS", "")
+	if requireAuth {
+		t.Setenv("CORRAL_AUTH_REQUIRED", "true")
+		t.Setenv("CORRAL_ADMINS", "admin@example.com")
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	finished := make(chan struct{})
 	var result error
@@ -102,6 +106,7 @@ func postConsoleHandoff(t *testing.T, endpoint consoleEndpoint) int {
 	}
 	req.Header.Set("Origin", origin)
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Tailscale-User-Login", "viewer@example.com")
 	client := &http.Client{Timeout: 3 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -131,7 +136,7 @@ func assertConsoleListenerClosed(t *testing.T, server *web.Server, endpoint cons
 func TestConsoleNotifyReady_JSONEndpointThenOneAuthenticEvent(t *testing.T) {
 	out := &consoleHandoffWriter{lines: make(chan string, 4)}
 	vm := types.VM{Name: "desk", Namespace: "local", Context: "lab"}
-	endpoint, stop, _ := startConsoleHandoff(t, vm, out)
+	endpoint, stop, _ := startConsoleHandoff(t, vm, out, true)
 	u := assertOSPort(t, endpoint.URL)
 	if endpoint.VM != vm.Name || endpoint.Namespace != vm.Namespace || endpoint.Context != vm.Context || u.Path != "/console/local/desk" || u.Query().Get("context") != "lab" || u.Query().Get("ready_nonce") == "" {
 		t.Fatalf("readiness endpoint = %+v", endpoint)
@@ -184,7 +189,7 @@ func TestConsoleNotifyReady_BlockedEventOutputDoesNotBlockHTTPOrCancellation(t *
 	// caller-owned writer. This tests cancellation, not a cooperative writer.
 	t.Cleanup(func() { close(release) })
 	out := &consoleHandoffWriter{lines: make(chan string, 4), eventStarted: make(chan struct{}), eventRelease: release}
-	endpoint, stop, _ := startConsoleHandoff(t, types.VM{Name: "desk", Namespace: "local"}, out)
+	endpoint, stop, _ := startConsoleHandoff(t, types.VM{Name: "desk", Namespace: "local"}, out, false)
 	if status := postConsoleHandoff(t, endpoint); status != http.StatusNoContent {
 		t.Fatalf("HTTP waited for blocked stdout or rejected report: %d", status)
 	}
@@ -205,7 +210,7 @@ func TestConsoleNotifyReady_BlockedEventOutputDoesNotBlockHTTPOrCancellation(t *
 func TestConsoleNotifyReady_EventOutputFailureStopsServer(t *testing.T) {
 	failure := errors.New("output closed")
 	out := &consoleHandoffWriter{lines: make(chan string, 4), eventError: failure}
-	endpoint, stop, finished := startConsoleHandoff(t, types.VM{Name: "desk", Namespace: "local"}, out)
+	endpoint, stop, finished := startConsoleHandoff(t, types.VM{Name: "desk", Namespace: "local"}, out, false)
 	if status := postConsoleHandoff(t, endpoint); status != http.StatusNoContent {
 		t.Fatalf("report = %d", status)
 	}
@@ -222,7 +227,7 @@ func TestConsoleNotifyReady_EventOutputFailureStopsServer(t *testing.T) {
 
 func TestConsoleNotifyReady_CancelBeforeRFBEmitsNoEvent(t *testing.T) {
 	out := &consoleHandoffWriter{lines: make(chan string, 4)}
-	endpoint, stop, _ := startConsoleHandoff(t, types.VM{Name: "desk", Namespace: "local"}, out)
+	endpoint, stop, _ := startConsoleHandoff(t, types.VM{Name: "desk", Namespace: "local"}, out, false)
 	if err := stop(); err != nil {
 		t.Fatal(err)
 	}

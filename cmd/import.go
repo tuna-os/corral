@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/tuna-os/corral/pkg/backend"
 	"github.com/tuna-os/corral/pkg/kubevirt"
 	"github.com/tuna-os/corral/pkg/shell"
 	"github.com/tuna-os/corral/pkg/types"
@@ -47,6 +48,7 @@ qcow2 and raw images work as-is. Convert other formats first:
 }
 
 func runImport(name, ns, source, disk, mem string, cpu int) error {
+	backend.ActivateContext(types.InstanceRef{Backend: "kubevirt", Context: createContext("kubevirt")})
 	if ns == "" {
 		ns = kubevirt.DefaultNamespace
 	}
@@ -86,7 +88,9 @@ func runImport(name, ns, source, disk, mem string, cpu int) error {
 		return err
 	}
 	if registryStore != nil {
-		registryStore.Set(name, types.RegistryEntry{Backend: "kubevirt", Namespace: ns})
+		if err := registryStore.SetRef(types.InstanceRef{Backend: "kubevirt", Context: createContext("kubevirt"), Namespace: ns, Name: name}, types.RegistryEntry{Password: kubevirt.LastPassword}); err != nil {
+			return fmt.Errorf("saving registry: %w", err)
+		}
 	}
 	fmt.Fprintf(os.Stderr, "VM %q created in ns/%s — start: corral start %s\n", name, ns, name)
 	return nil

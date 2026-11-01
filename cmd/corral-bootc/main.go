@@ -56,7 +56,7 @@ func finishVM(name, ns, pvcName, image, key, mem string, cpu int, node string, p
 		fmt.Fprintf(os.Stderr, "warning: tailnet expose failed: %v\n", err)
 	}
 	if store, err := registry.NewStore(); err == nil {
-		store.Set(name, types.RegistryEntry{
+		store.SetRef(types.InstanceRef{Backend: "kubevirt", Context: config.KubeContext(), Namespace: ns, Name: name}, types.RegistryEntry{
 			Backend:   "kubevirt",
 			Namespace: ns,
 		})
@@ -483,7 +483,7 @@ lists this same catalog alongside the OS image catalog in one place.`,
 			return err
 		}
 		if store, err := registry.NewStore(); err == nil {
-			store.Set(name, types.RegistryEntry{Backend: "kubevirt", Namespace: ns})
+			store.SetRef(types.InstanceRef{Backend: "kubevirt", Context: config.KubeContext(), Namespace: ns, Name: name}, types.RegistryEntry{})
 		}
 		fmt.Fprintf(os.Stderr, "VM %q rebuilt from %s and restarted\n", name, image)
 		return nil

@@ -311,6 +311,8 @@ UEFI search follows the **guest** architecture. Firmware for amd64 comes from
 Homebrew on Apple Silicon; Corral does not replace it with firmware for ARM.
 ARM64 guests need `--firmware uefi`. Files from `CORRAL_OVMF_CODE` and
 `CORRAL_OVMF_VARS` must match the selected guest architecture.
+Intel Macs also discover Homebrew's ARM64 UEFI firmware under
+`/usr/local/share/qemu`; ARM64 guests there use TCG, not Hypervisor.framework.
 
 Corral records the guest `architecture` and `acceleration` in VM info.
 It saves the exact emulator command for subsequent starts.
@@ -325,6 +327,13 @@ after the standalone noVNC page reports a real RFB connection.
 The server checks a one-shot nonce, the exact Origin and Host, and the VM
 and backend context for that listener. This proves browser/transport
 readiness only, not OS boot completion or an authenticated Tuna session.
+
+The report is a scoped self-service POST, not a VM administration action:
+an authenticated console-authorized viewer need not be in `CORRAL_ADMINS`,
+but a claimed VDI desktop still requires its holder or an admin. Only the
+exact clean console-report path is eligible; the existing authentication,
+same-VM authorization and all nonce/origin checks remain required. Other
+non-admin VM mutations remain forbidden.
 
 Corral does not authenticate the disk's publisher or qualification: its
 product-specific consumer must verify the release artifact first. Argument
@@ -344,6 +353,10 @@ A 200-character QMP sequence takes more than five seconds.
 The CLI also creates and starts an empty disk.
 It waits for firmware pixels with `qemu//local/NAME`, then stops and deletes
 the VM. CI keeps the frame and checks that Corral removed its own files.
+All four hosts retain the amd64-guest UEFI case. The Intel macOS job also
+runs an ARM64 empty-disk guest using Homebrew firmware and checks QMP's
+guest architecture, live TCG translation state, and attached firmware files.
+Both cases keep runtime and owned-cleanup receipts with the firmware frame.
 
 These checks qualify backend/CLI behavior, not a Tuna guest or the desktop
 launcher. They do not prove firstboot, login, or a browser session.

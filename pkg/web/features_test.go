@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"github.com/tuna-os/corral/pkg/catalog"
+	"github.com/tuna-os/corral/pkg/config"
 	"github.com/tuna-os/corral/pkg/kubevirt"
+	"github.com/tuna-os/corral/pkg/types"
 )
 
 // errSimulated is a sentinel error used in error-path tests.
@@ -521,6 +523,10 @@ func TestHandleClone(t *testing.T) {
 		"get", "vm", "testvm", "-n", "tailvm", "-o", "json",
 	}, `{"metadata":{"name":"testvm"},"spec":{"template":{"spec":{"volumes":[{"name":"disk","persistentVolumeClaim":{"claimName":"testvm-disk"}}]}}}}`, nil)
 	fx.Runner.AddResponseKV("kubectl", []string{"apply", "-f", "-"}, "applied", nil)
+	foreign := types.InstanceRef{Backend: "qemu", Name: "testvm-clone"}
+	if err := store.SetRef(foreign, types.RegistryEntry{Password: "keep"}); err != nil {
+		t.Fatal(err)
+	}
 
 	body := strings.NewReader(`{"target":"testvm-clone"}`)
 	resp, err := http.Post(fx.Server.URL+"/api/vms/tailvm/testvm/clone", "application/json", body)
@@ -529,12 +535,22 @@ func TestHandleClone(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == 200 {
-		var out map[string]string
-		json.NewDecoder(resp.Body).Decode(&out)
-		if out["target"] != "testvm-clone" {
-			t.Errorf("expected target=testvm-clone, got %v", out)
-		}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("clone: HTTP %d, want 200", resp.StatusCode)
+	}
+	var out map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out["target"] != "testvm-clone" {
+		t.Fatalf("expected target=testvm-clone, got %v", out)
+	}
+	ref := types.InstanceRef{Backend: "kubevirt", Context: config.KubeContext(), Namespace: "tailvm", Name: "testvm-clone"}
+	if entry, ok := store.GetRef(ref); !ok || entry.Namespace != ref.Namespace || entry.Context != ref.Context {
+		t.Fatalf("clone did not retain its actual scoped identity: %+v (found %v)", entry, ok)
+	}
+	if entry, ok := store.GetRef(foreign); !ok || entry.Password != "keep" {
+		t.Fatalf("clone overwrote another backend's credentials: %+v (found %v)", entry, ok)
 	}
 }
 

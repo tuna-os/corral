@@ -89,7 +89,7 @@ func TestCreateOnAProxmoxContextCreatesOnPVE(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	proxmoxbe.SetClientForContext("pve", client)
+	proxmoxbe.SetClientForContext(server.URL, client)
 	t.Cleanup(proxmoxbe.ResetClients)
 	rootContext = "pve"
 	createISO = "local:iso/debian.iso"

@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/tuna-os/corral/pkg/qemu"
+	"github.com/tuna-os/corral/pkg/registry"
+	"github.com/tuna-os/corral/pkg/types"
 )
 
 // fakeHost implements every Runner collaborator and records the calls that
@@ -286,5 +288,29 @@ func TestRunner_Order(t *testing.T) {
 	}
 	if result.SSH.Port != 2222 || !strings.Contains(result.SSH.Command, "-p 2222") {
 		t.Errorf("SSH endpoint not recorded: %+v", result.SSH)
+	}
+}
+
+func TestRecordInRegistryStoresLocalCredentialsWithoutOverwritingAnotherTarget(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	store, err := registry.NewStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign := types.InstanceRef{Backend: "kubevirt", Context: "cluster", Namespace: "team", Name: "vmtest"}
+	if err := store.SetRef(foreign, types.RegistryEntry{Password: "preserved"}); err != nil {
+		t.Fatal(err)
+	}
+	var output strings.Builder
+	recordInRegistry(&Spec{Name: "vmtest", RootPassword: "local-test-secret"}, &output)
+	if output.Len() != 0 {
+		t.Fatalf("recording credentials failed: %s", output.String())
+	}
+	ref := types.InstanceRef{Backend: "qemu", Name: "vmtest"}
+	if entry, ok := store.GetRef(ref); !ok || entry.Password != "local-test-secret" {
+		t.Fatalf("actual local writer did not persist scoped credentials: %+v (found %v)", entry, ok)
+	}
+	if entry, ok := store.GetRef(foreign); !ok || entry.Password != "preserved" {
+		t.Fatalf("local writer overwrote another target's credentials: %+v (found %v)", entry, ok)
 	}
 }

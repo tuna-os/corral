@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/tuna-os/corral/pkg/catalog"
+	"github.com/tuna-os/corral/pkg/config"
 	"github.com/tuna-os/corral/pkg/doctor"
 	"github.com/tuna-os/corral/pkg/kubevirt"
 	"github.com/tuna-os/corral/pkg/plugin"
@@ -280,10 +281,19 @@ func snapshotRef(r *http.Request) types.InstanceRef {
 	case localNS:
 		return types.InstanceRef{Backend: "qemu", Name: name}
 	case "incus":
+		if context == "" {
+			context = config.IncusRemote()
+		}
 		return types.InstanceRef{Backend: "incus", Context: context, Name: name}
 	case "libvirt":
+		if context == "" {
+			context = config.LibvirtURI()
+		}
 		return types.InstanceRef{Backend: "libvirt", Context: context, Name: name}
 	default:
+		if context == "" {
+			context = config.KubeContext()
+		}
 		return types.InstanceRef{Backend: "kubevirt", Context: context, Namespace: ns, Name: name}
 	}
 }
@@ -391,14 +401,16 @@ func handleClone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	done := taskBegin(requestUser(r), "clone", ns+"/"+name+" → "+b.Target)
-	if err := kubeClient(r, ns).Clone(name, b.Target); err != nil {
+	client := kubeClient(r, ns)
+	if err := client.Clone(name, b.Target); err != nil {
 		done(err)
 		errResp(w, http.StatusInternalServerError, err)
 		return
 	}
 	done(nil)
 	if store != nil {
-		store.Set(b.Target, types.RegistryEntry{Backend: "kubevirt", Namespace: ns})
+		ref := types.InstanceRef{Backend: "kubevirt", Context: client.Context, Namespace: ns, Name: b.Target}
+		store.SetRef(ref, types.RegistryEntry{Backend: "kubevirt", Namespace: ns})
 	}
 	jsonResp(w, http.StatusOK, map[string]string{"target": b.Target})
 }
@@ -508,6 +520,10 @@ func handleBootcRebuild(w http.ResponseWriter, r *http.Request) {
 			fmt.Errorf("bootc support is not enabled on this server (optional plugin)"))
 		return
 	}
+	context := r.URL.Query().Get("context")
+	if context == "" {
+		context = config.KubeContext()
+	}
 	var b struct {
 		Image string `json:"image"`
 	}
@@ -517,7 +533,10 @@ func handleBootcRebuild(w http.ResponseWriter, r *http.Request) {
 		// The durable corral.bootc/image annotation on the VM, not the local
 		// registry (which is lost on server-pod restart and not the source
 		// of truth for this — see kubevirt.BootcImageOf).
-		image = kubevirt.BootcImageOf(name, ns)
+		_ = kubevirt.WithContext(context, func() error {
+			image = kubevirt.BootcImageOf(name, ns)
+			return nil
+		})
 	}
 	if image == "" {
 		errResp(w, http.StatusBadRequest,
@@ -530,9 +549,12 @@ func handleBootcRebuild(w http.ResponseWriter, r *http.Request) {
 	task := tasks.start(r.Context(), id)
 	done := taskBegin(requestUser(r), "bootc rebuild", ns+"/"+name)
 	go func() {
-		err := kubevirt.BootcRebuild(name, ns, image, sshKey, "", "", task)
+		err := kubevirt.WithContext(context, func() error {
+			return kubevirt.BootcRebuild(name, ns, image, sshKey, "", "", task)
+		})
 		if err == nil && store != nil {
-			store.Set(name, types.RegistryEntry{Backend: "kubevirt", Namespace: ns})
+			ref := types.InstanceRef{Backend: "kubevirt", Context: context, Namespace: ns, Name: name}
+			store.SetRef(ref, types.RegistryEntry{Backend: "kubevirt", Namespace: ns})
 		}
 		task.finish(err)
 		done(err)

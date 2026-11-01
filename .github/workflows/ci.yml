@@ -98,15 +98,26 @@ jobs:
           set -euo pipefail
           corral="$RUNNER_TEMP/corral-native-cli"
           go build -trimpath -o "$corral" .
+          guest_arches=(amd64)
+          if [[ "$RUNNER_OS" == macOS && "$RUNNER_ARCH" == X64 ]]; then
+            guest_arches+=(arm64)
+          fi
+          for guest_arch in "${guest_arches[@]}"; do
           name="canonical-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          evidence=native-qemu-evidence
+          if [[ "$guest_arch" == arm64 ]]; then
+            name="$name-arm64"
+            evidence="$evidence/arm64"
+          fi
+          mkdir -p "$evidence"
           ref="qemu//local/$name"
           created=0
           cleanup() {
             result=$?
             trap - EXIT INT TERM HUP
             if [[ "$created" == 1 ]]; then
-              "$corral" --backend qemu stop "$ref" >>native-qemu-evidence/cli-cleanup.log 2>&1 || result=1
-              "$corral" --backend qemu delete "$ref" --force >>native-qemu-evidence/cli-cleanup.log 2>&1 || result=1
+              "$corral" --backend qemu stop "$ref" >>"$evidence/cli-cleanup.log" 2>&1 || result=1
+              "$corral" --backend qemu delete "$ref" --force >>"$evidence/cli-cleanup.log" 2>&1 || result=1
             fi
             exit "$result"
           }
@@ -114,26 +125,41 @@ jobs:
           trap 'exit 130' INT
           trap 'exit 143' TERM
           trap 'exit 129' HUP
-          "$corral" --backend qemu create "$name" --firmware uefi --arch amd64 --loopback --disk 64M --mem 256M --cpu 1
           created=1
+          "$corral" --backend qemu create "$name" --firmware uefi --arch "$guest_arch" --loopback --disk 64M --mem 256M --cpu 1
+          if [[ "$guest_arch" == arm64 ]]; then
+            # No firmware override or OS image: exercise production Intel
+            # Homebrew discovery and its private, copied ARM variable store.
+            cmp /usr/local/share/qemu/edk2-arm-vars.fd "$HOME/.local/share/corral/vms/$name/vars.fd"
+            shasum -a 256 /usr/local/share/qemu/edk2-{aarch64-code,arm-vars}.fd >"$evidence/firmware-sha256.txt"
+            qemu-system-aarch64 --version >"$evidence/qemu-version.txt"
+          fi
           "$corral" --backend qemu start "$ref"
           # The actual firmware framebuffer is sufficient for this API regression;
           # it is explicitly not proof that a guest OS or Tuna session booted.
-          "$corral" --backend qemu --json wait "$ref" --paint --timeout 30s --interval 100ms >native-qemu-evidence/cli-wait.json
-          "$corral" --backend qemu info "$ref" >native-qemu-evidence/cli-info.json
-          "$corral" --backend qemu qmp "$ref" query-target >native-qemu-evidence/cli-target.json
-          "$corral" --backend qemu qmp "$ref" query-kvm >native-qemu-evidence/cli-kvm.json
-          "$corral" --backend qemu qmp "$ref" query-block >native-qemu-evidence/cli-blocks.json
-          python3 - "$corral" <<'PY'
+          "$corral" --backend qemu --json wait "$ref" --paint --timeout 30s --interval 100ms >"$evidence/cli-wait.json"
+          "$corral" --backend qemu info "$ref" >"$evidence/cli-info.json"
+          "$corral" --backend qemu qmp "$ref" query-target >"$evidence/cli-target.json"
+          "$corral" --backend qemu qmp "$ref" query-kvm >"$evidence/cli-kvm.json"
+          "$corral" --backend qemu qmp "$ref" query-block >"$evidence/cli-blocks.json"
+          if [[ "$guest_arch" == arm64 ]]; then
+            "$corral" --backend qemu qmp "$ref" human-monitor-command '{"command-line":"info jit"}' >"$evidence/cli-tcg.json"
+          fi
+          python3 - "$corral" "$guest_arch" "$evidence" "$name" <<'PY'
           import hashlib, json, os, pathlib, shutil, sys
-          root = pathlib.Path("native-qemu-evidence")
+          root = pathlib.Path(sys.argv[3])
+          guest_arch = sys.argv[2]
           info = json.loads((root / "cli-info.json").read_text())
           target = json.loads((root / "cli-target.json").read_text())
           kvm = json.loads((root / "cli-kvm.json").read_text())
           blocks = json.loads((root / "cli-blocks.json").read_text())
-          assert info["architecture"] == "amd64" and target["arch"] == "x86_64"
+          target_arch = "aarch64" if guest_arch == "arm64" else "x86_64"
+          assert info["architecture"] == guest_arch and target["arch"] == target_arch
           assert info["firmware"] == "uefi"
-          if os.environ["RUNNER_ARCH"] == "ARM64":
+          if guest_arch == "arm64":
+              assert info["acceleration"] == "tcg"
+              assert "Translation buffer state" in json.loads((root / "cli-tcg.json").read_text()), "running QEMU lacks TCG translation buffer"
+          elif os.environ["RUNNER_ARCH"] == "ARM64":
               assert info["acceleration"] == "tcg"
           elif os.environ["RUNNER_OS"] == "macOS":
               assert info["acceleration"] == "hvf"
@@ -146,7 +172,13 @@ jobs:
                   and item["inserted"].get("image", {}).get("filename", "").endswith(".fd")]
           assert len(code) == 1, "running VM lacks one actual read-only UEFI flash image"
           firmware = pathlib.Path(code[0])
-          qemu = pathlib.Path(shutil.which("qemu-system-x86_64")).resolve()
+          if guest_arch == "arm64":
+              assert firmware.resolve() == pathlib.Path("/usr/local/share/qemu/edk2-aarch64-code.fd").resolve()
+              private_vars = pathlib.Path.home() / ".local/share/corral/vms" / sys.argv[4] / "vars.fd"
+              assert any(item.get("inserted", {}).get("ro") is False
+                         and pathlib.Path(item["inserted"]["image"]["filename"]) == private_vars
+                         for item in blocks if item.get("inserted", {}).get("image", {}).get("filename")), "running QEMU lacks its owned ARM variable store"
+          qemu = pathlib.Path(shutil.which("qemu-system-" + target_arch)).resolve()
           receipt = {"host": os.environ["RUNNER_OS"], "hostArchitecture": os.environ["RUNNER_ARCH"],
                      "guestArchitecture": target["arch"], "acceleration": info["acceleration"],
                      "firmwareCode": str(firmware), "firmwareCodeSha256": hashlib.sha256(firmware.read_bytes()).hexdigest(),
@@ -155,12 +187,14 @@ jobs:
                      "scope": "native CLI and UEFI execution only; no guest OS, Tuna login or browser proof"}
           (root / "cli-runtime.json").write_text(json.dumps(receipt, indent=2) + "\n")
           PY
-          "$corral" --backend qemu screenshot "$ref" --require-paint -o native-qemu-evidence/cli-firmware.png
+          "$corral" --backend qemu screenshot "$ref" --require-paint -o "$evidence/cli-firmware.png"
           "$corral" --backend qemu stop "$ref"
           "$corral" --backend qemu delete "$ref" --force
           test ! -e "$HOME/.local/share/corral/vms/$name"
           test ! -e "$HOME/.config/systemd/user/corral-$name.service"
           created=0
+          printf '{"ref":"%s","stopped":true,"deleted":true,"vmDirectoryRemoved":true,"unitRemoved":true}\n' "$ref" >"$evidence/cli-cleanup.json"
+          done
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with:

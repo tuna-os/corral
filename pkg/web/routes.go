@@ -55,7 +55,7 @@ func routes(useDemoConsole bool, readiness *consoleReadiness) (*http.ServeMux, e
 		mux.HandleFunc("GET /console/{ns}/{name}", handleConsolePage)
 	} else {
 		mux.HandleFunc("GET /console/{ns}/{name}", readiness.page)
-		mux.HandleFunc("POST /api/console-ready/{ns}/{name}", readiness.connected)
+		mux.Handle("POST /api/console-ready/{ns}/{name}", vdiConsoleGate(http.HandlerFunc(readiness.connected)))
 	}
 
 	// Proxmox API compatibility — expose /api2/json/… alongside the

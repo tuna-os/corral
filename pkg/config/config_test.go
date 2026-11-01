@@ -598,3 +598,25 @@ func TestContextManagement(t *testing.T) {
 		t.Error("HasBackend('incus') want false after removal")
 	}
 }
+
+func TestContextsDoNotDuplicateTheSelectedKubevirtTargetAsUnbound(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("KUBECONFIG", "")
+	t.Setenv("CORRAL_DEFAULT_BACKEND", "")
+	t.Setenv("CORRAL_INCUS_REMOTE", "")
+	t.Setenv("CORRAL_LIBVIRT_URI", "")
+	t.Setenv("CORRAL_KUBE_CONTEXT", "cluster-a")
+	if err := AddContext(ContextConfig{Name: "cluster-alias", Backend: "kubevirt", Context: "cluster-a"}); err != nil {
+		t.Fatal(err)
+	}
+	var targets []ContextConfig
+	for _, target := range Contexts() {
+		if target.Backend == "kubevirt" {
+			targets = append(targets, target)
+		}
+	}
+	if len(targets) != 1 || targets[0].Context != "cluster-a" {
+		t.Fatalf("selected KubeVirt target was duplicated or lost: %+v", targets)
+	}
+}

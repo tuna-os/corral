@@ -15,6 +15,7 @@ import (
 	"github.com/tuna-os/corral/pkg/config"
 	"github.com/tuna-os/corral/pkg/kubevirt"
 	"github.com/tuna-os/corral/pkg/registry"
+	"github.com/tuna-os/corral/pkg/types"
 )
 
 // forceKubevirt makes config.Contexts() offer a kubevirt target for the
@@ -866,6 +867,24 @@ func TestHandleCreateDelete_RegistryRoundtrip(t *testing.T) {
 	if resp.StatusCode != 201 {
 		t.Fatalf("create: expected 201, got %d", resp.StatusCode)
 	}
+	ref := types.InstanceRef{Backend: "kubevirt", Context: config.KubeContext(), Namespace: "tailvm", Name: "web"}
+	if entry, ok := store.GetRef(ref); !ok || entry.Namespace != ref.Namespace {
+		t.Fatalf("actual create did not persist scoped registry data: %+v (found %v)", entry, ok)
+	}
+	foreign := []types.InstanceRef{
+		{Backend: "kubevirt", Context: ref.Context + "-other", Namespace: ref.Namespace, Name: ref.Name},
+		{Backend: "kubevirt", Context: ref.Context, Namespace: "other-namespace", Name: ref.Name},
+		{Backend: "qemu", Name: ref.Name},
+		{Backend: "kubevirt", Context: ref.Context, Namespace: ref.Namespace, Name: ref.Name, Peer: "remote-other"},
+	}
+	for _, target := range foreign {
+		if err := store.SetRef(target, types.RegistryEntry{Password: "preserved"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.Set(ref.Name, types.RegistryEntry{Backend: "kubevirt", Namespace: ref.Namespace, Password: "legacy-retained"}); err != nil {
+		t.Fatal(err)
+	}
 
 	// Now delete — should remove from registry
 	fx.Runner.AddPrefixResponse("kubectl delete", "", nil)
@@ -883,18 +902,16 @@ func TestHandleCreateDelete_RegistryRoundtrip(t *testing.T) {
 		t.Fatalf("delete: expected 200, got %d", resp.StatusCode)
 	}
 
-	// Verify registry was cleaned — try deleting again, should still succeed
-
-	req, _ = http.NewRequest("DELETE", fx.Server.URL+"/api/vms/tailvm/web", nil)
-	resp, err = http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
+	if entry, ok := store.GetRef(ref); ok {
+		t.Fatalf("actual HTTP delete retained its scoped credentials: %+v", entry)
 	}
-	resp.Body.Close()
-
-	// Second delete should also succeed (idempotent)
-	if resp.StatusCode != 200 {
-		t.Errorf("idempotent delete: expected 200, got %d", resp.StatusCode)
+	for _, target := range foreign {
+		if entry, ok := store.GetRef(target); !ok || entry.Password != "preserved" {
+			t.Fatalf("HTTP delete removed another target's credentials %s: %+v (found %v)", target.String(), entry, ok)
+		}
+	}
+	if entry, ok := store.Get(ref.Name); !ok || entry.Password != "legacy-retained" {
+		t.Fatalf("HTTP delete guessed ownership of unbound legacy data: %+v (found %v)", entry, ok)
 	}
 }
 

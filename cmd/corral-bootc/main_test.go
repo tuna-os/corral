@@ -8,6 +8,7 @@ import (
 	"github.com/tuna-os/corral/pkg/kubevirt"
 	"github.com/tuna-os/corral/pkg/registry"
 	"github.com/tuna-os/corral/pkg/shell"
+	"github.com/tuna-os/corral/pkg/types"
 )
 
 // finishVM needs the bootc plugin compiled in (kubevirt.GenerateBootcVM
@@ -65,7 +66,7 @@ func TestFinishVM_RecordsRegistryEntry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("registry.NewStore: %v", err)
 	}
-	entry, ok := store.Get("myvm")
+	entry, ok := store.GetRef(types.InstanceRef{Backend: "kubevirt", Namespace: "tailvm", Name: "myvm"})
 	if !ok {
 		t.Fatal("expected a registry entry for myvm")
 	}

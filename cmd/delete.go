@@ -115,8 +115,8 @@ func resolveDeleteTarget(name string) deleteTarget {
 	if err != nil {
 		var notFound fleet.NotFoundError
 		if errors.As(err, &notFound) {
-			if adapter, ok := leftoverAdapter(name); ok {
-				t.adapter, t.notListed = adapter, err
+			if adapter, ref, ok := leftoverAdapter(name); ok {
+				t.adapter, t.ref, t.notListed = adapter, ref, err
 				return t
 			}
 		}
@@ -147,21 +147,25 @@ func resolveDeleteTarget(name string) deleteTarget {
 
 // leftoverAdapter is the default context's adapter, when it can purge by
 // name: the --context flag's context, else the configured default.
-func leftoverAdapter(name string) (backend.Adapter, bool) {
+func leftoverAdapter(name string) (backend.Adapter, types.InstanceRef, bool) {
 	target := config.DefaultContext()
 	if rootContext != "" {
 		found, ok := config.FindContext(rootContext)
 		if !ok {
-			return nil, false
+			return nil, types.InstanceRef{}, false
 		}
 		target = found
 	}
-	adapter, err := backend.For(types.InstanceRef{Backend: target.Backend, Context: target.Context, Name: name})
+	ref := types.InstanceRef{Backend: target.Backend, Context: target.Context, Name: name}
+	adapter, err := backend.For(ref)
 	if err != nil {
-		return nil, false
+		return nil, ref, false
+	}
+	if namespacer, ok := adapter.(backend.Namespacer); ok {
+		ref.Namespace = namespacer.DefaultNamespace()
 	}
 	_, ok := adapter.(backend.Purger)
-	return adapter, ok
+	return adapter, ref, ok
 }
 
 func confirmDelete(names []string) bool {
@@ -200,13 +204,15 @@ func (t deleteTarget) delete() deleteResult {
 		return result
 	}
 	result.Deleted = true
+	if selectedVM != nil && selectedVM.Ref() == t.ref {
+		selectedVM = nil
+	}
 	if registryStore != nil && t.peer == nil {
-		if entry, ok := registryStore.Get(t.ref.Name); ok && entry.Peer == t.ref.Peer &&
-			backend.Ref(entry.Backend, entry.Context, entry.Namespace, t.ref.Name) ==
-				backend.Ref(t.ref.Backend, t.ref.Context, t.ref.Namespace, t.ref.Name) {
-			if err := registryStore.Remove(t.ref.Name); err != nil {
-				fmt.Fprintf(os.Stderr, "warning: %s is deleted, but its registry entry stays: %v\n", t.name, err)
-			}
+		if err := registryStore.RemoveRef(t.ref); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: %s is deleted, but its registry entry stays: %v\n", t.name, err)
+		}
+		if entry, ok := registryStore.Get(t.ref.Name); ok && entry.Backend == t.ref.Backend && entry.Peer == t.ref.Peer && entry.Context == "" {
+			fmt.Fprintf(os.Stderr, "warning: retained legacy registry entry for %s: its target context is unknown; it does not establish that the VM still exists\n", t.ref.Name)
 		}
 	}
 	return result

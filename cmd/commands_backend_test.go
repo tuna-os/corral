@@ -5,11 +5,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tuna-os/corral/pkg/config"
 	"github.com/tuna-os/corral/pkg/incus"
 	"github.com/tuna-os/corral/pkg/libvirt"
 	"github.com/tuna-os/corral/pkg/registry"
 	"github.com/tuna-os/corral/pkg/shell"
 	"github.com/tuna-os/corral/pkg/types"
+	"github.com/tuna-os/corral/pkg/virtualbox"
 )
 
 // remoteVMScratch registers one VM on a non-local backend and isolates
@@ -29,13 +31,35 @@ func remoteVMScratch(t *testing.T, name string, entry types.RegistryEntry) *shel
 	registryStore = registry.NewStoreAt(filepath.Join(t.TempDir(), "registry.json"))
 	selectedVM = nil
 	t.Cleanup(func() { registryStore, selectedVM = oldStore, oldSelected })
-	if err := registryStore.Set(name, entry); err != nil {
+	ref := types.InstanceRef{Backend: entry.Backend, Context: entry.Context, Namespace: entry.Namespace, Name: name}
+	if ref.Namespace == "" && (ref.Backend == "incus" || ref.Backend == "libvirt" || ref.Backend == "virtualbox") {
+		ref.Namespace = ref.Backend
+	}
+	if err := registryStore.SetRef(ref, entry); err != nil {
 		t.Fatal(err)
+	}
+	if err := config.AddContext(config.ContextConfig{Name: "test-target", Backend: entry.Backend, Context: entry.Context}); err != nil {
+		t.Fatal(err)
+	}
+	if entry.Backend == "kubevirt" {
+		if err := config.SetKubeContext(entry.Context); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	fake := shell.NewFake()
 	fake.AddPrefixResponse("incus", "", nil)
 	fake.AddPrefixResponse("virsh", "", nil)
+	switch entry.Backend {
+	case "incus":
+		fake.AddResponse("incus list "+entry.Context+": --format=json", `[{"name":"`+name+`","type":"virtual-machine","status":"Stopped"}]`, nil)
+	case "libvirt":
+		fake.AddResponse("virsh -c "+entry.Context+" list --all --name", name+"\n", nil)
+	case "virtualbox":
+		fake.AddResponse("VBoxManage list vms", `"`+name+`" {00000000-0000-0000-0000-000000000001}`+"\n", nil)
+		virtualbox.SetRunner(fake)
+		t.Cleanup(func() { virtualbox.SetRunner(shell.Real{}) })
+	}
 	incus.SetRunner(fake)
 	libvirt.SetRunner(fake)
 	t.Cleanup(func() {

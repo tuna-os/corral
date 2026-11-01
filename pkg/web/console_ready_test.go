@@ -18,7 +18,7 @@ import (
 	"golang.org/x/net/websocket"
 )
 
-func readyConsoleServer(t *testing.T, vmContext string) (*Server, string, <-chan struct{}, context.CancelFunc) {
+func readyConsoleServer(t *testing.T, namespace, name, vmContext string) (*Server, string, <-chan struct{}, context.CancelFunc) {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("CORRAL_AUTH_REQUIRED", "")
@@ -28,7 +28,7 @@ func readyConsoleServer(t *testing.T, vmContext string) (*Server, string, <-chan
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	page, ready, err := srv.NotifyConsoleReady(ctx, "local", "desk", vmContext)
+	page, ready, err := srv.NotifyConsoleReady(ctx, namespace, name, vmContext)
 	if err != nil {
 		cancel()
 		_ = srv.Close()
@@ -64,7 +64,7 @@ func readinessBody(t *testing.T, page, vmContext string) string {
 	return string(body)
 }
 
-func readinessRequest(t *testing.T, srv *Server, method, path, origin, host, body string) (int, string) {
+func readinessRequest(t *testing.T, srv *Server, method, path, origin, host, body, login string) (int, string) {
 	t.Helper()
 	req, err := http.NewRequest(method, srv.URL()+path, strings.NewReader(body))
 	if err != nil {
@@ -77,6 +77,9 @@ func readinessRequest(t *testing.T, srv *Server, method, path, origin, host, bod
 		req.Host = host
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if login != "" {
+		req.Header.Set("Tailscale-User-Login", login)
+	}
 	client := &http.Client{Timeout: 3 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -100,7 +103,7 @@ func assertNotConsoleReady(t *testing.T, ready <-chan struct{}) {
 }
 
 func TestConsoleReadiness_HTTPRejectsForeignIdentityAndMalformedReports(t *testing.T) {
-	srv, page, ready, _ := readyConsoleServer(t, "lab")
+	srv, page, ready, _ := readyConsoleServer(t, "local", "desk", "lab")
 	body := readinessBody(t, page, "lab")
 	u, _ := url.Parse(srv.URL())
 	const path = "/api/console-ready/local/desk"
@@ -127,14 +130,14 @@ func TestConsoleReadiness_HTTPRejectsForeignIdentityAndMalformedReports(t *testi
 		{"GET cannot report", "GET", path, srv.URL(), "", body, http.StatusNotFound},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			status, response := readinessRequest(t, srv, tc.method, tc.path, tc.origin, tc.host, tc.body)
+			status, response := readinessRequest(t, srv, tc.method, tc.path, tc.origin, tc.host, tc.body, "")
 			if status != tc.want {
 				t.Fatalf("status = %d, want %d: %s", status, tc.want, response)
 			}
 			assertNotConsoleReady(t, ready)
 		})
 	}
-	status, response := readinessRequest(t, srv, "POST", path, srv.URL(), "", body)
+	status, response := readinessRequest(t, srv, "POST", path, srv.URL(), "", body, "")
 	if status != http.StatusNoContent {
 		t.Fatalf("authentic report = %d: %s", status, response)
 	}
@@ -143,8 +146,81 @@ func TestConsoleReadiness_HTTPRejectsForeignIdentityAndMalformedReports(t *testi
 	case <-time.After(time.Second):
 		t.Fatal("authentic report did not signal readiness")
 	}
-	if status, _ := readinessRequest(t, srv, "POST", path, srv.URL(), "", body); status != http.StatusConflict {
+	if status, _ := readinessRequest(t, srv, "POST", path, srv.URL(), "", body, ""); status != http.StatusConflict {
 		t.Fatalf("duplicate report = %d, want 409", status)
+	}
+}
+
+func TestConsoleReadiness_HTTPNonAdminHolderCapabilityIsScoped(t *testing.T) {
+	f := newVDIFixture(t)
+	srv, page, ready, _ := readyConsoleServer(t, "vdi", "desk-1", "lab")
+	t.Setenv("CORRAL_ADMINS", "root@example.com")
+	t.Setenv("CORRAL_AUTH_REQUIRED", "true")
+	const holder = "alice@example.com"
+	if desktop := f.claim(t, holder); desktop.ID != vdiDesk1.ID() {
+		t.Fatalf("holder claimed %q, want %q", desktop.ID, vdiDesk1.ID())
+	}
+	const path = "/api/console-ready/vdi/desk-1"
+	body := readinessBody(t, page, "lab")
+	for _, tc := range []struct {
+		name, method, path, origin, host, body, login string
+		want                                          int
+	}{
+		{"anonymous", "POST", path, srv.URL(), "", body, "", http.StatusUnauthorized},
+		{"another holder", "POST", path, srv.URL(), "", body, "bob@example.com", http.StatusForbidden},
+		{"wrong VM", "POST", "/api/console-ready/vdi/desk-2", srv.URL(), "", body, holder, http.StatusForbidden},
+		{"wrong namespace", "POST", "/api/console-ready/other/desk-1", srv.URL(), "", body, holder, http.StatusForbidden},
+		{"wrong context", "POST", path, srv.URL(), "", readinessBody(t, page, "other"), holder, http.StatusForbidden},
+		{"wrong nonce", "POST", path, srv.URL(), "", `{"nonce":"wrong","context":"lab"}`, holder, http.StatusForbidden},
+		{"missing origin", "POST", path, "", "", body, holder, http.StatusForbidden},
+		{"foreign origin", "POST", path, "https://attacker.example", "", body, holder, http.StatusForbidden},
+		{"foreign Host", "POST", path, srv.URL(), "attacker.example", body, holder, http.StatusMisdirectedRequest},
+		{"extra segment", "POST", path + "/stop", srv.URL(), "", body, holder, http.StatusForbidden},
+		{"prefix lookalike", "POST", "/api/console-ready-other/vdi/desk-1", srv.URL(), "", body, holder, http.StatusForbidden},
+		{"empty segment", "POST", "/api/console-ready//desk-1", srv.URL(), "", body, holder, http.StatusForbidden},
+		{"dot segment", "POST", "/api/console-ready/vdi/x/../desk-1", srv.URL(), "", body, holder, http.StatusForbidden},
+		{"trailing slash", "POST", path + "/", srv.URL(), "", body, holder, http.StatusForbidden},
+		{"encoded separator", "POST", "/api/console-ready/vdi%2fdesk-1", srv.URL(), "", body, holder, http.StatusForbidden},
+		{"encoded namespace", "POST", "/api/console-ready/%76di/desk-1", srv.URL(), "", body, holder, http.StatusForbidden},
+		{"encoded traversal", "POST", "/api/console-ready/vdi/%2e%2e/desk-1", srv.URL(), "", body, holder, http.StatusForbidden},
+		{"encoded percent", "POST", "/api/console-ready/vdi/%2564esk-1", srv.URL(), "", body, holder, http.StatusForbidden},
+		{"different verb", "PUT", path, srv.URL(), "", body, holder, http.StatusForbidden},
+		{"VM stop", "POST", "/api/vms/vdi/desk-1/stop", srv.URL(), "", body, holder, http.StatusForbidden},
+		{"VM delete", "DELETE", "/api/vms/vdi/desk-1", srv.URL(), "", body, holder, http.StatusForbidden},
+		{"settings mutation", "PUT", "/api/theme", srv.URL(), "", body, holder, http.StatusForbidden},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			status, response := readinessRequest(t, srv, tc.method, tc.path, tc.origin, tc.host, tc.body, tc.login)
+			if status != tc.want {
+				t.Fatalf("HTTP %d, want %d: %s", status, tc.want, response)
+			}
+			assertNotConsoleReady(t, ready)
+		})
+	}
+	if status, response := readinessRequest(t, srv, "POST", path, srv.URL(), "", body, holder); status != http.StatusNoContent {
+		t.Fatalf("holder's authentic report: HTTP %d: %s", status, response)
+	}
+	select {
+	case <-ready:
+	case <-time.After(time.Second):
+		t.Fatal("authorized non-admin holder did not report readiness")
+	}
+	if status, _ := readinessRequest(t, srv, "POST", path, srv.URL(), "", body, holder); status != http.StatusConflict {
+		t.Fatalf("replayed holder report: HTTP %d, want 409", status)
+	}
+}
+
+func TestConsoleReadiness_HTTPNonAdminLocalViewer(t *testing.T) {
+	srv, page, ready, _ := readyConsoleServer(t, "local", "desk", "")
+	t.Setenv("CORRAL_ADMINS", "root@example.com")
+	t.Setenv("CORRAL_AUTH_REQUIRED", "true")
+	if status, response := readinessRequest(t, srv, "POST", "/api/console-ready/local/desk", srv.URL(), "", readinessBody(t, page, ""), "viewer@example.com"); status != http.StatusNoContent {
+		t.Fatalf("console-authorized non-admin local viewer: HTTP %d: %s", status, response)
+	}
+	select {
+	case <-ready:
+	case <-time.After(time.Second):
+		t.Fatal("authorized local viewer did not report readiness")
 	}
 }
 
@@ -158,7 +234,7 @@ func mustReadyNonce(t *testing.T, page string) string {
 }
 
 func TestConsoleReadiness_PageIsBoundAndDoesNotSignal(t *testing.T) {
-	srv, page, ready, _ := readyConsoleServer(t, "lab")
+	srv, page, ready, _ := readyConsoleServer(t, "local", "desk", "lab")
 	u, _ := url.Parse(page)
 	nonce := mustReadyNonce(t, page)
 	decoded, err := base64.RawURLEncoding.DecodeString(nonce)
@@ -180,7 +256,7 @@ func TestConsoleReadiness_PageIsBoundAndDoesNotSignal(t *testing.T) {
 		{"duplicate nonce", u.RequestURI() + "&ready_nonce=" + nonce, http.StatusForbidden, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			status, body := readinessRequest(t, srv, "GET", tc.path, "", "", "")
+			status, body := readinessRequest(t, srv, "GET", tc.path, "", "", "", "")
 			if status != tc.want || strings.Contains(body, `data-ready-nonce="`+nonce+`"`) != tc.withNonce {
 				t.Fatalf("page = %d, want %d (nonce %v): %s", status, tc.want, tc.withNonce, body)
 			}
@@ -190,25 +266,25 @@ func TestConsoleReadiness_PageIsBoundAndDoesNotSignal(t *testing.T) {
 }
 
 func TestConsoleReadiness_CancellationRetiresPageAndReport(t *testing.T) {
-	srv, page, ready, cancel := readyConsoleServer(t, "")
+	srv, page, ready, cancel := readyConsoleServer(t, "local", "desk", "")
 	cancel()
 	u, _ := url.Parse(page)
-	if status, _ := readinessRequest(t, srv, "GET", u.RequestURI(), "", "", ""); status != http.StatusGone {
+	if status, _ := readinessRequest(t, srv, "GET", u.RequestURI(), "", "", "", ""); status != http.StatusGone {
 		t.Fatalf("late page = %d, want 410", status)
 	}
-	if status, _ := readinessRequest(t, srv, "POST", "/api/console-ready/local/desk", srv.URL(), "", readinessBody(t, page, "")); status != http.StatusGone {
+	if status, _ := readinessRequest(t, srv, "POST", "/api/console-ready/local/desk", srv.URL(), "", readinessBody(t, page, ""), ""); status != http.StatusGone {
 		t.Fatalf("late report = %d, want 410", status)
 	}
 	assertNotConsoleReady(t, ready)
 }
 
 func TestConsoleReadiness_NonceIsPerListener(t *testing.T) {
-	_, first, firstReady, _ := readyConsoleServer(t, "")
-	secondServer, second, secondReady, _ := readyConsoleServer(t, "")
+	_, first, firstReady, _ := readyConsoleServer(t, "local", "desk", "")
+	secondServer, second, secondReady, _ := readyConsoleServer(t, "local", "desk", "")
 	if mustReadyNonce(t, first) == mustReadyNonce(t, second) {
 		t.Fatal("listeners reused a readiness nonce")
 	}
-	if status, _ := readinessRequest(t, secondServer, "POST", "/api/console-ready/local/desk", secondServer.URL(), "", readinessBody(t, first, "")); status != http.StatusForbidden {
+	if status, _ := readinessRequest(t, secondServer, "POST", "/api/console-ready/local/desk", secondServer.URL(), "", readinessBody(t, first, ""), ""); status != http.StatusForbidden {
 		t.Fatalf("another listener's nonce was accepted: %d", status)
 	}
 	assertNotConsoleReady(t, firstReady)
@@ -242,7 +318,7 @@ func TestConsoleReadiness_WebSocketUpgradeIsNotRFBReadiness(t *testing.T) {
 	previous := demoEnabled
 	demoEnabled = true // Existing RFB fixture; deliberately never finish RFB.
 	t.Cleanup(func() { demoEnabled = previous })
-	srv, _, ready, _ := readyConsoleServer(t, "")
+	srv, _, ready, _ := readyConsoleServer(t, "local", "desk", "")
 	ws, err := websocket.Dial("ws"+strings.TrimPrefix(srv.URL(), "http")+"/api/vnc/local/desk", "", srv.URL())
 	if err != nil {
 		t.Fatalf("websocket upgrade: %v", err)
@@ -259,7 +335,7 @@ func TestConsoleReadiness_WebSocketUpgradeIsNotRFBReadiness(t *testing.T) {
 }
 
 func TestConsoleReadiness_StalledBodyIsBounded(t *testing.T) {
-	srv, _, ready, _ := readyConsoleServer(t, "")
+	srv, _, ready, _ := readyConsoleServer(t, "local", "desk", "")
 	u, _ := url.Parse(srv.URL())
 	conn, err := net.DialTimeout("tcp", u.Host, time.Second)
 	if err != nil {

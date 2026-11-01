@@ -67,7 +67,7 @@ func createWindowsVM(name, ns, iso, disk, mem string, cpu int, unattended bool) 
 	}
 	fmt.Fprintf(os.Stderr, "SSH/VNC/RDP exposed via proxy service %s-proxy\n", name)
 	if store, err := registry.NewStore(); err == nil {
-		store.Set(name, types.RegistryEntry{
+		store.SetRef(types.InstanceRef{Backend: "kubevirt", Context: config.KubeContext(), Namespace: ns, Name: name}, types.RegistryEntry{
 			Backend:   "kubevirt",
 			Namespace: ns,
 			Username:  "Administrator",

@@ -81,7 +81,7 @@ func poolCreateCmd() *cobra.Command {
 			}
 			if store, rerr := registry.NewStore(); rerr == nil {
 				for _, m := range p.Members {
-					store.Set(m.Name, types.RegistryEntry{Backend: "kubevirt", Namespace: ns})
+					store.SetRef(types.InstanceRef{Backend: "kubevirt", Context: config.KubeContext(), Namespace: ns, Name: m.Name}, types.RegistryEntry{})
 				}
 			}
 			fmt.Printf("pool %q created: %d members\n", name, len(p.Members))

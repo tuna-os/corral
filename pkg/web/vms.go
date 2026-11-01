@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/tuna-os/corral/pkg/config"
 	"github.com/tuna-os/corral/pkg/incus"
 	"github.com/tuna-os/corral/pkg/kubevirt"
 	"github.com/tuna-os/corral/pkg/libvirt"
@@ -16,7 +17,11 @@ import (
 // context the request names and to the request itself, so the commands they
 // run log the request ID.
 func kubeClient(r *http.Request, ns string) *kubevirt.Client {
-	return kubevirt.NewClientForContext(ns, r.URL.Query().Get("context")).WithContext(r.Context())
+	context := r.URL.Query().Get("context")
+	if context == "" {
+		context = config.KubeContext()
+	}
+	return kubevirt.NewClientForContext(ns, context).WithContext(r.Context())
 }
 
 func incusClient(r *http.Request) incus.Client {
@@ -169,10 +174,14 @@ func handleDeleteVM(w http.ResponseWriter, r *http.Request) {
 		proxyPeerVM(w, r, peer, remoteNS)
 		return
 	}
+	ref := snapshotRef(r)
 	if ns == "incus" {
-		if err := incusClient(r).Delete(name); err != nil {
+		if err := incus.NewClient(ref.Context).WithContext(r.Context()).Delete(name); err != nil {
 			errResp(w, 500, err)
 			return
+		}
+		if store != nil {
+			_ = store.RemoveRef(ref)
 		}
 		jsonResp(w, 200, map[string]string{"status": "deleted"})
 		return
@@ -182,9 +191,12 @@ func handleDeleteVM(w http.ResponseWriter, r *http.Request) {
 			errResp(w, http.StatusBadRequest, fmt.Errorf("libvirt deletion requires destroyStorage=true because it permanently removes domain disks"))
 			return
 		}
-		if err := libvirtClient(r).Delete(name); err != nil {
+		if err := libvirt.NewClient(ref.Context).WithContext(r.Context()).Delete(name); err != nil {
 			errResp(w, 500, err)
 			return
+		}
+		if store != nil {
+			_ = store.RemoveRef(ref)
 		}
 		jsonResp(w, 200, map[string]string{"status": "deleted"})
 		return
@@ -198,19 +210,19 @@ func handleDeleteVM(w http.ResponseWriter, r *http.Request) {
 		}
 		done(nil)
 		if store != nil {
-			_ = store.Remove(name)
+			_ = store.RemoveRef(ref)
 		}
 		jsonResp(w, http.StatusOK, map[string]string{"status": "deleted"})
 		return
 	}
-	if err := kubeClient(r, ns).DeleteVM(name); err != nil {
+	if err := kubevirt.NewClientForContext(ns, ref.Context).WithContext(r.Context()).DeleteVM(name); err != nil {
 		done(err)
 		errResp(w, http.StatusInternalServerError, err)
 		return
 	}
 	done(nil)
 	if store != nil {
-		_ = store.Remove(name)
+		_ = store.RemoveRef(ref)
 	}
 	jsonResp(w, http.StatusOK, map[string]string{"status": "deleted"})
 }

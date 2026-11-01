@@ -85,6 +85,11 @@ func candidateFirmwares(arch types.GuestArch) []firmwarePair {
 				code: "/usr/share/edk2-arm/aarch64/QEMU_EFI.fd",
 				vars: "/usr/share/edk2-arm/aarch64/QEMU_VARS.fd",
 			},
+			// Homebrew (macOS Intel)
+			{
+				code: "/usr/local/share/qemu/edk2-aarch64-code.fd",
+				vars: "/usr/local/share/qemu/edk2-arm-vars.fd",
+			},
 			// Homebrew (macOS Apple Silicon)
 			{
 				code: "/opt/homebrew/share/qemu/edk2-aarch64-code.fd",

@@ -225,6 +225,14 @@ Then `corral delete desk` removes the builder VM and the disk. Corral looks
 for these objects in the default context. Use `--context` for a different
 context.
 
+Successful deletion also retires saved credentials for that exact backend,
+context, namespace, and peer identity. Older name-only registry entries without
+a recorded remote context are retained with a warning: Corral cannot prove which
+cluster owns them. They are not reused as credentials for a different target,
+and saved registry data alone never establishes that a VM still exists. Keep or
+remove such legacy data manually in `~/.local/share/corral/registry.json` after
+checking its ownership; changing the default context does not migrate it.
+
 A delete does not wait for Kubernetes finalizers. Add `--wait` to wait until
 the deleted objects are gone. `--timeout` sets the maximum time. The default
 is 5 minutes. If an object stays after that time, the command fails and
