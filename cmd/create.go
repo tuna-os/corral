@@ -358,11 +358,11 @@ func executeCreate(name string, kubevirtExplicit bool) error {
 	case "incus":
 		return runIncusCreate(name)
 	case "libvirt":
-		if err := libvirt.NewClient(createContext("libvirt")).Create(types.CreateOpts{Name: name, CPU: createCPU, Mem: createMem, Disk: createDisk, ISO: createISO, QCOW: createQCOW}); err != nil {
+		if err := libvirt.NewClient(createContext(config.LibvirtURI)).Create(types.CreateOpts{Name: name, CPU: createCPU, Mem: createMem, Disk: createDisk, ISO: createISO, QCOW: createQCOW}); err != nil {
 			return err
 		}
 		if registryStore != nil {
-			return registryStore.SetRef(types.InstanceRef{Backend: "libvirt", Context: createContext("libvirt"), Namespace: "libvirt", Name: name}, types.RegistryEntry{})
+			return registryStore.SetRef(types.InstanceRef{Backend: "libvirt", Context: createContext(config.LibvirtURI), Namespace: "libvirt", Name: name}, types.RegistryEntry{})
 		}
 		return nil
 	case "qemu":
@@ -371,7 +371,12 @@ func executeCreate(name string, kubevirtExplicit bool) error {
 		}
 		return maybeStartAndWait(name)
 	}
-	return runAdapterCreate(name, backend, createContext(backend))
+	return runAdapterCreate(name, backend, createContext(func() string {
+		if def := config.DefaultContext(); def.Backend == backend {
+			return def.Context
+		}
+		return ""
+	}))
 }
 
 // Guest architecture is currently implemented only for direct local QEMU create.
@@ -435,26 +440,16 @@ func refuseKubevirtOnlyFlags(backendName string) error {
 }
 
 // createContext returns the backend target, not the Corral configuration alias.
-// Package-level create helpers read these same accessors.
-func createContext(backend string) string {
-	if target, ok := config.FindContext(rootContext); rootContext != "" && ok {
-		return target.Context
-	}
+// The caller supplies its existing default accessor, evaluated only when no
+// explicit context was selected.
+func createContext(defaultContext func() string) string {
 	if rootContext != "" {
+		if target, ok := config.FindContext(rootContext); ok {
+			return target.Context
+		}
 		return rootContext
 	}
-	switch backend {
-	case "kubevirt":
-		return config.KubeContext()
-	case "incus":
-		return config.IncusRemote()
-	case "libvirt":
-		return config.LibvirtURI()
-	}
-	if def := config.DefaultContext(); def.Backend == backend {
-		return def.Context
-	}
-	return ""
+	return defaultContext()
 }
 
 // runAdapterCreate creates on a backend the dedicated paths above do not
@@ -546,7 +541,7 @@ func init() {
 }
 
 func runIncusCreate(name string) error {
-	backend.ActivateContext(types.InstanceRef{Backend: "incus", Context: createContext("incus")})
+	backend.ActivateContext(types.InstanceRef{Backend: "incus", Context: createContext(config.IncusRemote)})
 	if createISO != "" || createQCOW != "" || createImport != "" || createPVC != "" || createContainerDisk != "" {
 		return fmt.Errorf("the Incus backend creates from an Incus image; use --image (for example images:ubuntu/24.04)")
 	}
@@ -558,13 +553,13 @@ func runIncusCreate(name string) error {
 		return err
 	}
 	if registryStore != nil {
-		return registryStore.SetRef(types.InstanceRef{Backend: "incus", Context: createContext("incus"), Namespace: "incus", Name: name}, types.RegistryEntry{})
+		return registryStore.SetRef(types.InstanceRef{Backend: "incus", Context: createContext(config.IncusRemote), Namespace: "incus", Name: name}, types.RegistryEntry{})
 	}
 	return nil
 }
 
 func runKubevirtCreate(name string) error {
-	backend.ActivateContext(types.InstanceRef{Backend: "kubevirt", Context: createContext("kubevirt")})
+	backend.ActivateContext(types.InstanceRef{Backend: "kubevirt", Context: createContext(config.KubeContext)})
 	ns := createNamespace
 	if ns == "" {
 		ns = kubevirt.DefaultNamespace
@@ -651,7 +646,7 @@ func runKubevirtCreate(name string) error {
 	}
 
 	if registryStore != nil {
-		if err := registryStore.SetRef(types.InstanceRef{Backend: "kubevirt", Context: createContext("kubevirt"), Namespace: ns, Name: name}, types.RegistryEntry{
+		if err := registryStore.SetRef(types.InstanceRef{Backend: "kubevirt", Context: createContext(config.KubeContext), Namespace: ns, Name: name}, types.RegistryEntry{
 			Backend:   "kubevirt",
 			Namespace: ns,
 			Password:  kubevirt.LastPassword,
@@ -718,7 +713,7 @@ func runQemuCreate(name string) error {
 }
 
 func runKubevirtBootcCreate(name string) error {
-	backend.ActivateContext(types.InstanceRef{Backend: "kubevirt", Context: createContext("kubevirt")})
+	backend.ActivateContext(types.InstanceRef{Backend: "kubevirt", Context: createContext(config.KubeContext)})
 	ns := createNamespace
 	if ns == "" {
 		ns = kubevirt.DefaultNamespace
@@ -756,7 +751,7 @@ func runKubevirtBootcCreate(name string) error {
 			return err
 		}
 		if registryStore != nil {
-			if err := registryStore.SetRef(types.InstanceRef{Backend: "kubevirt", Context: createContext("kubevirt"), Namespace: ns, Name: name}, types.RegistryEntry{}); err != nil {
+			if err := registryStore.SetRef(types.InstanceRef{Backend: "kubevirt", Context: createContext(config.KubeContext), Namespace: ns, Name: name}, types.RegistryEntry{}); err != nil {
 				return err
 			}
 		}
@@ -783,7 +778,7 @@ func runKubevirtBootcCreate(name string) error {
 		fmt.Fprintf(os.Stderr, "warning: tailnet expose failed: %v\n", err)
 	}
 	if registryStore != nil {
-		if err := registryStore.SetRef(types.InstanceRef{Backend: "kubevirt", Context: createContext("kubevirt"), Namespace: ns, Name: name}, types.RegistryEntry{}); err != nil {
+		if err := registryStore.SetRef(types.InstanceRef{Backend: "kubevirt", Context: createContext(config.KubeContext), Namespace: ns, Name: name}, types.RegistryEntry{}); err != nil {
 			return err
 		}
 	}

@@ -408,11 +408,16 @@ func handleClone(w http.ResponseWriter, r *http.Request) {
 		errResp(w, http.StatusInternalServerError, err)
 		return
 	}
-	done(nil)
 	if store != nil {
 		ref := types.InstanceRef{Backend: "kubevirt", Context: client.Context, Namespace: ns, Name: b.Target}
-		store.SetRef(ref, types.RegistryEntry{Backend: "kubevirt", Namespace: ns})
+		if err := store.SetRef(ref, types.RegistryEntry{Backend: "kubevirt", Namespace: ns}); err != nil {
+			err = fmt.Errorf("VM %q was cloned but its registry data could not be saved: %w", b.Target, err)
+			done(err)
+			errResp(w, http.StatusInternalServerError, err)
+			return
+		}
 	}
+	done(nil)
 	jsonResp(w, http.StatusOK, map[string]string{"target": b.Target})
 }
 
@@ -558,7 +563,9 @@ func handleBootcRebuild(w http.ResponseWriter, r *http.Request) {
 		err := kubevirt.BootcRebuild(name, ns, image, sshKey, "", "", task)
 		if err == nil && store != nil {
 			ref := types.InstanceRef{Backend: "kubevirt", Context: context, Namespace: ns, Name: name}
-			store.SetRef(ref, types.RegistryEntry{Backend: "kubevirt", Namespace: ns})
+			if saveErr := store.SetRef(ref, types.RegistryEntry{Backend: "kubevirt", Namespace: ns}); saveErr != nil {
+				err = fmt.Errorf("VM %q was rebuilt but its registry data could not be saved: %w", name, saveErr)
+			}
 		}
 		task.finish(err)
 		done(err)

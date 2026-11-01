@@ -149,8 +149,8 @@ var viewerCmd = &cobra.Command{
 // <name>`, checking (in order) the explicit flag, then whatever's
 // remembered in the registry, then $USER/"root" for username. If
 // flagUser was passed explicitly and differs from what's remembered, it's
-// saved back to the registry — so a user only needs `-u` once per host,
-// not on every `corral ssh` call.
+// saved back to the registry when possible — so a user only needs `-u` once
+// per host. A failed cache write warns but does not change this request's credentials.
 func resolveSSHCredentials(ref types.InstanceRef, flagUser, flagPassword string) (user, password string) {
 	var saved types.RegistryEntry
 	if registryStore != nil {
@@ -171,7 +171,9 @@ func resolveSSHCredentials(ref types.InstanceRef, flagUser, flagPassword string)
 	if flagUser != "" && flagUser != saved.Username && registryStore != nil {
 		updated := saved
 		updated.Username = flagUser
-		registryStore.SetRef(ref, updated)
+		if err := registryStore.SetRef(ref, updated); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not remember SSH username; using the requested credentials for this session: %v\n", err)
+		}
 	}
 
 	password = flagPassword

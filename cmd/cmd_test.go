@@ -419,8 +419,10 @@ func TestResolveSSHCredentials_SavesExplicitUsername(t *testing.T) {
 	dir := t.TempDir()
 	oldStore := registryStore
 	registryStore = registry.NewStoreAt(filepath.Join(dir, "registry.json"))
-	registryStore.SetRef(types.InstanceRef{Backend: "kubevirt", Namespace: "default", Name: "myvm"}, types.RegistryEntry{Password: "secret"})
 	defer func() { registryStore = oldStore }()
+	if err := registryStore.SetRef(types.InstanceRef{Backend: "kubevirt", Namespace: "default", Name: "myvm"}, types.RegistryEntry{Password: "secret"}); err != nil {
+		t.Fatal(err)
+	}
 
 	user, password := resolveSSHCredentials(types.InstanceRef{Backend: "kubevirt", Namespace: "default", Name: "myvm"}, "admin", "")
 	if user != "admin" {
@@ -443,8 +445,10 @@ func TestResolveSSHCredentials_UsesRememberedUsernameWhenNoFlag(t *testing.T) {
 	dir := t.TempDir()
 	oldStore := registryStore
 	registryStore = registry.NewStoreAt(filepath.Join(dir, "registry.json"))
-	registryStore.SetRef(types.InstanceRef{Backend: "kubevirt", Name: "myvm"}, types.RegistryEntry{Username: "ubuntu", Password: "hunter2"})
 	defer func() { registryStore = oldStore }()
+	if err := registryStore.SetRef(types.InstanceRef{Backend: "kubevirt", Name: "myvm"}, types.RegistryEntry{Username: "ubuntu", Password: "hunter2"}); err != nil {
+		t.Fatal(err)
+	}
 
 	user, password := resolveSSHCredentials(types.InstanceRef{Backend: "kubevirt", Name: "myvm"}, "", "")
 	if user != "ubuntu" {
@@ -459,8 +463,10 @@ func TestResolveSSHCredentials_FlagOverridesRemembered(t *testing.T) {
 	dir := t.TempDir()
 	oldStore := registryStore
 	registryStore = registry.NewStoreAt(filepath.Join(dir, "registry.json"))
-	registryStore.SetRef(types.InstanceRef{Backend: "kubevirt", Name: "myvm"}, types.RegistryEntry{Username: "ubuntu"})
 	defer func() { registryStore = oldStore }()
+	if err := registryStore.SetRef(types.InstanceRef{Backend: "kubevirt", Name: "myvm"}, types.RegistryEntry{Username: "ubuntu"}); err != nil {
+		t.Fatal(err)
+	}
 
 	user, _ := resolveSSHCredentials(types.InstanceRef{Backend: "kubevirt", Name: "myvm"}, "root", "")
 	if user != "root" {
@@ -469,6 +475,50 @@ func TestResolveSSHCredentials_FlagOverridesRemembered(t *testing.T) {
 	entry, _ := registryStore.GetRef(types.InstanceRef{Backend: "kubevirt", Name: "myvm"})
 	if entry.Username != "root" {
 		t.Errorf("expected the registry to update to the new explicit username, got %q", entry.Username)
+	}
+}
+
+func TestResolveSSHCredentials_WriteFailureWarnsAndKeepsExplicitCredentials(t *testing.T) {
+	dir := t.TempDir()
+	blocked := filepath.Join(dir, "blocked")
+	if err := os.WriteFile(blocked, []byte("existing data"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	oldStore := registryStore
+	registryStore = registry.NewStoreAt(filepath.Join(blocked, "registry.json"))
+	t.Cleanup(func() { registryStore = oldStore })
+
+	capturePath := filepath.Join(dir, "stderr")
+	capture, err := os.Create(capturePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldStderr := os.Stderr
+	os.Stderr = capture
+	t.Cleanup(func() {
+		os.Stderr = oldStderr
+		if err := capture.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+
+	user, password := resolveSSHCredentials(types.InstanceRef{Backend: "kubevirt", Context: "test-cluster", Namespace: "default", Name: "myvm"}, "explicit-user", "explicit-password")
+	if user != "explicit-user" || password != "explicit-password" {
+		t.Fatal("registry write failure changed the current request's credentials")
+	}
+	warning, err := os.ReadFile(capturePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(warning), "warning: could not remember SSH username") {
+		t.Fatalf("missing persistence warning: %s", warning)
+	}
+	if strings.Contains(string(warning), user) || strings.Contains(string(warning), password) {
+		t.Fatal("persistence warning disclosed credentials")
+	}
+	data, err := os.ReadFile(blocked)
+	if err != nil || string(data) != "existing data" {
+		t.Fatalf("registry write failure changed existing data: %q, %v", data, err)
 	}
 }
 
@@ -494,8 +544,10 @@ func TestResolveSSHCredentials_FlagPasswordOverridesSaved(t *testing.T) {
 	dir := t.TempDir()
 	oldStore := registryStore
 	registryStore = registry.NewStoreAt(filepath.Join(dir, "registry.json"))
-	registryStore.SetRef(types.InstanceRef{Backend: "kubevirt", Name: "myvm"}, types.RegistryEntry{Password: "old"})
 	defer func() { registryStore = oldStore }()
+	if err := registryStore.SetRef(types.InstanceRef{Backend: "kubevirt", Name: "myvm"}, types.RegistryEntry{Password: "old"}); err != nil {
+		t.Fatal(err)
+	}
 
 	_, password := resolveSSHCredentials(types.InstanceRef{Backend: "kubevirt", Name: "myvm"}, "", "new")
 	if password != "new" {

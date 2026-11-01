@@ -58,7 +58,8 @@ func generateWindowsVM(name, ns, mem string, cpu int, unattended bool) map[strin
 // an injected autounattend.xml — see pkg/kubevirt/autounattend.go — and
 // the generated Administrator password is saved to the registry the same
 // way cloud-init VM passwords already are, so `corral ssh`/RDP just work
-// once install finishes.
+// once install finishes. Registry failures retain the VM and report the
+// unattended password as unsaved so the user can keep it for explicit login.
 func createWindowsVM(name, ns, iso, disk, mem string, cpu int, unattended bool) error {
 	fmt.Fprintf(os.Stderr, "installer ISO importing: %s-iso ← %s\n", name, iso)
 	password, err := kubevirt.CreateWindowsVM(name, ns, iso, disk, mem, cpu, unattended)
@@ -66,13 +67,20 @@ func createWindowsVM(name, ns, iso, disk, mem string, cpu int, unattended bool) 
 		return err
 	}
 	fmt.Fprintf(os.Stderr, "SSH/VNC/RDP exposed via proxy service %s-proxy\n", name)
-	if store, err := registry.NewStore(); err == nil {
-		store.SetRef(types.InstanceRef{Backend: "kubevirt", Context: config.KubeContext(), Namespace: ns, Name: name}, types.RegistryEntry{
+	store, err := registry.NewStore()
+	if err == nil {
+		err = store.SetRef(types.InstanceRef{Backend: "kubevirt", Context: config.KubeContext(), Namespace: ns, Name: name}, types.RegistryEntry{
 			Backend:   "kubevirt",
 			Namespace: ns,
 			Username:  "Administrator",
 			Password:  password,
 		})
+	}
+	if err != nil {
+		if unattended {
+			fmt.Fprintf(os.Stderr, "Administrator password: %s (NOT saved — keep this password and supply it explicitly when connecting)\n", password)
+		}
+		return fmt.Errorf("VM %q created (stopped) in ns/%s, but its registry entry and credentials could not be saved (VM and disks retained): %w", name, ns, err)
 	}
 	if unattended {
 		fmt.Fprintf(os.Stderr, `VM %q created (stopped). Setup will run unattended — no interactive

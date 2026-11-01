@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +13,7 @@ import (
 	"github.com/tuna-os/corral/pkg/catalog"
 	"github.com/tuna-os/corral/pkg/config"
 	"github.com/tuna-os/corral/pkg/kubevirt"
+	"github.com/tuna-os/corral/pkg/registry"
 	"github.com/tuna-os/corral/pkg/types"
 )
 
@@ -1272,5 +1275,47 @@ func TestHandleDoctorFix_Error(t *testing.T) {
 
 	if resp.StatusCode != 500 {
 		t.Errorf("expected 500 when the fix fails, got %d", resp.StatusCode)
+	}
+}
+
+func TestWebRegistryMutationReportsActualFilesystemFailure(t *testing.T) {
+	for _, action := range []string{"clone", "delete"} {
+		t.Run(action, func(t *testing.T) {
+			fx := NewTestFixture()
+			defer fx.Close()
+			blocker := filepath.Join(t.TempDir(), "retained-file")
+			if err := os.WriteFile(blocker, []byte("existing user data"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			store = registry.NewStoreAt(filepath.Join(blocker, "registry.json"))
+			var response *http.Response
+			switch action {
+			case "clone":
+				fx.Runner.AddResponseKV("kubectl", []string{"get", "vm", "source", "-n", "team", "-o", "json"},
+					`{"metadata":{"name":"source"},"spec":{"template":{"spec":{"volumes":[]}}}}`, nil)
+				fx.Runner.AddResponseKV("kubectl", []string{"apply", "-f", "-"}, "applied", nil)
+				var err error
+				response, err = http.Post(fx.Server.URL+"/api/vms/team/source/clone", "application/json", strings.NewReader(`{"target":"owned"}`))
+				if err != nil {
+					t.Fatal(err)
+				}
+			case "delete":
+				fx.Runner.AddPrefixResponse("kubectl delete", "", nil)
+				fx.Runner.AddPrefixResponse("kubectl get pvc -n team -l corral.dev/vm=owned", "", nil)
+				fx.Runner.AddPrefixResponse("kubectl get datavolume -n team -l corral.dev/vm=owned", "", nil)
+				response = mustDelete(t, fx.Server.URL+"/api/vms/team/owned")
+			}
+			defer response.Body.Close()
+			var result map[string]string
+			if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+				t.Fatal(err)
+			}
+			if response.StatusCode != http.StatusInternalServerError || !strings.Contains(result["error"], "was "+action+"d") {
+				t.Fatalf("actual registry I/O failure was not reported with retained backend-state context: HTTP %d, %+v", response.StatusCode, result)
+			}
+			if data, err := os.ReadFile(blocker); err != nil || string(data) != "existing user data" {
+				t.Fatalf("registry failure overwrote pre-existing filesystem data: %q, %v", data, err)
+			}
+		})
 	}
 }

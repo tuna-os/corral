@@ -233,6 +233,11 @@ and saved registry data alone never establishes that a VM still exists. Keep or
 remove such legacy data manually in `~/.local/share/corral/registry.json` after
 checking its ownership; changing the default context does not migrate it.
 
+If a backend operation has already completed but registry persistence fails,
+Corral reports that partial state explicitly. It does not delete VM or pool
+data as an automatic rollback; an SSH username-cache failure is a warning and
+does not discard the explicit username for the current connection.
+
 A delete does not wait for Kubernetes finalizers. Add `--wait` to wait until
 the deleted objects are gone. `--timeout` sets the maximum time. The default
 is 5 minutes. If an object stays after that time, the command fails and

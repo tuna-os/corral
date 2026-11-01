@@ -182,7 +182,10 @@ func handleDeleteVM(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if store != nil {
-			_ = store.RemoveRef(ref)
+			if err := store.RemoveRef(ref); err != nil {
+				errResp(w, http.StatusInternalServerError, fmt.Errorf("VM %q was deleted but its saved credentials could not be retired: %w", name, err))
+				return
+			}
 		}
 		jsonResp(w, 200, map[string]string{"status": "deleted"})
 		return
@@ -197,7 +200,10 @@ func handleDeleteVM(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if store != nil {
-			_ = store.RemoveRef(ref)
+			if err := store.RemoveRef(ref); err != nil {
+				errResp(w, http.StatusInternalServerError, fmt.Errorf("VM %q was deleted but its saved credentials could not be retired: %w", name, err))
+				return
+			}
 		}
 		jsonResp(w, 200, map[string]string{"status": "deleted"})
 		return
@@ -209,10 +215,15 @@ func handleDeleteVM(w http.ResponseWriter, r *http.Request) {
 			errResp(w, localErrStatus(err), err)
 			return
 		}
-		done(nil)
 		if store != nil {
-			_ = store.RemoveRef(ref)
+			if err := store.RemoveRef(ref); err != nil {
+				err = fmt.Errorf("VM %q was deleted but its saved credentials could not be retired: %w", name, err)
+				done(err)
+				errResp(w, http.StatusInternalServerError, err)
+				return
+			}
 		}
+		done(nil)
 		jsonResp(w, http.StatusOK, map[string]string{"status": "deleted"})
 		return
 	}
@@ -221,9 +232,14 @@ func handleDeleteVM(w http.ResponseWriter, r *http.Request) {
 		errResp(w, http.StatusInternalServerError, err)
 		return
 	}
-	done(nil)
 	if store != nil {
-		_ = store.RemoveRef(ref)
+		if err := store.RemoveRef(ref); err != nil {
+			err = fmt.Errorf("VM %q was deleted but its saved credentials could not be retired: %w", name, err)
+			done(err)
+			errResp(w, http.StatusInternalServerError, err)
+			return
+		}
 	}
+	done(nil)
 	jsonResp(w, http.StatusOK, map[string]string{"status": "deleted"})
 }

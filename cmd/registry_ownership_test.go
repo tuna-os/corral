@@ -3,6 +3,8 @@ package cmd
 import (
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -12,8 +14,57 @@ import (
 	"github.com/tuna-os/corral/pkg/config"
 	"github.com/tuna-os/corral/pkg/fleet"
 	"github.com/tuna-os/corral/pkg/registry"
+	"github.com/tuna-os/corral/pkg/shell"
 	"github.com/tuna-os/corral/pkg/types"
 )
+
+func TestCreateContextUsesBackendDefaultsAndExplicitTargets(t *testing.T) {
+	for _, tc := range []struct {
+		backend string
+		env     string
+		read    func() string
+	}{
+		{"kubevirt", "CORRAL_KUBE_CONTEXT", config.KubeContext},
+		{"incus", "CORRAL_INCUS_REMOTE", config.IncusRemote},
+		{"libvirt", "CORRAL_LIBVIRT_URI", config.LibvirtURI},
+	} {
+		t.Run(tc.backend, func(t *testing.T) {
+			target := config.ContextConfig{Name: "selected-alias", Backend: tc.backend, Context: "selected-target"}
+			createScratch(t, target)
+			t.Setenv("CORRAL_KUBE_CONTEXT", "")
+			t.Setenv("CORRAL_INCUS_REMOTE", "")
+			t.Setenv("CORRAL_LIBVIRT_URI", "")
+			t.Setenv("KUBECONFIG", filepath.Join(t.TempDir(), "absent"))
+			if err := config.SetDefaultContext(target.Name); err != nil {
+				t.Fatal(err)
+			}
+			rootContext = ""
+			if got := createContext(tc.read); got != target.Context {
+				t.Fatalf("selected backend default = %q, want %q", got, target.Context)
+			}
+			t.Setenv(tc.env, "environment-target")
+			if got := createContext(tc.read); got != "environment-target" {
+				t.Fatalf("environment backend default = %q, want environment-target", got)
+			}
+			for _, explicit := range []string{target.Name, "raw-target", "local"} {
+				rootContext = explicit
+				want := explicit
+				if explicit == target.Name {
+					want = target.Context
+				} else if explicit == "local" {
+					want = ""
+				}
+				got := createContext(func() string {
+					t.Fatal("explicit context evaluated the backend default")
+					return ""
+				})
+				if got != want {
+					t.Fatalf("explicit context %q = %q, want %q", explicit, got, want)
+				}
+			}
+		})
+	}
+}
 
 // Exercise real create/import callers and reopen the JSON they persist, rather
 // than testing a duplicate of the ownership predicate or command arguments.
@@ -23,6 +74,12 @@ func TestKubevirtWritersAndDeleteRetireOnlyTheSelectedTarget(t *testing.T) {
 			fake := placementScratch(t)
 			fake.AddPrefixResponse("kubectl", "", nil)
 			fake.AddPrefixResponse("virtctl image-upload", "uploaded", nil)
+			// Named-context manifest helpers bind DefaultKubectl rather than
+			// the package runners installed by placementScratch.
+			oldKubectl := shell.DefaultKubectl
+			shell.DefaultKubectl = fake
+			t.Cleanup(func() { shell.DefaultKubectl = oldKubectl })
+			t.Setenv("PATH", t.TempDir())
 			t.Setenv("CORRAL_KUBE_CONTEXT", "")
 			t.Setenv("CORRAL_INCUS_REMOTE", "")
 			t.Setenv("CORRAL_LIBVIRT_URI", "")
@@ -84,7 +141,11 @@ func TestKubevirtWritersAndDeleteRetireOnlyTheSelectedTarget(t *testing.T) {
 				}
 				err = runImport(ref.Name, ref.Namespace, source, "20G", "4G", 2)
 			case "windows-tui":
-				err = createWindowsFromTUI(ref.Name, target, "https://example.test/windows.iso")
+				iso := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Length", "1024")
+				}))
+				t.Cleanup(iso.Close)
+				err = createWindowsFromTUI(ref.Name, target, iso.URL+"/windows.iso")
 			}
 			if err != nil {
 				t.Fatal(err)
