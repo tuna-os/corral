@@ -62,7 +62,8 @@ the command alive while using its console; SIGINT or SIGTERM stops it.`,
 		}
 		ctx, stop := signalContext(cmd.Context())
 		defer stop()
-		return runConsole(ctx, os.Stdout, vm, consoleAddr, consoleNotifyReady)
+		_, err = runConsole(ctx, os.Stdout, vm, consoleAddr, consoleNotifyReady)
+		return err
 	},
 }
 
@@ -100,32 +101,25 @@ func newConsoleEndpoint(base string, vm types.VM) consoleEndpoint {
 }
 
 // runConsole binds addr, prints vm's console URL to out (one JSON line with
-// --json), and serves until ctx ends.
-func runConsole(ctx context.Context, out io.Writer, vm types.VM, addr string, notifyReady bool) error {
+// --json), and serves until ctx ends. It returns the exact bound server after
+// cleanup, so retirement checks cannot mistake a new owner of its old port.
+func runConsole(ctx context.Context, out io.Writer, vm types.VM, addr string, notifyReady bool) (*web.Server, error) {
 	if notifyReady && !jsonOutput {
-		return fmt.Errorf("--notify-ready requires --json")
+		return nil, fmt.Errorf("--notify-ready requires --json")
 	}
-	srv, err := web.Listen(addr)
-	if err != nil {
-		return err
-	}
-	return serveConsole(ctx, out, vm, srv, notifyReady)
-}
-
-// serveConsole owns the already-bound server until it returns. Keeping this
-// boundary explicit also lets lifecycle tests inspect that exact listener,
-// instead of mistaking a different server that reuses its port for a leak.
-func serveConsole(ctx context.Context, out io.Writer, vm types.VM, srv *web.Server, notifyReady bool) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	var err error
+	srv, err := web.Listen(addr)
+	if err != nil {
+		return nil, err
+	}
 	defer func() { _ = srv.Close() }()
 	endpoint := newConsoleEndpoint(srv.URL(), vm)
 	var ready <-chan struct{}
 	if notifyReady {
 		endpoint.URL, ready, err = srv.NotifyConsoleReady(ctx, vm.Namespace, vm.Name, vm.Context)
 		if err != nil {
-			return err
+			return srv, err
 		}
 	}
 	if jsonOutput {
@@ -139,12 +133,12 @@ func serveConsole(ctx context.Context, out io.Writer, vm types.VM, srv *web.Serv
 	}
 	if err != nil {
 		if notifyReady && ctx.Err() != nil {
-			return nil
+			return srv, nil
 		}
-		return err
+		return srv, err
 	}
 	if !notifyReady {
-		return srv.Serve(ctx)
+		return srv, srv.Serve(ctx)
 	}
 	served := make(chan error, 1)
 	go func() {
@@ -159,16 +153,16 @@ func serveConsole(ctx context.Context, out io.Writer, vm types.VM, srv *web.Serv
 			canceled := ctx.Err() != nil
 			cancel()
 			if serveErr := <-served; serveErr != nil {
-				return serveErr
+				return srv, serveErr
 			}
 			if canceled {
-				return nil
+				return srv, nil
 			}
-			return err
+			return srv, err
 		}
-		return <-served
+		return srv, <-served
 	case err := <-served:
-		return err
+		return srv, err
 	}
 }
 

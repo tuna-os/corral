@@ -83,7 +83,8 @@ func TestConsole_JSONLineWithPortZero(t *testing.T) {
 	withJSONOutput(t, true)
 	vm := types.VM{Name: "desk", Namespace: "corral-vms", Context: "lab"}
 	line, stop := serveFirstLine(t, func(ctx context.Context, out io.Writer) error {
-		return runConsole(ctx, out, vm, "127.0.0.1:0", false)
+		_, err := runConsole(ctx, out, vm, "127.0.0.1:0", false)
+		return err
 	})
 	if strings.Count(line, "\n") != 1 || !strings.HasSuffix(line, "}\n") {
 		t.Fatalf("want one JSON object line, got %q", line)
@@ -126,7 +127,8 @@ func TestConsole_JSONLineWithPortZero(t *testing.T) {
 func TestConsole_HumanLine(t *testing.T) {
 	withJSONOutput(t, false)
 	line, stop := serveFirstLine(t, func(ctx context.Context, out io.Writer) error {
-		return runConsole(ctx, out, types.VM{Name: "desk", Namespace: "local"}, "127.0.0.1:0", false)
+		_, err := runConsole(ctx, out, types.VM{Name: "desk", Namespace: "local"}, "127.0.0.1:0", false)
+		return err
 	})
 	defer func() { _ = stop() }()
 	prefix := "Console of desk: "
