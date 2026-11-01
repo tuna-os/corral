@@ -59,6 +59,7 @@ type deleteResult struct {
 // deleteTarget is one name resolved to whatever deletes it.
 type deleteTarget struct {
 	name    string
+	ref     types.InstanceRef
 	peer    *peerTarget
 	adapter backend.Adapter
 	// notListed is the lookup error for a name no backend lists; the default
@@ -109,7 +110,7 @@ func runDelete(_ *cobra.Command, args []string) error {
 // still resolves when the default context can purge by name, because an
 // interrupted create leaves objects under a name that has no VM yet.
 func resolveDeleteTarget(name string) deleteTarget {
-	t := deleteTarget{name: name}
+	t := deleteTarget{name: name, ref: types.InstanceRef{Name: name}}
 	resolved, err := requireOrPrompt([]string{name}, "delete")
 	if err != nil {
 		var notFound fleet.NotFoundError
@@ -131,7 +132,11 @@ func resolveDeleteTarget(name string) deleteTarget {
 		t.peer = &p
 		return t
 	}
-	t.adapter, t.err = instanceAdapter(resolved)
+	t.ref, t.err = instanceRef(resolved)
+	if t.err != nil {
+		return t
+	}
+	t.adapter, t.err = backend.For(t.ref)
 	if t.err == nil {
 		if _, ok := t.adapter.(backend.Power); !ok {
 			t.err = unsupported(t.adapter, "delete")
@@ -181,10 +186,10 @@ func (t deleteTarget) delete() deleteResult {
 	default:
 		if purger, ok := t.adapter.(backend.Purger); ok {
 			var removed []string
-			removed, err = purger.Purge(t.name)
+			removed, err = purger.Purge(t.ref.Name)
 			result.Removed = append(result.Removed, removed...)
 		} else {
-			err = t.adapter.(backend.Power).Delete(t.name)
+			err = t.adapter.(backend.Power).Delete(t.ref.Name)
 		}
 		if err == nil && t.notListed != nil && len(result.Removed) == 0 {
 			err = t.notListed // nothing listed and nothing left behind
@@ -195,9 +200,13 @@ func (t deleteTarget) delete() deleteResult {
 		return result
 	}
 	result.Deleted = true
-	if registryStore != nil {
-		if err := registryStore.Remove(t.name); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: %s is deleted, but its registry entry stays: %v\n", t.name, err)
+	if registryStore != nil && t.peer == nil {
+		if entry, ok := registryStore.Get(t.ref.Name); ok && entry.Peer == t.ref.Peer &&
+			backend.Ref(entry.Backend, entry.Context, entry.Namespace, t.ref.Name) ==
+				backend.Ref(t.ref.Backend, t.ref.Context, t.ref.Namespace, t.ref.Name) {
+			if err := registryStore.Remove(t.ref.Name); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: %s is deleted, but its registry entry stays: %v\n", t.name, err)
+			}
 		}
 	}
 	return result

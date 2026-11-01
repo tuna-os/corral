@@ -79,7 +79,7 @@ JSON object on stdout, ready or not.`,
 		if err != nil {
 			return err
 		}
-		probes, err := waitProbes(name, ref, adapter, waitSpec{
+		probes, err := waitProbes(ref.Name, ref, adapter, waitSpec{
 			ssh: waitSSH, bootComplete: waitBootComplete, units: waitUnits,
 			execs: waitExecs, paint: waitPaint, notBootID: waitBootID,
 			user: waitSSHUser, identity: waitSSHIdentity,

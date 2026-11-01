@@ -83,8 +83,8 @@ jobs:
             fi
           } | tee native-qemu-evidence/identities.txt
       # This drives real native QEMU's QMP and OS process retirement, not a
-      # stub or cross-compile. It is diskless backend qualification, NOT a
-      # claim of Tuna image boot, graphical readiness or browser admission.
+      # stub or cross-compile. This is empty-disk backend qualification, NOT a
+      # claim of Tuna image boot, firstboot/login or browser admission.
       - name: Exercise native process ownership and retirement
         env:
           CORRAL_REQUIRE_TOOLS: qemu
@@ -92,6 +92,42 @@ jobs:
         run: |
           set -o pipefail
           go test -json -count=1 -timeout 90s ./pkg/qemu -run 'Test(StartDirect_|StopDirect_|AccelArgsFor_)' | tee native-qemu-evidence/tests.jsonl
+      - name: Exercise canonical CLI wait and owned empty-disk retirement
+        shell: bash
+        run: |
+          set -euo pipefail
+          corral="$RUNNER_TEMP/corral-native-cli"
+          go build -trimpath -o "$corral" .
+          name="canonical-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          ref="qemu//local/$name"
+          created=0
+          cleanup() {
+            result=$?
+            trap - EXIT INT TERM HUP
+            if [[ "$created" == 1 ]]; then
+              "$corral" --backend qemu stop "$ref" >>native-qemu-evidence/cli-cleanup.log 2>&1 || result=1
+              "$corral" --backend qemu delete "$ref" --force >>native-qemu-evidence/cli-cleanup.log 2>&1 || result=1
+            fi
+            exit "$result"
+          }
+          trap cleanup EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+          trap 'exit 129' HUP
+          "$corral" --backend qemu create "$name" --arch amd64 --loopback --disk 64M --mem 128M --cpu 1
+          created=1
+          "$corral" --backend qemu start "$ref"
+          # The actual firmware framebuffer is sufficient for this API regression;
+          # it is explicitly not proof that a guest OS or Tuna session booted.
+          "$corral" --backend qemu --json wait "$ref" --paint --timeout 30s --interval 100ms >native-qemu-evidence/cli-wait.json
+          "$corral" --backend qemu info "$ref" >native-qemu-evidence/cli-info.json
+          "$corral" --backend qemu qmp "$ref" query-target >native-qemu-evidence/cli-target.json
+          "$corral" --backend qemu screenshot "$ref" --require-paint -o native-qemu-evidence/cli-firmware.png
+          "$corral" --backend qemu stop "$ref"
+          "$corral" --backend qemu delete "$ref" --force
+          test ! -e "$HOME/.local/share/corral/vms/$name"
+          test ! -e "$HOME/.config/systemd/user/corral-$name.service"
+          created=0
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with:

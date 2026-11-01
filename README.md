@@ -336,9 +336,11 @@ diagnosis. Older direct VMs without QMP must be stopped by their actual
 supervisor before recreation. The native CI lifecycle lane is configured for
 Linux and macOS on both amd64 and ARM64 hosts. It exercises real QEMU process
 retirement, loopback RFB ownership, and a 200-character QMP typing sequence
-lasting more than five seconds. Its created disk is empty: these are diskless
-lifecycle regressions with no guest OS, not qualification of a Tuna guest,
-the desktop launcher, or a browser session.
+lasting more than five seconds. A second native check builds and executes the
+real CLI through create/start, canonical `qemu//local/NAME` paint-wait and
+stop/delete, retaining the actual firmware frame and checking owned files
+are retired. Its disk is empty: this qualifies backend/CLI behavior, not a
+Tuna guest, the desktop launcher, firstboot/login, or a browser session.
 
 ## How VMs are reached
 
