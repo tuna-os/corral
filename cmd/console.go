@@ -105,12 +105,20 @@ func runConsole(ctx context.Context, out io.Writer, vm types.VM, addr string, no
 	if notifyReady && !jsonOutput {
 		return fmt.Errorf("--notify-ready requires --json")
 	}
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
 	srv, err := web.Listen(addr)
 	if err != nil {
 		return err
 	}
+	return serveConsole(ctx, out, vm, srv, notifyReady)
+}
+
+// serveConsole owns the already-bound server until it returns. Keeping this
+// boundary explicit also lets lifecycle tests inspect that exact listener,
+// instead of mistaking a different server that reuses its port for a leak.
+func serveConsole(ctx context.Context, out io.Writer, vm types.VM, srv *web.Server, notifyReady bool) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	var err error
 	defer func() { _ = srv.Close() }()
 	endpoint := newConsoleEndpoint(srv.URL(), vm)
 	var ready <-chan struct{}

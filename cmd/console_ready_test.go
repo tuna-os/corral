@@ -13,9 +13,11 @@ import (
 	"time"
 
 	"github.com/tuna-os/corral/pkg/types"
+	"github.com/tuna-os/corral/pkg/web"
 )
 
 type consoleHandoffWriter struct {
+	server       *web.Server
 	lines        chan string
 	writes       int
 	eventStarted chan struct{}
@@ -57,12 +59,17 @@ func startConsoleHandoff(t *testing.T, vm types.VM, out *consoleHandoffWriter) (
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("CORRAL_AUTH_REQUIRED", "")
 	t.Setenv("CORRAL_ADMINS", "")
+	server, err := web.Listen("127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out.server = server
 	ctx, cancel := context.WithCancel(context.Background())
 	finished := make(chan struct{})
 	var result error
 	go func() {
 		defer close(finished)
-		result = runConsole(ctx, out, vm, "127.0.0.1:0", true)
+		result = serveConsole(ctx, out, vm, server, true)
 	}()
 	stop := func() error {
 		cancel()
@@ -110,16 +117,12 @@ func postConsoleHandoff(t *testing.T, endpoint consoleEndpoint) int {
 	return resp.StatusCode
 }
 
-func assertConsoleListenerClosed(t *testing.T, endpoint consoleEndpoint) {
+func assertConsoleListenerClosed(t *testing.T, server *web.Server) {
 	t.Helper()
-	u, err := url.Parse(endpoint.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	conn, err := net.DialTimeout("tcp", u.Host, time.Second)
-	if err == nil {
-		_ = conn.Close()
-		t.Fatal("console listener survived cancellation/output failure")
+	// A different owner can bind this port as soon as our socket closes.
+	// Inspect the actual listener, not the current occupant of its old address.
+	if err := server.Close(); !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("owned console listener was not already closed: %v", err)
 	}
 }
 
@@ -170,7 +173,7 @@ func TestConsoleNotifyReady_JSONEndpointThenOneAuthenticEvent(t *testing.T) {
 		t.Fatalf("duplicate event: %s", extra)
 	default:
 	}
-	assertConsoleListenerClosed(t, endpoint)
+	assertConsoleListenerClosed(t, out.server)
 }
 
 func TestConsoleNotifyReady_BlockedEventOutputDoesNotBlockHTTPOrCancellation(t *testing.T) {
@@ -194,7 +197,7 @@ func TestConsoleNotifyReady_BlockedEventOutputDoesNotBlockHTTPOrCancellation(t *
 	if err := stop(); err != nil {
 		t.Fatal(err)
 	}
-	assertConsoleListenerClosed(t, endpoint)
+	assertConsoleListenerClosed(t, out.server)
 }
 
 func TestConsoleNotifyReady_EventOutputFailureStopsServer(t *testing.T) {
@@ -212,12 +215,12 @@ func TestConsoleNotifyReady_EventOutputFailureStopsServer(t *testing.T) {
 	if err := stop(); !errors.Is(err, failure) {
 		t.Fatalf("output error = %v, want %v", err, failure)
 	}
-	assertConsoleListenerClosed(t, endpoint)
+	assertConsoleListenerClosed(t, out.server)
 }
 
 func TestConsoleNotifyReady_CancelBeforeRFBEmitsNoEvent(t *testing.T) {
 	out := &consoleHandoffWriter{lines: make(chan string, 4)}
-	endpoint, stop, _ := startConsoleHandoff(t, types.VM{Name: "desk", Namespace: "local"}, out)
+	_, stop, _ := startConsoleHandoff(t, types.VM{Name: "desk", Namespace: "local"}, out)
 	if err := stop(); err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +229,7 @@ func TestConsoleNotifyReady_CancelBeforeRFBEmitsNoEvent(t *testing.T) {
 		t.Fatalf("cancellation emitted an event: %s", line)
 	default:
 	}
-	assertConsoleListenerClosed(t, endpoint)
+	assertConsoleListenerClosed(t, out.server)
 }
 
 type failedConsoleEndpointWriter struct {
@@ -256,11 +259,15 @@ func TestConsoleNotifyReady_EndpointWriteFailureReleasesListener(t *testing.T) {
 	}{{"error", false, failure}, {"short write", true, io.ErrShortWrite}} {
 		t.Run(tc.name, func(t *testing.T) {
 			out := &failedConsoleEndpointWriter{err: failure, short: tc.short}
-			err := runConsole(context.Background(), out, types.VM{Name: "desk", Namespace: "local"}, "127.0.0.1:0", true)
+			server, err := web.Listen("127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = serveConsole(context.Background(), out, types.VM{Name: "desk", Namespace: "local"}, server, true)
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("endpoint output = %v, want %v", err, tc.want)
 			}
-			assertConsoleListenerClosed(t, out.endpoint)
+			assertConsoleListenerClosed(t, server)
 		})
 	}
 }
@@ -305,9 +312,13 @@ func TestConsoleNotifyReady_BlockedEndpointOutputStillReleasesListener(t *testin
 	out := &blockedConsoleEndpointWriter{endpoint: make(chan consoleEndpoint, 1), release: release, finished: make(chan struct{})}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	server, err := web.Listen("127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
 	result := make(chan error, 1)
 	go func() {
-		result <- runConsole(ctx, out, types.VM{Name: "desk", Namespace: "local"}, "127.0.0.1:0", true)
+		result <- serveConsole(ctx, out, types.VM{Name: "desk", Namespace: "local"}, server, true)
 	}()
 	defer func() {
 		close(release)
@@ -317,9 +328,8 @@ func TestConsoleNotifyReady_BlockedEndpointOutputStillReleasesListener(t *testin
 			t.Error("test output writer did not finish")
 		}
 	}()
-	var endpoint consoleEndpoint
 	select {
-	case endpoint = <-out.endpoint:
+	case <-out.endpoint:
 	case <-time.After(10 * time.Second):
 		t.Fatal("console did not attempt to print its endpoint")
 	}
@@ -332,5 +342,25 @@ func TestConsoleNotifyReady_BlockedEndpointOutputStillReleasesListener(t *testin
 	case <-time.After(10 * time.Second):
 		t.Fatal("blocked first stdout write prevented cancellation")
 	}
-	assertConsoleListenerClosed(t, endpoint)
+	assertConsoleListenerClosed(t, server)
+}
+
+func TestConsoleNotifyReady_RetirementDoesNotClaimReusedPort(t *testing.T) {
+	out := &consoleHandoffWriter{lines: make(chan string, 4)}
+	endpoint, stop, _ := startConsoleHandoff(t, types.VM{Name: "desk", Namespace: "local"}, out)
+	u := assertOSPort(t, endpoint.URL)
+	if err := stop(); err != nil {
+		t.Fatal(err)
+	}
+	foreign, err := net.Listen("tcp", u.Host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = foreign.Close() }()
+	assertConsoleListenerClosed(t, out.server)
+	conn, err := net.DialTimeout("tcp", foreign.Addr().String(), time.Second)
+	if err != nil {
+		t.Fatalf("retirement check interfered with a different listener: %v", err)
+	}
+	_ = conn.Close()
 }
