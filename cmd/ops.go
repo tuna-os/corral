@@ -3,7 +3,6 @@ package cmd
 import (
 	"fmt"
 	"strconv"
-	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 	"github.com/tuna-os/corral/pkg/backend"
@@ -125,9 +124,11 @@ is a desktop gate.`,
 // way.
 
 var (
-	typeEnter     bool
-	pointerClick  string
-	pointerDouble bool
+	typeEnter      bool
+	typeFile       string
+	typePowerShell bool
+	pointerClick   string
+	pointerDouble  bool
 )
 
 // keyboarderFor resolves the VM's adapter as a Keyboarder, or refuses by
@@ -180,7 +181,7 @@ func printConsoleInput(result any) error {
 }
 
 var typeCmd = &cobra.Command{
-	Use:   "type <name> <text>",
+	Use:   "type <name> [text] [--file PATH|-] [--powershell] [--enter]",
 	Short: "Type text at a VM's console",
 	Long: `Type text at a running VM's keyboard — no VNC client, and no SSH in
 the guest. A local QEMU VM gets the keys through its QMP monitor. A KubeVirt
@@ -191,17 +192,38 @@ Use it to answer what only a keyboard can answer: a LUKS passphrase prompt, a
 greeter, a login on an image that ships sshd disabled. Pair it with
 ` + "`corral screenshot`" + ` to see what the guest is showing first.
 
-Only characters a US keyboard produces are typed; anything else is refused
-rather than silently dropped, because a passphrase missing one character fails
-as if the guest were at fault.
+Choose exactly one input source: positional text, --file PATH, or --file -
+to read standard input. Input must be UTF-8. Ordinary text is limited to
+characters a US keyboard produces; anything else is refused before typing.
 
-With --json, prints {"vm", "action": "type", "characters", "enter"}. The text
-itself is not printed.`,
+--powershell treats the input as PowerShell source (an optional leading UTF-8
+BOM is removed) and types powershell.exe -NoLogo -NoProfile -EncodedCommand
+with a UTF-16LE Base64 payload. Unicode, quotes and newlines stay in the
+payload. Empty source is refused. The launcher must fit the Windows cmd.exe
+limit of 8191 characters.
+Base64 is not encryption: the source can be recovered, and Run/shell history
+may retain it. Do not use this to hide secrets.
+
+Manually focus a guest command field or shell first. No focus, Run dialog,
+elevation or credentials are automated. --enter explicitly appends Return;
+otherwise only the text or launcher is typed. Newlines in ordinary input
+still type Return. Success acknowledges input sent, not script execution:
+check an observable guest result (for example a file written by the script).
+
+With --json, prints {"vm", "action": "type", "characters", "enter"}. The character
+count measures source, excluding a stripped BOM and the optional appended Return,
+not the launcher. Neither the source nor encoded payload is printed.`,
 	Example: `  corral screenshot vm -o before.png
   corral type vm 'correct horse battery staple' --enter
+  corral type vm --file script.ps1 --powershell --enter
+  cat script.ps1 | corral type vm --file - --powershell
   corral key vm ctrl alt f2`,
-	Args: cobra.ExactArgs(2),
+	Args: typeInputArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		text, characters, err := prepareTypeInput(cmd, args)
+		if err != nil {
+			return err
+		}
 		name, err := requireOrPrompt(args[:1], "type")
 		if err != nil {
 			return err
@@ -210,7 +232,6 @@ itself is not printed.`,
 		if err != nil {
 			return err
 		}
-		text := args[1]
 		if typeEnter {
 			// A newline types as Return, on the same connection as the text.
 			text += "\n"
@@ -219,7 +240,7 @@ itself is not printed.`,
 			return err
 		}
 		return printConsoleInput(typeResult{VM: name, Action: "type",
-			Characters: utf8.RuneCountInString(args[1]), Enter: typeEnter})
+			Characters: characters, Enter: typeEnter})
 	},
 }
 
@@ -783,6 +804,8 @@ var snapshotDeleteCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(restartCmd, pauseCmd, unpauseCmd, migrateCmd, scaleCmd, addDiskCmd, rmDiskCmd, exportCmd, snapshotCmd, templateCmd, screenshotCmd, typeCmd, keyCmd, pointerCmd, networksCmd, addNicCmd, lanServiceCmd)
 	typeCmd.Flags().BoolVar(&typeEnter, "enter", false, "Press Return after the text")
+	typeCmd.Flags().StringVar(&typeFile, "file", "", "Read UTF-8 input from this path, or - for standard input")
+	typeCmd.Flags().BoolVar(&typePowerShell, "powershell", false, "Type a Windows PowerShell -EncodedCommand launcher for the source")
 	pointerCmd.Flags().StringVar(&pointerClick, "click", "", "Click this button at the position: left, middle, or right")
 	pointerCmd.Flags().BoolVar(&pointerDouble, "double", false, "Double-click (the left button unless --click names another)")
 	templateCmd.AddCommand(templateMarkCmd, templateUnmarkCmd, templateListCmd, templateNewCmd)

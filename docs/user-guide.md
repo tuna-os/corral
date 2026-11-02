@@ -683,15 +683,21 @@ need a VNC client.
 corral key <vm-name> ret                       # press one key
 corral key <vm-name> ctrl alt f2               # press a key combination
 corral type <vm-name> 'my passphrase' --enter  # type text, then press Return
+corral type <vm-name> --file input.txt         # UTF-8 text; no extra Return
+corral type <vm-name> --file script.ps1 --powershell --enter
+cat script.ps1 | corral type <vm-name> --file - --powershell --enter
 corral pointer <vm-name> 1236 12 --click left  # click at x=1236, y=12
 ```
 
 - `corral key` uses QEMU key names: `ret`, `esc`, `tab`, `spc`, `backspace`, `delete`, `ctrl`, `alt`, `shift`, `meta_l` (the Super key), `f1` to `f24`, `up`, `down`, `left`, `right`, letters and digits. `corral key --help` shows more names. The keys go down in the given order and come up in the opposite order.
-- `corral type` types only the characters of a US keyboard. If the text has a different character, the command stops and types nothing.
+- `corral type` requires exactly one source: positional text, `--file PATH`, or `--file -` to read stdin. Input must be valid UTF-8, and ordinary input must contain only characters a US keyboard can type. The complete input is checked before any keys are sent; unsupported characters are not silently dropped. Files and stdin are not trimmed: ordinary newlines type Return. `--enter` adds one extra Return explicitly.
+- `--powershell` treats the input as PowerShell source, removes an optional leading UTF-8 BOM, and types `powershell.exe -NoLogo -NoProfile -EncodedCommand BASE64`. The payload uses UTF-16LE without a BOM, preserving Unicode (including supplementary characters), quotes and line breaks. Empty or BOM-only PowerShell source is refused. The complete ASCII launcher must fit the 8,191-character Windows `cmd.exe` command-line limit; longer scripts are refused before typing. This mode works through the same QMP/VNC keyboard paths, not a guest agent or a new backend.
+- Manually focus a guest command field or shell that can launch `powershell.exe` before sending the launcher. Corral does not open Run, focus a window, elevate through UAC, supply credentials, or automate Windows Setup. Without `--enter`, the launcher is only typed, not submitted. Console key acknowledgement or transport synchronization confirms delivery, **not script execution**. Check an observable guest result, for example a file that the script itself writes, and inspect it through your normal guest access.
+- Base64 is reversible encoding, **not encryption**. The source can be recovered from the launcher, and Windows Run or shell history may retain it. Do not treat `--powershell` as secret storage.
 - `corral pointer` moves the pointer to a position on the screen. The position is in pixels from the top-left corner, and it must be in the screen that `corral screenshot` shows. Add `--click left`, `--click middle` or `--click right` to click there. Add `--double` to double-click. Only KubeVirt VMs support this command, and the VMI must have a tablet input device.
 - A local QEMU VM gets the keys through its QMP monitor. A KubeVirt VM gets them on its VNC console through `virtctl vnc`, thus `virtctl` must be on your `PATH`.
 - KubeVirt allows one VNC session for each VM. Each command closes the VNC session that you have open, for example the console in the web UI. Open the console again after the command.
-- With `--json`, each command prints what it sent. For example, `corral pointer` prints `{"vm": "desk", "action": "pointer", "x": 1236, "y": 12, "button": "left", "double": false}`. `corral type` prints the number of characters, not the text.
+- Normal console-input output stays silent. With `--json`, each command prints what it sent. For example, `corral pointer` prints `{"vm": "desk", "action": "pointer", "x": 1236, "y": 12, "button": "left", "double": false}`. `corral type` prints only `{"vm", "action": "type", "characters", "enter"}`: the source character count excludes a stripped PowerShell BOM and the optional appended Return; it does not count the encoded launcher. Neither the source nor its encoded payload is printed.
 
 ---
 

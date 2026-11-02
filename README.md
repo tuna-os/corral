@@ -619,7 +619,8 @@ corral ssh <name>       [-u user] [-i key] [-c cmd] [-p port] [--password …]
                           [-L [bind:]port:host:hostport ...]  local port forward(s)
 corral viewer <name>    VNC via xdg-open
 corral key <name> <key>...  [qemu|kubevirt] press a key combination (ret, ctrl alt f2)
-corral type <name> <text>   [qemu|kubevirt] [--enter] type US-keyboard text
+corral type <name> [text]   [qemu|kubevirt] [--file PATH|-] [--powershell] [--enter]
+                          type UTF-8 input; --powershell sends an encoded launcher
 corral pointer <name> <x> <y>  [kubevirt] [--click left|middle|right] [--double]
 corral logs <name>      journald (local) / virt-launcher (cluster)
 corral info <name>      raw JSON
@@ -638,6 +639,22 @@ corral vdi assign <pool> <user>
 corral vdi unassign <member>
 corral vdi connect <member>
 ```
+
+`corral type` requires exactly one source: positional text, `--file PATH`, or
+`--file -` for stdin. Ordinary input must map to a US keyboard. `--powershell`
+accepts Unicode PowerShell source (including an optional leading UTF-8 BOM) and
+types `powershell.exe -NoLogo -NoProfile -EncodedCommand` with UTF-16LE Base64.
+For example: `corral type winvm --file script.ps1 --powershell --enter`.
+Empty or BOM-only PowerShell source is refused. The launcher is limited to
+8,191 characters for Windows `cmd.exe` compatibility.
+Manually focus the guest's command field or shell first; Corral does not open
+Run, change focus, elevate, or handle credentials. `--enter` explicitly appends
+Return; ordinary input's own newlines still press Return. Success means input
+was sent, not that a script ran: check an observable guest result such as a file
+the script creates. Base64 is not encryption or secret storage, and Run/shell
+history can retain the source. Normal output stays silent; `--json` reports only
+the VM, action, source character count (without a stripped BOM or appended
+Return), and whether `--enter` was requested, never the source or encoded payload.
 
 ### KubeVirt feature support & cluster requirements
 
