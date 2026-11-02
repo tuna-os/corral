@@ -139,9 +139,11 @@ For a guest boot gate, require a guest readiness milestone as well as paint;
 do not treat the host's placeholder as evidence that firmware or an OS drew.
 
 The native QEMU lifecycle CI lane qualifies empty-disk UEFI execution, not an
-OS or desktop boot. Its ARM guest first waits for EDK2's `BdsDxe: loading Boot…`
-or `BdsDxe: starting Boot…` console output, emitted after console initialization,
-then runs the actual CLI `wait --paint` with the remaining part of the same
+OS or desktop boot. Its ARM guest first waits for EDK2's `BdsDxe: loading Boot…`,
+`BdsDxe: starting Boot…`, or `BdsDxe: failed to load Boot…` console output,
+emitted after console initialization. Failed-load output is expected from the
+intentionally empty disk; it establishes firmware progress, never a booted OS.
+It then runs the actual CLI `wait --paint` with the remaining part of the same
 30-second readiness budget and the unchanged 100 ms interval. The separate
 `screenshot --require-paint` still captures and judges the current framebuffer
 at the unchanged 0.02 threshold; no earlier image is substituted. Artifacts

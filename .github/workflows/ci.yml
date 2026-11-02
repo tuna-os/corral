@@ -158,10 +158,11 @@ jobs:
           deadline = started + 30
           serial = pathlib.Path(serial)
           evidence = pathlib.Path(evidence)
-          # EDK2 PlatformBmPrintScLib prints these boot-option preparations
-          # through ConOut after PlatformBootManagerAfterConsole, not through
-          # the early debug UART before graphical console initialization.
-          milestone = re.compile(rb"BdsDxe: (?:loading|starting) Boot[0-9A-Fa-f]{4}[^\r\n]*[\r\n]")
+          # EDK2 prints boot-option attempts through ConOut after console
+          # initialization. This intentionally empty API-regression disk has
+          # no bootable OS, so failed-load output is normal firmware progress,
+          # not OS-boot evidence (see the retained serial and scope receipt).
+          milestone = re.compile(rb"BdsDxe: (?:loading|starting|failed to load) Boot[0-9A-Fa-f]{4}[^\r\n]*[\r\n]")
           while True:
               data = serial.read_bytes() if serial.exists() else b""
               match = milestone.search(data)
