@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/tuna-os/corral/pkg/ct"
+	"github.com/tuna-os/corral/pkg/kubevirt"
 	"github.com/tuna-os/corral/pkg/types"
 )
 
@@ -156,7 +157,10 @@ func TestTUIOps_PortToggleAppliesThroughACommand(t *testing.T) {
 // Enter on the hardware form scales through a command and closes the form
 // when it succeeds.
 func TestTUIOps_HardwareAppliesThroughACommand(t *testing.T) {
-	f := fakeCluster(t)
+	cluster, f := fakeCTCluster(t)
+	cluster.AddPrefixResponse("kubectl", `{"items":[]}`, nil)
+	cluster.AddPrefixResponse("kubectl get pods", `{"items":[{"metadata":{"name":"virt-launcher-web","namespace":"corral-vms","labels":{"vm.kubevirt.io/name":"web-prod"}}}]}`, nil)
+	cluster.AddPrefixResponse("kubectl top", "corral-vms virt-launcher-web 250m 512Mi", nil)
 	f.AddPrefixResponse("kubectl patch", "", nil)
 	f.AddPrefixResponse("kubectl get pod", `{"spec":{"containers":[{"name":"ct"}]}}`, nil)
 	f.AddPrefixResponse("kubectl annotate", "", nil)
@@ -168,20 +172,39 @@ func TestTUIOps_HardwareAppliesThroughACommand(t *testing.T) {
 	m.hwEdit = newCTHWEditModel(c)
 	m.hwEdit.cpu.SetValue("4")
 
+	// Inventory and metrics may already have reached the cluster before enter.
+	// Keep those observations, then measure only work begun at this boundary.
+	if usage := kubevirt.SampleAllUsage(); len(usage) == 0 {
+		t.Fatal("the prior metrics observation did not reach the cluster")
+	}
+	if _, err := ct.ListCTs(); err != nil {
+		t.Fatalf("the prior CT inventory observation failed: %v", err)
+	}
+	before := len(f.Calls())
+
 	next, cmd := m.Update(key("enter"))
 	m = next.(tuiModel)
-	if !m.busy || cmd == nil || len(f.Calls()) != 0 {
+	if !m.busy || cmd == nil || len(f.Calls()) != before {
 		t.Fatalf("enter should hand the scale to a command (busy %v, calls %v)", m.busy, f.Calls())
 	}
 	if !strings.Contains(m.render(), "Applying hardware") {
 		t.Errorf("the form does not show the apply running:\n%s", m.render())
 	}
-	m = settle(m, cmd)
-	if m.mode != ModeList || m.hwEdit.status != "" {
-		t.Errorf("after a successful scale: mode %v, status %q; want the list", m.mode, m.hwEdit.status)
+	if len(f.Calls()) != before {
+		t.Fatalf("render reached the CT backend before command execution: %v", f.Calls()[before:])
 	}
-	if !calledWith(f, "dev-shell") {
-		t.Errorf("the command never scaled the CT, calls: %v", f.Calls())
+
+	msg := cmd()
+	if !calledWith(f, "patch", "dev-shell") {
+		t.Fatalf("executing the command never scaled the CT, calls: %v", f.Calls()[before:])
+	}
+	if !m.busy || m.mode != ModeHWEdit {
+		t.Fatal("the form should stay busy and open until the command's result lands")
+	}
+	next, _ = m.Update(msg)
+	m = next.(tuiModel)
+	if m.busy || m.mode != ModeList || m.hwEdit.status != "" {
+		t.Errorf("after a successful scale: busy %v, mode %v, status %q; want the idle list", m.busy, m.mode, m.hwEdit.status)
 	}
 }
 
