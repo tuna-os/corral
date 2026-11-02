@@ -19,7 +19,7 @@
 //     a button in it is a later stage, with its own consent step.
 
 import { api } from '../api.js';
-import { select } from '../app.js';
+import { select } from '../router.js';
 import { icon } from '../icons.js';
 import { registerCapability } from '../ui/capabilities.js';
 import { esc } from '../ui/dom.js';

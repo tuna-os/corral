@@ -1,6 +1,6 @@
 // The screens the poll draws when it cannot show the fleet: the tailnet
 // identity is gone (401), or no backend could list any VMs. Each takes the
-// retry action from app.js, which owns the poll. Unit tests:
+// retry action from refresh.js, which owns the poll. Unit tests:
 // pkg/web/jstest/unavailable.test.mjs.
 
 import { api } from '../api.js';

@@ -1,8 +1,10 @@
 // Datacenter screen: dashboard widgets, the fleet grid with tag filter, and
 // the image library.
 
+import { registerScreen } from '../ui/screens.js';
 import { api, sendJSON, vmKey } from '../api.js';
-import { markRendered, refresh, select } from '../app.js';
+import { markRendered, select } from '../router.js';
+import { refresh } from '../refresh.js';
 import { watchBuild } from '../create.js';
 import { fmtBytes, fmtCPU, mountDashboard, timeChart } from '../dashboard.js';
 import { icon } from '../icons.js';
@@ -289,3 +291,4 @@ async function uploadImage(file) {
     });
   }
 }
+registerScreen('dc', renderDatacenter);

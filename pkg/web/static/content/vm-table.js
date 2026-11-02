@@ -2,7 +2,8 @@
 // Namespace screens share.
 
 import { api, findVM, vmKey, vmURL } from '../api.js';
-import { refresh, select, syncRoute } from '../app.js';
+import { refresh } from '../refresh.js';
+import { select, syncRoute } from '../router.js';
 import { mountGrid } from '../grid.js';
 import { icon } from '../icons.js';
 import { vmMenuItems } from '../menus.js';
@@ -158,7 +159,7 @@ export function bindVMTable(root, list) {
     // the new rows (which diffs them — see grid.js).
     //
     // Focus and the grid's own scroll position are restored by refresh() in
-    // app.js, not here: the view has already replaced the markup around this
+    // refresh.js, not here: the view has already replaced the markup around this
     // grid by the time we run, and that is what blurs the focused row, so the
     // only place that can still see where focus was is before the render.
     placeholder.replaceWith(gridHost);

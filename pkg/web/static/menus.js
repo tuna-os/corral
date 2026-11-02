@@ -2,7 +2,8 @@
 // namespace, pool). Item lists only; ui/menu.js draws them.
 
 import { api, ctKey, sendJSON, vmKey, vmURL } from './api.js';
-import { markRendered, refresh, renderContent, select } from './app.js';
+import { markRendered, renderContent, select } from './router.js';
+import { refresh } from './refresh.js';
 import { ctAction } from './content/ct.js';
 import { cloneVM, exportVM, migrateVM, post, vmAction } from './content/vm.js';
 import { loadPools, poolState, showMoveDialog, summariseOutcomes } from './pools.js';

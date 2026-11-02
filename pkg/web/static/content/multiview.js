@@ -1,7 +1,8 @@
 // Multiview screen: several live VNC consoles in one persisted grid.
 
+import { registerScreen } from '../ui/screens.js';
 import { vmKey, wsURL } from '../api.js';
-import { renderContent, select } from '../app.js';
+import { renderContent, select } from '../router.js';
 import { icon } from '../icons.js';
 import { state } from '../state.js';
 import { $, esc } from '../ui/dom.js';
@@ -148,3 +149,4 @@ export async function renderMultiview(main) {
   liveGrid = grid;
   liveGridKey = want;
 }
+registerScreen('multiview', renderMultiview);

@@ -1,7 +1,9 @@
 // Container (CT) screen and actions.
 
+import { registerScreen } from '../ui/screens.js';
 import { api, ctKey, ctURL, findCT, sendJSON } from '../api.js';
-import { markRendered, refresh, select } from '../app.js';
+import { markRendered, select } from '../router.js';
+import { refresh } from '../refresh.js';
 import { connectTTY, disconnectConsoles } from '../console.js';
 import { icon } from '../icons.js';
 import { ctMenuItems } from '../menus.js';
@@ -132,3 +134,4 @@ export async function ctAction(c, act) {
   } catch (e) { toast(e.message); }
   setTimeout(() => refresh(true), 600);
 }
+registerScreen('ct', renderCT);

@@ -4,6 +4,7 @@
 // a storage target on its own screen rather than only in the tree, because the
 // tree has room for a name and nothing else — the same reason this exists.
 
+import { registerScreen } from '../ui/screens.js';
 import { icon } from '../icons.js';
 import { state } from '../state.js';
 import { esc } from '../ui/dom.js';
@@ -49,3 +50,5 @@ function renderDataVolumes(main, ns) {
       </tr>`).join('')}</tbody>
     </table>` : '<p class="muted">No imported disks in this namespace.</p>'}`;
 }
+
+registerScreen('storage', renderStorage);
