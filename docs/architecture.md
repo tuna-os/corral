@@ -9,7 +9,7 @@
 cmd/              Cobra CLI (root, subcommands, TUI)
 ├── root.go       entrypoint, plugin dispatch, post-quit actions
 ├── commands.go   list, start, stop, ssh (TCP/vsock), viewer, logs, info, restart, pause, migrate, scale, adddisk, rmdisk, snapshot
-├── create.go     corral create (all flags, both backends, CLI catalog/import/bootc)
+├── create.go     corral create flags and CLI/TUI options adapter
 ├── clone.go      corral clone (kubevirt VM disk + config clone)
 ├── ct.go         corral ct (create/list/start/stop/delete/console — Containers, pkg/ct)
 ├── images.go     corral images (list catalog + imported datavolumes)
@@ -35,6 +35,8 @@ cmd/              Cobra CLI (root, subcommands, TUI)
 └── corral-bootc/   plugin binary (built with -tags bootc, separate from core)
 
 pkg/              Library code (importable)
+├── create/       request-based create orchestration, backend dispatch, bootc and post-create lifecycle
+├── lima/         Lima YAML parsing, source translation and provisioning cloud-init
 ├── catalog/      curated OS image catalog (containerdisks)
 ├── config/       ~/.config/tailvm/config.yaml reader (Tailscale auth key)
 ├── cronops/      shared CronJob/RBAC manifest builders for scheduled-op plugins (backup, snapsched, schedule)
