@@ -276,6 +276,10 @@ corral create web --kubevirt --container-disk quay.io/containerdisks/ubuntu:24.0
 corral start web
 corral ssh web
 
+# Copy literal files or directory trees through the KubeVirt API (SFTP)
+corral cp ./build.tar web:/tmp/build.tar -u ubuntu
+corral cp -r web:/home/ubuntu/results ./results -u ubuntu
+
 # Cluster VM from an installer ISO (CDI imports it for you, progress in `corral list`)
 corral create bluefin --kubevirt --iso https://download.example/bluefin.iso
 
@@ -294,6 +298,11 @@ corral ct console devbox
 # Container (CT) from a project's devcontainer.json
 corral ct create myproj --devcontainer ./myproj
 ```
+
+For persistent KubeVirt workspaces, use `--import URL` to put a bootable cloud
+image on a root PVC. A container disk remains ephemeral even with a separate
+`--disk` data PVC. See the [persistent testing-root recipe](docs/user-guide.md#a-persistent-kubevirt-testing-root)
+and [copy/authentication/trust details](docs/user-guide.md#copying-files-to-and-from-kubevirt).
 
 ## How VMs are reached
 
@@ -617,6 +626,7 @@ corral addnic <name>    [kubevirt] --network-nad ns/name --iface net1
                           bridge a LAN NIC onto an existing VM
 corral ssh <name>       [-u user] [-i key] [-c cmd] [-p port] [--password …]
                           [-L [bind:]port:host:hostport ...]  local port forward(s)
+corral cp <src> <dst>   [kubevirt] local ↔ instance:path; [-r] [-u user] [-i key]
 corral viewer <name>    VNC via xdg-open
 corral key <name> <key>...  [qemu|kubevirt] press a key combination (ret, ctrl alt f2)
 corral type <name> [text]   [qemu|kubevirt] [--file PATH|-] [--powershell] [--enter]

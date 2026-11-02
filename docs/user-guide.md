@@ -95,6 +95,103 @@ never creates the VM on a different backend instead.
 
 ## Common workflows
 
+### Copying files to and from KubeVirt
+
+```bash
+corral cp ./build.tar web:/tmp/build.tar -u ubuntu -i ~/.ssh/id_ed25519
+corral cp 'web:/tmp/report [final].txt' ./report.txt -u ubuntu
+corral cp -r ./workspace web:/home/ubuntu/ -u ubuntu
+# A fully scoped selector disambiguates duplicate names:
+corral cp ./build.tar kubevirt/production/corral-vms/web:/tmp/ -u ubuntu
+```
+
+Exactly one endpoint must be local; guest-to-guest copies, Corral peers and
+backends other than KubeVirt are explicitly refused. The guest must have an SSH
+server with an SFTP subsystem enabled, and accept a private key or SSH-agent
+authentication. Install OpenSSH's `sftp` client and `virtctl` locally.
+`--identity` restricts authentication to that private key; without it, only the
+existing SSH agent is used (no implicit key files). Password authentication is
+not used.
+The username defaults to the remembered registry username, then `$USER`, then
+`root`; `--user` overrides it without changing the registry.
+
+Paths are **literal**, including spaces, quotes, `$`, semicolons, brackets and
+wildcards. Quote them against your local shell. No guest shell or legacy SCP
+command interprets them. Use `./local:name` or an absolute path for local names
+containing colons. Relative guest paths start in the SFTP login directory;
+`~` is literal, not home-directory expansion. NUL, CR and LF are refused.
+Existing files may be overwritten, parent directories must already exist, and
+directories require `--recursive` (`-r`). Recursive copies include hidden files
+and empty directories but do not follow symlinks inside the tree. This is not
+an atomic sync, permission-preserving backup, or disk-image move.
+
+`cp` uses a private host-key database under the OS user cache directory:
+`corral/guest-ssh/<scope>/known_hosts`. The scope hashes the resolved Kubernetes
+context, namespace and VM name. First use automatically pins the presented key
+(**trust on first use**, not independent verification); subsequent changed keys
+are refused, including a VM recreated under the same name. Pins are never
+automatically removed or replaced. Independently investigate a changed key
+before deliberately managing its scoped pin; there is no insecure bypass.
+User/global `known_hosts` and SSH configuration are neither used nor modified.
+Unsafe local keys, symlinks/hardlinks, non-private trust files/directories and
+unsafe ancestors are refused rather than silently repaired. Ancestors must be
+owned by the current user or root and not writable by other users; trusted
+sticky directories such as `/tmp` are allowed. Identity/cache paths containing
+literal `${` are refused because OpenSSH would expand environment variables
+after validation. This restriction does not apply to transferred filenames.
+This private-storage implementation supports Linux and macOS; other hosts
+fail explicitly. This policy belongs to `cp`; the existing `corral ssh` command
+does not share these pins.
+
+### A persistent KubeVirt testing root
+
+Container-disk roots (`--container-disk`, including catalog images backed by
+container disks) are ephemeral: installed tools and root-filesystem changes
+can disappear when the VMI is recreated. Adding `--disk` to a container-disk VM
+creates a **blank persistent data PVC**, not a persistent root. Corral does not
+format or mount that data disk in the guest.
+
+For a reusable workspace, use the existing CDI import path instead:
+
+```bash
+# Replace workspace-cluster everywhere below with your kubeconfig context.
+# Use a trusted, architecture/firmware-compatible qcow2/raw cloud image URL.
+: "${CLOUD_IMAGE_URL:?Set a trusted qcow2/raw cloud-image URL first}"
+corral context add workspace-cluster --backend kubevirt --context workspace-cluster
+corral create workspace --context workspace-cluster --kubevirt \
+  --namespace corral-vms --import "$CLOUD_IMAGE_URL" --disk 32Gi
+vm=kubevirt/workspace-cluster/corral-vms/workspace
+corral start "$vm"
+
+# On a Linux workstation with GNU timeout, bound each SSH attempt too.
+# This uses the existing ssh command's authentication/trust policy, not cp's.
+ready=false
+for attempt in $(seq 1 30); do
+  if boot_id=$(timeout 15s corral ssh "$vm" -u ubuntu -i ~/.ssh/id_ed25519 \
+      -c 'cloud-init status --wait >/dev/null && cat /proc/sys/kernel/random/boot_id'); then
+    printf 'Guest boot ID: %s\n' "$boot_id"
+    ready=true
+    break
+  fi
+  sleep 5
+done
+[ "$ready" = true ] || { echo 'Guest did not become ready' >&2; exit 1; }
+corral cp -r ./workspace "$vm:/home/ubuntu/" -u ubuntu -i ~/.ssh/id_ed25519
+```
+
+The cluster needs CDI and a suitable storage class with enough capacity for the
+imported/expanded root. The image must boot on this cluster, support NoCloud
+cloud-init, and provision the selected guest account (`ubuntu` above), its SSH
+authorized key and SSH/SFTP server. Corral includes the first available local
+`~/.ssh/id_ed25519.pub`, `id_rsa.pub` or `id_ecdsa.pub` in generated cloud-init;
+ensure its matching private key is the one you use, or explicitly provision
+your chosen key/account through `--cloud-init`. Imports do not install missing
+guest services or make an incompatible image cloud-init capable.
+The imported `workspace-disk` PVC holds the root across stop/start and VMI
+recreation; `corral delete` deletes its managed disk too. Record a new boot ID
+after a reboot and check your workspace files/tools, rather than treating
+successful import or an old boot ID as proof of persistence.
+
 ### CLI, TUI or web UI
 
 The CLI, the TUI and the web UI use the same inventory and the same

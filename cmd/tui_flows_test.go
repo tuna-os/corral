@@ -23,6 +23,9 @@ import (
 // terminal so the detail pane is on screen.
 func demoModel(t *testing.T) tuiModel {
 	t.Helper()
+	// Demo inventory must not inherit real contexts: every configured cluster
+	// receives the same fake fleet, making bare names spuriously ambiguous.
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	demo.Enable()
 	m := newTUIModel()
 	m.width, m.height = 140, 40
