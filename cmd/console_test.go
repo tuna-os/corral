@@ -83,7 +83,8 @@ func TestConsole_JSONLineWithPortZero(t *testing.T) {
 	withJSONOutput(t, true)
 	vm := types.VM{Name: "desk", Namespace: "corral-vms", Context: "lab"}
 	line, stop := serveFirstLine(t, func(ctx context.Context, out io.Writer) error {
-		return runConsole(ctx, out, vm, "127.0.0.1:0")
+		_, err := runConsole(ctx, out, vm, "127.0.0.1:0", false)
+		return err
 	})
 	if strings.Count(line, "\n") != 1 || !strings.HasSuffix(line, "}\n") {
 		t.Fatalf("want one JSON object line, got %q", line)
@@ -99,6 +100,9 @@ func TestConsole_JSONLineWithPortZero(t *testing.T) {
 	if u.Path != "/console/corral-vms/desk" || u.Query().Get("context") != "lab" {
 		t.Errorf("url = %q, want /console/corral-vms/desk?context=lab", got.URL)
 	}
+	if u.Query().Has("ready_nonce") {
+		t.Fatalf("ordinary console unexpectedly opted into readiness: %s", got.URL)
+	}
 	if want := "ws://" + u.Host + "/api/vnc/corral-vms/desk?context=lab"; got.WebSocket != want {
 		t.Errorf("websocket = %q, want %q", got.WebSocket, want)
 	}
@@ -112,6 +116,9 @@ func TestConsole_JSONLineWithPortZero(t *testing.T) {
 	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `data-vm="desk"`) {
 		t.Errorf("GET %s = %d, want the console page:\n%s", got.URL, resp.StatusCode, body)
 	}
+	if strings.Contains(string(body), "data-ready-nonce") {
+		t.Fatal("ordinary console page exposes a readiness nonce")
+	}
 	if err := stop(); err != nil {
 		t.Errorf("serve returned %v after cancel, want nil", err)
 	}
@@ -120,7 +127,8 @@ func TestConsole_JSONLineWithPortZero(t *testing.T) {
 func TestConsole_HumanLine(t *testing.T) {
 	withJSONOutput(t, false)
 	line, stop := serveFirstLine(t, func(ctx context.Context, out io.Writer) error {
-		return runConsole(ctx, out, types.VM{Name: "desk", Namespace: "local"}, "127.0.0.1:0")
+		_, err := runConsole(ctx, out, types.VM{Name: "desk", Namespace: "local"}, "127.0.0.1:0", false)
+		return err
 	})
 	defer func() { _ = stop() }()
 	prefix := "Console of desk: "

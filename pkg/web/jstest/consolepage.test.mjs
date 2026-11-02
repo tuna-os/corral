@@ -38,7 +38,7 @@ describe('runConsolePage', () => {
       scale: '',
       focused: 0,
       on: (ev, fn) => { listeners[ev] = fn; },
-      emit: (ev) => listeners[ev](),
+      emit: (ev) => listeners[ev]?.(),
       setScale(mode) { this.scale = mode; },
       focus() { this.focused++; },
     };
@@ -97,5 +97,79 @@ describe('runConsolePage', () => {
     assert.equal(scheduled.length, 1);
     await scheduled[0].fn();
     assert.equal(sessions.length, 1);
+  });
+
+  test('readiness POST is sent only on actual RFB connect, once, to the intended same-origin VM', async () => {
+    body.dataset.readyNonce = 'listener-nonce';
+    body.dataset.context = 'lab & east';
+    const requests = [];
+    const request = async (path, options) => { requests.push({ path, options }); };
+    await runConsolePage({ body, screen, status, open, schedule, request });
+    assert.equal(requests.length, 0, 'opening a session is not readiness');
+    sessions[0].emit('connect');
+    await Promise.resolve();
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].path, '/api/console-ready/corral-vms/desk');
+    assert.deepEqual(requests[0].options, {
+      method: 'POST',
+      mode: 'same-origin',
+      credentials: 'same-origin',
+      redirect: 'error',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nonce: 'listener-nonce', context: 'lab & east' }),
+    });
+    sessions[0].emit('disconnect');
+    await scheduled[0].fn();
+    sessions[1].emit('connect');
+    await Promise.resolve();
+    assert.equal(requests.length, 1, 'reconnect must not send another readiness event');
+  });
+
+  test('without an owned nonce even a successful connection sends no readiness request', async () => {
+    const requests = [];
+    const request = async (...args) => { requests.push(args); };
+    await runConsolePage({ body, screen, status, open, schedule, request });
+    sessions[0].emit('connect');
+    await Promise.resolve();
+    assert.deepEqual(requests, []);
+  });
+
+  test('disconnect and a late connect from an ended session cannot report readiness', async () => {
+    body.dataset.readyNonce = 'listener-nonce';
+    const requests = [];
+    const request = async (...args) => { requests.push(args); };
+    await runConsolePage({ body, screen, status, open, schedule, request });
+    sessions[0].emit('securityfailure');
+    await Promise.resolve();
+    assert.deepEqual(requests, []);
+    sessions[0].emit('disconnect');
+    sessions[0].emit('connect');
+    await Promise.resolve();
+    assert.deepEqual(requests, []);
+    assert.equal(body.dataset.connected, 'false');
+  });
+
+  test('failed session opening cannot report readiness', async () => {
+    body.dataset.readyNonce = 'listener-nonce';
+    const requests = [];
+    const request = async (...args) => { requests.push(args); };
+    const fail = async () => { throw new Error('RFB handshake failed'); };
+    await runConsolePage({ body, screen, status, open: fail, schedule, request });
+    await Promise.resolve();
+    assert.deepEqual(requests, []);
+    assert.equal(body.dataset.connected, 'false');
+  });
+
+  test('failed readiness delivery neither changes RFB state nor creates a fallback notification', async () => {
+    body.dataset.readyNonce = 'listener-nonce';
+    let requests = 0;
+    const request = async () => { requests++; throw new Error('offline'); };
+    await runConsolePage({ body, screen, status, open, schedule, request });
+    sessions[0].emit('connect');
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.equal(requests, 1);
+    assert.equal(body.dataset.connected, 'true');
+    assert.equal(scheduled.length, 0);
   });
 });

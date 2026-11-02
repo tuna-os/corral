@@ -12,7 +12,7 @@
   body[data-connected="true"] #console-status { display: none; }
 </style>
 </head>
-<body data-vm="{{.Name}}" data-namespace="{{.Namespace}}" data-context="{{.Context}}" data-scale="{{.Scale}}" data-connected="false">
+<body data-vm="{{.Name}}" data-namespace="{{.Namespace}}" data-context="{{.Context}}" data-scale="{{.Scale}}" data-connected="false"{{if .ReadyNonce}} data-ready-nonce="{{.ReadyNonce}}"{{end}}>
 <div id="console-status" role="status">Connecting…</div>
 <div id="vnc-screen" data-connected="false" aria-label="{{.Name}} console"></div>
 <script type="module" src="../../console-page.js"></script>

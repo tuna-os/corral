@@ -295,6 +295,79 @@ corral ct console devbox
 corral ct create myproj --devcontainer ./myproj
 ```
 
+Local QEMU defaults to the host architecture. `--arch amd64|arm64` selects
+the **guest** architecture independently of the Corral binary: amd64 uses
+`qemu-system-x86_64` and the `q35` board; arm64 uses
+`qemu-system-aarch64` and `virt`. Linux uses KVM for native guests only if the
+caller can open `/dev/kvm` read/write. Otherwise Corral uses TCG and records
+that choice. Native guests use Hypervisor.framework on macOS.
+
+Cross-architecture guests always use TCG with an emulated CPU, never KVM/HVF
+or the host CPU model. For example, an amd64 guest on an Apple Silicon Mac
+uses the x86_64 emulator, `q35`, amd64 UEFI, and TCG.
+This is slower than native virtualization.
+
+To import a verified amd64 boot disk without a local disk build:
+```bash
+corral --backend qemu create NAME --qcow /absolute/path/disk.qcow2 --firmware uefi --arch amd64 --loopback
+```
+UEFI search follows the **guest** architecture. Firmware for amd64 comes from
+Homebrew on Apple Silicon; Corral does not replace it with firmware for ARM.
+ARM64 guests need `--firmware uefi`. Files from `CORRAL_OVMF_CODE` and
+`CORRAL_OVMF_VARS` must match the selected guest architecture.
+Intel Macs also discover Homebrew's ARM64 UEFI firmware under
+`/usr/local/share/qemu`; ARM64 guests there use TCG, not Hypervisor.framework.
+
+Corral records the guest `architecture` and `acceleration` in VM info.
+It saves the exact emulator command for subsequent starts.
+`--arch` works only for QEMU on the local host. Other backends reject it.
+The `--bootc` path also rejects it.
+`--loopback` binds the guest VNC console and forwarded SSH to `127.0.0.1`,
+even when Tailscale is active; it is also local-QEMU-create-only.
+
+`corral --json console qemu//local/NAME --addr 127.0.0.1:0 --notify-ready`
+first reports its own bound console URL. It emits an `rfb-connected` event
+after the standalone noVNC page reports a real RFB connection.
+The server checks a one-shot nonce, the exact Origin and Host, and the VM
+and backend context for that listener. This proves browser/transport
+readiness only, not OS boot completion or an authenticated Tuna session.
+
+This self-service POST reports a console connection. It does not administer VMs.
+A viewer with access to the console need not be in `CORRAL_ADMINS`.
+For a claimed VDI desktop, the caller must be its holder or an admin.
+
+Only the exact path for the console report is eligible.
+That path must have no encoded or extra segments.
+The server still checks authentication, access to that VM and all nonce/origin rules.
+The server refuses other VM mutations from non-admins.
+
+Corral does not authenticate the disk's publisher or qualification: its
+product-specific consumer must verify the release artifact first. Argument
+and metadata tests are not proof that a particular guest boots on macOS;
+actual native-host disk and browser qualification is still required.
+
+Without a systemd user session, Corral records a direct QEMU process.
+Stop identifies that VM over its private QMP socket and requests `quit`.
+A PID file alone is not enough to send a signal to a process.
+If Corral cannot prove the identity or the retirement, stop fails.
+Delete then retains the disk and PID state for diagnosis.
+For an older direct VM without QMP, its actual supervisor must stop it first.
+
+CI runs on Linux and macOS with both amd64 and ARM64 hosts.
+It checks retirement of real QEMU processes and ownership of loopback RFB.
+A 200-character QMP sequence takes more than five seconds.
+The CLI also creates and starts an empty disk.
+It waits for firmware pixels with `qemu//local/NAME`, then stops and deletes
+the VM. CI keeps the frame and checks that Corral removed its own files.
+
+All four hosts retain the amd64-guest UEFI case.
+The Intel macOS job also runs an empty ARM64 guest with Homebrew firmware.
+It checks QMP's guest architecture, live TCG translation state and attached firmware files.
+Both cases keep runtime and owned-cleanup receipts with the firmware frame.
+
+These checks qualify backend/CLI behavior, not a Tuna guest or the desktop
+launcher. They do not prove firstboot, login, or a browser session.
+
 ## How VMs are reached
 
 | | Local (qemu) | Cluster (kubevirt) |
@@ -686,7 +759,10 @@ Full design document: [SPEC.md](SPEC.md).
 
 ## Requirements
 
-- Local backend: `qemu-system-x86_64` + KVM, systemd user session
+- Local backend: `qemu-system-x86_64` or `qemu-system-aarch64` must match the guest.
+  Linux uses KVM for native guests; macOS uses Hypervisor.framework.
+  Cross-architecture guests use TCG. UEFI firmware must match the guest.
+  A systemd user session is optional.
 - Cluster backend: `kubectl` context with KubeVirt (+ CDI for ISO import),
   `virtctl`; Tailscale operator for published ports
 - `tailscale` on the host; `sshpass` only if you use password SSH

@@ -8,16 +8,16 @@ import (
 	"github.com/tuna-os/corral/pkg/types"
 )
 
-// createContext names the context a create on backend lands in: the --context
-// flag, else the default context when it belongs to that backend.
-func (r request) createContext(backend string) string {
+// createContext returns the backend target rather than its configuration alias.
+// Evaluate the backend default only when no explicit context was selected.
+func (r request) createContext(defaultContext func() string) string {
 	if r.Context != "" {
+		if target, ok := config.FindContext(r.Context); ok {
+			return target.Context
+		}
 		return r.Context
 	}
-	if def := config.DefaultContext(); def.Backend == backend {
-		return def.Name
-	}
-	return ""
+	return defaultContext()
 }
 
 // runAdapterCreate creates on a backend the dedicated paths above do not
@@ -49,7 +49,7 @@ func (r request) runAdapterCreate(name, backendName, context string) error {
 		return err
 	}
 	if r.Registry != nil {
-		if err := r.Registry.Set(name, types.RegistryEntry{Backend: backendName, Context: context}); err != nil {
+		if err := r.Registry.SetRef(types.InstanceRef{Backend: backendName, Context: context, Name: name}, types.RegistryEntry{}); err != nil {
 			return err
 		}
 	}

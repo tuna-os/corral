@@ -27,10 +27,14 @@ var consolePathSegment = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,252}$`
 // consolePage is what the page template renders. Scale is "one" (1:1 pixels)
 // or "fit" (scaled to the window).
 type consolePage struct {
-	Namespace, Name, Context, Scale string
+	Namespace, Name, Context, Scale, ReadyNonce string
 }
 
 func handleConsolePage(w http.ResponseWriter, r *http.Request) {
+	serveConsolePage(w, r, "")
+}
+
+func serveConsolePage(w http.ResponseWriter, r *http.Request, readyNonce string) {
 	ns, name := r.PathValue("ns"), r.PathValue("name")
 	if !consolePathSegment.MatchString(ns) || !consolePathSegment.MatchString(name) {
 		http.NotFound(w, r)
@@ -48,6 +52,7 @@ func handleConsolePage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	page := consolePage{Namespace: ns, Name: name, Context: r.URL.Query().Get("context"), Scale: scale}
+	page.ReadyNonce = readyNonce
 	if err := consolePageTemplate.Execute(w, page); err != nil {
 		slog.WarnContext(r.Context(), "render console page", "error", err)
 	}

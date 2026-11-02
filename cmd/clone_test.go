@@ -24,7 +24,7 @@ func TestCloneCLIUsesTheSourceBackendsCloner(t *testing.T) {
 	if !ranCommandLine(fake, "kubectl apply -f -") {
 		t.Errorf("clone did not apply a VirtualMachineClone; calls were %v", fake.Calls())
 	}
-	entry, ok := registryStore.Get("web-copy")
+	entry, ok := registryStore.GetRef(types.InstanceRef{Backend: "kubevirt", Context: "prod", Namespace: "team-a", Name: "web-copy"})
 	if !ok || entry.Backend != "kubevirt" || entry.Context != "prod" || entry.Namespace != "team-a" {
 		t.Errorf("registry entry for the clone = %+v (found %v), want kubevirt/prod/team-a", entry, ok)
 	}

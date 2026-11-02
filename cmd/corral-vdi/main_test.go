@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -25,6 +27,61 @@ func TestPoolCmd_Subcommands(t *testing.T) {
 		if err != nil || c == pool {
 			t.Errorf("pool: missing subcommand %q", want)
 		}
+	}
+}
+
+func TestPoolCreateCmd_RegistryFailureRetainsMembers(t *testing.T) {
+	for _, failure := range []string{"open", "write"} {
+		t.Run(failure, func(t *testing.T) {
+			fake := shell.NewFake()
+			fake.AddResponseKV("kubectl", []string{"get", "vm", "golden", "-n", "corral-vms", "-o", "name"}, "vm/golden", nil)
+			fake.AddResponseKV("kubectl", []string{"apply", "-f", "-"}, "applied", nil)
+			for _, name := range []string{"devpool-1", "devpool-2"} {
+				fake.AddResponseKV("kubectl", []string{"get", "vm", name, "-n", "corral-vms", "-o", "name"}, "vm/"+name, nil)
+				fake.AddResponseKV("kubectl", []string{"label", "vm", name, "-n", "corral-vms", "corral.dev/vdi-pool=devpool", "corral.dev/vdi-assigned-to-", "--overwrite"}, "", nil)
+				fake.AddResponseKV("kubectl", []string{"annotate", "vm", name, "-n", "corral-vms", "corral.dev/vdi-claimed-at-", "corral.dev/vdi-assigned-to-", "--overwrite"}, "", nil)
+			}
+			vdi.SetRunner(fake)
+			t.Cleanup(func() { vdi.SetRunner(shell.Real{}) })
+			oldNamespace := namespace
+			namespace = "corral-vms"
+			t.Cleanup(func() { namespace = oldNamespace })
+			home := ""
+			if failure == "write" {
+				home = filepath.Join(t.TempDir(), "blocked-home")
+				if err := os.WriteFile(home, []byte("existing data"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			t.Setenv("HOME", home)
+
+			cmd := poolCreateCmd()
+			if err := cmd.Flags().Set("from", "golden"); err != nil {
+				t.Fatal(err)
+			}
+			if err := cmd.Flags().Set("size", "2"); err != nil {
+				t.Fatal(err)
+			}
+			err := cmd.RunE(cmd, []string{"devpool"})
+			if err == nil || !strings.Contains(err.Error(), `pool "devpool" created with 2 members`) || !strings.Contains(err.Error(), "all members retained") {
+				t.Fatalf("missing created-pool persistence error: %v", err)
+			}
+			if failure == "write" && !strings.Contains(err.Error(), "0/2 entries saved") {
+				t.Fatalf("missing partial registry state: %v", err)
+			}
+			clones := 0
+			for _, call := range fake.Calls() {
+				if strings.Contains(call.Stdin, `"kind":"VirtualMachineClone"`) {
+					clones++
+				}
+				if len(call.Args) > 0 && call.Args[0] == "delete" {
+					t.Fatal("registry failure deleted a pool member")
+				}
+			}
+			if clones != 2 {
+				t.Fatalf("created %d clones before registry failure, want 2", clones)
+			}
+		})
 	}
 }
 

@@ -4,7 +4,8 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"runtime"
+
+	"github.com/tuna-os/corral/pkg/types"
 )
 
 type firmwarePair struct {
@@ -12,13 +13,12 @@ type firmwarePair struct {
 	vars string
 }
 
-func candidateFirmwares() []firmwarePair {
+func candidateFirmwares(arch types.GuestArch) []firmwarePair {
 	if code := os.Getenv("CORRAL_OVMF_CODE"); code != "" {
 		vars := os.Getenv("CORRAL_OVMF_VARS")
 		return []firmwarePair{{code: code, vars: vars}}
 	}
 
-	arch := runtime.GOARCH
 	var list []firmwarePair
 
 	switch arch {
@@ -85,6 +85,11 @@ func candidateFirmwares() []firmwarePair {
 				code: "/usr/share/edk2-arm/aarch64/QEMU_EFI.fd",
 				vars: "/usr/share/edk2-arm/aarch64/QEMU_VARS.fd",
 			},
+			// Homebrew (macOS Intel)
+			{
+				code: "/usr/local/share/qemu/edk2-aarch64-code.fd",
+				vars: "/usr/local/share/qemu/edk2-arm-vars.fd",
+			},
 			// Homebrew (macOS Apple Silicon)
 			{
 				code: "/opt/homebrew/share/qemu/edk2-aarch64-code.fd",
@@ -100,10 +105,20 @@ func candidateFirmwares() []firmwarePair {
 	return list
 }
 
-// FindUEFIFirmware searches known system and Homebrew locations for UEFI code
-// and vars template files on the host.
+// FindUEFIFirmware searches for the host's default guest architecture.
 func FindUEFIFirmware() (codePath, varsTemplate string, err error) {
-	for _, cand := range candidateFirmwares() {
+	return FindUEFIFirmwareForArch("")
+}
+
+// FindUEFIFirmwareForArch searches system and Homebrew locations for guest-
+// architecture-matched UEFI. Explicit CORRAL_OVMF_CODE/VARS overrides must
+// themselves match that guest architecture; no host firmware fallback is used.
+func FindUEFIFirmwareForArch(arch types.GuestArch) (codePath, varsTemplate string, err error) {
+	arch, err = resolveGuestArch(arch)
+	if err != nil {
+		return "", "", err
+	}
+	for _, cand := range candidateFirmwares(arch) {
 		if cand.code == "" {
 			continue
 		}
@@ -117,7 +132,7 @@ func FindUEFIFirmware() (codePath, varsTemplate string, err error) {
 			}
 		}
 	}
-	return "", "", fmt.Errorf("UEFI firmware not found on host (install edk2-ovmf or ovmf)")
+	return "", "", fmt.Errorf("UEFI firmware not found for %s guest (install edk2-ovmf/ovmf for amd64, or edk2-aarch64/AAVMF for arm64)", arch)
 }
 
 // UEFIAvailable reports whether UEFI firmware is present on the host.

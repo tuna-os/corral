@@ -132,6 +132,30 @@ deviation of its luminance is at or under 0.02. A guest that boots and never
 draws is the failure an SSH probe hides. Without this flag, no exit code
 catches it and somebody has to look at a picture.
 
+Paint is a point-in-time measurement, not proof of guest initialization or
+that a later screenshot will remain painted. QEMU's initial host-rendered
+“Guest has not initialized the display (yet).” message is nonuniform too.
+For guest boot gates, paint must accompany a readiness milestone.
+A host message does not prove that firmware or an OS drew.
+
+CI checks the native lifecycle of QEMU with an empty disk.
+This proves neither an OS boot nor a desktop boot.
+The ARM guest first waits for one of these EDK2 messages:
+`BdsDxe: loading Boot…`, `BdsDxe: starting Boot…`, or
+`BdsDxe: failed to load Boot…`.
+EDK2 prints these messages after it initializes the console.
+An empty disk can produce failed-load output.
+This shows firmware progress, not an OS boot.
+
+The CLI then runs `wait --paint` within the same 30-second budget.
+The 100 ms interval stays unchanged.
+The separate `screenshot --require-paint` captures the current framebuffer.
+Its 0.02 threshold stays unchanged.
+The check never uses an earlier image.
+
+Artifacts retain the milestone receipt, the serial output, and the live screenshot.
+On failure, cleanup saves the serial output before it stops or deletes the VM.
+
 An image that checks itself on boot can report a failure as well as a pass.
 Give that line to `--fail-marker`, and the run fails (exit 6) when the line
 appears. It does not wait for the timeout. corral checks the failure marker

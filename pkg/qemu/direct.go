@@ -2,7 +2,6 @@ package qemu
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -136,6 +135,10 @@ func startDirect(name string) error {
 	}
 	pid := cmd.Process.Pid
 	if err := os.WriteFile(filepath.Join(vmDir, pidFile), []byte(strconv.Itoa(pid)+"\n"), 0o644); err != nil {
+		// This is still our child, not a PID recovered from disk. Never leave
+		// an untracked QEMU holding the disk when persisting ownership fails.
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
 		return fmt.Errorf("recording the QEMU pid: %w", err)
 	}
 
@@ -187,33 +190,44 @@ func directPID(name string) (int, bool) {
 	return pid, true
 }
 
-// stopDirect terminates a directly started VM: ask, then insist.
+// stopDirect quits through this VM's QMP capability, never through a PID
+// recovered from disk: that PID may already belong to an unrelated process.
+// Retain state on failure so Delete cannot unlink a disk still held by QEMU.
 func stopDirect(name string) error {
-	pid, alive := directPID(name)
+	_, alive := directPID(name)
 	path := filepath.Join(VMHome(), name, pidFile)
 	if !alive {
-		_ = os.Remove(path)
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
 		return nil
 	}
-	process, err := os.FindProcess(pid)
+	conn, reader, err := qmpDial(filepath.Join(VMHome(), name, "qmp.sock"))
 	if err != nil {
-		return err
+		return fmt.Errorf("refusing to signal an unverified PID for VM %q: %w", name, err)
 	}
-	if err := process.Signal(syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
-		return fmt.Errorf("stopping QEMU (pid %d): %w", pid, err)
+	defer func() { _ = conn.Close() }()
+	raw, err := qmpExecute(conn, reader, "query-name", nil)
+	if err != nil {
+		return fmt.Errorf("identifying QEMU for %q: %w", name, err)
+	}
+	var identity struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(raw, &identity); err != nil || identity.Name != name {
+		return fmt.Errorf("QMP socket does not identify VM %q", name)
+	}
+	if _, err := qmpExecute(conn, reader, "quit", nil); err != nil {
+		return fmt.Errorf("quitting QEMU for %q: %w", name, err)
 	}
 	deadline := time.Now().Add(20 * time.Second)
 	for time.Now().Before(deadline) {
 		if _, alive := directPID(name); !alive {
-			_ = os.Remove(path)
-			return nil
+			return os.Remove(path)
 		}
-		time.Sleep(250 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond)
 	}
-	// A guest that ignores ACPI shutdown is normal, not exceptional.
-	_ = process.Signal(syscall.SIGKILL)
-	_ = os.Remove(path)
-	return nil
+	return fmt.Errorf("QEMU for %q has not retired; retaining PID and disk state", name)
 }
 
 // lastLines is the tail of a QEMU log, for an error message.

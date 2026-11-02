@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/tuna-os/corral/pkg/kubevirt"
+	"github.com/tuna-os/corral/pkg/qemu"
 	"github.com/tuna-os/corral/pkg/rfb"
 	"github.com/tuna-os/corral/pkg/rfb/rfbtest"
 	"github.com/tuna-os/corral/pkg/shell"
@@ -157,7 +158,7 @@ func TestPointerRefusesBadArguments(t *testing.T) {
 // monitor socket, so the call reached the QMP path.
 func TestKeyOnQEMUUsesQMP(t *testing.T) {
 	server, _ := kubevirtConsole(t)
-	if err := registryStore.Set("local", types.RegistryEntry{Backend: "qemu"}); err != nil {
+	if err := qemu.RecordCreating("local", types.CreateOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	err := keyCmd.RunE(keyCmd, []string{"local", "ret"})
@@ -172,6 +173,9 @@ func TestKeyOnQEMUUsesQMP(t *testing.T) {
 // QEMU VMs have no tablet, so pointer is refused by backend name.
 func TestPointerOnQEMUIsRefused(t *testing.T) {
 	remoteVMScratch(t, "local", types.RegistryEntry{Backend: "qemu"})
+	if err := qemu.RecordCreating("local", types.CreateOpts{}); err != nil {
+		t.Fatal(err)
+	}
 	consoleFlags(t, false, "left", false)
 	err := pointerCmd.RunE(pointerCmd, []string{"local", "1", "1"})
 	if err == nil || !strings.Contains(err.Error(), "qemu backend does not support pointer") {

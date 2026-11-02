@@ -147,13 +147,26 @@ func adminGate(next http.Handler) http.Handler {
 
 // selfServiceMutation reports a mutation that a non-admin may send because
 // its handler authorizes against the owner of the resource instead of the
-// admin allowlist. Only the VDI broker routes qualify (#227): each resolves
-// the caller through vdiRoute, which refuses anonymous callers, and the
-// broker checks that the caller holds the desktop. The path must be clean
-// so that a dot-segment cannot smuggle another route past the gate.
+// admin allowlist. VDI broker mutations resolve the caller through vdiRoute
+// and verify the desktop holder. The standalone console readiness report uses
+// the same console authorization and additionally verifies its listener's
+// nonce, exact VM/context, Origin and Host. Neither permits VM administration.
+// Require clean, unescaped console path segments so normalization or encoded
+// separators cannot turn this scoped capability into another route.
 func selfServiceMutation(r *http.Request) bool {
 	p := r.URL.Path
-	return r.Method == http.MethodPost && strings.HasPrefix(p, "/api/vdi/") && path.Clean(p) == p
+	if r.Method != http.MethodPost || path.Clean(p) != p {
+		return false
+	}
+	if strings.HasPrefix(p, "/api/vdi/") {
+		return true
+	}
+	const prefix = "/api/console-ready/"
+	if !strings.HasPrefix(p, prefix) || r.URL.EscapedPath() != p {
+		return false
+	}
+	namespace, name, ok := strings.Cut(strings.TrimPrefix(p, prefix), "/")
+	return ok && consolePathSegment.MatchString(namespace) && consolePathSegment.MatchString(name)
 }
 
 func errReadOnly(who string) error {

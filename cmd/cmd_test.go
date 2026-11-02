@@ -15,22 +15,13 @@ import (
 	"github.com/tuna-os/corral/pkg/types"
 )
 
-func TestResolveBackend_Registry(t *testing.T) {
-	// Setup a temp registry
-	dir := t.TempDir()
-	path := filepath.Join(dir, "registry.json")
-	s := registry.NewStoreAt(path)
-
-	// Override the global for this test
-	oldStore := registryStore
-	registryStore = s
-	defer func() { registryStore = oldStore }()
-
-	s.Set("testvm", types.RegistryEntry{Backend: "kubevirt", Namespace: "default"})
-
-	backend := resolveBackend("testvm")
-	if backend != "kubevirt" {
-		t.Errorf("expected kubevirt, got %s", backend)
+func TestResolveBackend_RegistryDoesNotEstablishLiveness(t *testing.T) {
+	kubevirtVMScratch(t, "other", types.RegistryEntry{Backend: "kubevirt", Namespace: "default"})
+	if err := registryStore.Set("testvm", types.RegistryEntry{Backend: "kubevirt", Namespace: "default"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := resolveBackend("testvm"); got != "" {
+		t.Errorf("unlisted registry name resolved as backend %q", got)
 	}
 }
 
@@ -78,15 +69,8 @@ func TestAllVMNames_Empty(t *testing.T) {
 	_ = names
 }
 
-func TestResolveNamespace_FromRegistry(t *testing.T) {
-	dir := t.TempDir()
-	s := registry.NewStoreAt(filepath.Join(dir, "registry.json"))
-	s.Set("testvm", types.RegistryEntry{Backend: "kubevirt", Namespace: "custom-ns"})
-
-	oldStore := registryStore
-	registryStore = s
-	defer func() { registryStore = oldStore }()
-
+func TestResolveNamespace_FromInventory(t *testing.T) {
+	kubevirtVMScratch(t, "testvm", types.RegistryEntry{Backend: "kubevirt", Namespace: "custom-ns"})
 	ns, backend := resolveNamespace("testvm")
 	if ns != "custom-ns" {
 		t.Errorf("expected custom-ns, got %s", ns)
@@ -268,14 +252,8 @@ func TestResolveBackend_QemuExists(t *testing.T) {
 	}
 }
 
-func TestRequireBackend_WithRegistry(t *testing.T) {
-	dir := t.TempDir()
-	s := registry.NewStoreAt(filepath.Join(dir, "registry.json"))
-	s.Set("testvm", types.RegistryEntry{Backend: "kubevirt", Namespace: "default"})
-
-	oldStore := registryStore
-	registryStore = s
-	defer func() { registryStore = oldStore }()
+func TestRequireBackend_FromInventory(t *testing.T) {
+	kubevirtVMScratch(t, "testvm", types.RegistryEntry{Backend: "kubevirt", Namespace: "default"})
 
 	b, err := requireBackend("testvm")
 	if err != nil {
@@ -441,10 +419,12 @@ func TestResolveSSHCredentials_SavesExplicitUsername(t *testing.T) {
 	dir := t.TempDir()
 	oldStore := registryStore
 	registryStore = registry.NewStoreAt(filepath.Join(dir, "registry.json"))
-	registryStore.Set("myvm", types.RegistryEntry{Backend: "kubevirt", Namespace: "default", Password: "secret"})
 	defer func() { registryStore = oldStore }()
+	if err := registryStore.SetRef(types.InstanceRef{Backend: "kubevirt", Namespace: "default", Name: "myvm"}, types.RegistryEntry{Password: "secret"}); err != nil {
+		t.Fatal(err)
+	}
 
-	user, password := resolveSSHCredentials("myvm", "kubevirt", "admin", "")
+	user, password := resolveSSHCredentials(types.InstanceRef{Backend: "kubevirt", Namespace: "default", Name: "myvm"}, "admin", "")
 	if user != "admin" {
 		t.Errorf("user = %q, want admin", user)
 	}
@@ -452,7 +432,7 @@ func TestResolveSSHCredentials_SavesExplicitUsername(t *testing.T) {
 		t.Errorf("password = %q, want secret (preserved from the existing entry)", password)
 	}
 
-	entry, ok := registryStore.Get("myvm")
+	entry, ok := registryStore.GetRef(types.InstanceRef{Backend: "kubevirt", Namespace: "default", Name: "myvm"})
 	if !ok || entry.Username != "admin" {
 		t.Errorf("expected the registry to remember Username=admin, got %+v", entry)
 	}
@@ -465,10 +445,12 @@ func TestResolveSSHCredentials_UsesRememberedUsernameWhenNoFlag(t *testing.T) {
 	dir := t.TempDir()
 	oldStore := registryStore
 	registryStore = registry.NewStoreAt(filepath.Join(dir, "registry.json"))
-	registryStore.Set("myvm", types.RegistryEntry{Backend: "kubevirt", Username: "ubuntu", Password: "hunter2"})
 	defer func() { registryStore = oldStore }()
+	if err := registryStore.SetRef(types.InstanceRef{Backend: "kubevirt", Name: "myvm"}, types.RegistryEntry{Username: "ubuntu", Password: "hunter2"}); err != nil {
+		t.Fatal(err)
+	}
 
-	user, password := resolveSSHCredentials("myvm", "kubevirt", "", "")
+	user, password := resolveSSHCredentials(types.InstanceRef{Backend: "kubevirt", Name: "myvm"}, "", "")
 	if user != "ubuntu" {
 		t.Errorf("user = %q, want the remembered ubuntu (no -u flag passed)", user)
 	}
@@ -481,16 +463,62 @@ func TestResolveSSHCredentials_FlagOverridesRemembered(t *testing.T) {
 	dir := t.TempDir()
 	oldStore := registryStore
 	registryStore = registry.NewStoreAt(filepath.Join(dir, "registry.json"))
-	registryStore.Set("myvm", types.RegistryEntry{Backend: "kubevirt", Username: "ubuntu"})
 	defer func() { registryStore = oldStore }()
+	if err := registryStore.SetRef(types.InstanceRef{Backend: "kubevirt", Name: "myvm"}, types.RegistryEntry{Username: "ubuntu"}); err != nil {
+		t.Fatal(err)
+	}
 
-	user, _ := resolveSSHCredentials("myvm", "kubevirt", "root", "")
+	user, _ := resolveSSHCredentials(types.InstanceRef{Backend: "kubevirt", Name: "myvm"}, "root", "")
 	if user != "root" {
 		t.Errorf("user = %q, want root (explicit -u should win)", user)
 	}
-	entry, _ := registryStore.Get("myvm")
+	entry, _ := registryStore.GetRef(types.InstanceRef{Backend: "kubevirt", Name: "myvm"})
 	if entry.Username != "root" {
 		t.Errorf("expected the registry to update to the new explicit username, got %q", entry.Username)
+	}
+}
+
+func TestResolveSSHCredentials_WriteFailureWarnsAndKeepsExplicitCredentials(t *testing.T) {
+	dir := t.TempDir()
+	blocked := filepath.Join(dir, "blocked")
+	if err := os.WriteFile(blocked, []byte("existing data"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	oldStore := registryStore
+	registryStore = registry.NewStoreAt(filepath.Join(blocked, "registry.json"))
+	t.Cleanup(func() { registryStore = oldStore })
+
+	capturePath := filepath.Join(dir, "stderr")
+	capture, err := os.Create(capturePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldStderr := os.Stderr
+	os.Stderr = capture
+	t.Cleanup(func() {
+		os.Stderr = oldStderr
+		if err := capture.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+
+	user, password := resolveSSHCredentials(types.InstanceRef{Backend: "kubevirt", Context: "test-cluster", Namespace: "default", Name: "myvm"}, "explicit-user", "explicit-password")
+	if user != "explicit-user" || password != "explicit-password" {
+		t.Fatal("registry write failure changed the current request's credentials")
+	}
+	warning, err := os.ReadFile(capturePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(warning), "warning: could not remember SSH username") {
+		t.Fatalf("missing persistence warning: %s", warning)
+	}
+	if strings.Contains(string(warning), user) || strings.Contains(string(warning), password) {
+		t.Fatal("persistence warning disclosed credentials")
+	}
+	data, err := os.ReadFile(blocked)
+	if err != nil || string(data) != "existing data" {
+		t.Fatalf("registry write failure changed existing data: %q, %v", data, err)
 	}
 }
 
@@ -503,7 +531,7 @@ func TestResolveSSHCredentials_NoEntryFallsBackToEnvOrRoot(t *testing.T) {
 	os.Unsetenv("USER")
 	defer os.Setenv("USER", oldUser)
 
-	user, password := resolveSSHCredentials("ghost", "kubevirt", "", "")
+	user, password := resolveSSHCredentials(types.InstanceRef{Backend: "kubevirt", Name: "ghost"}, "", "")
 	if user != "root" {
 		t.Errorf("user = %q, want root fallback", user)
 	}
@@ -516,10 +544,12 @@ func TestResolveSSHCredentials_FlagPasswordOverridesSaved(t *testing.T) {
 	dir := t.TempDir()
 	oldStore := registryStore
 	registryStore = registry.NewStoreAt(filepath.Join(dir, "registry.json"))
-	registryStore.Set("myvm", types.RegistryEntry{Backend: "kubevirt", Password: "old"})
 	defer func() { registryStore = oldStore }()
+	if err := registryStore.SetRef(types.InstanceRef{Backend: "kubevirt", Name: "myvm"}, types.RegistryEntry{Password: "old"}); err != nil {
+		t.Fatal(err)
+	}
 
-	_, password := resolveSSHCredentials("myvm", "kubevirt", "", "new")
+	_, password := resolveSSHCredentials(types.InstanceRef{Backend: "kubevirt", Name: "myvm"}, "", "new")
 	if password != "new" {
 		t.Errorf("password = %q, want new (explicit --password should win)", password)
 	}
@@ -751,13 +781,7 @@ func TestRunClone_RejectsNonKubevirtBackend(t *testing.T) {
 }
 
 func TestRunClone_RejectsExistingTarget(t *testing.T) {
-	dir := t.TempDir()
-	s := registry.NewStoreAt(filepath.Join(dir, "registry.json"))
-	s.Set("taken", types.RegistryEntry{Backend: "kubevirt", Namespace: "default"})
-
-	oldStore := registryStore
-	registryStore = s
-	defer func() { registryStore = oldStore }()
+	kubevirtVMScratch(t, "taken", types.RegistryEntry{Backend: "kubevirt", Namespace: "default"})
 
 	err := runClone(types.VM{Name: "web1", Backend: "kubevirt", Namespace: "default"}, "taken")
 	if err == nil {
@@ -847,23 +871,9 @@ func TestLanServiceCmd_NonexistentVM(t *testing.T) {
 }
 
 func TestLanServiceCmd_AppliesForKnownVM(t *testing.T) {
-	dir := t.TempDir()
-	oldStore := registryStore
-	registryStore = registry.NewStoreAt(filepath.Join(dir, "registry.json"))
-	registryStore.Set("myvm", types.RegistryEntry{Backend: "kubevirt", Namespace: "corral-vms"})
-	defer func() { registryStore = oldStore }()
-
-	fake := shell.NewFake()
+	fake := kubevirtVMScratch(t, "myvm", types.RegistryEntry{Backend: "kubevirt", Namespace: "corral-vms"})
 	fake.AddResponseKV("kubectl", []string{"apply", "-f", "-"}, "applied", nil)
 	fake.AddResponseKV("kubectl", []string{"get", "svc", "myvm-lan", "-n", "corral-vms", "-o", "json"}, `{"status":{}}`, nil)
-	kubevirt.SetApplyRunner(fake)
-	kubevirt.SetPackageRunner(fake)
-	kubevirt.SetDefaultRunner(fake)
-	defer func() {
-		kubevirt.SetApplyRunner(shell.Real{})
-		kubevirt.SetPackageRunner(shell.Real{})
-		kubevirt.SetDefaultRunner(nil)
-	}()
 
 	if err := lanServiceCmd.RunE(lanServiceCmd, []string{"myvm"}); err != nil {
 		t.Fatalf("lanservice: %v", err)

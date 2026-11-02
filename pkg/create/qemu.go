@@ -5,6 +5,9 @@ import (
 )
 
 func (r request) runQemuCreate(name string) error {
+	if err := r.validateGuestOptions("qemu"); err != nil {
+		return err
+	}
 	useUEFI := r.Firmware == "uefi"
 	vsock := r.Vsock || r.VsockCID != 0
 	if r.VsockCID != 0 {
@@ -12,6 +15,8 @@ func (r request) runQemuCreate(name string) error {
 	}
 	if err := r.QEMUCreate(types.CreateOpts{
 		Name:     name,
+		Arch:     types.GuestArch(r.Arch),
+		Loopback: r.Loopback,
 		Mem:      r.Mem,
 		CPU:      r.CPU,
 		Disk:     r.Disk,
@@ -26,7 +31,7 @@ func (r request) runQemuCreate(name string) error {
 		return err
 	}
 	if r.Registry != nil {
-		_ = r.Registry.Set(name, types.RegistryEntry{Backend: "qemu"})
+		return r.Registry.SetRef(types.InstanceRef{Backend: "qemu", Namespace: "local", Name: name}, types.RegistryEntry{})
 	}
 	return nil
 }

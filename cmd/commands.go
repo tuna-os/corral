@@ -149,13 +149,12 @@ var viewerCmd = &cobra.Command{
 // <name>`, checking (in order) the explicit flag, then whatever's
 // remembered in the registry, then $USER/"root" for username. If
 // flagUser was passed explicitly and differs from what's remembered, it's
-// saved back to the registry — so a user only needs `-u` once per host,
-// not on every `corral ssh` call.
-func resolveSSHCredentials(name, backend, flagUser, flagPassword string) (user, password string) {
+// saved back to the registry when possible — so a user only needs `-u` once
+// per host. A failed cache write warns but does not change this request's credentials.
+func resolveSSHCredentials(ref types.InstanceRef, flagUser, flagPassword string) (user, password string) {
 	var saved types.RegistryEntry
-	var hadEntry bool
 	if registryStore != nil {
-		saved, hadEntry = registryStore.Get(name)
+		saved, _ = registryStore.GetRef(ref)
 	}
 
 	user = flagUser
@@ -172,10 +171,9 @@ func resolveSSHCredentials(name, backend, flagUser, flagPassword string) (user, 
 	if flagUser != "" && flagUser != saved.Username && registryStore != nil {
 		updated := saved
 		updated.Username = flagUser
-		if !hadEntry {
-			updated.Backend = backend
+		if err := registryStore.SetRef(ref, updated); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not remember SSH username; using the requested credentials for this session: %v\n", err)
 		}
-		registryStore.Set(name, updated)
 	}
 
 	password = flagPassword
@@ -234,7 +232,7 @@ something the VM has listening on its own port 80.`,
 		if !ok {
 			return unsupported(adapter, "ssh")
 		}
-		user, password := resolveSSHCredentials(name, ref.Backend, sshUser, sshPassword)
+		user, password := resolveSSHCredentials(ref, sshUser, sshPassword)
 		return sheller.SSH(name, backend.SSHOptions{
 			User: user, Identity: sshIdentity, Command: sshCommand, Port: sshPort,
 			Password: password, LocalForwards: sshLocalForwards, Vsock: sshVsock,
@@ -307,16 +305,9 @@ func requireOrPrompt(args []string, action string) (string, error) {
 				return args[0], nil
 			}
 		}
+		selectedVM = nil
 		vm, err := resolveVM(args[0])
 		if err != nil {
-			if registryStore != nil {
-				if entry, ok := registryStore.Get(args[0]); ok {
-					fallback := types.VM{Name: args[0], Backend: entry.Backend, Context: entry.Context, Namespace: entry.Namespace}
-					selectedVM = &fallback
-					activateVMContext(fallback)
-					return args[0], nil
-				}
-			}
 			return "", err
 		}
 		selectedVM = &vm
@@ -359,11 +350,6 @@ func resolveNamespace(name string) (string, string) {
 	if vm, err := resolveVM(name); err == nil {
 		activateVMContext(vm)
 		return vm.Namespace, vm.Backend
-	}
-	if registryStore != nil {
-		if entry, ok := registryStore.Get(name); ok && entry.Namespace != "" {
-			return entry.Namespace, entry.Backend
-		}
 	}
 	// Search all KubeVirt namespaces for the VM
 	client := kubevirt.NewClient("")

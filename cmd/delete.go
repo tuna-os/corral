@@ -59,6 +59,7 @@ type deleteResult struct {
 // deleteTarget is one name resolved to whatever deletes it.
 type deleteTarget struct {
 	name    string
+	ref     types.InstanceRef
 	peer    *peerTarget
 	adapter backend.Adapter
 	// notListed is the lookup error for a name no backend lists; the default
@@ -109,13 +110,13 @@ func runDelete(_ *cobra.Command, args []string) error {
 // still resolves when the default context can purge by name, because an
 // interrupted create leaves objects under a name that has no VM yet.
 func resolveDeleteTarget(name string) deleteTarget {
-	t := deleteTarget{name: name}
+	t := deleteTarget{name: name, ref: types.InstanceRef{Name: name}}
 	resolved, err := requireOrPrompt([]string{name}, "delete")
 	if err != nil {
 		var notFound fleet.NotFoundError
 		if errors.As(err, &notFound) {
-			if adapter, ok := leftoverAdapter(name); ok {
-				t.adapter, t.notListed = adapter, err
+			if adapter, ref, ok := leftoverAdapter(name); ok {
+				t.adapter, t.ref, t.notListed = adapter, ref, err
 				return t
 			}
 		}
@@ -131,7 +132,11 @@ func resolveDeleteTarget(name string) deleteTarget {
 		t.peer = &p
 		return t
 	}
-	t.adapter, t.err = instanceAdapter(resolved)
+	t.ref, t.err = instanceRef(resolved)
+	if t.err != nil {
+		return t
+	}
+	t.adapter, t.err = backend.For(t.ref)
 	if t.err == nil {
 		if _, ok := t.adapter.(backend.Power); !ok {
 			t.err = unsupported(t.adapter, "delete")
@@ -142,21 +147,25 @@ func resolveDeleteTarget(name string) deleteTarget {
 
 // leftoverAdapter is the default context's adapter, when it can purge by
 // name: the --context flag's context, else the configured default.
-func leftoverAdapter(name string) (backend.Adapter, bool) {
+func leftoverAdapter(name string) (backend.Adapter, types.InstanceRef, bool) {
 	target := config.DefaultContext()
 	if rootContext != "" {
 		found, ok := config.FindContext(rootContext)
 		if !ok {
-			return nil, false
+			return nil, types.InstanceRef{}, false
 		}
 		target = found
 	}
-	adapter, err := backend.For(types.InstanceRef{Backend: target.Backend, Context: target.Context, Name: name})
+	ref := types.InstanceRef{Backend: target.Backend, Context: target.Context, Name: name}
+	adapter, err := backend.For(ref)
 	if err != nil {
-		return nil, false
+		return nil, ref, false
+	}
+	if namespacer, ok := adapter.(backend.Namespacer); ok {
+		ref.Namespace = namespacer.DefaultNamespace()
 	}
 	_, ok := adapter.(backend.Purger)
-	return adapter, ok
+	return adapter, ref, ok
 }
 
 func confirmDelete(names []string) bool {
@@ -181,10 +190,10 @@ func (t deleteTarget) delete() deleteResult {
 	default:
 		if purger, ok := t.adapter.(backend.Purger); ok {
 			var removed []string
-			removed, err = purger.Purge(t.name)
+			removed, err = purger.Purge(t.ref.Name)
 			result.Removed = append(result.Removed, removed...)
 		} else {
-			err = t.adapter.(backend.Power).Delete(t.name)
+			err = t.adapter.(backend.Power).Delete(t.ref.Name)
 		}
 		if err == nil && t.notListed != nil && len(result.Removed) == 0 {
 			err = t.notListed // nothing listed and nothing left behind
@@ -195,9 +204,15 @@ func (t deleteTarget) delete() deleteResult {
 		return result
 	}
 	result.Deleted = true
-	if registryStore != nil {
-		if err := registryStore.Remove(t.name); err != nil {
+	if selectedVM != nil && selectedVM.Ref() == t.ref {
+		selectedVM = nil
+	}
+	if registryStore != nil && t.peer == nil {
+		if err := registryStore.RemoveRef(t.ref); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: %s is deleted, but its registry entry stays: %v\n", t.name, err)
+		}
+		if entry, ok := registryStore.Get(t.ref.Name); ok && entry.Backend == t.ref.Backend && entry.Peer == t.ref.Peer && entry.Context == "" {
+			fmt.Fprintf(os.Stderr, "warning: retained legacy registry entry for %s: its target context is unknown; it does not establish that the VM still exists\n", t.ref.Name)
 		}
 	}
 	return result

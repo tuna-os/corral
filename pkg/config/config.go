@@ -161,7 +161,7 @@ func Contexts() []ContextConfig {
 	// ubiquitous client default, so those require opt-in below.
 	if cfg.Kubevirt.Context != "" || cfg.Default.Backend == "kubevirt" ||
 		os.Getenv("CORRAL_KUBE_CONTEXT") != "" || forceKubevirt.Load() || KubeconfigPresent() {
-		legacy = append(legacy, ContextConfig{Name: "kubevirt", Backend: "kubevirt", Context: cfg.Kubevirt.Context})
+		legacy = append(legacy, ContextConfig{Name: "kubevirt", Backend: "kubevirt", Context: KubeContext()})
 	}
 	if cfg.Incus.Remote != "" || cfg.Default.Backend == "incus" || os.Getenv("CORRAL_INCUS_REMOTE") != "" {
 		legacy = append(legacy, ContextConfig{Name: "incus", Backend: "incus", Context: IncusRemote()})

@@ -1,50 +1,86 @@
 package qemu
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"reflect"
 	"runtime"
-	"strings"
 	"testing"
+
+	"github.com/tuna-os/corral/pkg/types"
 )
 
-// ── accelArgsFor platform matrix ─────────────────────────────
-// Consumers run on Linux and macOS; the matrix pins
-// every combination so a refactor cannot silently move a platform back to
-// flags its hypervisor rejects.
-
 func TestAccelArgsFor_Matrix(t *testing.T) {
-	cases := []struct {
-		goos, arch  string
-		hasKVM      bool
-		wantCPU     string
-		wantMachine string
-	}{
-		{"linux", "amd64", true, "host", "q35,accel=kvm"},
-		{"linux", "amd64", false, "max", "q35,accel=tcg"},
-		{"linux", "arm64", true, "host", "q35,accel=kvm"},
-		{"linux", "arm64", false, "max", "q35,accel=tcg"},
-		{"darwin", "amd64", false, "host", "q35,accel=hvf"},
-		{"darwin", "arm64", false, "host", "virt,accel=hvf"},
-		// KVM presence is meaningless on macOS: hvf either way.
-		{"darwin", "arm64", true, "host", "virt,accel=hvf"},
-	}
-	for _, c := range cases {
-		args := accelArgsFor(c.goos, c.arch, c.hasKVM, 4)
-		joined := strings.Join(args, " ")
-		for _, want := range []string{"-cpu " + c.wantCPU, "-smp 4", "-machine " + c.wantMachine} {
-			if !strings.Contains(joined, want) {
-				t.Errorf("accelArgsFor(%q,%q,kvm=%v) = %q, want substring %q",
-					c.goos, c.arch, c.hasKVM, joined, want)
+	for _, goos := range []string{"linux", "darwin"} {
+		for _, host := range []string{"amd64", "arm64"} {
+			for _, guest := range []types.GuestArch{"", types.ArchAMD64, types.ArchARM64} {
+				for _, kvm := range []bool{false, true} {
+					t.Run(fmt.Sprintf("%s/%s/guest=%s/kvm=%v", goos, host, guest, kvm), func(t *testing.T) {
+						effective := string(guest)
+						if effective == "" {
+							effective = host
+						}
+						machine, acceleration, model := "q35", "tcg", "max"
+						if effective == "arm64" {
+							machine = "virt"
+						}
+						if effective == host && goos == "darwin" {
+							acceleration, model = "hvf", "host"
+						} else if effective == host && kvm {
+							acceleration, model = "kvm", "host"
+						}
+						want := []string{"-cpu", model, "-smp", "4", "-machine", machine + ",accel=" + acceleration}
+						if got := accelArgsFor(goos, host, guest, kvm, 4); !reflect.DeepEqual(got, want) {
+							t.Fatalf("runtime machine args = %v, want %v", got, want)
+						}
+					})
+				}
 			}
 		}
 	}
 }
 
-func TestQemuSystemBinary_MatchesBuildArch(t *testing.T) {
-	want := "qemu-system-x86_64"
-	if runtime.GOARCH == "arm64" {
-		want = "qemu-system-aarch64"
+func TestAccelArgsFor_DeviceAccessRequiresReadWrite(t *testing.T) {
+	// Real filesystem permission boundary only, not a claim of KVM hardware.
+	path := filepath.Join(t.TempDir(), "device")
+	if kvmDeviceAccessible(path) {
+		t.Fatal("missing device admitted")
 	}
-	if got := qemuSystemBinary(); got != want {
-		t.Errorf("qemuSystemBinary() = %q on %q, want %q", got, runtime.GOARCH, want)
+	if err := os.WriteFile(path, []byte("device-access-fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if !kvmDeviceAccessible(path) {
+		t.Fatal("caller-readable/writable descriptor refused")
+	}
+	t.Run("present-but-not-writable", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("root bypasses this DAC boundary; native qualification runs unprivileged")
+		}
+		if err := os.Chmod(path, 0400); err != nil {
+			t.Fatal(err)
+		}
+		if kvmDeviceAccessible(path) {
+			t.Fatal("mere node presence admitted without caller write access")
+		}
+	})
+}
+
+func TestQemuSystemBinary(t *testing.T) {
+	for _, tc := range []struct {
+		arch types.GuestArch
+		want string
+	}{
+		{types.ArchAMD64, "qemu-system-x86_64"},
+		{types.ArchARM64, "qemu-system-aarch64"},
+		{"riscv64", ""},
+		{"x86_64", ""},
+	} {
+		if got := qemuSystemBinary(tc.arch); got != tc.want {
+			t.Errorf("qemuSystemBinary(%q) = %q, want %q", tc.arch, got, tc.want)
+		}
+	}
+	if got, want := qemuSystemBinary(""), qemuSystemBinary(types.GuestArch(runtime.GOARCH)); got != want {
+		t.Errorf("default emulator = %q, want host emulator %q", got, want)
 	}
 }

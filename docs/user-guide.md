@@ -225,6 +225,21 @@ Then `corral delete desk` removes the builder VM and the disk. Corral looks
 for these objects in the default context. Use `--context` for a different
 context.
 
+After deletion, Corral removes saved credentials for that backend, context,
+namespace and peer. Corral keeps old entries that lack a remote context.
+It warns because it cannot prove which cluster owns each entry.
+Corral does not use those entries for another target.
+
+Data in the registry does not prove that a VM exists.
+Check each entry's owner before you keep or remove it in
+`~/.local/share/corral/registry.json`. A new default context does not migrate
+these entries.
+
+Corral reports failures to save data in the registry even after the backend
+operation has finished. It does not delete VM or pool data to undo that operation.
+If Corral cannot save an SSH username, it warns you.
+It still uses the username you supplied for this connection.
+
 A delete does not wait for Kubernetes finalizers. Add `--wait` to wait until
 the deleted objects are gone. `--timeout` sets the maximum time. The default
 is 5 minutes. If an object stays after that time, the command fails and
@@ -735,6 +750,11 @@ only one of `--password-prompt`, `--password-stdin`, and `--password-hash`.
 The same account flags work with `bootc rebuild`, `bootc upgrade`, and
 `bootc switch`. You cannot use `--resume` to add an account to a disk that
 is already installed.
+
+The web API can rebuild a bootc disk only in the server's default KubeVirt context.
+It rejects a different, malformed or repeated `context` selector before it
+looks up the image or stops, deletes or builds resources.
+It does not try another cluster. Credentials keep the identity of that default target.
 
 #### Testing a bootc image (`corral vmtest`)
 
