@@ -640,21 +640,28 @@ corral vdi unassign <member>
 corral vdi connect <member>
 ```
 
-`corral type` requires exactly one source: positional text, `--file PATH`, or
-`--file -` for stdin. Ordinary input must map to a US keyboard. `--powershell`
-accepts Unicode PowerShell source (including an optional leading UTF-8 BOM) and
-types `powershell.exe -NoLogo -NoProfile -EncodedCommand` with UTF-16LE Base64.
+`corral type` needs one source: positional text, `--file PATH`, or `--file -`
+for stdin. Ordinary input must map to a US keyboard.
+
+With `--powershell`, Corral accepts Unicode in PowerShell source, with an
+optional UTF-8 BOM at the start. It types
+`powershell.exe -NoLogo -NoProfile -EncodedCommand` with UTF-16LE Base64.
 For example: `corral type winvm --file script.ps1 --powershell --enter`.
-Empty or BOM-only PowerShell source is refused. The launcher is limited to
-8,191 characters for Windows `cmd.exe` compatibility.
-Manually focus the guest's command field or shell first; Corral does not open
-Run, change focus, elevate, or handle credentials. `--enter` explicitly appends
-Return; ordinary input's own newlines still press Return. Success means input
-was sent, not that a script ran: check an observable guest result such as a file
-the script creates. Base64 is not encryption or secret storage, and Run/shell
-history can retain the source. Normal output stays silent; `--json` reports only
-the VM, action, source character count (without a stripped BOM or appended
-Return), and whether `--enter` was requested, never the source or encoded payload.
+Corral refuses empty or BOM-only PowerShell source.
+The launcher has a limit of 8,191 characters for Windows `cmd.exe` compatibility.
+
+Manually focus the guest's command field or shell first.
+Corral does not open Run, change focus, elevate through UAC, or handle credentials.
+`--enter` explicitly appends Return; ordinary input's own newlines still press Return.
+Success means Corral sent the input, not that a script ran.
+Check an observable guest result, such as a file the script creates.
+
+Base64 is reversible, not encryption or secret storage.
+Run or shell history can retain the source.
+Normal output stays silent.
+With `--json`, Corral reports only the VM, action, source character count, and whether the user chose `--enter`.
+This count excludes a stripped BOM or appended Return.
+Corral never prints the source or encoded payload.
 
 ### KubeVirt feature support & cluster requirements
 
