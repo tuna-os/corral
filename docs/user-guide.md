@@ -266,7 +266,8 @@ command stops when all the conditions that you name are true:
 corral wait vm --unit gdm.service --paint --timeout 15m
 ```
 
-You can also use a canonical ID to select the backend, context, and namespace:
+A canonical ID selects the backend, context, and namespace for all probes.
+Use the ID to distinguish VMs with the same name in different namespaces:
 
 ```bash
 corral wait kubevirt/prod/corral-vms/vm --unit gdm.service --paint --timeout 15m
