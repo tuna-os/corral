@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
-import { singleFlight, startPolling } from '../static/poll.js';
+import { PollingState, singleFlight, startPolling } from '../static/poll.js';
 
 // A run whose calls stay pending until the test releases them, in order.
 function gatedRun() {
@@ -165,5 +165,79 @@ describe('startPolling', () => {
     });
     await assert.rejects(clock.next().fn(), /render failed/);
     assert.equal(clock.next().ms, 5020);
+  });
+});
+
+// The policy can be tested without importing a screen or installing a DOM.
+describe('PollingState', () => {
+  test('deduplicates both poll renders and renders performed by navigation', () => {
+    const policy = new PollingState();
+    assert.equal(policy.shouldRender('fleet-1'), true);
+    assert.equal(policy.shouldRender('fleet-1'), false);
+    policy.markRendered('selected-vm');
+    assert.equal(policy.shouldRender('selected-vm'), false);
+    assert.equal(policy.shouldRender('fleet-2'), true);
+  });
+
+  test('a gesture leaves the fingerprint stale until the deferred refresh renders', () => {
+    const policy = new PollingState();
+    policy.markRendered('old');
+    assert.equal(policy.shouldRender('new', { interacting: true }), false);
+    assert.equal(policy.shouldRender('newer', { interacting: true }), false);
+    assert.equal(policy.lastRenderFp, 'old');
+    assert.equal(policy.takeDeferred(), true);
+    assert.equal(policy.takeDeferred(), false);
+    assert.equal(policy.shouldRender('newer'), true);
+  });
+
+  test('a context menu holds the change for the next poll without scheduling a gesture refresh', () => {
+    const policy = new PollingState();
+    policy.markRendered('old');
+    assert.equal(policy.shouldRender('new', { menu: true, interacting: true }), false);
+    assert.equal(policy.takeDeferred(), false);
+    assert.equal(policy.lastRenderFp, 'old');
+    assert.equal(policy.shouldRender('new'), true);
+  });
+
+  test('unchanged data during a gesture needs no deferred render', () => {
+    const policy = new PollingState();
+    policy.markRendered('same');
+    assert.equal(policy.shouldRender('same', { interacting: true }), false);
+    assert.equal(policy.takeDeferred(), false);
+  });
+
+  test('forced refresh bypasses deduplication, menus and gestures', () => {
+    const policy = new PollingState();
+    policy.markRendered('same');
+    assert.equal(policy.shouldRender('same', { force: true, menu: true, interacting: true }), true);
+    assert.equal(policy.takeDeferred(), false);
+  });
+});
+
+describe('PollingState failure recovery', () => {
+  test('initial offline guidance is shown once and leaves static screens usable', () => {
+    const policy = new PollingState();
+    const error = new Error('unreachable');
+    assert.equal(policy.failed(error), 'offline');
+    assert.equal(policy.failed(error), null);
+    policy.markRendered('extensions');
+    assert.equal(policy.failed(error), null);
+    assert.equal(policy.failed(new Error('another failure')), 'toast');
+    assert.equal(policy.failed(new Error('another failure')), null);
+    assert.equal(policy.recovered(), false);
+    assert.equal(policy.lastError, '');
+    assert.equal(policy.failed(error), 'toast');
+  });
+
+  test('identity loss is reported once and recovery forces an unchanged fleet to render', () => {
+    const policy = new PollingState();
+    policy.markRendered('fleet');
+    assert.equal(policy.failed({ status: 401 }), 'identity');
+    assert.equal(policy.failed({ status: 401 }), null);
+    assert.equal(policy.identityLost, true);
+    assert.equal(policy.shouldRender('fleet', { force: policy.recovered() }), true);
+    assert.equal(policy.identityLost, false);
+    assert.equal(policy.recovered(), false);
+    assert.equal(policy.failed({ status: 401 }), 'identity');
   });
 });

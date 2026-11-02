@@ -32,7 +32,8 @@ corral vmtest gate --bootc ghcr.io/tuna-os/yellowfin:gnome-testing \
   --check 'systemctl --failed --no-legend' \
   --video
 # exit 0 → the image booted, the hook passed, every check passed
-ssh -i corral-vmtest-out/ssh/id_ed25519 -p 2242 tester@127.0.0.1
+# With --keep, use the SSH command printed in the summary. The private key
+# is kept outside corral-vmtest-out/ and is not uploaded with the evidence.
 corral delete gate
 ```
 
@@ -41,8 +42,10 @@ Add `--rm` for a pure gate, where nothing runs after it.
 ### What it writes
 
 Every run fills an artifact directory (`--artifacts`, default
-`corral-vmtest-out/`). Upload it from CI and a failure is diagnosable without
-a second run:
+`corral-vmtest-out/`). Upload it from CI; a failure is diagnosable without a
+second run. The generated SSH identity is kept in a private temporary directory
+outside the artifact directory. With the default `--keep`, use the SSH command
+printed in the summary.
 
 | File | What it tells you |
 |---|---|
@@ -52,8 +55,6 @@ a second run:
 | `ready.png` / `failure.png` | the screen at the moment the run ended |
 | `timelapse.webm` | the boot as a video (`--video`, needs ffmpeg) |
 | `diagnostics/` | failed units, `bootc status`, journal warnings |
-| `layer/Containerfile` | exactly what the run added to the image |
-| `ssh/id_ed25519` | the run's own keypair |
 
 ### Exit codes
 
@@ -130,6 +131,22 @@ corral vmtest desk --bootc "$IMAGE" --ready-marker 'Reached target Graphical' \
 deviation of its luminance is at or under 0.02. A guest that boots and never
 draws is the failure an SSH probe hides. Without this flag, no exit code
 catches it and somebody has to look at a picture.
+
+Paint is a point-in-time measurement, not proof of guest initialization or
+that a later screenshot will remain painted. QEMU's initial host-rendered
+“Guest has not initialized the display (yet).” message is nonuniform too.
+For a guest boot gate, require a guest readiness milestone as well as paint;
+do not treat the host's placeholder as evidence that firmware or an OS drew.
+
+The native QEMU lifecycle CI lane qualifies empty-disk UEFI execution, not an
+OS or desktop boot. Its ARM guest first waits for EDK2's `BdsDxe: loading Boot…`
+or `BdsDxe: starting Boot…` console output, emitted after console initialization,
+then runs the actual CLI `wait --paint` with the remaining part of the same
+30-second readiness budget and the unchanged 100 ms interval. The separate
+`screenshot --require-paint` still captures and judges the current framebuffer
+at the unchanged 0.02 threshold; no earlier image is substituted. Artifacts
+retain the firmware milestone receipt and serial console alongside the live
+screenshot, including serial output preserved before failure cleanup.
 
 An image that checks itself on boot can report a failure as well as a pass.
 Give that line to `--fail-marker`, and the run fails (exit 6) when the line
@@ -230,6 +247,65 @@ corral vmtest gate -f verify.yaml
 A flag beats the file, and only when you pass it. An unknown field in the file
 is an error, not a warning: a misspelled `packages:` that installs nothing
 wastes the whole run.
+
+### Guest behavior assertions
+
+The guest suite is optional. It adapts the boot, identity and graphical scenarios from
+[Frostyard's smoke features](https://github.com/frostyard/testsuite/tree/4cd5e6096b4daca53c24d0eb3523013e07521d16/tests/smoke/features).
+It uses the same spec and SSH `checks:` machinery, not a BDD runner or a
+container test. For a headless image, omit `desktop`:
+
+```yaml
+bootc: quay.io/fedora/fedora-bootc:41
+guestAssertions:
+  id: fedora              # exact /etc/os-release ID
+  versionId: "41"         # optional exact VERSION_ID
+```
+
+For a desktop image, specify the installed session executable and the
+display-manager unit that systemd must show as active (names differ by distribution):
+
+```yaml
+bootc: ghcr.io/tuna-os/yellowfin:gnome-testing
+guestAssertions:
+  id: fedora              # replace with the image's actual ID
+  desktop:
+    sessionCommand: gnome-shell
+    displayManagerUnit: gdm.service
+screenshots:
+  requirePaint: true
+```
+
+The suite checks the system bus, journal, systemd service inventory and
+os-release identity and human-readable names. A desktop check also needs a
+graphical default target, the specified executable and an active manager.
+Missing tools and failed scenarios fail the run; their commands and
+output are in `result.json` alongside the serial log and other artifacts.
+Other `checks:` still run. A headless configuration makes no claim about the
+absence of a desktop.
+
+Add image-specific checks (including any failed-unit
+allowlist or provenance requirements) separately; the suite does not assume
+Frostyard's distribution or packages. A painted frame is useful evidence but
+not proof of a successful user login.
+
+These checks run only after the QEMU guest reports ready and SSH answers. A
+container-only layer test is not evidence that the VM booted. For real-boot
+regression coverage on a prepared KVM host, configure both images and run:
+
+```bash
+export CORRAL_VMTEST_HEADLESS_IMAGE=quay.io/fedora/fedora-bootc:41
+export CORRAL_VMTEST_HEADLESS_ID=fedora CORRAL_VMTEST_HEADLESS_VERSION=41
+export CORRAL_VMTEST_DESKTOP_IMAGE=your-desktop-bootc-image
+export CORRAL_VMTEST_DESKTOP_ID=your-os-id
+export CORRAL_VMTEST_DESKTOP_COMMAND=gnome-shell CORRAL_VMTEST_DESKTOP_UNIT=gdm.service
+sudo -E go test -tags e2evmtest -timeout 90m -count=1 -v ./pkg/vmtest/ -run 'TestE2E_GuestAssertion'
+```
+
+This also boots the headless image with a deliberately incorrect identity and
+asserts an `ExitCheck` failure with check output, serial log and result file.
+A test skips a case when you do not configure its image or when the host does not
+have a VM prerequisite. Read the test output: a skipped case is not boot evidence.
 
 ### GitHub Actions
 

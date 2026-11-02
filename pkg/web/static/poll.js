@@ -1,5 +1,5 @@
 // The fleet poll's schedule: one refresh at a time, and the next one scheduled
-// from the end of the last. No DOM and no API here; app.js says what a refresh
+// from the end of the last. No DOM and no API here; refresh.js says what a refresh
 // does. Unit tests: pkg/web/jstest/poll.test.mjs.
 //
 // This used to be `setInterval(refresh, 5000)`. refresh() is asynchronous and
@@ -69,4 +69,58 @@ export function startPolling(refresh, {
     }
   };
   schedule(tick, interval);
+}
+
+// Render policy has no knowledge of the DOM, inventory or screen renderers.
+// The coordinator supplies fingerprints and interaction state after loading.
+export class PollingState {
+  lastRenderFp = '';
+  lastError = '';
+  identityLost = false;
+  offlineShown = false;
+  renderDeferred = false;
+
+  // Return the notification to show; repeats leave the current screen alone.
+  failed(error) {
+    if (error.status === 401) {
+      if (this.identityLost) return null;
+      this.identityLost = true;
+      return 'identity';
+    }
+    let notice = null;
+    if (!this.lastRenderFp && !this.offlineShown) {
+      this.offlineShown = true;
+      notice = 'offline';
+    } else if (this.lastRenderFp && error.message !== this.lastError) {
+      notice = 'toast';
+    }
+    this.lastError = error.message;
+    return notice;
+  }
+
+  // An identity screen must be replaced even when the inventory is unchanged.
+  recovered() {
+    this.lastError = '';
+    const force = this.identityLost;
+    this.identityLost = false;
+    return force;
+  }
+
+  markRendered(fingerprint) {
+    this.lastRenderFp = fingerprint;
+  }
+
+  shouldRender(fingerprint, { force = false, menu = false, interacting = false } = {}) {
+    if (!force && fingerprint === this.lastRenderFp) return false;
+    if (!force && menu) return false;
+    if (!force && interacting) { this.renderDeferred = true; return false; }
+    this.markRendered(fingerprint);
+    return true;
+  }
+
+  takeDeferred() {
+    const deferred = this.renderDeferred;
+    this.renderDeferred = false;
+    return deferred;
+  }
 }

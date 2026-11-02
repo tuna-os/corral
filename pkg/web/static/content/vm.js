@@ -1,7 +1,9 @@
 // VM screen: the tab strip, every VM tab, and the VM actions.
 
+import { registerScreen } from '../ui/screens.js';
 import { api, sendJSON, vmKey, vmURL } from '../api.js';
-import { markRendered, refresh, select } from '../app.js';
+import { markRendered, select } from '../router.js';
+import { refresh } from '../refresh.js';
 import { connectRDP, connectTTY, connectVNC, consoleGeneration, disconnectConsoles } from '../console.js';
 import { watchBuild } from '../create.js';
 import { timeChart } from '../dashboard.js';
@@ -905,3 +907,4 @@ async function renderSnapSchedule(vm) {
     renderSnapSchedule(vm);
   };
 }
+registerScreen('vm', renderVM);

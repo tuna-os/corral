@@ -80,7 +80,7 @@ fmt-check:
 web addr="127.0.0.1:8006":
     go run -tags bootc . web --addr {{addr}}
 
-# Refresh the ublue/bluefin/tuna bootc catalog from ghcr (drops >60d-stale). Needs gh + curl.
+# Refresh curated public GHCR images and installer ISOs; retain stale entries. Needs Python and curl.
 regen-catalog:
     python3 scripts/regen-catalog.py
     gofmt -w pkg/catalog/catalog_generated.go

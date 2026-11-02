@@ -1,6 +1,6 @@
 // VM tags: chips with remove buttons and the inline add control.
 
-import { refresh } from './app.js';
+import { refresh } from './refresh.js';
 import { post } from './content/vm.js';
 import { icon } from './icons.js';
 import { $, esc, toast } from './ui/dom.js';

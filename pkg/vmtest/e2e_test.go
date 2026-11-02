@@ -19,6 +19,7 @@
 package vmtest
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -138,6 +139,72 @@ func TestE2E_FailingHookFailsTheRun(t *testing.T) {
 	}
 	if !strings.Contains(result.Hook.Log, "deliberate failure") {
 		t.Errorf("the hook's output should be collected: %q", result.Hook.Log)
+	}
+}
+
+// These opt-in cases exercise the same suite through Run, not a container.
+// Images and their expected identities are supplied by the operator.
+func TestE2E_GuestAssertions(t *testing.T) {
+	for _, tc := range []struct {
+		name, imageEnv, idEnv, versionEnv string
+		desktop                           bool
+	}{
+		{"headless", "CORRAL_VMTEST_HEADLESS_IMAGE", "CORRAL_VMTEST_HEADLESS_ID", "CORRAL_VMTEST_HEADLESS_VERSION", false},
+		{"desktop", "CORRAL_VMTEST_DESKTOP_IMAGE", "CORRAL_VMTEST_DESKTOP_ID", "CORRAL_VMTEST_DESKTOP_VERSION", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			image, id := os.Getenv(tc.imageEnv), os.Getenv(tc.idEnv)
+			if image == "" || id == "" {
+				t.Skipf("set %s and %s to exercise this image", tc.imageEnv, tc.idEnv)
+			}
+			spec := e2eSpec(t, "corral-e2e-guest-"+tc.name)
+			spec.Bootc = image
+			spec.GuestAssertions = &GuestAssertions{ID: id, VersionID: os.Getenv(tc.versionEnv)}
+			if tc.desktop {
+				spec.GuestAssertions.Desktop = &DesktopAssertions{
+					SessionCommand:     os.Getenv("CORRAL_VMTEST_DESKTOP_COMMAND"),
+					DisplayManagerUnit: os.Getenv("CORRAL_VMTEST_DESKTOP_UNIT"),
+				}
+			}
+			result, err := Run(spec, os.Stderr)
+			if err != nil {
+				t.Fatalf("suite: %v; result: %+v", err, result)
+			}
+			if !result.Ready || result.ExitCode != ExitOK || len(result.Checks) < 4 {
+				t.Fatalf("suite did not run: %+v", result)
+			}
+		})
+	}
+}
+
+func TestE2E_GuestAssertionFailureEvidence(t *testing.T) {
+	image := os.Getenv("CORRAL_VMTEST_HEADLESS_IMAGE")
+	if image == "" {
+		t.Skip("set CORRAL_VMTEST_HEADLESS_IMAGE to exercise failure evidence")
+	}
+	spec := e2eSpec(t, "corral-e2e-guest-broken")
+	spec.Bootc = image
+	spec.GuestAssertions = &GuestAssertions{ID: "corral-deliberately-invalid-id"}
+	result, err := Run(spec, os.Stderr)
+	if err == nil || result.ExitCode != ExitCheck || !result.Ready {
+		t.Fatalf("expected a booted guest and failing check: %+v, %v", result, err)
+	}
+	for _, name := range []string{"serial.log", ResultFile} {
+		info, err := os.Stat(filepath.Join(spec.Artifacts, name))
+		if err != nil || info.Size() == 0 {
+			t.Fatalf("missing %s: %v", name, err)
+		}
+	}
+	data, err := os.ReadFile(filepath.Join(spec.Artifacts, ResultFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stored Result
+	if err := json.Unmarshal(data, &stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored.ExitCode != ExitCheck || len(stored.Checks) < 4 || !strings.Contains(stored.Checks[3].Output, "unexpected os-release ID") {
+		t.Fatalf("identity failure evidence missing: %s", data)
 	}
 }
 

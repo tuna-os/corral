@@ -58,14 +58,14 @@ type Layered struct {
 	Engine string `json:"engine,omitempty"`
 	// PackageManager is what the base image turned out to use.
 	PackageManager string `json:"packageManager,omitempty"`
-	// ContextDir holds the Containerfile and the overlay, kept for the
-	// artifacts: the generated Containerfile is the record of what was added.
+	// ContextDir is the caller-owned build context used while the layer is
+	// built. The runner keeps it outside the artifact directory and removes it
+	// after the build.
 	ContextDir string `json:"contextDir,omitempty"`
 }
 
 // BuildLayer builds the derived image for spec, or reports that none is
-// needed. contextDir is where the build context is written — inside the run's
-// artifact directory, so a failed build leaves the exact Containerfile behind.
+// needed. contextDir is caller-owned and holds the temporary build context.
 func BuildLayer(spec *Spec, authorizedKey, contextDir string, progress func(string)) (Layered, error) {
 	result := Layered{Image: spec.Bootc, Base: spec.Bootc}
 	if !spec.needsLayer() {

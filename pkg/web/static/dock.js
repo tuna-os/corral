@@ -2,7 +2,7 @@
 // island, see ADR-0004).
 
 import { api, ctKey, findVM, vmKey } from './api.js';
-import { select } from './app.js';
+import { select } from './router.js';
 import { emit, on, state } from './state.js';
 import { onPageVisible, pageHidden } from './ui/visibility.js';
 

@@ -1,5 +1,6 @@
 // Doctor screen: cluster and local readiness checks.
 
+import { registerScreen } from '../ui/screens.js';
 import { api, sendJSON } from '../api.js';
 import { icon } from '../icons.js';
 import { $, esc, toast } from '../ui/dom.js';
@@ -41,3 +42,4 @@ export async function renderDoctor(main) {
     };
   });
 }
+registerScreen('doctor', renderDoctor);

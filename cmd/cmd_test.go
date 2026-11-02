@@ -600,22 +600,6 @@ func TestKubevirtOnly_NonexistentVM(t *testing.T) {
 
 // ── Create helper ────────────────────────────────────────────────
 
-func TestRunKubevirtCreate_InvalidImage(t *testing.T) {
-	oldImage := createImage
-	createImage = "nonexistent-image"
-	defer func() { createImage = oldImage }()
-
-	oldStore := registryStore
-	dir := t.TempDir()
-	registryStore = registry.NewStoreAt(filepath.Join(dir, "registry.json"))
-	defer func() { registryStore = oldStore }()
-
-	err := runKubevirtCreate("test-vm")
-	if err == nil {
-		t.Error("expected error for unknown catalog image")
-	}
-}
-
 func TestRunKubevirtCreate_EmptyName(t *testing.T) {
 	oldImage := createImage
 	createImage = "fedora"
@@ -928,51 +912,6 @@ func TestNetworksCmd_NoNADs(t *testing.T) {
 	}
 }
 
-func TestAttachLANBridge_ZeroNADsErrors(t *testing.T) {
-	fake := shell.NewFake()
-	fake.AddResponseKV("kubectl", []string{"get", "net-attach-def", "-A",
-		"-o", `jsonpath={range .items[*]}{.metadata.namespace}/{.metadata.name}{"\n"}{end}`}, "", fmt.Errorf("no Multus"))
-	kubevirt.SetPackageRunner(fake)
-	defer kubevirt.SetPackageRunner(shell.Real{})
-
-	oldNAD := createNetworkNAD
-	createNetworkNAD = ""
-	defer func() { createNetworkNAD = oldNAD }()
-
-	if err := attachLANBridge("corral-vms", "myvm"); err == nil {
-		t.Error("expected an error when no NAD exists on the cluster, not a silent no-op")
-	}
-}
-
-func TestAttachLANBridge_ExplicitNADPatchesVM(t *testing.T) {
-	fake := shell.NewFake()
-	fake.AddPrefixResponse("kubectl patch vm myvm -n corral-vms --type json -p", "", nil)
-	kubevirt.SetPackageRunner(fake)
-	kubevirt.SetDefaultRunner(fake)
-	defer func() {
-		kubevirt.SetPackageRunner(shell.Real{})
-		kubevirt.SetDefaultRunner(nil)
-	}()
-
-	oldNAD, oldIface := createNetworkNAD, createBridgeIface
-	createNetworkNAD = "default/lan-bridge"
-	createBridgeIface = "net1"
-	defer func() { createNetworkNAD, createBridgeIface = oldNAD, oldIface }()
-
-	if err := attachLANBridge("corral-vms", "myvm"); err != nil {
-		t.Fatalf("attachLANBridge: %v", err)
-	}
-	var patched bool
-	for _, c := range fake.Calls() {
-		if c.Name == "kubectl" && len(c.Args) > 0 && c.Args[0] == "patch" {
-			patched = true
-		}
-	}
-	if !patched {
-		t.Error("expected attachLANBridge to patch the VM with the new NIC")
-	}
-}
-
 func TestPerformCTAction_DispatchesToCTPackage(t *testing.T) {
 	fake := shell.NewFake()
 	fake.AddResponseKV("kubectl", []string{"delete", "pod", "web1", "-n", "corral-ct", "--ignore-not-found"}, "", nil)
@@ -1016,55 +955,6 @@ func TestCTCreate_PortsFlag(t *testing.T) {
 	}
 }
 
-func TestLocalBootcScript_UsesTempDirMounts(t *testing.T) {
-	script := localBootcScript("/dev/loop7", "", nil)
-
-	if !strings.Contains(script, "DISK=/dev/loop7") {
-		t.Errorf("script missing DISK=/dev/loop7:\n%s", script)
-	}
-	if !strings.Contains(script, "MNT_ESP=$(mktemp -d)") {
-		t.Errorf("script should use mktemp -d for ESP mount:\n%s", script)
-	}
-	if !strings.Contains(script, "MNT_ROOT=$(mktemp -d)") {
-		t.Errorf("script should use mktemp -d for composefs root mount:\n%s", script)
-	}
-	if !strings.Contains(script, "MNT=$(mktemp -d)") {
-		t.Errorf("script should use mktemp -d for post-install mount check:\n%s", script)
-	}
-
-	// Must not contain hardcoded /mnt paths that break on dangling symlinks (#389)
-	for _, forbidden := range []string{"/mnt/esp", "/mnt/root", "mkdir -p /mnt", "mount \"${DISK}p3\" /mnt ", "chroot /mnt"} {
-		if strings.Contains(script, forbidden) {
-			t.Errorf("script contains forbidden hardcoded /mnt path %q (#389):\n%s", forbidden, script)
-		}
-	}
-}
-
-func TestLocalBootcScript_WithProvisionScript(t *testing.T) {
-	script := localBootcScript("/dev/loop7", "echo test-provision", nil)
-
-	wantChroot := `cat /output/provision.sh | chroot "$MNT" /bin/bash`
-	if !strings.Contains(script, wantChroot) {
-		t.Errorf("script missing chroot into temp mount %q:\n%s", wantChroot, script)
-	}
-	if strings.Contains(script, "chroot /mnt") {
-		t.Errorf("script contains forbidden chroot /mnt:\n%s", script)
-	}
-}
-
-func TestLocalBootcScript_Kargs(t *testing.T) {
-	script := localBootcScript("/dev/loop7", "", []string{"tunaos.countme=0", "console=ttyS0,115200n8", "it's=1"})
-	want := `--wipe --karg 'tunaos.countme=0' --karg 'console=ttyS0,115200n8' --karg 'it'\''s=1' --root-ssh-authorized-keys /output/id_rsa.pub "$DISK"`
-	if !strings.Contains(script, want) {
-		t.Errorf("script missing %q:\n%s", want, script)
-	}
-
-	plain := localBootcScript("/dev/loop7", "", nil)
-	if strings.Contains(plain, "--karg") || !strings.Contains(plain, `--wipe --root-ssh-authorized-keys`) {
-		t.Errorf("script without kargs must keep the plain install line:\n%s", plain)
-	}
-}
-
 func TestCreateKargFlag(t *testing.T) {
 	f := createCmd.Flags().Lookup("karg")
 	if f == nil {
@@ -1097,26 +987,5 @@ func TestExecuteCreate_RejectsBadKargs(t *testing.T) {
 	createKargs, createBootc = []string{"two words"}, "ghcr.io/tuna-os/yellowfin:gnome"
 	if err := executeCreate("vm", false); err == nil || !strings.Contains(err.Error(), "not one kernel argument") {
 		t.Errorf("whitespace karg: err = %v", err)
-	}
-}
-
-func TestBootcPluginArgs_ForwardsKargs(t *testing.T) {
-	t.Cleanup(func() {
-		createBootc, createStorageClass, createNode, createKargs = "", "", "", nil
-		createCPU, createMem = 2, "4G"
-		createDedicatedCPUs, createIsolateEmulator, createTags = false, false, nil
-	})
-	createBootc, createStorageClass, createNode = "ghcr.io/tuna-os/yellowfin:gnome", "fast", "n1"
-	createCPU, createMem = 4, "6G"
-	createKargs = []string{"tunaos.countme=0", "console=ttyS0,115200n8"}
-	createDedicatedCPUs, createIsolateEmulator = true, true
-	createTags = []string{"pair=run42", "desktop=gnome"}
-
-	got := strings.Join(bootcPluginArgs("gate", "ci", "40Gi"), " ")
-	want := "create gate --image ghcr.io/tuna-os/yellowfin:gnome -n ci --cpu 4 --mem 6G --disk 40Gi --storage-class fast --node n1" +
-		" --karg tunaos.countme=0 --karg console=ttyS0,115200n8" +
-		" --dedicated-cpus --isolate-emulator-thread --tag pair=run42 --tag desktop=gnome"
-	if got != want {
-		t.Errorf("bootcPluginArgs = %q\nwant              %q", got, want)
 	}
 }

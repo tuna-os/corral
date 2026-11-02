@@ -1,5 +1,6 @@
 // Namespace screen: VMs and containers in one namespace.
 
+import { registerScreen } from '../ui/screens.js';
 import { icon } from '../icons.js';
 import { state } from '../state.js';
 import { esc } from '../ui/dom.js';
@@ -25,3 +26,4 @@ export function renderNamespace(main, name) {
   bindVMTable(main, nsVMs);
   bindCTTable(main);
 }
+registerScreen('namespace', renderNamespace);

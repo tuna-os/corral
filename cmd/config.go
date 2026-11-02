@@ -45,13 +45,36 @@ Example config.yaml:
 }
 
 var configSetBackendCmd = &cobra.Command{
-	Use: "set-default-backend <qemu|kubevirt|incus|libvirt>", Short: "Set the backend used by unqualified create commands",
+	Use:   "set-default-backend <qemu|kubevirt|incus|libvirt>",
+	Short: "Set the backend used by unqualified create commands",
+	Long: `Set the backend unqualified create commands default to.
+
+When you run "corral create" without a backend flag, corral picks the
+backend with this precedence: an explicit flag (--kubevirt, --incus, ...)
+wins; then the CORRAL_DEFAULT_BACKEND environment variable; then the value
+stored here in config.yaml; otherwise "qemu".
+
+The value is written to config.yaml (default.backend), not to a remote
+cluster or a VM. Accepted backends: qemu, kubevirt, incus, libvirt,
+virtualbox, vsphere, xen, nutanix.`,
+	Example: `  corral config set-default-backend incus   # future unqualified creates default to incus
+  corral config get-default-backend         # confirm what it stored`,
 	Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, args []string) error { return config.SetDefaultBackend(args[0]) },
 }
 
 var configGetBackendCmd = &cobra.Command{
-	Use: "get-default-backend", Short: "Print the default backend", Args: cobra.NoArgs,
-	Run: func(_ *cobra.Command, _ []string) { fmt.Println(config.DefaultBackend()) },
+	Use:   "get-default-backend",
+	Short: "Print the default backend",
+	Long: `Print the backend unqualified create commands default to.
+
+This resolves the effective default: the CORRAL_DEFAULT_BACKEND environment
+variable if set, else the value stored in config.yaml (default.backend),
+else "qemu". Set it with "corral config set-default-backend".
+
+Explicit backend flags on "corral create" always override this value.`,
+	Example: `  corral config get-default-backend   # e.g. incus`,
+	Args:    cobra.NoArgs,
+	Run:     func(_ *cobra.Command, _ []string) { fmt.Println(config.DefaultBackend()) },
 }
 
 func init() {

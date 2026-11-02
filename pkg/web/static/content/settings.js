@@ -1,5 +1,6 @@
 // Settings screen: theme and branding.
 
+import { registerScreen } from '../ui/screens.js';
 import { api, sendJSON } from '../api.js';
 import { icon } from '../icons.js';
 import { MODES, setThemeMode, themeMode } from '../ui/theme.js';
@@ -162,3 +163,4 @@ export async function renderSettings(main) {
   // Apply the current theme's custom CSS as live preview too.
   updatePreview();
 }
+registerScreen('settings', renderSettings);

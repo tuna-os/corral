@@ -1,7 +1,7 @@
 // Create VM and Create CT dialogs, the OS wizard and the build-log viewer.
 
 import { api, sendJSON } from './api.js';
-import { refresh } from './app.js';
+import { refresh } from './refresh.js';
 import { icon } from './icons.js';
 import { state } from './state.js';
 import { $, esc, toast } from './ui/dom.js';

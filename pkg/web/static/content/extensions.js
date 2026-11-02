@@ -1,5 +1,6 @@
 // Extensions screen: installed and available plugins.
 
+import { registerScreen } from '../ui/screens.js';
 import { api, sendJSON } from '../api.js';
 import { icon } from '../icons.js';
 import { $, esc, toast } from '../ui/dom.js';
@@ -112,3 +113,4 @@ export async function renderExtensions(main) {
     };
   });
 }
+registerScreen('extensions', renderExtensions);

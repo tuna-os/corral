@@ -7,7 +7,8 @@
 // second capability means another module like this one and no edit to core.
 
 import { api } from '../api.js';
-import { refresh, select } from '../app.js';
+import { refresh } from '../refresh.js';
+import { select } from '../router.js';
 import { icon } from '../icons.js';
 import { state } from '../state.js';
 import { registerCapability } from '../ui/capabilities.js';

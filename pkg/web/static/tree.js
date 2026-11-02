@@ -2,7 +2,8 @@
 // multi-select click model shared with the inventory grid.
 
 import { ctKey, vmKey } from './api.js';
-import { markRendered, refresh, renderContent, select } from './app.js';
+import { markRendered, renderContent, select } from './router.js';
+import { refresh } from './refresh.js';
 import { migrateVM } from './content/vm.js';
 import { icon } from './icons.js';
 import {

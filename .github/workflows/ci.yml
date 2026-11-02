@@ -111,11 +111,15 @@ jobs:
           fi
           mkdir -p "$evidence"
           ref="qemu//local/$name"
+          serial="$HOME/.local/share/corral/vms/$name/serial.log"
           created=0
           cleanup() {
             result=$?
             trap - EXIT INT TERM HUP
             if [[ "$created" == 1 ]]; then
+              if [[ -f "$serial" ]]; then
+                cp "$serial" "$evidence/cli-serial.log" || result=1
+              fi
               "$corral" --backend qemu stop "$ref" >>"$evidence/cli-cleanup.log" 2>&1 || result=1
               "$corral" --backend qemu delete "$ref" --force >>"$evidence/cli-cleanup.log" 2>&1 || result=1
             fi
@@ -140,9 +144,48 @@ jobs:
             qemu-system-aarch64 --version >"$evidence/qemu-version.txt"
           fi
           "$corral" --backend qemu start "$ref"
-          # The actual firmware framebuffer is sufficient for this API regression;
-          # it is explicitly not proof that a guest OS or Tuna session booted.
-          "$corral" --backend qemu --json wait "$ref" --paint --timeout 30s --interval 100ms >"$evidence/cli-wait.json"
+          # Paint is a point-in-time framebuffer observation, not a firmware
+          # milestone: QEMU's initial host-rendered 640x480 "Guest has not
+          # initialized the display (yet)." surface is itself nonuniform.
+          # ARM UEFI then replaces it with a blank 1280x800 GOP surface.
+          # Qualify the actual guest console before measuring its paint,
+          # sharing the existing 30s deadline rather than adding a new one.
+          if [[ "$guest_arch" == arm64 ]]; then
+            python3 - "$corral" "$ref" "$serial" "$evidence" <<'PY'
+          import json, pathlib, re, subprocess, sys, time
+          corral, ref, serial, evidence = sys.argv[1:]
+          started = time.monotonic()
+          deadline = started + 30
+          serial = pathlib.Path(serial)
+          evidence = pathlib.Path(evidence)
+          # EDK2 PlatformBmPrintScLib prints these boot-option preparations
+          # through ConOut after PlatformBootManagerAfterConsole, not through
+          # the early debug UART before graphical console initialization.
+          milestone = re.compile(rb"BdsDxe: (?:loading|starting) Boot[0-9A-Fa-f]{4}[^\r\n]*[\r\n]")
+          while True:
+              data = serial.read_bytes() if serial.exists() else b""
+              match = milestone.search(data)
+              remaining = deadline - time.monotonic()
+              if remaining <= 0:
+                  raise SystemExit("ARM UEFI did not initialize its boot-manager console within 30s; see cli-serial.log")
+              if match:
+                  (evidence / "cli-firmware-ready.json").write_text(json.dumps({
+                      "condition": "UEFI boot-manager console initialized",
+                      "observed": match.group().decode("utf-8", errors="replace").strip(),
+                      "elapsed_seconds": time.monotonic() - started,
+                  }, indent=2) + "\n")
+                  break
+              time.sleep(min(0.1, remaining))
+          with (evidence / "cli-wait.json").open("w") as output:
+              subprocess.run([corral, "--backend", "qemu", "--json", "wait", ref,
+                              "--paint", "--timeout", f"{deadline - time.monotonic():.9f}s",
+                              "--interval", "100ms"], stdout=output, check=True)
+          PY
+          else
+            "$corral" --backend qemu --json wait "$ref" --paint --timeout 30s --interval 100ms >"$evidence/cli-wait.json"
+          fi
+          # Firmware output qualifies this API regression only, not a guest
+          # OS boot, Tuna session, firstboot/login or browser admission.
           "$corral" --backend qemu info "$ref" >"$evidence/cli-info.json"
           "$corral" --backend qemu qmp "$ref" query-target >"$evidence/cli-target.json"
           "$corral" --backend qemu qmp "$ref" query-kvm >"$evidence/cli-kvm.json"
@@ -193,6 +236,7 @@ jobs:
           (root / "cli-runtime.json").write_text(json.dumps(receipt, indent=2) + "\n")
           PY
           "$corral" --backend qemu screenshot "$ref" --require-paint -o "$evidence/cli-firmware.png"
+          cp "$serial" "$evidence/cli-serial.log"
           "$corral" --backend qemu stop "$ref"
           "$corral" --backend qemu delete "$ref" --force
           test ! -e "$HOME/.local/share/corral/vms/$name"
@@ -325,11 +369,10 @@ jobs:
 
   publish-image:
     # corral-web image: the web UI served on the cluster (deploy/corral-web.yaml)
-    # Not on pull requests: there it built both arches and pushed nothing,
-    # which web-image-smoke (same Containerfile, amd64, plus the probes) and
-    # its arm64 cross-build step already cover — one runner per PR push saved.
+    # Only main may publish the rolling image. Manual dispatches on catalog
+    # branches run verification without replacing production.
     needs: test
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     concurrency:
       group: ${{ github.workflow }}-publish-image-${{ github.ref }}
       cancel-in-progress: false
