@@ -861,7 +861,7 @@ The same command can target the TunaOS site checkout:
 The `Screenshots` workflow runs this script when the web UI, the TUI or the
 demo fleet changes, and one time each week. It retains the captures and a
 `corral-screenshot-patch` artifact for a maintainer to review and submit as a
-PR; no Corral PR is created automatically. The job summary and
+PR; automation does not create a Corral PR. The job summary and
 [contribution guide](../CONTRIBUTING.md#reviewing-generated-screenshots)
 describe the handoff. When the `TUNAOS_DOCS_TOKEN` secret is set, the separate
 site job still opens a PR in tuna-os/docs to update the TunaOS site images.
