@@ -79,7 +79,7 @@ func copyTestSigner(t *testing.T) ssh.Signer {
 }
 
 func serveCopySession(connection net.Conn, signer ssh.Signer, serverBinary, root string) {
-	defer connection.Close()
+	defer func() { _ = connection.Close() }()
 	_ = connection.SetDeadline(time.Now().Add(15 * time.Second))
 	config := &ssh.ServerConfig{NoClientAuth: true}
 	config.AddHostKey(signer)
@@ -87,7 +87,7 @@ func serveCopySession(connection net.Conn, signer ssh.Signer, serverBinary, root
 	if err != nil {
 		return
 	}
-	defer server.Close()
+	defer func() { _ = server.Close() }()
 	go ssh.DiscardRequests(requests)
 	for incoming := range channels {
 		if incoming.ChannelType() != "session" {
@@ -134,7 +134,7 @@ func TestCopyOpenSSHRoundTripLiteralPathsRecursiveAndChangedKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 	signer := copyTestSigner(t)
 	var signerMu sync.Mutex
 	go func() {
