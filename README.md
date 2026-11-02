@@ -301,7 +301,7 @@ corral ct create myproj --devcontainer ./myproj
 
 For persistent KubeVirt workspaces, use `--import URL` to put a bootable cloud
 image on a root PVC. A container disk remains ephemeral even with a separate
-`--disk` data PVC. See the [persistent testing-root recipe](docs/user-guide.md#a-persistent-kubevirt-testing-root)
+`--disk` data PVC. See the [persistent workspace recipe](docs/user-guide.md#a-persistent-kubevirt-workspace-root)
 and [copy/authentication/trust details](docs/user-guide.md#copying-files-to-and-from-kubevirt).
 
 ## How VMs are reached

@@ -25,7 +25,7 @@ func openDirectory(path string, create bool) (*os.File, error) {
 		return nil, err
 	}
 	if err := checkDirectory(fd, false, false); err != nil {
-		unix.Close(fd)
+		_ = unix.Close(fd)
 		return nil, err
 	}
 	parts := strings.Split(strings.TrimPrefix(absolute, "/"), "/")
@@ -33,18 +33,18 @@ func openDirectory(path string, create bool) (*os.File, error) {
 		next, openErr := unix.Openat(fd, part, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 		if errors.Is(openErr, unix.ENOENT) && create {
 			if err := unix.Mkdirat(fd, part, 0o700); err != nil && !errors.Is(err, unix.EEXIST) {
-				unix.Close(fd)
+				_ = unix.Close(fd)
 				return nil, err
 			}
 			next, openErr = unix.Openat(fd, part, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 		}
-		unix.Close(fd)
+		_ = unix.Close(fd)
 		if openErr != nil {
 			return nil, errors.New("refusing inaccessible or linked private directory")
 		}
 		fd = next
 		if err := checkDirectory(fd, i == len(parts)-1, create); err != nil {
-			unix.Close(fd)
+			_ = unix.Close(fd)
 			return nil, err
 		}
 	}
@@ -83,7 +83,7 @@ func privateFile(path string, create bool) error {
 	if err != nil {
 		return err
 	}
-	defer directory.Close()
+	defer func() { _ = directory.Close() }()
 	flags := unix.O_RDONLY | unix.O_NOFOLLOW | unix.O_CLOEXEC | unix.O_NONBLOCK
 	fd, err := unix.Openat(int(directory.Fd()), filepath.Base(path), flags, 0)
 	if errors.Is(err, unix.ENOENT) && create {
@@ -95,7 +95,7 @@ func privateFile(path string, create bool) error {
 	if err != nil {
 		return err
 	}
-	defer unix.Close(fd)
+	defer func() { _ = unix.Close(fd) }()
 	var stat unix.Stat_t
 	if unix.Fstat(fd, &stat) != nil || stat.Mode&unix.S_IFMT != unix.S_IFREG || stat.Uid != uint32(os.Getuid()) || stat.Nlink != 1 || stat.Mode&0o077 != 0 {
 		return errors.New("refusing non-owned, linked, non-private or non-regular SSH file")
