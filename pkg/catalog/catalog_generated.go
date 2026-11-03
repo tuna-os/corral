@@ -5,11 +5,11 @@
 package catalog
 
 var generatedBootcImages = []BootcImage{
-	// upstream: sha256:2d5c6750f4d3c12fc61ec7df8fdec34f5846b3392456b4e7e73108cf7bb8e7f6
+	// upstream: sha256:5f3c8c5ef516dffa2d62e2805cec80afc5b2961899331acabfa878c1e0b8deb8
 	{"aurora", "Universal Blue Aurora — KDE Plasma bootc desktop", "ghcr.io/ublue-os/aurora:latest", "universal-blue.org", "kde"},
-	// upstream: sha256:e0ee354fd6d89b1e35c17727d7a10ff19092f05688085b320d40d40e16bbc92e
+	// upstream: sha256:3b7ebe07b35c5e20689db4b7fe255c3e6aae94d67a80eda8ec2d8efe7315e248
 	{"aurora-dx", "Aurora DX — KDE Plasma + developer tooling", "ghcr.io/ublue-os/aurora-dx:latest", "universal-blue.org", "kde"},
-	// upstream: sha256:8c4ac7b085a02327644ef8eac971380cb66ef38197af439566b90bf111e78d36
+	// upstream: sha256:8789e7146c3e27982eda68d2c816a7a75ab16ebc6f9b1b7729783f8d07aefb02
 	{"aurora-nvidia-open", "Aurora — KDE Plasma bootc desktop", "ghcr.io/ublue-os/aurora-nvidia-open:latest", "universal-blue.org", "kde"},
 	// upstream: sha256:ee82a885dbb77cd4604a5ffa8278a0eef0bc84d16850045c7b9d847729da9949
 	{"bazzite", "Bazzite — gaming bootc desktop (KDE)", "ghcr.io/ublue-os/bazzite:stable", "universal-blue.org", "steam"},
@@ -25,17 +25,17 @@ var generatedBootcImages = []BootcImage{
 	{"bazzite-dx-nvidia-gnome", "Bazzite — gaming bootc image", "ghcr.io/ublue-os/bazzite-dx-nvidia-gnome:stable", "universal-blue.org", "steam"},
 	// upstream: sha256:396f34fd5971e28d8796e2b8ec3c821abd5105752f1cc9ff8d96a5bc5c91bd3a
 	{"bazzite-gnome", "Bazzite — gaming bootc desktop (GNOME)", "ghcr.io/ublue-os/bazzite-gnome:stable", "universal-blue.org", "steam"},
-	// upstream: sha256:83a48249dd45695d951e05fc455b0f37e2d8e6bce2b97fe80c48c3c61ca02098
+	// upstream: sha256:581f77cb7f7a9e22212f1ed0ea8b93fc12059a81853d4195c5b6f1d7be292d27
 	{"bluefin", "Universal Blue Bluefin — GNOME bootc desktop", "ghcr.io/ublue-os/bluefin:latest", "universal-blue.org", "gnome"},
-	// upstream: sha256:d49ad4df8a59acb0413ed5abeafa1f205a96225d1cee3ccd65bfca82a8b35d35
+	// upstream: sha256:451b4265ea6363e5c2d50a477b83718655ec0bbad28c50b44a534f39520140bd
 	{"bluefin-dx", "Bluefin DX — GNOME desktop + developer tooling", "ghcr.io/ublue-os/bluefin-dx:latest", "universal-blue.org", "gnome"},
-	// upstream: sha256:96132cb177a631a7085507bb6f04a502546678620da5ed0dddcd161db6c0a25c
+	// upstream: sha256:bb75d97a918f9d6f0ab1bc2812f4eb35a12206859300fc307465e989dfa5a2b7
 	{"bluefin-dx-nvidia-open", "Bluefin — GNOME bootc desktop", "ghcr.io/ublue-os/bluefin-dx-nvidia-open:latest", "universal-blue.org", "gnome"},
-	// upstream: sha256:ca90d8419b54c3a383a2b4d56c0a1c5de8a4bb476a0630b436e737b9dfc03d82
+	// upstream: sha256:eff324d7f7f6fdf642c2930b83125f02b8f7e4a92bceef291173f7d18dfc7bf9
 	{"bluefin-nvidia-open", "Bluefin — GNOME bootc desktop", "ghcr.io/ublue-os/bluefin-nvidia-open:latest", "universal-blue.org", "gnome"},
-	// upstream: sha256:e53d4a03897b9d47b902695e74359de6a2710454189b007705c8b8e83cb945a2
+	// upstream: sha256:d482e64a6bea8194c4b4809933f849e4ac3359268f8dfe73e2b4291aea7f15b1
 	{"kinoite-main", "Universal Blue Kinoite — KDE Fedora Atomic base", "ghcr.io/ublue-os/kinoite-main:latest", "universal-blue.org", "kde"},
-	// upstream: sha256:112bb15d34ae97380bcbb36972a27dd81b506a668c9023f6be1dc7253324a9a6
+	// upstream: sha256:d5cae2fbc8e264b3db12b634f1481f61b81e3c7262cbb945509263f8d9dc337d
 	{"kinoite-nvidia", "Kinoite — KDE Fedora Atomic", "ghcr.io/ublue-os/kinoite-nvidia:latest", "universal-blue.org", "kde"},
 	{"projectbluefin-base", "projectbluefin Base — bootc image", "ghcr.io/projectbluefin/base:latest", "projectbluefin.io", "linux"},
 	// upstream: sha256:a50af2d633f72b549b395d0973a2cc317654e4e4ad679543b9c52c63c34a0d61
@@ -59,45 +59,45 @@ var generatedBootcImages = []BootcImage{
 	{"projectbluefin-static", "projectbluefin Static — bootc image", "ghcr.io/projectbluefin/static:latest", "projectbluefin.io", "linux"},
 	{"projectbluefin-static-aarch64", "projectbluefin Static Aarch64 — bootc image", "ghcr.io/projectbluefin/static-aarch64:latest", "projectbluefin.io", "linux"},
 	{"projectbluefin-static-x86_64", "projectbluefin Static X86_64 — bootc image", "ghcr.io/projectbluefin/static-x86_64:latest", "projectbluefin.io", "linux"},
-	// upstream: sha256:d1c18b19f90b596a42a172a281dec82d2c70f4fdd50d45a047f0ba4c20380cc4
+	// upstream: sha256:0737aea1afa97b94767deb877aee4b1e06d18e2feaf3433bf7d2dfdf9542d8a0
 	{"silverblue-main", "Universal Blue Silverblue — GNOME Fedora Atomic base", "ghcr.io/ublue-os/silverblue-main:latest", "universal-blue.org", "gnome"},
-	// upstream: sha256:2c5637e3ad1cb8f9b08beacd026cee7809006b9bc51ff1fb3ac9a9b0553c9071
+	// upstream: sha256:cc2aece07777c834d77b69b123178bc0729682f2961fbf6b79614394abdaa88c
 	{"silverblue-nvidia", "Silverblue — GNOME Fedora Atomic", "ghcr.io/ublue-os/silverblue-nvidia:latest", "universal-blue.org", "gnome"},
 	{"steambox", "SteamBox — Steam Big Picture image", "ghcr.io/ublue-os/steambox:latest", "universal-blue.org", "steam"},
 	{"steambox-gnome", "SteamBox — Steam Big Picture image", "ghcr.io/ublue-os/steambox-gnome:latest", "universal-blue.org", "steam"},
-	// upstream: sha256:4bc07e76afb05587233b0bde0391f22a4ebe738fdab889511d24044140d8af90
+	// upstream: sha256:d38155cdd9435356add43a5fb9f225db80df624f3a1d90397e0255dd9107154b
 	{"tuna-albacore", "tuna-os Albacore — bootc image", "ghcr.io/tuna-os/albacore:niri-nvidia-linux-amd64", "tunaos.org", "linux"},
 	{"tuna-arch-bootc", "tuna-os Fisherman Arch Bootc — bootc image", "ghcr.io/tuna-os/fisherman/arch-bootc:latest", "tunaos.org", "linux"},
 	{"tuna-bonito", "tuna-os Bonito — bootc image", "ghcr.io/tuna-os/bonito:xfce-nvidia-linux-arm64", "tunaos.org", "linux"},
-	// upstream: sha256:7074f95748815837c85f0f556688c5dd7e0843a479b79f0eb8786d6c4ba38663
+	// upstream: sha256:02554bd2a73fdca3eb0774122aa06100986ec4ba0b8426c4e826b6fd85b5de8a
 	{"tuna-bootc-installer", "tuna-os Bootc Installer — bootc image", "ghcr.io/tuna-os/bootc-installer:latest", "tunaos.org", "linux"},
 	{"tuna-bootc-migrate-composefs", "tuna-os Bootc Migrate Composefs — bootc image", "ghcr.io/tuna-os/bootc-migrate-composefs:latest", "tunaos.org", "linux"},
 	{"tuna-centos-bootc", "tuna-os Fisherman Centos Bootc — bootc image", "ghcr.io/tuna-os/fisherman/centos-bootc:latest", "tunaos.org", "linux"},
 	{"tuna-chunkah", "tuna-os Chunkah — bootc image", "ghcr.io/tuna-os/chunkah:latest", "tunaos.org", "linux"},
-	// upstream: sha256:b0dcfc6972a050b2ac48f00c192844f1c59bb061591839cf4c330e8136c3880f
+	// upstream: sha256:a19e9644cd82f8516501f624b9db333e004fcd3d4a494d89b2183f57d32a747b
 	{"tuna-corral", "tuna-os Corral — bootc image", "ghcr.io/tuna-os/corral:latest", "tunaos.org", "linux"},
 	{"tuna-dakota", "tuna-os Fisherman Dakota — bootc image", "ghcr.io/tuna-os/fisherman/dakota:latest", "tunaos.org", "linux"},
 	{"tuna-debian-bootc", "tuna-os Fisherman Debian Bootc — bootc image", "ghcr.io/tuna-os/fisherman/debian-bootc:latest", "tunaos.org", "linux"},
 	{"tuna-decks-rust", "tuna-os Decks Rust — bootc image", "ghcr.io/tuna-os/decks-rust:latest", "tunaos.org", "linux"},
-	// upstream: sha256:5dfb98241b3ec939cb829cc11882723c5c69bacab605e1c9e6691eb56017be7b
+	// upstream: sha256:d36e32a3f46012ff8cc0912b26acfe75580a10bdefd36f4f48f9a9d336663dc8
 	{"tuna-grouper", "tuna-os Grouper — bootc image", "ghcr.io/tuna-os/grouper:xfce-linux-amd64", "tunaos.org", "linux"},
 	{"tuna-hanthor-rust", "tuna-os Hanthor Rust — bootc image", "ghcr.io/tuna-os/hanthor-rust:tables-rust", "tunaos.org", "linux"},
 	{"tuna-letters-rust", "tuna-os Letters Rust — bootc image", "ghcr.io/tuna-os/letters-rust:latest", "tunaos.org", "linux"},
-	// upstream: sha256:247868c22f0999f6aa64a5b20fbe20eb5b3917734c022a0552179468a703fc9a
+	// upstream: sha256:6cdc1dcbfedff9c258eaf85b7513d8a2beef7e83b4372b092e7c0b944a1bad00
 	{"tuna-mariner", "tuna-os Mariner — bootc image", "ghcr.io/tuna-os/mariner:latest", "tunaos.org", "linux"},
 	{"tuna-mock-runner", "tuna-os Mock Runner — bootc image", "ghcr.io/tuna-os/mock-runner:centos-stream-10-fca39cb1110605ade756a1207d65ce32bd2b9eff", "tunaos.org", "linux"},
 	{"tuna-skipjack", "tuna-os Skipjack — bootc image", "ghcr.io/tuna-os/skipjack:niri-linux-arm64", "tunaos.org", "linux"},
 	{"tuna-tables-rust", "tuna-os Tables Rust — bootc image", "ghcr.io/tuna-os/tables-rust:latest", "tunaos.org", "linux"},
-	// upstream: sha256:725edcd52c00264b95b70cb670ce9ee5fca497d20d24fc616a32e2400255f03b
+	// upstream: sha256:fb1775290a8a95629d8faa344a34053471ad35ac25423f9b7813ae06471f20a2
 	{"tuna-tacklebox", "tuna-os Tacklebox — bootc image", "ghcr.io/tuna-os/tacklebox:latest", "tunaos.org", "linux"},
-	// upstream: sha256:64e78377682fffdddc2d7d72599c104410c108649423b46993e3835187bf5ee7
+	// upstream: sha256:51a5d3db7d16e2722ab9dc77da3ccf2a53c2dcb9165852a49310ecf9baefcadb
 	{"tuna-tavern", "tuna-os Tavern — bootc image", "ghcr.io/tuna-os/tavern:latest", "tunaos.org", "linux"},
 	{"tuna-yellowfin", "tuna-os Yellowfin — bootc image", "ghcr.io/tuna-os/yellowfin:niri-nvidia-linux-arm64", "tunaos.org", "linux"},
-	// upstream: sha256:21f4ea0d77205a17cbef2018ac2017ee78ccc6d10e7d9b13751d7d6cd2092b9c
+	// upstream: sha256:3a068c0f924db141979093304104abbd784c26111693f712638eb782f49897dc
 	{"ucore", "uCore — Fedora CoreOS server, batteries included", "ghcr.io/ublue-os/ucore:stable", "universal-blue.org", "fedora"},
-	// upstream: sha256:59ad79af1cc499e0a15505a95537ceb38f70b25563ae7c84a6cdee5e5c328bc2
+	// upstream: sha256:07dcc97683c17b391004d469f7c1665ef220a573c9b52fd3d63983526b5f0422
 	{"ucore-hci", "uCore HCI — hyper-converged (libvirt/KVM) server", "ghcr.io/ublue-os/ucore-hci:stable", "universal-blue.org", "fedora"},
-	// upstream: sha256:7906a70efe7482704fdb232c7e5d2a3068a0c5520ef46d3f7f6b9f8fc0e899b9
+	// upstream: sha256:09f589822485bc2e35607c76e56b1e36fde82bd4d730c9cdb0c7eaa8e45c0c93
 	{"ucore-minimal", "uCore minimal — lean Fedora CoreOS server", "ghcr.io/ublue-os/ucore-minimal:stable", "universal-blue.org", "fedora"},
 }
 
