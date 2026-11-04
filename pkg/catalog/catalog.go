@@ -43,7 +43,7 @@ func (i *Image) Kind() string {
 // repositories. Reusing the version in the description keeps it in sync.
 const (
 	// renovate: datasource=docker depName=quay.io/containerdisks/fedora
-	fedoraVersion = "44"
+	fedoraVersion = "45"
 	// renovate: datasource=docker depName=quay.io/containerdisks/ubuntu
 	ubuntuVersion = "26.04"
 	// renovate: datasource=docker depName=quay.io/containerdisks/debian
