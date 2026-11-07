@@ -6,7 +6,7 @@ require (
 	charm.land/bubbles/v2 v2.2.1
 	charm.land/bubbletea/v2 v2.1.1
 	charm.land/lipgloss/v2 v2.0.6
-	// SHA-512 crypt for the test-account passwords pkg/vmtest writes into a
+	// SHA-512 crypt for the account passwords pkg/image/layer writes into a
 	// derived image's /etc/shadow. Already present as an indirect dependency
 	// of go-htpasswd; this only promotes it to a direct one.
 	github.com/GehirnInc/crypt v0.0.0-20230320061759-8cc1b52080c5

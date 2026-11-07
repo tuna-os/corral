@@ -98,6 +98,38 @@ func TestBuildLayer_BuiltinEngine(t *testing.T) {
 		t.Errorf("the Containerfile does not build on the image under test:\n%s", data)
 	}
 
+	// The manifest-to-layer boundary must preserve content and script timing.
+	for path, want := range map[string]string{
+		"build_files/10-corral-accounts.sh":        "corral_adduser 'tester' '/bin/bash' 'video'",
+		"build_files/20-corral-services.sh":        "PasswordAuthentication yes",
+		"build_files/50-corral-provision-01.sh":    "echo built-at-build-time",
+		"system_files/usr/libexec/corral-postboot": "systemctl is-active sshd",
+		"system_files/etc/corral-test.conf":        "hello\n",
+	} {
+		content, err := os.ReadFile(filepath.Join(dir, path))
+		if err != nil || !strings.Contains(string(content), want) {
+			t.Errorf("%s: want %q, got %q (error %v)", path, want, content, err)
+		}
+		if strings.Contains(string(content), "rootpw") || strings.Contains(string(content), "hunter2") {
+			t.Errorf("%s contains a plaintext password", path)
+		}
+		if strings.Contains(path, "corral-postboot") && strings.Contains(string(content), "echo built-at-build-time") {
+			t.Error("image provision script leaked into the boot hook")
+		}
+	}
+	info, err := os.Stat(filepath.Join(dir, "system_files/etc/corral-test.conf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Errorf("overlay file mode = %o, want 0600", info.Mode().Perm())
+	}
+	for _, want := range []string{"dnf -y install jq htop", "dnf config-manager --set-enabled crb"} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("Containerfile lost %q", want)
+		}
+	}
+
 	// And the build was told where the context is.
 	var built bool
 	for _, call := range fake.Calls() {
