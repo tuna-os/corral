@@ -202,6 +202,10 @@ func (a kubevirtAdapter) SSH(name string, opts SSHOptions) error {
 	return a.client.SSH(name, opts.User, opts.Identity, opts.Command, opts.Port, opts.Password, opts.LocalForwards)
 }
 
+func (a kubevirtAdapter) Copy(name string, opts types.CopyOptions) error {
+	return a.client.Copy(name, opts)
+}
+
 func (a kubevirtAdapter) Exec(name string, opts SSHOptions) ([]byte, error) {
 	return a.client.Exec(name, opts.User, opts.Identity, opts.Command, opts.Port)
 }
