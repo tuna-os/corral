@@ -10,7 +10,10 @@ import (
 	"time"
 
 	"github.com/tuna-os/corral/pkg/backend"
+	"github.com/tuna-os/corral/pkg/config"
+	"github.com/tuna-os/corral/pkg/kubevirt"
 	"github.com/tuna-os/corral/pkg/qemu"
+	"github.com/tuna-os/corral/pkg/shell"
 	"github.com/tuna-os/corral/pkg/types"
 )
 
@@ -354,23 +357,29 @@ func waitFlags(t *testing.T) {
 	})
 }
 
-// End to end on KubeVirt: the listing says Running, then virtctl ssh answers
-// for the unit, and --json prints the one report object.
+// End to end on KubeVirt: a canonical selector resolves to the backend-local
+// name for running, guest, and paint checks, but remains the report identity.
 func TestWaitCommandKubeVirt(t *testing.T) {
 	fake := kubevirtVMScratch(t, "web", types.RegistryEntry{Backend: "kubevirt", Context: "prod", Namespace: "corral-vms"})
+	if err := config.AddContext(config.ContextConfig{Name: "prod", Backend: "kubevirt", Context: "prod"}); err != nil {
+		t.Fatal(err)
+	}
+	target := (types.InstanceRef{Backend: "kubevirt", Context: "prod", Namespace: "corral-vms", Name: "web"}).String()
+	kubevirt.SetDefaultRunner(waitPaintRunner{Fake: fake, t: t})
 	fake.AddResponse("kubectl get vms -A -o json",
-		`{"items":[{"metadata":{"name":"web","namespace":"corral-vms"},"status":{"printableStatus":"Running","ready":true}}]}`, nil)
+		`{"items":[{"metadata":{"name":"web","namespace":"other"},"status":{"printableStatus":"Stopped","ready":false}},{"metadata":{"name":"web","namespace":"corral-vms"},"status":{"printableStatus":"Running","ready":true}}]}`, nil)
 	fake.AddPrefixResponse("/fake/bin/virtctl ssh", "corral-boot-id=4b1d\nactive\n", nil)
 	waitFlags(t)
 	jsonOutput = true
 	waitUnits = []string{"gdm.service"}
-	waitTimeout, waitInterval = time.Minute, time.Millisecond
+	waitPaint = true
+	waitTimeout, waitInterval = 100*time.Millisecond, time.Millisecond
 
 	var stderr bytes.Buffer
 	waitCmd.SetErr(&stderr)
 	t.Cleanup(func() { waitCmd.SetErr(nil) })
 	stdout := captureStdout(t, func() {
-		if err := waitCmd.RunE(waitCmd, []string{"web"}); err != nil {
+		if err := waitCmd.RunE(waitCmd, []string{target}); err != nil {
 			t.Fatalf("wait: %v", err)
 		}
 	})
@@ -378,14 +387,40 @@ func TestWaitCommandKubeVirt(t *testing.T) {
 	if err := json.Unmarshal([]byte(stdout), &report); err != nil {
 		t.Fatalf("stdout is not one JSON object: %v\n%s", err, stdout)
 	}
-	if !report.Ready || report.VM != "web" || report.BootID != "4b1d" || len(report.Conditions) != 3 ||
-		report.Conditions[2].Name != "unit:gdm.service" || report.Conditions[2].Observed != "active" {
+	if !report.Ready || report.VM != target || report.BootID != "4b1d" || len(report.Conditions) != 4 ||
+		report.Conditions[0].Observed != "Running" ||
+		report.Conditions[2].Name != "unit:gdm.service" || report.Conditions[2].Observed != "active" ||
+		report.Conditions[3].Name != "paint" || !strings.HasPrefix(report.Conditions[3].Observed, "painted 64x48") {
 		t.Errorf("report = %+v", report)
 	}
 	if !ranCommandLine(fake, "virtctl ssh --namespace=corral-vms --username=root --command=echo corral-boot-id=$(cat /proc/sys/kernel/random/boot_id); systemctl is-active -- 'gdm.service'") {
 		t.Errorf("no unit check over virtctl ssh; calls were %v", fake.Calls())
 	}
-	if !strings.Contains(stderr.String(), "web is ready after") {
+	if !ranCommandLine(fake, "virtctl vnc screenshot web -n corral-vms -f ") {
+		t.Errorf("no backend-local console capture; calls were %v", fake.Calls())
+	}
+	if !strings.Contains(stderr.String(), target+" is ready after") {
 		t.Errorf("stderr = %q, want progress", stderr.String())
 	}
+}
+
+// waitPaintRunner supplies a real PNG at the dynamically chosen capture path.
+// Other commands retain the shared KubeVirt fixture's responses and call log.
+type waitPaintRunner struct {
+	*shell.Fake
+	t *testing.T
+}
+
+func (r waitPaintRunner) Run(name string, args ...string) ([]byte, error) {
+	if len(args) > 1 && args[0] == "ssh" && (args[len(args)-1] != "vm/web" || args[1] != "--namespace=corral-vms") {
+		return nil, fmt.Errorf("unexpected guest target: %v", args)
+	}
+	out, err := r.Fake.Run(name, args...)
+	if err == nil && len(args) == 7 && args[0] == "vnc" && args[1] == "screenshot" {
+		if args[2] != "web" || args[3] != "-n" || args[4] != "corral-vms" || args[5] != "-f" {
+			return nil, fmt.Errorf("unexpected console target: %v", args)
+		}
+		writeFramePNG(r.t, args[6], true)
+	}
+	return out, err
 }
