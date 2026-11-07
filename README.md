@@ -405,6 +405,17 @@ with Hyper-V enlightenments. It attaches the virtio-win driver ISO as a second
 CD-ROM, so Setup can see the virtio disk/network. It also sets up proper
 access to the console.
 
+### The macOS plugin
+
+`corral macos` prepares verified Apple Sequoia recovery media, provisions a
+persistent KubeVirt VM, bootstraps the first local account and key-only SSH from
+an explicitly focused root Recovery Terminal, and owns private Messages/Beeper
+guest setup and focused credential input. Bootstrap verifies the installed
+APFS volume pair before vault access and never types passwords into Recovery.
+macOS installation, Apple sign-in/2FA and native privacy approval remain interactive.
+Build/install instructions, requirements, safe reruns, and boot diagnostics:
+**[docs/macos.md](docs/macos.md)**.
+
 ### The VDI plugin
 
 `corral vdi` — desktop pools. Phase 1 of [RFC-0001](docs/rfc/0001-vdi-plugin.md):
