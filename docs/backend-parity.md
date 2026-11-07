@@ -8,6 +8,9 @@ it there**. Not every feature every backend has — parity across backends for t
 features Corral has. Where a backend genuinely cannot do a thing, the matrix
 records that with a reason instead of silence.
 
+For the decision not to add an nspawn or NSL backend yet, see the
+[nspawn / NSL evaluation](research/nspawn-nsl-backend.md).
+
 ## How this document is kept honest
 
 The table below is **generated from `pkg/backend.Matrix`**, which is the single
