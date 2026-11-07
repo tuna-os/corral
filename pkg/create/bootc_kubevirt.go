@@ -6,12 +6,15 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/tuna-os/corral/pkg/backend"
+	"github.com/tuna-os/corral/pkg/config"
 	"github.com/tuna-os/corral/pkg/kubevirt"
 	"github.com/tuna-os/corral/pkg/plugin"
 	"github.com/tuna-os/corral/pkg/types"
 )
 
 func (r request) runKubevirtBootcCreate(name string) error {
+	backend.ActivateContext(types.InstanceRef{Backend: "kubevirt", Context: r.createContext(config.KubeContext)})
 	ns := r.Namespace
 	if ns == "" {
 		ns = kubevirt.DefaultNamespace
@@ -49,7 +52,9 @@ func (r request) runKubevirtBootcCreate(name string) error {
 			return err
 		}
 		if r.Registry != nil {
-			_ = r.Registry.Set(name, types.RegistryEntry{Backend: "kubevirt", Namespace: ns})
+			if err := r.Registry.SetRef(types.InstanceRef{Backend: "kubevirt", Context: r.createContext(config.KubeContext), Namespace: ns, Name: name}, types.RegistryEntry{}); err != nil {
+				return err
+			}
 		}
 		if r.WaitSSH {
 			fmt.Fprintf(os.Stderr, "  Waiting for SSH (timeout %ds)...\n", r.Timeout)
@@ -74,7 +79,9 @@ func (r request) runKubevirtBootcCreate(name string) error {
 		fmt.Fprintf(os.Stderr, "warning: tailnet expose failed: %v\n", err)
 	}
 	if r.Registry != nil {
-		_ = r.Registry.Set(name, types.RegistryEntry{Backend: "kubevirt", Namespace: ns})
+		if err := r.Registry.SetRef(types.InstanceRef{Backend: "kubevirt", Context: r.createContext(config.KubeContext), Namespace: ns, Name: name}, types.RegistryEntry{}); err != nil {
+			return err
+		}
 	}
 	fmt.Fprintf(os.Stderr, "VM %q created in ns/%s\n", name, ns)
 	fmt.Fprintf(os.Stderr, "  Start:  corral start %s\n", name)

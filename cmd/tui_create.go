@@ -477,7 +477,7 @@ func createWindowsFromTUI(name string, target config.ContextConfig, iso string) 
 		return err
 	}
 	if registryStore != nil {
-		return registryStore.Set(name, types.RegistryEntry{
+		return registryStore.SetRef(types.InstanceRef{Backend: "kubevirt", Context: target.Context, Namespace: ns, Name: name}, types.RegistryEntry{
 			Backend:   "kubevirt",
 			Namespace: ns,
 			Username:  "Administrator",

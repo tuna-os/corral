@@ -23,6 +23,19 @@ import (
 // terminal so the detail pane is on screen.
 func demoModel(t *testing.T) tuiModel {
 	t.Helper()
+	// Demo inventory must not acquire a second copy of every VM through the
+	// developer's real configured contexts: unqualified names then become
+	// ambiguous instead of exercising the intended collision checks.
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("CORRAL_DEFAULT_BACKEND", "")
+	t.Setenv("CORRAL_KUBE_CONTEXT", "")
+	t.Setenv("CORRAL_INCUS_REMOTE", "")
+	t.Setenv("CORRAL_LIBVIRT_URI", "")
+	t.Setenv("KUBECONFIG", "")
+	savedBackend, savedContext := rootBackend, rootContext
+	rootBackend, rootContext = "", ""
+	t.Cleanup(func() { rootBackend, rootContext = savedBackend, savedContext })
 	demo.Enable()
 	m := newTUIModel()
 	m.width, m.height = 140, 40

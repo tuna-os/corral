@@ -42,7 +42,8 @@ func decodeDeletes(t *testing.T, out string) []deleteResult {
 // the objects each delete removed.
 func TestDelete_SeveralNamesPrintOneJSONResultEach(t *testing.T) {
 	fake := kubevirtVMScratch(t, "web", kvEntry)
-	if err := registryStore.Set("db", kvEntry); err != nil {
+	listedKubevirtVMs(t, fake, types.VM{Name: "web", Namespace: kvEntry.Namespace}, types.VM{Name: "db", Namespace: kvEntry.Namespace})
+	if err := registryStore.SetRef(types.InstanceRef{Backend: "kubevirt", Namespace: kvEntry.Namespace, Name: "db"}, kvEntry); err != nil {
 		t.Fatal(err)
 	}
 	fake.AddResponse("kubectl delete vm web"+kvDelFlags, "virtualmachine.kubevirt.io/web\n", nil)
@@ -68,7 +69,7 @@ func TestDelete_SeveralNamesPrintOneJSONResultEach(t *testing.T) {
 		t.Errorf("db result = %+v", db)
 	}
 	for _, name := range []string{"web", "db"} {
-		if _, ok := registryStore.Get(name); ok {
+		if _, ok := registryStore.GetRef(types.InstanceRef{Backend: "kubevirt", Namespace: kvEntry.Namespace, Name: name}); ok {
 			t.Errorf("delete left %s in the registry", name)
 		}
 	}
@@ -81,7 +82,8 @@ func TestDelete_SeveralNamesPrintOneJSONResultEach(t *testing.T) {
 // names the error.
 func TestDelete_OneFailureReportsAndContinues(t *testing.T) {
 	fake := kubevirtVMScratch(t, "web", kvEntry)
-	if err := registryStore.Set("db", kvEntry); err != nil {
+	listedKubevirtVMs(t, fake, types.VM{Name: "web", Namespace: kvEntry.Namespace}, types.VM{Name: "db", Namespace: kvEntry.Namespace})
+	if err := registryStore.SetRef(types.InstanceRef{Backend: "kubevirt", Namespace: kvEntry.Namespace, Name: "db"}, kvEntry); err != nil {
 		t.Fatal(err)
 	}
 	fake.AddResponse("kubectl delete vm web"+kvDelFlags, "Error from server (Forbidden): nope", errors.New("exit status 1"))
@@ -100,7 +102,7 @@ func TestDelete_OneFailureReportsAndContinues(t *testing.T) {
 	if !results[1].Deleted {
 		t.Errorf("db result = %+v, want deleted", results[1])
 	}
-	if _, ok := registryStore.Get("web"); !ok {
+	if _, ok := registryStore.GetRef(types.InstanceRef{Backend: "kubevirt", Namespace: kvEntry.Namespace, Name: "web"}); !ok {
 		t.Error("a failed delete removed the registry entry")
 	}
 }
@@ -174,7 +176,8 @@ func TestDelete_RemovesLeftoversOfAnInterruptedCreate(t *testing.T) {
 // One prompt covers every name, and a "no" deletes nothing.
 func TestDelete_PromptCoversEveryNameAndNoDeletesNothing(t *testing.T) {
 	fake := kubevirtVMScratch(t, "web", kvEntry)
-	if err := registryStore.Set("db", kvEntry); err != nil {
+	listedKubevirtVMs(t, fake, types.VM{Name: "web", Namespace: kvEntry.Namespace}, types.VM{Name: "db", Namespace: kvEntry.Namespace})
+	if err := registryStore.SetRef(types.InstanceRef{Backend: "kubevirt", Namespace: kvEntry.Namespace, Name: "db"}, kvEntry); err != nil {
 		t.Fatal(err)
 	}
 	deleteFlags(t, false, time.Minute, false)

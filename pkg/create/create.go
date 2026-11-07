@@ -3,12 +3,16 @@ package create
 import (
 	"fmt"
 
+	backendapi "github.com/tuna-os/corral/pkg/backend"
 	"github.com/tuna-os/corral/pkg/config"
 	"github.com/tuna-os/corral/pkg/kubevirt"
 	"github.com/tuna-os/corral/pkg/types"
 )
 
 func (r request) execute(name string) error {
+	if err := r.validateGuestOptions("qemu"); err != nil {
+		return err
+	}
 	if len(r.Kargs) > 0 && r.Bootc == "" {
 		return fmt.Errorf("--karg needs --bootc: only a bootc install puts kernel arguments into the boot entry")
 	}
@@ -23,6 +27,9 @@ func (r request) execute(name string) error {
 	}
 
 	if r.Bootc != "" {
+		if err := r.validateGuestOptions("bootc"); err != nil {
+			return err
+		}
 		// Backend auto-selection: honor an explicit KubeVirt choice, otherwise
 		// use KubeVirt when a cluster is reachable and fall back to local
 		// QEMU. One command, right backend, no flag juggling.
@@ -56,6 +63,9 @@ func (r request) execute(name string) error {
 	if backend == "qemu" && !r.Incus && (r.Image != "" || r.Import != "" || r.ContainerDisk != "" || r.PVC != "") {
 		backend = "kubevirt"
 	}
+	if err := r.validateGuestOptions(backend); err != nil {
+		return err
+	}
 	switch backend {
 	case "kubevirt":
 		return r.runKubevirtCreate(name)
@@ -69,11 +79,13 @@ func (r request) execute(name string) error {
 	case "incus":
 		return r.runIncusCreate(name)
 	case "libvirt":
+		target := types.InstanceRef{Backend: "libvirt", Context: r.createContext(config.LibvirtURI), Namespace: "libvirt", Name: name}
+		backendapi.ActivateContext(target)
 		if err := r.LibvirtCreate(types.CreateOpts{Name: name, CPU: r.CPU, Mem: r.Mem, Disk: r.Disk, ISO: r.ISO, QCOW: r.QCOW}); err != nil {
 			return err
 		}
 		if r.Registry != nil {
-			return r.Registry.Set(name, types.RegistryEntry{Backend: "libvirt"})
+			return r.Registry.SetRef(target, types.RegistryEntry{})
 		}
 		return nil
 	case "qemu":
@@ -82,7 +94,32 @@ func (r request) execute(name string) error {
 		}
 		return r.maybeStartAndWait(name)
 	}
-	return r.runAdapterCreate(name, backend, r.createContext(backend))
+	return r.runAdapterCreate(name, backend, r.createContext(func() string {
+		if def := config.DefaultContext(); def.Backend == backend {
+			return def.Context
+		}
+		return ""
+	}))
+}
+
+// Guest selection is supported only by direct local QEMU create; never silently
+// drop it when another backend or the bootc builder chooses the guest.
+func (r request) validateGuestOptions(backend string) error {
+	if err := types.GuestArch(r.Arch).Validate(); err != nil {
+		return err
+	}
+	switch r.Firmware {
+	case "", "uefi", "bios":
+	default:
+		return fmt.Errorf("unsupported firmware %q: use uefi or bios", r.Firmware)
+	}
+	if r.Arch != "" && backend != "qemu" {
+		return fmt.Errorf("--arch is not supported on backend %s; use local QEMU create with a prepared disk or ISO", backend)
+	}
+	if r.Loopback && backend != "qemu" {
+		return fmt.Errorf("--loopback is supported only on local QEMU create")
+	}
+	return nil
 }
 
 // An explicit choice bypasses reachability detection, including an explicit

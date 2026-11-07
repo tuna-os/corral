@@ -13,8 +13,11 @@ import (
 	"testing"
 
 	"github.com/tuna-os/corral/pkg/config"
+	"github.com/tuna-os/corral/pkg/fleet"
 	"github.com/tuna-os/corral/pkg/kubevirt"
+	"github.com/tuna-os/corral/pkg/qemu"
 	"github.com/tuna-os/corral/pkg/registry"
+	"github.com/tuna-os/corral/pkg/types"
 )
 
 // forceKubevirt makes config.Contexts() offer a kubevirt target for the
@@ -857,14 +860,39 @@ func TestHandleCreateDelete_RegistryRoundtrip(t *testing.T) {
 		`{"items":[{"metadata":{"name":"longhorn"}}]}`, nil)
 	fx.Runner.AddResponseKV("kubectl", []string{"apply", "-f", "-"}, "created", nil)
 
-	body := strings.NewReader(`{"name":"web","containerDisk":"quay.io/containerdisks/fedora:42"}`)
+	body := strings.NewReader(`{"name":"web","namespace":"tailvm","containerDisk":"quay.io/containerdisks/fedora:42"}`)
 	resp, err := http.Post(fx.Server.URL+"/api/vms", "application/json", body)
 	if err != nil {
+		t.Fatal(err)
+	}
+	var created map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
 	if resp.StatusCode != 201 {
 		t.Fatalf("create: expected 201, got %d", resp.StatusCode)
+	}
+	if created["name"] != "web" || created["namespace"] != "tailvm" {
+		t.Fatalf("actual create returned a different target: %+v", created)
+	}
+	ref := types.InstanceRef{Backend: "kubevirt", Context: config.KubeContext(), Namespace: "tailvm", Name: "web"}
+	if entry, ok := store.GetRef(ref); !ok || entry.Namespace != ref.Namespace {
+		t.Fatalf("actual create did not persist scoped registry data: %+v (found %v)", entry, ok)
+	}
+	foreign := []types.InstanceRef{
+		{Backend: "kubevirt", Context: ref.Context + "-other", Namespace: ref.Namespace, Name: ref.Name},
+		{Backend: "kubevirt", Context: ref.Context, Namespace: "other-namespace", Name: ref.Name},
+		{Backend: "qemu", Namespace: "local", Name: ref.Name},
+		{Backend: "kubevirt", Context: ref.Context, Namespace: ref.Namespace, Name: ref.Name, Peer: "remote-other"},
+	}
+	for _, target := range foreign {
+		if err := store.SetRef(target, types.RegistryEntry{Password: "preserved"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.Set(ref.Name, types.RegistryEntry{Backend: "kubevirt", Namespace: ref.Namespace, Password: "legacy-retained"}); err != nil {
+		t.Fatal(err)
 	}
 
 	// Now delete — should remove from registry
@@ -883,18 +911,16 @@ func TestHandleCreateDelete_RegistryRoundtrip(t *testing.T) {
 		t.Fatalf("delete: expected 200, got %d", resp.StatusCode)
 	}
 
-	// Verify registry was cleaned — try deleting again, should still succeed
-
-	req, _ = http.NewRequest("DELETE", fx.Server.URL+"/api/vms/tailvm/web", nil)
-	resp, err = http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
+	if entry, ok := store.GetRef(ref); ok {
+		t.Fatalf("actual HTTP delete retained its scoped credentials: %+v", entry)
 	}
-	resp.Body.Close()
-
-	// Second delete should also succeed (idempotent)
-	if resp.StatusCode != 200 {
-		t.Errorf("idempotent delete: expected 200, got %d", resp.StatusCode)
+	for _, target := range foreign {
+		if entry, ok := store.GetRef(target); !ok || entry.Password != "preserved" {
+			t.Fatalf("HTTP delete removed another target's credentials %s: %+v (found %v)", target.String(), entry, ok)
+		}
+	}
+	if entry, ok := store.Get(ref.Name); !ok || entry.Password != "legacy-retained" {
+		t.Fatalf("HTTP delete guessed ownership of unbound legacy data: %+v (found %v)", entry, ok)
 	}
 }
 
@@ -1131,5 +1157,60 @@ func TestReadyz_UnwritableStore(t *testing.T) {
 	}
 	if res["status"] != "not_ready" {
 		t.Errorf("status = %v, want not_ready", res["status"])
+	}
+}
+
+func TestLocalWebRetirement_UsesInventoryScope(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("KUBECONFIG", "")
+	t.Setenv("CORRAL_KUBE_CONTEXT", "")
+	t.Setenv("CORRAL_INCUS_REMOTE", "")
+	t.Setenv("CORRAL_LIBVIRT_URI", "")
+	t.Setenv("CORRAL_BACKEND", "qemu")
+	t.Setenv("CORRAL_ADMINS", "")
+	t.Setenv("CORRAL_AUTH_REQUIRED", "")
+	owned, err := os.MkdirTemp(home, "owned-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := filepath.Base(owned)
+	fx := NewTestFixture()
+	defer fx.Close()
+	if err := qemu.RecordCreating(name, types.CreateOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	result := fleet.List(context.Background())
+	inventory := result.VMs
+	if len(result.Errors) != 0 || len(inventory) != 1 || inventory[0].Name != name {
+		t.Fatalf("actual recorded local inventory: %+v, %+v", inventory, result.Errors)
+	}
+	vm := inventory[0]
+	ref := types.InstanceRef{Backend: vm.Backend, Context: vm.Context, Namespace: vm.Namespace, Name: vm.Name, Peer: vm.Peer}
+	if err := store.SetRef(ref, types.RegistryEntry{Password: "owned"}); err != nil {
+		t.Fatal(err)
+	}
+	foreign := types.InstanceRef{Backend: "libvirt", Context: "qemu:///system", Namespace: "libvirt", Name: name}
+	if err := store.SetRef(foreign, types.RegistryEntry{Password: "preserved"}); err != nil {
+		t.Fatal(err)
+	}
+	response := mustDelete(t, fx.Server.URL+"/api/vms/local/"+name)
+	defer func() {
+		if err := response.Body.Close(); err != nil {
+			t.Errorf("close actual HTTP response: %v", err)
+		}
+	}()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("actual local HTTP deletion: HTTP %d", response.StatusCode)
+	}
+	if _, err := os.Stat(filepath.Join(qemu.VMHome(), name)); !os.IsNotExist(err) {
+		t.Fatalf("owned local metadata was not deleted: %v", err)
+	}
+	if entry, ok := store.GetRef(ref); ok {
+		t.Fatalf("actual local HTTP deletion retained inventory-scoped credentials: %+v", entry)
+	}
+	if entry, ok := store.GetRef(foreign); !ok || entry.Password != "preserved" {
+		t.Fatalf("local HTTP deletion removed another backend's credentials: %+v (found %v)", entry, ok)
 	}
 }

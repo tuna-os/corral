@@ -97,9 +97,12 @@ func (t actionTarget) run(action string) (notice, kind string) {
 	switch action {
 	case "start", "stop", "restart", "delete", "pause", "unpause", "migrate":
 		notice, kind = backendAction(t.vm, action)
-		if action == "delete" && registryStore != nil {
-			if err := registryStore.RemoveRef(t.vm.Ref()); err != nil && kind == "ok" {
+		if action == "delete" && kind == "ok" && registryStore != nil {
+			if err := registryStore.RemoveRef(t.vm.Ref()); err != nil {
 				return notice + " (registry entry kept: " + err.Error() + ")", "warn"
+			}
+			if entry, ok := registryStore.Get(t.vm.Name); ok && entry.Backend == t.vm.Backend && entry.Peer == t.vm.Peer && entry.Context == "" {
+				return notice + " (legacy credentials retained: target context unknown)", "warn"
 			}
 		}
 		return notice, kind

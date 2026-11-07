@@ -119,3 +119,54 @@ func TestLimaRequestDoesNotLeak(t *testing.T) {
 		t.Fatalf("previous request leaked: %v", err)
 	}
 }
+
+func TestCreateContextUsesBackendDefaultsAndExplicitTargets(t *testing.T) {
+	for _, tc := range []struct {
+		backend string
+		env     string
+		read    func() string
+	}{
+		{"kubevirt", "CORRAL_KUBE_CONTEXT", config.KubeContext},
+		{"incus", "CORRAL_INCUS_REMOTE", config.IncusRemote},
+		{"libvirt", "CORRAL_LIBVIRT_URI", config.LibvirtURI},
+	} {
+		t.Run(tc.backend, func(t *testing.T) {
+			isolateConfig(t)
+			target := config.ContextConfig{Name: "selected-alias", Backend: tc.backend, Context: "selected-target"}
+			if err := config.AddContext(target); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("CORRAL_KUBE_CONTEXT", "")
+			t.Setenv("CORRAL_INCUS_REMOTE", "")
+			t.Setenv("CORRAL_LIBVIRT_URI", "")
+			t.Setenv("KUBECONFIG", filepath.Join(t.TempDir(), "absent"))
+			if err := config.SetDefaultContext(target.Name); err != nil {
+				t.Fatal(err)
+			}
+			r := request{}
+			if got := r.createContext(tc.read); got != target.Context {
+				t.Fatalf("selected backend default = %q, want %q", got, target.Context)
+			}
+			t.Setenv(tc.env, "environment-target")
+			if got := r.createContext(tc.read); got != "environment-target" {
+				t.Fatalf("environment backend default = %q, want environment-target", got)
+			}
+			for _, explicit := range []string{target.Name, "raw-target", "local"} {
+				r.Context = explicit
+				want := explicit
+				if explicit == target.Name {
+					want = target.Context
+				} else if explicit == "local" {
+					want = ""
+				}
+				got := r.createContext(func() string {
+					t.Fatal("explicit context evaluated the backend default")
+					return ""
+				})
+				if got != want {
+					t.Fatalf("explicit context %q = %q, want %q", explicit, got, want)
+				}
+			}
+		})
+	}
+}

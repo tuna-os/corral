@@ -44,6 +44,8 @@ type Options struct {
 	BridgeIface       string
 	LANService        bool
 	Firmware          string
+	Arch              string
+	Loopback          bool
 	Vsock             bool
 	VsockCID          uint32
 	TPM               bool
@@ -54,7 +56,7 @@ type Options struct {
 
 // Registry persists creation metadata.
 type Registry interface {
-	Set(string, types.RegistryEntry) error
+	SetRef(types.InstanceRef, types.RegistryEntry) error
 }
 
 // Service supplies backend operations. NewService installs production defaults;
@@ -81,7 +83,9 @@ func NewService(resolve func(string) string, registry Registry) *Service {
 		Reachable: kubevirt.Reachable, BackendFor: backend.For,
 		QEMUStart: qemu.Start, QEMUWaitSSH: qemu.WaitSSH,
 		QEMUCreate: qemu.Create, KubevirtCreate: kubevirt.CreateVM,
-		IncusCreate: incus.Create, LibvirtCreate: libvirt.NewClient("").Create,
+		IncusCreate: incus.Create, LibvirtCreate: func(opts types.CreateOpts) error {
+			return libvirt.NewClient("").Create(opts)
+		},
 	}
 }
 

@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/tuna-os/corral/pkg/catalog"
+	"github.com/tuna-os/corral/pkg/config"
 	"github.com/tuna-os/corral/pkg/doctor"
 	"github.com/tuna-os/corral/pkg/kubevirt"
 	"github.com/tuna-os/corral/pkg/plugin"
@@ -280,10 +282,19 @@ func snapshotRef(r *http.Request) types.InstanceRef {
 	case localNS:
 		return types.InstanceRef{Backend: "qemu", Name: name}
 	case "incus":
+		if context == "" {
+			context = config.IncusRemote()
+		}
 		return types.InstanceRef{Backend: "incus", Context: context, Name: name}
 	case "libvirt":
+		if context == "" {
+			context = config.LibvirtURI()
+		}
 		return types.InstanceRef{Backend: "libvirt", Context: context, Name: name}
 	default:
+		if context == "" {
+			context = config.KubeContext()
+		}
 		return types.InstanceRef{Backend: "kubevirt", Context: context, Namespace: ns, Name: name}
 	}
 }
@@ -391,15 +402,22 @@ func handleClone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	done := taskBegin(requestUser(r), "clone", ns+"/"+name+" → "+b.Target)
-	if err := kubeClient(r, ns).Clone(name, b.Target); err != nil {
+	client := kubeClient(r, ns)
+	if err := client.Clone(name, b.Target); err != nil {
 		done(err)
 		errResp(w, http.StatusInternalServerError, err)
 		return
 	}
-	done(nil)
 	if store != nil {
-		store.Set(b.Target, types.RegistryEntry{Backend: "kubevirt", Namespace: ns})
+		ref := types.InstanceRef{Backend: "kubevirt", Context: client.Context, Namespace: ns, Name: b.Target}
+		if err := store.SetRef(ref, types.RegistryEntry{Backend: "kubevirt", Namespace: ns}); err != nil {
+			err = fmt.Errorf("VM %q was cloned but its registry data could not be saved: %w", b.Target, err)
+			done(err)
+			errResp(w, http.StatusInternalServerError, err)
+			return
+		}
 	}
+	done(nil)
 	jsonResp(w, http.StatusOK, map[string]string{"target": b.Target})
 }
 
@@ -503,6 +521,18 @@ func handleAddNIC(w http.ResponseWriter, r *http.Request) {
 // build log, like the initial bootc create.
 func handleBootcRebuild(w http.ResponseWriter, r *http.Request) {
 	ns, name := r.PathValue("ns"), r.PathValue("name")
+	// The legacy rebuild orchestrator's clients and streaming commands use the
+	// server's default cluster. A package-runner scope cannot retarget them all.
+	context := config.KubeContext()
+	query, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil || len(query["context"]) > 1 {
+		errResp(w, http.StatusBadRequest, fmt.Errorf("bootc rebuild requires a valid single context selector"))
+		return
+	}
+	if requested := query.Get("context"); requested != "" && requested != context {
+		errResp(w, http.StatusBadRequest, fmt.Errorf("bootc rebuild does not support a non-default context; no rebuild operation was started"))
+		return
+	}
 	if !kubevirt.BootcAvailable() {
 		errResp(w, http.StatusBadRequest,
 			fmt.Errorf("bootc support is not enabled on this server (optional plugin)"))
@@ -532,7 +562,10 @@ func handleBootcRebuild(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		err := kubevirt.BootcRebuild(name, ns, image, sshKey, "", "", task)
 		if err == nil && store != nil {
-			store.Set(name, types.RegistryEntry{Backend: "kubevirt", Namespace: ns})
+			ref := types.InstanceRef{Backend: "kubevirt", Context: context, Namespace: ns, Name: name}
+			if saveErr := store.SetRef(ref, types.RegistryEntry{Backend: "kubevirt", Namespace: ns}); saveErr != nil {
+				err = fmt.Errorf("VM %q was rebuilt but its registry data could not be saved: %w", name, saveErr)
+			}
 		}
 		task.finish(err)
 		done(err)
