@@ -5,18 +5,18 @@ name: Screenshots
 # scripts/capture-docs.mjs drives the real `--demo` fleet in headless Chromium
 # and tmux, so the captures need no cluster and no KVM. This workflow runs it
 # whenever the web UI, the TUI or the demo fleet changes, and weekly as a
-# backstop, then proposes the new images as pull requests:
+# backstop, then prepares the new images for review:
 #
-# - here, into docs/screenshots/generated/ (the README and user guide);
+# - here, a patch for a maintainer PR into docs/screenshots/generated/;
 # - in tuna-os/docs, into static/img/screenshots/corral/ (tunaos.org/corral).
 #   That repo's sync copies Markdown, not images, so without this the landing
 #   page keeps whatever was last copied by hand. The step needs a token that
 #   can push to tuna-os/docs: set the repository secret TUNAOS_DOCS_TOKEN to
 #   enable it. With none set the job says so and stops.
 #
-# Both PRs reuse one fixed branch, so a busy week updates one PR instead of
-# opening several. On pull_request the captures only run and upload, which
-# checks that the script still works against the changed UI.
+# The Corral handoff never pushes, creates or approves a PR: maintainers
+# review the patch and open the PR themselves (#634). The optional site PR
+# reuses a fixed branch. On pull_request only capture and upload run.
 
 on:
   push:
@@ -82,34 +82,64 @@ jobs:
           path: ${{ runner.temp }}/screenshots/
           if-no-files-found: error
 
-  corral-pr:
+  corral-handoff:
     needs: capture
     if: github.event_name != 'pull_request' && github.repository == 'tuna-os/corral'
     runs-on: ubuntu-26.04
-    permissions:
-      contents: write
-      pull-requests: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: screenshots
           path: docs/screenshots/generated
 
-      - name: Open or update the screenshots PR
-        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8
+      - name: Prepare the maintainer patch
+        id: patch
+        run: |
+          git add -- docs/screenshots/generated/*.png
+          if git diff --cached --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No Corral screenshot changes." >> "$GITHUB_STEP_SUMMARY"
+          else
+            git diff --cached --binary -- docs/screenshots/generated/ > "$RUNNER_TEMP/screenshots.patch"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload the maintainer patch
+        if: steps.patch.outputs.changed == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          commit-message: "docs: refresh generated screenshots"
-          title: "docs: refresh generated screenshots"
-          body: |
-            Automated capture of the `--demo` fleet by
-            `scripts/capture-docs.mjs` (see `.github/workflows/screenshots.yml`).
-            Check the images before merging.
-          branch: automation/screenshots
-          delete-branch: true
-          add-paths: docs/screenshots/generated/*.png
-          labels: documentation
+          name: corral-screenshot-patch
+          path: ${{ runner.temp }}/screenshots.patch
+          if-no-files-found: error
+
+      - name: Request a maintainer PR
+        if: steps.patch.outputs.changed == 'true'
+        env:
+          RUN_ID: ${{ github.run_id }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          echo "::notice::Screenshot changes captured; no PR was created. A maintainer must download corral-screenshot-patch, review it, and open a PR (see the job summary). Do not enable Actions self-approval."
+          {
+            echo '### Maintainer action required — no PR created'
+            echo "Screenshots captured from \`$SOURCE_SHA\`. Download the patch into a temporary directory:"
+            echo '```sh'
+            echo "gh run download $RUN_ID --repo tuna-os/corral --name corral-screenshot-patch --dir /tmp/corral-screenshot-$RUN_ID"
+            echo '```'
+            echo 'In a clean Corral checkout, create a branch from current main and review/apply the patch:'
+            echo '```sh'
+            echo 'git fetch origin main'
+            echo "git switch -c docs/screenshots-$RUN_ID origin/main"
+            echo "git apply --check /tmp/corral-screenshot-$RUN_ID/screenshots.patch"
+            echo "git apply --index /tmp/corral-screenshot-$RUN_ID/screenshots.patch"
+            echo 'git diff --cached --stat'
+            echo '```'
+            echo 'Inspect every changed image. If the patch no longer applies, rerun capture against current main rather than forcing it.'
+            echo "Commit and push only the reviewed screenshot changes, then open a PR with \`gh pr create --base main\`. Human review and all required checks still apply; this workflow neither approves nor merges."
+          } >> "$GITHUB_STEP_SUMMARY"
 
   site-pr:
     needs: capture
