@@ -1,6 +1,6 @@
 # Corral Roadmap
 
-**Last updated**: 2026-10-15 | **Maintainer**: tuna-os (hanthor) / architect agent
+**Last updated**: 2026-10-19 | **Maintainer**: tuna-os (hanthor) / strategist agent
 
 ---
 
@@ -17,7 +17,7 @@ images on a KubeVirt cluster (`scripts/boot-gate.sh` in tunaOS).
 
 ---
 
-## Current Status (2026-10-16)
+## Current Status (2026-10-19)
 
 - Corral is a Go rewrite of the legacy Python `tailvm`. On-disk names keep
   the `tailvm-` prefix during the transition ([SPEC.md](SPEC.md)).
@@ -33,7 +33,8 @@ images on a KubeVirt cluster (`scripts/boot-gate.sh` in tunaOS).
 
 | Priority | Item | Tracking | Status |
 |----------|------|----------|--------|
-| P0 | Launch: Show HN and announcements (drafts in `docs/blog/`) | #423, #424, #425, #426 | 🟡 Drafts merged (#611); a person must post them |
+| P0 | Launch: Show HN and announcements (drafts in `docs/blog/`) | #423, #424, #425, #426 | 🟡 Drafts merged (#611); awaiting maintainer decision + timing |
+| P1 | Architecture tech-debt refactoring | #602, #603, #604, #605, #607, #614 | 🟡 Findings filed; split & decoupling underway |
 | P3 | Dependency hygiene | #97 | 🟢 Ongoing (Renovate) |
 
 ---
@@ -48,12 +49,12 @@ launch item has a draft in `docs/blog/` and a `ready-for-human` label.
 The git history is clean (#264), v0.7.0 is public (#339), and tunaOS uses
 the gate (#431).
 
-| Item | Issue | Depends on |
-|------|-------|------------|
-| Show HN | #423 | — |
-| bootc case study | #426 | — |
-| VDI launch announcement | #425 | — |
-| KubeVirt ecosystem positioning | #424 | — |
+| Item | Issue | Depends on | Status / Checkpoint |
+|------|-------|------------|---------------------|
+| Show HN | #423 | — | 🟡 Ready; awaiting maintainer approval + timing |
+| bootc case study | #426 | — | 🟡 Ready; awaiting maintainer approval |
+| VDI launch announcement | #425 | — | 🟡 Ready; awaiting maintainer approval |
+| KubeVirt ecosystem positioning | #424 | — | 🟡 Ready; awaiting maintainer approval |
 
 ### Open after Phase 3
 
@@ -117,9 +118,14 @@ the gate (#431).
 ---
 
 ## Technical Debt Backlog
-
+ 
 | Item | Issue | Priority | Effort |
 |------|-------|----------|--------|
+| VM test harness package split (image build, layer composition, boot orchestration) | #604, #607 | P1 | L |
+| HTTP handler refactor away from package-global state | #614 | P1 | M |
+| `cmd/create.go` decoupling (Lima parsing, bootc, backend provisioning) | #602 | P2 | M |
+| TUI Update loop state machine & dispatch decoupling | #603 | P2 | M |
+| Web client `app.js` poll loop decoupling (state refresh, view routing, lifecycle) | #605 | P2 | S |
 | `pkg/proxmox` (compat server) vs `pkg/proxmoxbe` (client) naming confusion | CONTEXT.md | P2 | S |
 | Legacy `tailvm` prefix migration completion | SPEC.md | P2 | M |
 
