@@ -98,7 +98,7 @@ jobs:
           path: docs/screenshots/generated
 
       - name: Open or update the screenshots PR
-        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8
+        uses: peter-evans/create-pull-request@15733dbdfeedb4f7fdb73d13c6f5ac83b710fab8 # v8
         with:
           commit-message: "docs: refresh generated screenshots"
           title: "docs: refresh generated screenshots"
@@ -142,7 +142,7 @@ jobs:
 
       - name: Open or update the tunaos.org screenshots PR
         if: steps.token.outputs.configured == 'true'
-        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8
+        uses: peter-evans/create-pull-request@15733dbdfeedb4f7fdb73d13c6f5ac83b710fab8 # v8
         with:
           token: ${{ secrets.TUNAOS_DOCS_TOKEN }}
           commit-message: "chore: refresh Corral screenshots"
