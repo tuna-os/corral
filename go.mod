@@ -23,7 +23,7 @@ require (
 	github.com/vmware/govmomi v0.56.2
 	golang.org/x/crypto v0.58.0 // GO-2026-5932: openpgp subpackage is unmaintained/unfixable; this repo only uses x/crypto/bcrypt (cmd/corral-auth), openpgp is not imported — see #193
 	golang.org/x/net v0.62.0
-	golang.org/x/oauth2 v0.37.0
+	golang.org/x/oauth2 v0.38.0
 	golang.org/x/term v0.48.0
 	gopkg.in/yaml.v3 v3.0.1
 )
