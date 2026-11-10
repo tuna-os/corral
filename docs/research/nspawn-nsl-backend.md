@@ -1,10 +1,10 @@
 # nspawn / NSL local backend evaluation
 
 **Decision: no-go for a Corral backend or lifecycle prototype now.** Revisit
-with a separate, opt-in NSL experiment after the capability and identity gaps
-below are addressed and tested. This is a source evaluation, not evidence of a
-working integration. No runtime registration, probe, dependency, privilege
-policy, or behavior on hosts without these tools is changed by this decision.
+with a separate, opt-in NSL experiment. First, address and test the capability
+and identity gaps below. This is a source evaluation, not evidence of an
+integration that works. This decision does not change any runtime registration,
+probe, dependency, privilege policy, or behavior on hosts without these tools.
 
 ## Comparison
 
@@ -16,102 +16,108 @@ policy, or behavior on hosts without these tools is changed by this decision.
 | Enter | `machinectl shell USER@NAME` opens a privileged machine session; it is not SSH. | `nsl -m NAME` opens a login shell; `nsl run -m NAME ...` executes as the configured guest user by default. Both can start the machine and VM. |
 | Costs / coupling | No extra VM, but Corral must establish safe ownership and manage host authorization, image lifecycle, service settings and stopped-machine discovery. | Existing named ownership and structured list are a better fit for a future experiment, but add a pre-release external CLI, systemd-vmspawn/QEMU/KVM and its versioned host/VM protocol. NSL is not an Intune service. |
 
-The two are different backends, not interchangeable implementations selected
-implicitly by `$PATH`. NSL's current requirements include an x86-64 Linux
+The two are different backends. They are not interchangeable implementations
+for `$PATH` to select implicitly. NSL's current requirements include an x86-64 Linux
 host, KVM, systemd-vmspawn 259+, QEMU/UEFI and virtiofsd. Direct nspawn
 support must not treat NSL's container names as host machinectl names.
 
 ## Why no-go
 
 1. Corral's [`Power`](../../pkg/backend/ops.go) bundles start, stop and
-   **delete**. Implementing it for a list/enter/start/stop-only prototype
-   would advertise delete in the matrix, or require a dishonest stub. Calling
-   NSL remove to satisfy the interface would exceed the issue's scope and
+   **delete**. To support it, a list/enter/start/stop-only prototype would
+   advertise delete in the matrix, or need a dishonest stub. A call to NSL
+   remove to satisfy the interface would exceed the issue's scope and
    permanently delete the machine's data. Split the capability and audit its
-   callers before implementing a non-destructive subset.
+   callers before you add a non-destructive subset.
 2. `InstanceRef` identifies peer/backend/context/namespace/name, not a stable
-   machine generation. NSL verifies the record ID during operations, but its
-   public list JSON at the inspected revision does not expose that ID; selecting
-   a name and later invoking the CLI cannot detect a replacement between the
-   selection and the call. Direct machinectl has no Corral ownership boundary
-   at all. An explicit selection alone must not become permission to operate
-   on an unrelated or replaced machine.
+   machine generation. NSL verifies the record ID during operations. But at
+   the inspected revision, its public list JSON does not expose that ID. If
+   Corral selects a name and later calls the CLI, it cannot detect a
+   replacement between those two steps. Direct machinectl has no
+   Corral ownership boundary at all. An explicit selection alone must not
+   become permission to operate on an unrelated or replaced machine.
 3. A CLI shell is not automatically a web TTY. `pkg/web/console.go` routes by
-   namespace and otherwise falls back to KubeVirt/CT paths; unsupported direct
-   requests must fail closed rather than reach a same-named guest elsewhere.
-   The SSH options include identity, password, forwarding and vsock, which are
-   not equivalent to either shell. Do not advertise SSH or web TTY until their
-   contracts and callers are explicitly handled.
-4. Neither path has been exercised on a representative host here. A successful
-   source review cannot establish authorization, teardown, state reporting or
-   session behavior. Incus already provides an integrated container option;
-   there is no reason to weaken the boundary merely to register another one.
+   namespace and otherwise falls back to KubeVirt/CT paths. Unsupported direct
+   requests must fail closed and not reach a same-named guest elsewhere.
+   The SSH options include identity, password, forwards and vsock, which are
+   not equivalent to either shell. Do not advertise SSH or web TTY until Corral
+   explicitly handles their contracts and callers.
+4. This review did not exercise either path on a representative host. Even a
+   successful review of the source cannot establish the behavior of
+   authorization, teardown, state reports or sessions. Incus already provides
+   an integrated container option; there is no reason to weaken the boundary
+   merely to register another one.
 
 ## Scope and security for a future experiment
 
-An eventual backend must be explicitly configured, never discovered or started
-implicitly. Inventory must work while machines are stopped; list must not boot
-anything. Carry a distinct backend and local context through fleet, canonical
-selectors, CLI, TUI, web and peer operations. Reject ambiguous names; do not
-fall back to another backend. An ownership mechanism must bind the selected
-instance to the operation at the authoritative boundary, including replacement
-and concurrent operations; rechecking an untrusted name immediately before a
-command does not eliminate the race. Reject unknown, replaced, and foreign
-machines without side effects. NSL's current CLI would need a supported way to
-bind a mutation to a selected ID before it can meet that requirement.
+The operator must configure an eventual backend explicitly; Corral must never
+discover or start it implicitly. Inventory must work for stopped machines; list
+must not boot anything. Carry a distinct backend and local context through
+fleet, canonical selectors, CLI, TUI, web and peer operations. Reject ambiguous
+names; do not fall back to another backend.
+
+An ownership mechanism must bind the selected instance to the operation at the
+authoritative boundary. This must also cover replacement and concurrent
+operations. A recheck of an untrusted name immediately before a command does
+not eliminate the race. Reject unknown, replaced, and foreign machines without
+side effects. NSL's current CLI would need a supported way to bind a mutation
+to a selected ID before it can meet that requirement.
 
 Host machinectl actions go through systemd/machined authorization, often
 root or polkit. Do not install broad sudo or polkit grants; verify noninteractive
 and interactive failures explicitly. `machinectl shell` confers the selected
-container user's authority and must not be exposed via the web service's host
+container user's authority. The web service must not expose it via its host
 identity without a separate authorization design. Containers share a kernel;
-do not claim VM isolation or use them for untrusted tenants. Explicit user
-namespace and host resource policies are needed for direct nspawn. NSL's
-shared tier gives the guest access to host files as the user; its isolated tier
-uses a separate VM. NSL's agent config uses `PrivateUsers=no` **inside that
-VM**, which is not a safe default to transplant to a host container.
-Intuneme's device, host socket, X11 and session-bus integration is for its own
-use case; do not carry it over as a generic default.
+do not claim VM isolation or use them for untrusted tenants. Direct nspawn
+needs explicit user namespace and host resource policies.
+
+NSL's shared tier gives the guest access to host files as the user; its
+isolated tier uses a separate VM. NSL's agent config uses `PrivateUsers=no`
+**inside that VM**, which is not a safe default to transplant to a host
+container. Intuneme's device, host socket, X11 and session-bus integration is
+for its own use case; do not carry it over as a generic default.
 
 Until implemented and verified, Corral advertises no nspawn/NSL capabilities.
 A future narrow adapter must explicitly reject firmware/UEFI, snapshots,
-disk migration/export, VNC and other unsupported VM operations rather than
-routing them to QEMU or KubeVirt. Do not claim create, delete, web console or
+disk migration/export, VNC and other unsupported VM operations. It must not
+route them to QEMU or KubeVirt. Do not claim create, delete, web console or
 SSH merely because the external tool has a related command. Enforce this at
 server/CLI dispatch as well as in displayed capability flags.
 
 ## Exit criteria and verification
 
-Before changing the decision, a follow-up should:
+Before the decision changes, a follow-up should:
 
-- Separate start/stop from deletion in the operation family and update all
-  callers, capability derivation, matrix and conformance tests without changing
+- Separate start/stop from deletion in the operation family. Update all
+  callers, capability derivation, matrix and conformance tests; do not change
   existing backends. Establish an authoritative, generation-bound selection
-  mechanism; specify failure behavior if the selected machine is replaced.
-- Pin and version-check the chosen NSL CLI contract; verify machine and VM
+  mechanism. Specify the failure behavior if another machine replaces the
+  selected one.
+- Pin and version-check the NSL CLI contract that you choose; verify machine and VM
   status errors are distinguishable from stopped. Bound subprocess duration,
   pass arguments without a shell, propagate errors, and never use a default
   machine implicitly. Keep executable discovery and registration opt-in.
-- Test missing executables and denied authorization, no-start inventory,
-  name collisions across contexts/backends, replacement races, foreign names,
-  failed start/stop, timeout, and every unsupported operation through each
-  exposed surface. Run the complete `pkg/backend`, `pkg/fleet`, `pkg/types`,
+- Test missing executables and denied authorization, no-start inventory, and
+  name collisions across contexts/backends. Also test replacement races,
+  foreign names, failed start/stop, timeout, and every unsupported operation
+  through each exposed surface. Run the complete `pkg/backend`, `pkg/fleet`, `pkg/types`,
   `pkg/lifecycle`, `pkg/snapshot`, `pkg/export`, `pkg/move`, `pkg/web`, and
   `cmd` test modules in both build tag sets, plus the repository's `just ci`.
-- On a disposable, appropriately authorized Linux host, create two explicitly
-  named disposable machines (one selected, one unrelated). Record their
-  identities and stopped states; list without starting; start and enter only
-  the selected one; stop and wait for teardown; verify the unrelated one is
-  unchanged. Exercise denied and stale/replaced selections and verify they
-  cause no side effects. Remove only the disposable test resources using the
-  tool's own documented cleanup, after recording results. Repeat on a host
-  without the optional tools and confirm unchanged Corral behavior. Record
-  versions, configuration, commands and outcomes; do not substitute mocks for
-  this integration run.
+- On a disposable Linux host with appropriate authorization, create two
+  disposable machines with explicit names (one selected, one unrelated).
+  Record their identities and stopped states. List them; do not start either
+  one. Start and enter only the selected one. Stop it and wait for teardown.
+  Verify that the unrelated one stays unchanged. Exercise denied and
+  stale/replaced selections and verify they cause no side effects. After you
+  record the results, remove only the disposable test resources with the
+  cleanup that the tool documents. Repeat on a host without the optional tools
+  and confirm that Corral behavior does not change. Record versions,
+  configuration, commands and outcomes; do not substitute mocks for this
+  integration run.
 
 This environment has neither `machinectl`, `systemd-nspawn`, `systemctl`,
-Podman nor `/dev/kvm`; the disposable lifecycle was **not run**. No lifecycle
-prototype is proposed or claimed by this record. The full modules listed above
+Podman nor `/dev/kvm`; the disposable lifecycle was **not run**. This record
+does not propose or claim a lifecycle prototype. The full modules listed above
 passed with both plain and `bootc` tags. `just ci` passed format, vet and build
 for both tag sets, then stopped at race tests: CGO is disabled and no C
 compiler is installed. The lint stage did not run; `golangci-lint` is also
@@ -124,8 +130,8 @@ absent. These checks do not replace a real-host integration run.
   [`pkg/fleet/fleet.go`](../../pkg/fleet/fleet.go),
   [`pkg/types/types.go`](../../pkg/types/types.go), and
   [`pkg/web/console.go`](../../pkg/web/console.go). Searches covered lifecycle,
-  inventory, console, snapshot/export and move callers; no existing nspawn or
-  NSL integration was found outside vendored assets.
+  inventory, console, snapshot/export and move callers. They found no existing
+  nspawn or NSL integration outside vendored assets.
 - NSL at [`b78a782`](https://github.com/frostyard/nsl/tree/b78a782f7f56eb1717afac16fa69d05a58cfd60e):
   [`machines.go`](https://github.com/frostyard/nsl/blob/b78a782f7f56eb1717afac16fa69d05a58cfd60e/machines.go),
   [`storage.go`](https://github.com/frostyard/nsl/blob/b78a782f7f56eb1717afac16fa69d05a58cfd60e/storage.go),
@@ -135,5 +141,5 @@ absent. These checks do not replace a real-host integration run.
   boot arguments, shell and stop/wait behavior.
 - systemd manuals: [machinectl](https://www.freedesktop.org/software/systemd/man/latest/machinectl.html)
   and [systemd-nspawn](https://www.freedesktop.org/software/systemd/man/latest/systemd-nspawn.html).
-- Both inspected roots have MIT licenses. No source was copied; future copying
-  must retain the applicable copyright and license notices.
+- Both inspected roots have MIT licenses. This change copies no source; a
+  future copy must retain the applicable copyright and license notices.
