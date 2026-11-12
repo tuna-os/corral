@@ -48,9 +48,11 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+      - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
 
@@ -77,9 +79,11 @@ jobs:
     env:
       IMAGE: ${{ inputs.image || 'quay.io/fedora/fedora-bootc:41' }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+      - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
 
@@ -135,8 +139,10 @@ jobs:
             --check 'bootc status --format json' \
             --artifacts vmtest-out \
             --video \
-            --timeout ${{ steps.kvm.outputs.boot-timeout }} \
+            --timeout "$STEPS_KVM_OUTPUTS_BOOT_TIMEOUT" \
             --rm
+        env:
+          STEPS_KVM_OUTPUTS_BOOT_TIMEOUT: ${{ steps.kvm.outputs.boot-timeout }}
 
       # The run was root, so the artifacts are root-owned and the upload step
       # (which is not) cannot read them.
@@ -148,7 +154,7 @@ jobs:
       # the frames are what turn "it did not boot" into a cause.
       - name: Upload the evidence
         if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: vmtest-evidence
           path: vmtest-out/
