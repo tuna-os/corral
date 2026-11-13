@@ -266,6 +266,13 @@ command stops when all the conditions that you name are true:
 corral wait vm --unit gdm.service --paint --timeout 15m
 ```
 
+A canonical ID selects the backend, context, and namespace for all probes.
+Use the ID to distinguish VMs with the same name in different namespaces:
+
+```bash
+corral wait kubevirt/prod/corral-vms/vm --unit gdm.service --paint --timeout 15m
+```
+
 | Flag | The condition is true when |
 |---|---|
 | `--running` | The backend shows that the VM runs. Corral always does this check first |
