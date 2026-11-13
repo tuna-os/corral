@@ -331,9 +331,9 @@ func buildAndImport(spec *Spec, layered Layered, keys Keypair, progress func(str
 	return nil
 }
 
-// recordInRegistry makes the VM visible to the rest of corral, so `corral ssh`,
-// `corral list` and `corral delete` work on what the run left behind. A
-// failure here does not fail the run: the VM exists either way.
+// recordInRegistry retains scoped credentials for the actual local VM. Backend
+// inventory, not credentials, establishes its liveness. Failure here does not
+// fail the run: the VM exists either way.
 func recordInRegistry(spec *Spec, out io.Writer) {
 	store, err := registry.NewStore()
 	if err != nil {
@@ -341,7 +341,7 @@ func recordInRegistry(spec *Spec, out io.Writer) {
 		return
 	}
 	entry := types.RegistryEntry{Backend: "qemu", Password: spec.RootPassword}
-	if err := store.Set(spec.Name, entry); err != nil {
+	if err := store.SetRef(types.InstanceRef{Backend: "qemu", Namespace: "local", Name: spec.Name}, entry); err != nil {
 		_, _ = fmt.Fprintf(out, "warning: %s is not in the registry: %v\n", spec.Name, err)
 	}
 }

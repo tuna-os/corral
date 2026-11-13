@@ -47,6 +47,17 @@ func fakeCluster(t *testing.T) *shell.Fake {
 	return f
 }
 
+// fakeCTCluster keeps CT calls separate from the other backend seams. A web
+// metrics sampler started by another test can still use the package-level
+// KubeVirt runner; its observations are not work started by a CT form.
+func fakeCTCluster(t *testing.T) (*shell.Fake, *shell.Fake) {
+	t.Helper()
+	cluster := fakeCluster(t)
+	f := shell.NewFake()
+	ct.SetRunner(f)
+	return cluster, f
+}
+
 // kubeVM is a KubeVirt VM with every capability on — the tests that care about
 // gating set the fields they are gating on explicitly.
 func kubeVM(name string) types.VM {
@@ -728,7 +739,7 @@ func TestTUITemplate_FailureIsReported(t *testing.T) {
 // ── CT hardware ───────────────────────────────────────────────────
 
 func TestTUICTHardware_ScalesThePod(t *testing.T) {
-	f := fakeCluster(t)
+	_, f := fakeCTCluster(t)
 	f.AddPrefixResponse("kubectl patch", "", nil)
 	f.AddPrefixResponse("kubectl get pod", `{"spec":{"containers":[{"name":"ct"}]}}`, nil)
 	f.AddPrefixResponse("kubectl annotate", "", nil)
@@ -761,7 +772,7 @@ func TestTUICTHardware_ScalesThePod(t *testing.T) {
 }
 
 func TestTUICTHardware_UnchangedValuesDoNotScale(t *testing.T) {
-	f := fakeCluster(t)
+	_, f := fakeCTCluster(t)
 
 	c := ct.CT{Name: "files", Namespace: "corral-vms", CPU: 1, Mem: "256Mi"}
 	hw := newCTHWEditModel(c)
@@ -772,7 +783,7 @@ func TestTUICTHardware_UnchangedValuesDoNotScale(t *testing.T) {
 }
 
 func TestTUICTHardware_FailureKeepsTheFormOpen(t *testing.T) {
-	f := fakeCluster(t)
+	_, f := fakeCTCluster(t)
 	f.AddPrefixResponse("kubectl", "", errors.New("pod resize rejected"))
 
 	c := ct.CT{Name: "files", Namespace: "corral-vms", CPU: 1, Mem: "256Mi"}

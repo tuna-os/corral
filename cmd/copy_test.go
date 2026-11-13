@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tuna-os/corral/pkg/qemu"
 	"github.com/tuna-os/corral/pkg/shell"
 	"github.com/tuna-os/corral/pkg/types"
 )
@@ -46,7 +47,21 @@ func TestCopyRefusesDirectionBackendAndPeersBeforeTransfer(t *testing.T) {
 		{"peer selector", "kubevirt", "./one", "peer/lab/kubevirt/prod/guests/web:/two", "peer targets"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			fake := kubevirtVMScratch(t, "web", types.RegistryEntry{Backend: tc.backend, Context: "prod", Namespace: "guests"})
+			// Each case lists "web" only on its own backend; a KubeVirt listing
+			// beside it would make the bare name ambiguous.
+			var fake *shell.Fake
+			switch tc.backend {
+			case "kubevirt":
+				fake = kubevirtVMScratch(t, "web", types.RegistryEntry{Backend: "kubevirt", Context: "prod", Namespace: "guests"})
+			case "qemu":
+				// Local QEMU has no context; the VM exists through its own state.
+				fake = remoteVMScratch(t, "web", types.RegistryEntry{Backend: "qemu"})
+				if err := qemu.RecordCreating("web", types.CreateOpts{}); err != nil {
+					t.Fatal(err)
+				}
+			default:
+				fake = remoteVMScratch(t, "web", types.RegistryEntry{Backend: tc.backend, Context: "prod"})
+			}
 			cache := t.TempDir()
 			t.Setenv("XDG_CACHE_HOME", cache)
 			command := newCopyCommand()

@@ -113,7 +113,7 @@ not created. Recursive copies do not follow symlinks inside directory trees.`,
 			}
 			resolvedUser := user
 			if resolvedUser == "" && registryStore != nil {
-				if saved, ok := registryStore.Get(ref.Name); ok {
+				if saved, ok := registryStore.GetRef(ref); ok {
 					resolvedUser = saved.Username
 				}
 			}

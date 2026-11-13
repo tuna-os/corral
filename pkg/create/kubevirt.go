@@ -4,12 +4,15 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/tuna-os/corral/pkg/backend"
 	"github.com/tuna-os/corral/pkg/catalog"
+	"github.com/tuna-os/corral/pkg/config"
 	"github.com/tuna-os/corral/pkg/kubevirt"
 	"github.com/tuna-os/corral/pkg/types"
 )
 
 func (r request) runKubevirtCreate(name string) error {
+	backend.ActivateContext(types.InstanceRef{Backend: "kubevirt", Context: r.createContext(config.KubeContext)})
 	ns := r.Namespace
 	if ns == "" {
 		ns = kubevirt.DefaultNamespace
@@ -96,7 +99,7 @@ func (r request) runKubevirtCreate(name string) error {
 	}
 
 	if r.Registry != nil {
-		if err := r.Registry.Set(name, types.RegistryEntry{
+		if err := r.Registry.SetRef(types.InstanceRef{Backend: "kubevirt", Context: r.createContext(config.KubeContext), Namespace: ns, Name: name}, types.RegistryEntry{
 			Backend:   "kubevirt",
 			Namespace: ns,
 			Password:  kubevirt.LastPassword,

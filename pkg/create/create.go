@@ -3,6 +3,7 @@ package create
 import (
 	"fmt"
 
+	backendapi "github.com/tuna-os/corral/pkg/backend"
 	"github.com/tuna-os/corral/pkg/config"
 	"github.com/tuna-os/corral/pkg/kubevirt"
 	"github.com/tuna-os/corral/pkg/types"
@@ -69,11 +70,13 @@ func (r request) execute(name string) error {
 	case "incus":
 		return r.runIncusCreate(name)
 	case "libvirt":
+		target := types.InstanceRef{Backend: "libvirt", Context: r.createContext(config.LibvirtURI), Namespace: "libvirt", Name: name}
+		backendapi.ActivateContext(target)
 		if err := r.LibvirtCreate(types.CreateOpts{Name: name, CPU: r.CPU, Mem: r.Mem, Disk: r.Disk, ISO: r.ISO, QCOW: r.QCOW}); err != nil {
 			return err
 		}
 		if r.Registry != nil {
-			return r.Registry.Set(name, types.RegistryEntry{Backend: "libvirt"})
+			return r.Registry.SetRef(target, types.RegistryEntry{})
 		}
 		return nil
 	case "qemu":
@@ -82,7 +85,12 @@ func (r request) execute(name string) error {
 		}
 		return r.maybeStartAndWait(name)
 	}
-	return r.runAdapterCreate(name, backend, r.createContext(backend))
+	return r.runAdapterCreate(name, backend, r.createContext(func() string {
+		if def := config.DefaultContext(); def.Backend == backend {
+			return def.Context
+		}
+		return ""
+	}))
 }
 
 // An explicit choice bypasses reachability detection, including an explicit

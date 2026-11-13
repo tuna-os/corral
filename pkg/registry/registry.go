@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/tuna-os/corral/pkg/backend"
 	"github.com/tuna-os/corral/pkg/types"
 )
 
@@ -79,13 +80,13 @@ func (s *Store) Remove(name string) error {
 	return s.writeAll(reg)
 }
 
-// SetRef stores an entry under its canonical scoped identity. Legacy Set is
-// retained for reading existing registries during migration.
+// SetRef stores an entry under its canonical scoped identity. Existing unscoped
+// data is usable only when its recorded identity establishes exact ownership.
 func (s *Store) SetRef(ref types.InstanceRef, entry types.RegistryEntry) error {
 	if err := ref.Validate(); err != nil {
 		return err
 	}
-	entry.Backend, entry.Context, entry.Peer = ref.Backend, ref.Context, ref.Peer
+	entry.Backend, entry.Context, entry.Namespace, entry.Peer = ref.Backend, ref.Context, ref.Namespace, ref.Peer
 	return s.Set(ref.String(), entry)
 }
 
@@ -93,16 +94,40 @@ func (s *Store) GetRef(ref types.InstanceRef) (types.RegistryEntry, bool) {
 	if entry, ok := s.Get(ref.String()); ok {
 		return entry, true
 	}
-	// Backward-compatible fallback only when the legacy entry describes this
-	// same target. It is not used to collapse two scoped identities.
+	// A legacy name is usable only when its recorded ownership matches exactly.
+	// In particular, an absent context is not evidence of today's default cluster.
 	entry, ok := s.Get(ref.Name)
-	if !ok || entry.Backend != ref.Backend || (entry.Context != "" && entry.Context != ref.Context) || (entry.Namespace != "" && entry.Namespace != ref.Namespace) {
+	if !ok || !ownsRef(entry, ref) {
 		return types.RegistryEntry{}, false
 	}
 	return entry, true
 }
 
-func (s *Store) RemoveRef(ref types.InstanceRef) error { return s.Remove(ref.String()) }
+// RemoveRef retires scoped data and legacy data whose recorded ownership is
+// exact. Unbound legacy credentials are retained, never assigned to the current
+// default cluster merely because an instance there has the same name.
+func (s *Store) RemoveRef(ref types.InstanceRef) error {
+	if err := ref.Validate(); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	reg := s.readAll()
+	delete(reg, ref.String())
+	if entry, ok := reg[ref.Name]; ok && ownsRef(entry, ref) {
+		delete(reg, ref.Name)
+	}
+	return s.writeAll(reg)
+}
+
+func ownsRef(entry types.RegistryEntry, ref types.InstanceRef) bool {
+	if entry.Context == "" && entry.Backend != "qemu" {
+		return false
+	}
+	return entry.Peer == ref.Peer &&
+		backend.Ref(entry.Backend, entry.Context, entry.Namespace, ref.Name) ==
+			backend.Ref(ref.Backend, ref.Context, ref.Namespace, ref.Name)
+}
 
 // All returns all registry entries.
 func (s *Store) All() map[string]types.RegistryEntry {
