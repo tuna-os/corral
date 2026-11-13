@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # VDI broker end-to-end test (#227–#229) against a real Kubernetes API server
-# with KubeVirt: the kind cluster of .github/workflows/e2e.yml.
+# with KubeVirt: the kind cluster of the e2e-kind job in .github/workflows/ci.yml.
 #
 # It starts its own `corral web` with the broker on, an admin allowlist, and a
 # short maximum session, so it does not change the instance the Playwright

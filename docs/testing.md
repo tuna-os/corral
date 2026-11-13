@@ -12,7 +12,7 @@
 - **Demo-mode end-to-end** (`pkg/web/demo_test.go`): boots the real mux
   against the in-memory fake cluster in `pkg/demo`. It exercises list → action →
   state-flip → metrics through real handler code.
-- **UI smoke in CI** (`.github/workflows/ui-smoke.yml`): headless Chromium
+- **UI smoke in CI** (`ui-smoke` job in `.github/workflows/ci.yml`): headless Chromium
   drives the actual dashboard against `corral web --demo` on every
   `pkg/web`/`pkg/demo` change (`scripts/ui-smoke.mjs`).
 - **VDI broker e2e** (`scripts/e2e-vdi.sh`, in the cluster e2e job): a
@@ -21,7 +21,7 @@
   builds `corral-vdi` from the v0.6.0 tag. It checks that an assignment of
   that release carries over (see the
   [upgrade path](enterprise-readiness.md#upgrade-path)).
-- **Cluster e2e** (`.github/workflows/e2e.yml`): kind + emulated KubeVirt on
+- **Cluster e2e** (`e2e-kind` job in `.github/workflows/ci.yml`): kind + emulated KubeVirt on
   GitHub runners — real `kubectl`/`virtctl` against a real API server.
 - **The generated layer, in a real bootc image** (`just vmtest-layer`, the
   `layer` job in `.github/workflows/vmtest.yml`). It builds what `pkg/vmtest`
@@ -109,7 +109,7 @@ the few DOM calls the client makes. The files are outside `static/`, so
 `go:embed` does not ship them.
 
 Run them with `just test-js` (Node 22 or newer). CI runs them first in
-`.github/workflows/ui-smoke.yml`. Put the API request shape, error messages,
+the `ui-smoke` job in `.github/workflows/ci.yml`. Put the API request shape, error messages,
 and state transitions here. Keep the rendered page in UI smoke.
 
 ## Mid-tier frontend flows
@@ -117,13 +117,13 @@ and state transitions here. Keep the rendered page in UI smoke.
 Two suites sit between unit tests and the live cluster. Both drive the real
 dashboard. Neither needs production.
 
-- **UI smoke** (`scripts/ui-smoke.mjs`, in `.github/workflows/ui-smoke.yml`).
+- **UI smoke** (`scripts/ui-smoke.mjs`, in the `ui-smoke` job of `.github/workflows/ci.yml`).
   It serves `corral web --demo`. It checks the fleet table, the tree, and the
   tag filter bar. It checks the Incus split between containers and VMs. It
   checks column order and sort in the grid. It checks the summary SSH hint.
   It checks the console pop-out and the context menu.
 - **Mid-tier Playwright** (`e2e/corral.spec.js` without `@live-only`, in
-  `.github/workflows/e2e.yml`). It runs kind + emulated KubeVirt on every
+  the `e2e-kind` job of `.github/workflows/ci.yml`). It runs kind + emulated KubeVirt on every
   push to `main`. It also runs on each pull request that changes the
   `corral` binary, the UI or the specs. It covers the wizard for every source type and the
   catalog. It covers CDI import to Succeeded and scale on a stopped VM. It
@@ -307,7 +307,7 @@ test('image library loads datavolumes', async ({ page }) => {
 | Tree sidebar | Node → VM navigation, drawer toggle (mobile) |
 
 The suites run against `corral web --demo` (ui-smoke) or kind + emulated
-KubeVirt (e2e.yml). `shell.Fake` and the demo cluster stand in for a real
+KubeVirt (the `e2e-kind` job of ci.yml). `shell.Fake` and the demo cluster stand in for a real
 cluster. No suite needs production.
 
 ---
@@ -361,7 +361,7 @@ happy-path and one error-path case.
 2. The test server (starts the Go server with `Fake` on a random port).
 3. Playwright scenarios for the important UI paths, in two tiers: the CI
    tier and the `@live-only` tier.
-4. Wired into CI (`ui-smoke.yml`, `e2e.yml`, `nightly.yml`).
+4. Wired into CI (the `ui-smoke` and `e2e-kind` jobs of `ci.yml`, `nightly.yml`).
 
 ### Phase 6 — CI (1 session) — done
 
@@ -482,7 +482,7 @@ safe to run against production.
 
 | Tier | What | Where it runs |
 |---|---|---|
-| CI (default) | wizard flows, catalog content, create for every source type, CDI import to Succeeded (PVC flow), scale on a stopped VM, one full boot lifecycle (cirros) | `.github/workflows/e2e.yml`: kind + KubeVirt `useEmulation` + CDI on every push to `main` and on PRs that change the `corral` binary, UI or specs — `npx playwright test --grep-invert "@live-only"` |
+| CI (default) | wizard flows, catalog content, create for every source type, CDI import to Succeeded (PVC flow), scale on a stopped VM, one full boot lifecycle (cirros) | the `e2e-kind` job of `.github/workflows/ci.yml`: kind + KubeVirt `useEmulation` + CDI on every push to `main` and on PRs that change the `corral` binary, UI or specs — `npx playwright test --grep-invert "@live-only"` |
 | `@live-only` | console websockets (VNC RFB handshake, serial output) + fullscreen/scaling controls, SSH login with an injected key, RDP probe, snapshots (longhorn), bootc build → boot → serial check, boot-from-import | manually against the real cluster: `corral web` + `cd e2e && npx playwright test` |
 
 Knobs: `CORRAL_URL` (default `` http://localhost:8006 ``), `CORRAL_NS` (default

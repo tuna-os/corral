@@ -14,6 +14,7 @@ workflows:
     '.github/workflows/ci.yml':
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-go@v7.0.0'
+        - 'actions/setup-node@v7.1.0'
         - 'actions/upload-artifact@v7.0.2'
         - 'anchore/sbom-action@v0.24.3'
         - 'docker/build-push-action@v7.4.0'
@@ -28,11 +29,6 @@ workflows:
     '.github/workflows/e2e-incus.yml':
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-go@v7.0.0'
-    '.github/workflows/e2e.yml':
-        - 'actions/checkout@v7.0.1'
-        - 'actions/setup-go@v7.0.0'
-        - 'actions/setup-node@v7.1.0'
-        - 'actions/upload-artifact@v7.0.2'
     '.github/workflows/nightly.yml':
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-go@v7.0.0'
@@ -52,12 +48,6 @@ workflows:
         - 'actions/setup-node@v7.1.0'
         - 'actions/upload-artifact@v7.0.2'
         - 'peter-evans/create-pull-request@v8.1.3'
-    '.github/workflows/ste.yml': []
-    '.github/workflows/ui-smoke.yml':
-        - 'actions/checkout@v7.0.1'
-        - 'actions/setup-go@v7.0.0'
-        - 'actions/setup-node@v7.1.0'
-        - 'actions/upload-artifact@v7.0.2'
     '.github/workflows/vmtest.yml':
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-go@v7.0.0'

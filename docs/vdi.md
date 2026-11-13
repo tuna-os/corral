@@ -14,7 +14,7 @@ create a pool, hand a member to a user, connect, release it, delete the pool.
 
 | Surface | Backend | Level | Evidence |
 |---|---|---|---|
-| The [self-service broker](#self-service-broker) on persistent VM pools (members by the `corral.dev/vdi-pool` label): claim, ownership, connect, release, reclaim | KubeVirt | Stable | `scripts/e2e-vdi.sh` in the `e2e-kind` job of [e2e.yml](../.github/workflows/e2e.yml); the [upgrade test](#upgrade-from-v060); [troubleshooting](troubleshooting.md#vdi-desktops) |
+| The [self-service broker](#self-service-broker) on persistent VM pools (members by the `corral.dev/vdi-pool` label): claim, ownership, connect, release, reclaim | KubeVirt | Stable | `scripts/e2e-vdi.sh` in the `e2e-kind` job of [ci.yml](../.github/workflows/ci.yml); the [upgrade test](#upgrade-from-v060); [troubleshooting](troubleshooting.md#vdi-desktops) |
 | The `corral vdi` CLI (`pool create` clones, `assign`, `unassign`, `connect`), ephemeral VM pools (`--ephemeral`), [CT-backed pools](vdi-ct-pools.md), [USB redirection](#native-usb-redirection), [device capacity checks](#gpu--host-device-capacity-validation) | KubeVirt | Preview | Unit tests. CI has no end-to-end test of these yet. |
 
 This page is about pools of VMs. For pools of ephemeral Linux desktops that
