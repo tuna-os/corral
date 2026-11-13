@@ -59,6 +59,22 @@ For bootc image verification, run `just vmtest-layer` to test the generated laye
 - Update `docs/` if your change affects usage, backend parity, or architecture.
 - Include the validation commands you ran in the PR description.
 
+### Reviewing generated screenshots
+
+The **Screenshots** workflow captures the demo fleet and keeps the
+`screenshots` artifact. On non-PR runs, changes to Corral images also produce
+`corral-screenshot-patch`. The job summary gives the exact download and apply
+commands. A successful handoff means the artifact is ready; it does not mean
+that a PR exists or images are public.
+
+A maintainer applies the patch on a branch from current `main` and inspects
+every changed image. They commit only `docs/screenshots/generated/*.png` and
+open a normal PR for review. If the patch is stale, run capture again; do not
+force the patch. Human review and required checks remain mandatory.
+
+GitHub Actions self-approval stays disabled. This needs no extra token or
+policy change. The optional PR into the site repository stays unchanged.
+
 ## Questions?
 
 - [TunaOS Documentation](https://tunaos.org)
