@@ -286,10 +286,30 @@ type RegistryEntry struct {
 	Username  string `json:"username,omitempty"` // remembered from the last explicit `corral ssh -u`
 }
 
+// GuestArch identifies a guest instruction set, independently of the host binary.
+type GuestArch string
+
+const (
+	ArchAMD64 GuestArch = "amd64"
+	ArchARM64 GuestArch = "arm64"
+)
+
+// Validate permits the empty value so existing callers retain the host default.
+func (arch GuestArch) Validate() error {
+	switch arch {
+	case "", ArchAMD64, ArchARM64:
+		return nil
+	default:
+		return fmt.Errorf("unsupported guest architecture %q: use amd64 or arm64", arch)
+	}
+}
+
 // CreateOpts holds all VM creation options.
 type CreateOpts struct {
 	Name              string
-	Backend           string // "qemu" or "kubevirt"
+	Backend           string    // "qemu" or "kubevirt"
+	Arch              GuestArch // local QEMU guest architecture; "" uses the host architecture
+	Loopback          bool      // bind local QEMU VNC/SSH only to 127.0.0.1, never the tailnet
 	Mem               string
 	CPU               int
 	Disk              string

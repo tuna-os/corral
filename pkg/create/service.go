@@ -44,6 +44,8 @@ type Options struct {
 	BridgeIface       string
 	LANService        bool
 	Firmware          string
+	Arch              string
+	Loopback          bool
 	Vsock             bool
 	VsockCID          uint32
 	TPM               bool
