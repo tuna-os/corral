@@ -42,6 +42,8 @@ var (
 	createBridgeIface       string
 	createLANService        bool
 	createFirmware          string
+	createArch              string
+	createLoopback          bool
 	createVsock             bool
 	createVsockCID          uint32
 	createTPM               bool
@@ -105,7 +107,9 @@ func init() {
 	rootCmd.AddCommand(createCmd)
 	createCmd.Flags().BoolVarP(&createKubevirt, "kubevirt", "k", false, "Use KubeVirt backend")
 	createCmd.Flags().BoolVar(&createIncus, "incus", false, "Use Incus backend")
-	createCmd.Flags().StringVar(&createFirmware, "firmware", "", "Firmware boot type: uefi (default) or bios")
+	createCmd.Flags().StringVar(&createFirmware, "firmware", "", "Firmware boot type: uefi or bios (QEMU default: uefi for arm64 guests, bios for amd64)")
+	createCmd.Flags().StringVar(&createArch, "arch", "", "[qemu] Guest architecture: amd64 or arm64 (default: host architecture)")
+	createCmd.Flags().BoolVar(&createLoopback, "loopback", false, "[qemu] Bind VNC and forwarded SSH only to 127.0.0.1")
 	createCmd.Flags().StringVar(&createMem, "mem", "4G", "Memory allocation")
 	createCmd.Flags().IntVar(&createCPU, "cpu", 2, "CPU cores")
 	createCmd.Flags().StringVar(&createDisk, "disk", "", "Disk size (default: 20G)")
@@ -192,6 +196,8 @@ func createOptions(kubevirtExplicit bool) create.Options {
 		BridgeIface:       createBridgeIface,
 		LANService:        createLANService,
 		Firmware:          createFirmware,
+		Arch:              createArch,
+		Loopback:          createLoopback,
 		Vsock:             createVsock,
 		VsockCID:          createVsockCID,
 		TPM:               createTPM,
