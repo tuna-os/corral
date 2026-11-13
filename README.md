@@ -334,6 +334,22 @@ The `--bootc` path also rejects it.
 `--loopback` binds the guest VNC console and forwarded SSH to `127.0.0.1`,
 even when Tailscale is active; it is also local-QEMU-create-only.
 
+`corral --json console qemu//local/NAME --addr 127.0.0.1:0 --notify-ready`
+first reports its own bound console URL. It emits an `rfb-connected` event
+after the standalone noVNC page reports a real RFB connection.
+The server checks a one-shot nonce, the exact Origin and Host, and the VM
+and backend context for that listener. This proves browser/transport
+readiness only, not OS boot completion or an authenticated Tuna session.
+
+This self-service POST reports a console connection. It does not administer VMs.
+A viewer with access to the console need not be in `CORRAL_ADMINS`.
+For a claimed VDI desktop, the caller must be its holder or an admin.
+
+Only the exact path for the console report is eligible.
+That path must have no encoded or extra segments.
+The server still checks authentication, access to that VM and all nonce/origin rules.
+The server refuses other VM mutations from non-admins.
+
 Corral does not authenticate the disk's publisher or qualification: its
 product-specific consumer must verify the release artifact first. Argument
 and metadata tests are not proof that a particular guest boots on macOS;
