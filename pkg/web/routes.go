@@ -14,11 +14,15 @@ import (
 // newMux builds the HTTP router wrapped in the request pipeline. Split out
 // from Serve so tests can exercise the full route table with httptest.
 func newMux() (http.Handler, error) {
+	return newMuxWithConsoleReadiness(nil)
+}
+
+func newMuxWithConsoleReadiness(readiness *consoleReadiness) (http.Handler, error) {
 	// Capture this for the router being built, then clear it so a demo mux in
 	// one test cannot turn later production-style muxes into demo consoles.
 	useDemoConsole := demoEnabled
 	demoEnabled = false
-	mux, err := routes(useDemoConsole)
+	mux, err := routes(useDemoConsole, readiness)
 	if err != nil {
 		return nil, err
 	}
@@ -27,7 +31,7 @@ func newMux() (http.Handler, error) {
 
 // routes builds the route table. useDemoConsole serves the demo VNC console
 // instead of dialing a real VM.
-func routes(useDemoConsole bool) (*http.ServeMux, error) {
+func routes(useDemoConsole bool, readiness *consoleReadiness) (*http.ServeMux, error) {
 	sub, err := fs.Sub(staticFS, "static")
 	if err != nil {
 		return nil, err
@@ -47,7 +51,12 @@ func routes(useDemoConsole bool) (*http.ServeMux, error) {
 	})
 
 	// One VM's console on its own page, for scripts and browser automation.
-	mux.HandleFunc("GET /console/{ns}/{name}", handleConsolePage)
+	if readiness == nil {
+		mux.HandleFunc("GET /console/{ns}/{name}", handleConsolePage)
+	} else {
+		mux.HandleFunc("GET /console/{ns}/{name}", readiness.page)
+		mux.Handle("POST /api/console-ready/{ns}/{name}", vdiConsoleGate(http.HandlerFunc(readiness.connected)))
+	}
 
 	// Proxmox API compatibility — expose /api2/json/… alongside the
 	// corral REST API so ecosystem tools can manage VMs through the

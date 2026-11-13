@@ -89,9 +89,10 @@ var store *registry.Store
 
 // Server is the web UI bound to its listener and ready to serve.
 type Server struct {
-	listener net.Listener
-	handler  http.Handler
-	url      string
+	listener  net.Listener
+	handler   http.Handler
+	url       string
+	readiness *consoleReadiness
 }
 
 // Listen prepares the web UI and binds addr. Port 0 lets the OS choose a
@@ -114,7 +115,8 @@ func Listen(addr string, allowedHosts ...string) (*Server, error) {
 	}
 	applyCLITheme() // CLI flags always win over config file
 
-	mux, err := newMux()
+	readiness := &consoleReadiness{}
+	mux, err := newMuxWithConsoleReadiness(readiness)
 	if err != nil {
 		return nil, err
 	}
@@ -132,7 +134,7 @@ func Listen(addr string, allowedHosts ...string) (*Server, error) {
 			return nil, err
 		}
 	}
-	return &Server{listener: listener, handler: mux, url: listenURL(addr, listener.Addr())}, nil
+	return &Server{listener: listener, handler: mux, url: listenURL(addr, listener.Addr()), readiness: readiness}, nil
 }
 
 // listenURL is the base URL a client on this host uses to reach a listener
@@ -158,16 +160,33 @@ func listenURL(bindAddr string, listenerAddr net.Addr) string {
 // URL is the server's base URL, for example http://127.0.0.1:8006.
 func (s *Server) URL() string { return s.url }
 
+// Close releases a listener even if Serve has not started (for example, when
+// the caller cannot write its listening URL).
+func (s *Server) Close() error {
+	if s.readiness != nil {
+		s.readiness.retire()
+	}
+	return s.listener.Close()
+}
+
 // Serve starts the background samplers and serves requests until ctx ends.
 // Then it stops accepting connections and returns nil.
 func (s *Server) Serve(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	if s.readiness != nil {
+		defer s.readiness.retire()
+	}
 	startMetricSampler()
 	startVDIReclaim(ctx)
 	if MetricsEnabled {
 		StartMetrics(ctx)
 		fmt.Fprintln(os.Stderr, "Prometheus metrics on /metrics")
 	}
-	srv := &http.Server{Handler: s.handler}
+	srv := &http.Server{
+		Handler:     s.handler,
+		BaseContext: func(net.Listener) context.Context { return ctx },
+	}
 	stopped := make(chan struct{})
 	go func() {
 		defer close(stopped)
@@ -177,8 +196,9 @@ func (s *Server) Serve(ctx context.Context) error {
 		_ = srv.Shutdown(shutdown)
 	}()
 	err := srv.Serve(s.listener)
+	cancel()
+	<-stopped
 	if errors.Is(err, http.ErrServerClosed) {
-		<-stopped
 		return nil
 	}
 	return err
