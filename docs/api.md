@@ -43,7 +43,7 @@ VMs that run.
 [
   {
     "name": "web",
-    "namespace": "tailvm",
+    "namespace": "corral-vms",
     "status": "Running",
     "ready": true,
     "running": true,
@@ -65,7 +65,7 @@ Create a VM.
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `name` | string | yes | `[a-z0-9][a-z0-9-]*` |
-| `namespace` | string | no | defaults to `tailvm` |
+| `namespace` | string | no | defaults to `corral-vms` (`CORRAL_NAMESPACE`) |
 | `cpu` | int | no | default 2 |
 | `mem` | string | no | e.g. `4G`, default `4G` |
 | `disk` | string | no | e.g. `20G`, default `20G` |
@@ -86,7 +86,7 @@ Exactly one *source* field must be set.
 **Response** (201 Created):
 
 ```json
-{"name": "web", "namespace": "tailvm"}
+{"name": "web", "namespace": "corral-vms"}
 ```
 
 **Bootc response** (202 Accepted, build is async):
@@ -337,7 +337,7 @@ imported from URLs.
 Start a CDI import. Body:
 
 ```json
-{"name": "jammy", "namespace": "tailvm", "url": "https://.../jammy.qcow2", "size": "10Gi"}
+{"name": "jammy", "namespace": "corral-vms", "url": "https://.../jammy.qcow2", "size": "10Gi"}
 ```
 
 **Response**: `{"name": "jammy"}`

@@ -5,10 +5,11 @@
 **Module:** `github.com/tuna-os/corral`
 
 > **Naming:** Corral is the Go rewrite of the legacy Python `tailvm`. The
-> command is `corral`; on-disk and in-cluster identifiers deliberately keep
-> the `tailvm` prefix (`~/.local/share/tailvm/`, `~/.config/tailvm/`,
-> `tailvm-<name>.service` units, the `tailvm` namespace and labels) so both
-> tools see the same VMs and nothing breaks during the transition.
+> June 2026 rename moved on-disk and in-cluster identifiers to `corral` too:
+> `~/.local/share/corral/`, `~/.config/corral/`, `corral-<name>.service`
+> units, `corral.dev/*` labels, and the `corral-vms` default namespace
+> (override with `CORRAL_NAMESPACE`). Corral does not read the legacy
+> `tailvm` directories.
 
 ## 1. Purpose
 
@@ -31,8 +32,9 @@ Design constraints:
   `viewer`, ...) auto-detects the backend from the registry, falling back to
   live probing.
 - **Secrets stay local.** Cloud-init passwords live in the registry file
-  (mode 0600); the Tailscale auth key comes from config/env (seeded from
-  Bitwarden by the dotfiles Ansible role).
+  (mode 0600). Cluster VMs reach the tailnet through the Tailscale
+  operator, which holds its own credentials, so Corral passes no auth key
+  to guests.
 
 ## 2. Command reference
 
@@ -55,7 +57,7 @@ corral info   <name>                   # JSON (VM manifest / metadata.json)
 corral viewer <name>                   # VNC viewer via xdg-open
 corral ssh    <name> [-u user] [-i key] [-c cmd] [-p port] [--password p]
 corral logs   <name>                   # journalctl (qemu) / virt-launcher logs (kubevirt)
-corral config                          # show config + Tailscale auth key status
+corral config                          # show config path, default backend, Incus remote
 corral doctor [--fix]                  # cluster health checks; --fix applies safe config-only fixes
 corral web [--addr host:port]          # Proxmox-style web UI (default 127.0.0.1:8006)
 corral completion <shell>              # cobra built-in
@@ -92,11 +94,10 @@ cluster capabilities. Corral detects them and gates the UI rather than failing:
 | `--qcow <path>` | qemu | template disk |
 | `--container-disk <image>` | kubevirt | ephemeral container disk |
 | `--pvc <name>` | kubevirt | boot an existing PVC |
-| `--namespace, -n` | kubevirt | namespace (default `tailvm`) |
+| `--namespace, -n` | kubevirt | namespace (default `corral-vms`, or `CORRAL_NAMESPACE`) |
 | `--node <host>` | kubevirt | pin to node via `kubernetes.io/hostname` |
 | `--cloud-init-password` | kubevirt | password (default: random 12-char, stored in registry) |
 | `--cloud-init` | kubevirt | extra cloud-init user-data appended verbatim |
-| `--ts-authkey` | kubevirt | Tailscale auth key (default: config file / `TS_AUTHKEY`) |
 | `--storage-class, -s` | kubevirt | StorageClass for new disks (default: cluster preference) |
 | `--force` | both | overwrite existing VM |
 
@@ -127,8 +128,8 @@ cmd/
   tui.go         Bubble Tea TUI (see §7)
 pkg/
   types/         shared VM/CreateOpts/RegistryEntry structs, port maps
-  registry/      ~/.local/share/tailvm/registry.json persistence (0600)
-  config/        ~/.config/tailvm/config.yaml + TS_AUTHKEY
+  registry/      ~/.local/share/corral/registry.json persistence (0600)
+  config/        ~/.config/corral/config.yaml
   qemu/          local VMs: qcow2 disks, systemd user units, metadata.json
   kubevirt/
     client.go    kubectl/virtctl wrapper; manifest generators (VM, PVC,
@@ -143,13 +144,13 @@ stores the namespace, so cross-namespace VMs keep working
 
 ## 4. State files
 
-### 4.1 Registry — `~/.local/share/tailvm/registry.json` (0600)
+### 4.1 Registry — `~/.local/share/corral/registry.json` (0600)
 
 ```json
 {
   "myvm": {
     "backend": "kubevirt",
-    "namespace": "tailvm",
+    "namespace": "corral-vms",
     "password": "abc123def456",
     "extra": { "bootc_image": "ghcr.io/..." }
   }
@@ -160,7 +161,7 @@ Written on create, removed on delete (CLI and TUI). Source of truth for
 backend/namespace/password; live probing is the fallback so out-of-band VMs
 are still usable.
 
-### 4.2 QEMU metadata — `~/.local/share/tailvm/vms/<name>/metadata.json`
+### 4.2 QEMU metadata — `~/.local/share/corral/vms/<name>/metadata.json`
 
 ```json
 {
@@ -174,20 +175,22 @@ are still usable.
 5900 + display, `ssh_port` = 2200 + display. Disk lives next to it as
 `disk.qcow2`.
 
-### 4.3 Config — `~/.config/tailvm/config.yaml`
+### 4.3 Config — `~/.config/corral/config.yaml`
+
+`$XDG_CONFIG_HOME/corral/config.yaml` when `XDG_CONFIG_HOME` is set.
 
 ```yaml
-tailscale:
-  auth_key: tskey-...
+default:
+  backend: kubevirt   # written by `corral config set-default-backend`
 ```
 
-`TS_AUTHKEY` env var takes precedence. Seeded from Bitwarden item
-`tailscale-apikey` by the dotfiles playbook.
+`corral config` still reads and shows `tailscale.auth_key` (or the
+`TS_AUTHKEY` env var), but no create path passes it to a guest (§6.1).
 
 ## 5. QEMU backend
 
 - `create` makes a qcow2 disk, then writes a **systemd user unit**
-  `~/.config/systemd/user/tailvm-<name>.service` running
+  `~/.config/systemd/user/corral-<name>.service` running
   `qemu-system-x86_64 -machine q35,accel=kvm` with virtio disk/net/rng.
 - Networking is **user-mode** (`-netdev user`) with:
   - VNC bound to the host's Tailscale IP at `:<display>` — reachable
@@ -203,18 +206,17 @@ tailscale:
 
 ### 6.1 VM creation
 
-Namespace `tailvm` is created on demand and labeled
+The VM namespace (default `corral-vms`) is created on demand and labeled
 `pod-security.kubernetes.io/enforce=privileged` (the bootc builder needs it).
 Boot source priority: `--iso` (CDI DataVolume CD-ROM, bootOrder 1 + blank PVC,
 bootOrder 2) → `--container-disk` (+ optional data PVC) → `--pvc` → blank PVC.
 
 Cloud-init always includes: a password (random unless given, persisted in the
 registry), `ssh_pwauth: true`, the operator's public key from `~/.ssh/`
-(`id_ed25519.pub` → `id_rsa.pub` → `id_ecdsa.pub`), and — when an auth key is
-configured — a `runcmd` that installs Tailscale and runs
-`tailscale up --auth-key=... --hostname=<name> --ssh`, so the VM appears on
-the tailnet as a first-class node. The injected `runcmd` is skipped if
-`--cloud-init` already supplies one (two `runcmd` keys would be invalid YAML).
+(`id_ed25519.pub` → `id_rsa.pub` → `id_ecdsa.pub`). It installs no
+Tailscale in the guest: when the cluster runs the Tailscale operator, the
+per-VM proxy (§6.2) is the VM's tailnet device, `<name>-vm`. `--cloud-init`
+user-data is merged into this document.
 
 ### 6.2 Port proxy (tailnet exposure)
 
@@ -351,9 +353,10 @@ tandem. Roadmap: the web UI section above and [docs/api.md](docs/api.md).
 ## 10. Security model
 
 - Registry contains cloud-init passwords → file mode 0600.
-- Cloud-init user-data (incl. password and TS auth key) is embedded in the VM
-  manifest: anyone with read access to the namespace can see it. Acceptable
-  for a single-operator homelab; use ephemeral/pre-authorized keys.
+- Cloud-init user-data (incl. the password and any `--cloud-init` content)
+  is embedded in the VM manifest: anyone with read access to the namespace
+  can see it. Acceptable for a single-operator homelab; keep long-lived
+  secrets out of `--cloud-init`.
 - The bootc builder Job runs **privileged** (loop devices, mkfs) — hence the
   namespace PodSecurity label. Builder containers are deleted after the build.
 - SSH defaults to `StrictHostKeyChecking=no` (VMs are disposable); identity

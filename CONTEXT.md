@@ -133,7 +133,7 @@ resource). Full design: `docs/adr/0005-containers-as-pet-pods.md`.
 
 ### Registry
 
-The file `~/.local/share/tailvm/registry.json` (mode 0600). Maps canonical
+The file `~/.local/share/corral/registry.json` (mode 0600). Maps canonical
 instance references to backend, context, namespace, cloud-init password, and
 other local metadata. Live backend inventory is authoritative for existence;
 the registry retains credentials and creation metadata and reads legacy
@@ -427,7 +427,7 @@ duplicate names require source-qualified selection.
 | peer | remote Corral web API aggregated into this dashboard |
 | ct | Container — a pet pod, not a VM |
 | console | VNC/RDP bridge to a VM's display |
-| registry | `~/.local/share/tailvm/registry.json` |
+| registry | `~/.local/share/corral/registry.json` |
 | plugin | krew-style corral-* binary |
 | proxmox api | `/api2/json/` compatibility layer |
 | node | K8s cluster node |

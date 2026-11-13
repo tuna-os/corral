@@ -13,7 +13,7 @@ cmd/              Cobra CLI (root, subcommands, TUI)
 ├── clone.go      corral clone (kubevirt VM disk + config clone)
 ├── ct.go         corral ct (create/list/start/stop/delete/console — Containers, pkg/ct)
 ├── images.go     corral images (list catalog + imported datavolumes)
-├── config.go     corral config (show, set auth key)
+├── config.go     corral config (show, get/set default backend)
 ├── web.go        corral web (--addr, serve embedded SPA)
 ├── console.go    corral console (one VM's console page on a free local port, URL printed for scripts)
 ├── tui.go        Bubble Tea TUI root model (state, Update loop, list/doctor/detail views, context filter)
@@ -38,7 +38,7 @@ pkg/              Library code (importable)
 ├── create/       request-based create orchestration, backend dispatch, bootc and post-create lifecycle
 ├── lima/         Lima YAML parsing, source translation and provisioning cloud-init
 ├── catalog/      curated OS image catalog (containerdisks)
-├── config/       ~/.config/tailvm/config.yaml reader (Tailscale auth key)
+├── config/       ~/.config/corral/config.yaml reader
 ├── cronops/      shared CronJob/RBAC manifest builders for scheduled-op plugins (backup, snapsched, schedule)
 ├── backend/      the parity matrix + conformance tests; see docs/backend-parity.md
 ├── ct/           Containers (CT) — pet pods, not KubeVirt VMs; see docs/adr/0005
@@ -56,7 +56,7 @@ pkg/              Library code (importable)
 │   └── bootc.go           bootc implementation (//go:build bootc — Job + kernel-boot VM)
 ├── plugin/        extension system (krew-style, marketplace fetch, install/remove)
 ├── qemu/          QEMU backend (local VMs via systemd user service)
-├── registry/      ~/.local/share/tailvm/registry.json — VM name → backend/namespace/password
+├── registry/      ~/.local/share/corral/registry.json — VM name → backend/namespace/password
 ├── vdi/           desktop pools (RFC-0001 phase 1) — clone-based pool create, label-based assignment
 ├── types/         shared types (VM, CreateOpts, RegistryEntry)
 └── web/           Proxmox-style web UI
@@ -147,7 +147,7 @@ unacceptable.
 3. **Web** — Embedded SPA served at `corral web --addr :8006`
 
 All three share the same `pkg/kubevirt` backend and
-`~/.local/share/tailvm/registry.json`. A VM created in the browser is
+`~/.local/share/corral/registry.json`. A VM created in the browser is
 immediately `corral ssh`-able and vice versa.
 
 ### Embedded SPA — no JS build step
@@ -202,10 +202,9 @@ can't support, so the user does not see a failure at submit time.
 ### Secrets stay local
 
 - Corral generates a cloud-init password for each VM and stores it in
-  `~/.local/share/tailvm/registry.json` (mode 0600).
-- The Tailscale auth key comes from `~/.config/tailvm/config.yaml` or the
-  `TS_AUTHKEY` environment variable (seeded from Bitwarden by the dotfiles
-  Ansible role).
+  `~/.local/share/corral/registry.json` (mode 0600).
+- No Tailscale auth key reaches a guest. Cluster VMs join the tailnet through
+  the Tailscale operator's per-VM proxy, which holds its own credentials.
 - SSH public keys are read from `~/.ssh/id_ed25519.pub` (fallbacks:
   `id_rsa.pub`, `id_ecdsa.pub`).
 - **No secrets in git, no secrets in cluster state.** The on-cluster
@@ -213,11 +212,11 @@ can't support, so the user does not see a failure at submit time.
 
 ### Namespace conventions
 
-- Default namespace: `tailvm` (overridable with `--namespace` or
-  `-n`).
+- Default namespace: `corral-vms` (overridable with `--namespace`/`-n`
+  or the `CORRAL_NAMESPACE` environment variable).
 - VM names must match `[a-z0-9][a-z0-9-]*` (Kubernetes DNS label).
-- On-disk state uses `tailvm` prefix (`~/.local/share/tailvm/`,
-  `~/.config/tailvm/`) for backward compat with the legacy Python `tailvm`.
+- On-disk state lives in `~/.local/share/corral/` and `~/.config/corral/`.
+  Corral does not read the legacy Python `tailvm` directories.
 
 ## Data flow
 
@@ -228,7 +227,7 @@ corral create web --kubevirt --image fedora
   │
   ├─ catalog.Find("fedora")              → containerDisk URI
   ├─ kubevirt.NewClient(ns).CreateVM(opts) → kubectl apply VM manifest
-  │   ├─ cloud-init: SSH key + Tailscale auth key + password
+  │   ├─ cloud-init: SSH key + password
   │   └─ containerDisk registry URL
   └─ registry.Set("web", {backend, namespace, password})
 ```
@@ -293,7 +292,8 @@ shape.
 ## On-cluster deployment
 
 The `deploy/corral-web.yaml` manifest:
-1. Creates the `tailvm` namespace (privileged pod-security)
+1. Creates the `corral` namespace (privileged pod-security); VMs go to
+   `corral-vms` (`CORRAL_NAMESPACE`)
 2. ServiceAccount + scoped ClusterRole (VM lifecycle, subresources,
    snapshots, CDI, PVCs, nodes, events, metrics, instancetypes, etc.)
 3. Deployment (ghcr.io/tuna-os/corral:latest, port 8006)

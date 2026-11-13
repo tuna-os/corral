@@ -32,8 +32,8 @@ Corral manages VMs across backends (local QEMU, KubeVirt, Incus, libvirt,
 Proxmox VE) and exposes guests over your Tailscale tailnet:
 
 - **Secrets stay local.** Cloud-init passwords live in the registry file
-  (`~/.local/share/corral/registry.json`, mode 0600). The Tailscale auth key
-  comes from config or the `TS_AUTHKEY` environment variable. For backend
+  (`~/.local/share/corral/registry.json`, mode 0600). Corral passes no
+  Tailscale auth key to guests; the Tailscale operator holds its own. For backend
   tokens, use environment variables such as `CORRAL_PROXMOX_TOKEN`. Then
   your credentials stay out of dotfiles repos.
 - **No client-side K8s SDK.** Corral runs `kubectl` and `virtctl` for
