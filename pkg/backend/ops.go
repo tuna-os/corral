@@ -239,6 +239,13 @@ type Sheller interface {
 	SSH(name string, opts SSHOptions) error
 }
 
+// Copier transfers literal files or directory trees between this machine and a
+// guest. It is independent of Sheller: an exec console is not an SSH transport.
+// Like Sheller, this terminal capability is not a matrix operation family.
+type Copier interface {
+	Copy(name string, opts types.CopyOptions) error
+}
+
 // Execer runs one command in the guest with no terminal and hands back its
 // combined output, for a caller that is a program rather than a person:
 // `corral wait` asking whether a unit is active. opts.Command is the command;
