@@ -291,8 +291,8 @@ sudo -E "$(command -v go)" test -tags e2evmtest -timeout 90m -count=1 -v ./pkg/v
 This also boots the headless image with a deliberately incorrect identity and
 asserts an `ExitCheck` failure with check output, serial log and result file.
 The desktop case uses a 32 GiB disk and builds the existing test layer to enable
-SSH without changing its desktop configuration. Each passing case also checks for nonempty serial and
-result evidence. `CORRAL_VMTEST_ARTIFACTS` preserves each case's artifacts under
+SSH. Its desktop configuration does not change. When a case passes, it also
+checks for nonempty serial and result evidence. `CORRAL_VMTEST_ARTIFACTS` preserves each case's artifacts under
 its VM name; without it, Go removes them with its temporary test directories.
 
 `CORRAL_REQUIRE_TOOLS` makes missing images/identities (`guest-images`), local
@@ -301,12 +301,12 @@ prerequisites skip the case for local development. A skipped case is not boot
 evidence.
 
 The existing **VM test harness** Actions workflow exposes the same cases on
-manual dispatch: enable `guest_assertions`, configure `image`, `headless_id` and
-`headless_version`, and supply `desktop_image`, `desktop_id`, and the desktop
-command/unit (plus an optional desktop version). The workflow runs all three
+manual dispatch. To use them, enable `guest_assertions` and configure `image`,
+`headless_id` and `headless_version`. Then supply `desktop_image`, `desktop_id`,
+and the desktop command/unit (plus an optional desktop version). The workflow runs all three
 cases with required prerequisites and uploads `vmtest-guest-out/` alongside its
 usual evidence, even on failure. Guest acceptance is opt-in; scheduled and PR
-runs keep their existing scope. A successful container layer job does not
+runs keep their existing scope. A successful job for the container layer does not
 satisfy guest acceptance.
 
 ### GitHub Actions
