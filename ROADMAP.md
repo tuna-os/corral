@@ -19,8 +19,8 @@ images on a KubeVirt cluster (`scripts/boot-gate.sh` in tunaOS).
 
 ## Current Status (2026-10-16)
 
-- Corral is a Go rewrite of the legacy Python `tailvm`. On-disk names keep
-  the `tailvm-` prefix during the transition ([SPEC.md](SPEC.md)).
+- Corral is a Go rewrite of the legacy Python `tailvm`. On-disk and
+  in-cluster names use `corral` since the June 2026 rename ([SPEC.md](SPEC.md)).
 - Corral supports nine backends. The `bootc` mode builds a disk from a
   bootable container on the cluster. Then it runs that disk as a KubeVirt VM.
 - ✅ **tunaOS CI uses Corral as its boot gate.** tunaOS#3249 replaced

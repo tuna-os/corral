@@ -80,7 +80,7 @@ new index together until the support window of the old clients ends.
 - Corral supports an upgrade from the previous minor release to the current
   one. To skip a minor release, upgrade through each release in sequence.
 - After an upgrade, Corral must read the on-disk state of the previous
-  release. This state is the registry file, the `tailvm-` names in
+  release. This state is the registry file, the `corral` paths and names in
   [SPEC.md](../SPEC.md) and the plugin state in `.installed/`. A format change needs a migration in code and
   a test that reads the old format.
 - A plugin can declare the Corral versions it supports in its `corral` field.

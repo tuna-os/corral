@@ -207,7 +207,7 @@ passthrough doesn't work the way you expect, check
 kubectl apply -f https://raw.githubusercontent.com/tuna-os/corral/main/deploy/corral-web.yaml
 ```
 
-`deploy/corral-web.yaml` creates a namespace (`tailvm`), a scoped
+`deploy/corral-web.yaml` creates a namespace (`corral`), a scoped
 ServiceAccount/ClusterRole (VM lifecycle + subresources, snapshots, exports,
 PVCs, storage/snapshot classes, events, metrics, instancetypes), a Deployment,
 and a Service. **There is no built-in auth** — expose it only on a trusted
@@ -242,7 +242,7 @@ uplink; note nodes may name interfaces differently):
 ```yaml
 apiVersion: k8s.cni.cncf.io/v1
 kind: NetworkAttachmentDefinition
-metadata: { name: lan, namespace: tailvm }
+metadata: { name: lan, namespace: corral-vms }
 spec:
   config: |
     { "cniVersion":"0.3.1","type":"macvlan","master":"eth0","mode":"bridge",
@@ -255,7 +255,7 @@ Once a NAD exists, bridge a VM onto it:
 corral networks                        # list NADs Corral can see
 corral create myvm --kubevirt --image fedora --lan   # new VM, bridges automatically if there's exactly one NAD
 corral addnic myvm                     # existing VM — same auto-detect
-corral addnic myvm --network-nad tailvm/lan --iface net1   # explicit, if there's more than one NAD
+corral addnic myvm --network-nad corral-vms/lan --iface net1   # explicit, if there's more than one NAD
 ```
 
 Or use Corral's **Add NIC** (Hardware → Network) in the web UI. `--lan`/
@@ -284,7 +284,7 @@ Services gives it an external IP the same way:
 ```bash
 corral create myvm --kubevirt --image fedora --lan-service   # new VM
 corral lanservice myvm                                        # existing VM
-kubectl get svc myvm-lan -n tailvm                             # external IP once a controller assigns one
+kubectl get svc myvm-lan -n corral-vms                          # external IP once a controller assigns one
 ```
 
 Without an LB-IPAM controller installed, `myvm-lan` sits `<pending>`

@@ -486,7 +486,7 @@ safe to run against production.
 | `@live-only` | console websockets (VNC RFB handshake, serial output) + fullscreen/scaling controls, SSH login with an injected key, RDP probe, snapshots (longhorn), bootc build → boot → serial check, boot-from-import | manually against the real cluster: `corral web` + `cd e2e && npx playwright test` |
 
 Knobs: `CORRAL_URL` (default `` http://localhost:8006 ``), `CORRAL_NS` (default
-`tailvm`), `E2E_CONTAINERDISK` (lifecycle boot image; CI uses the cirros demo
+`corral-vms`), `E2E_CONTAINERDISK` (lifecycle boot image; CI uses the cirros demo
 containerdisk because fedora won't boot in sensible time under TCG).
 
 ### Update (2026-06-21)

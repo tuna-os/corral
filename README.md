@@ -100,10 +100,11 @@ Never post account credentials or API keys in issues or pull requests.
   `corral ssh` picks the right path: a Kubernetes API tunnel for cluster VMs,
   a Tailscale-bound port-forward for local ones. Or use `--vsock` for QEMU
   AF_VSOCK transport on live ISOs. It changes no config files.
-- **VMs that join the tailnet themselves.** Drop a Tailscale auth key in
-  `~/.config/tailvm/config.yaml` (or `TS_AUTHKEY`). Then every cloud-init VM
-  runs `tailscale up` on first boot. It shows up as a real machine on your
-  tailnet, MagicDNS name and all.
+- **Cluster VMs on your tailnet, no agent in the guest.** When the cluster
+  runs the Tailscale Kubernetes operator, `corral create` gives each KubeVirt
+  VM a proxy that shows up on your tailnet as `<name>-vm`, with SSH, VNC and
+  RDP. Guests do not run `tailscale up` themselves; install Tailscale in the
+  guest if you want it to be a tailnet node of its own.
 - **Extensions with a marketplace.** Niche features ship as plugins:
   `corral plugin search`, then `corral plugin install bootc`. Then
   `corral bootc create dev --image ghcr.io/...` builds an OS disk *on the
@@ -374,7 +375,7 @@ launcher. They do not prove firstboot, login, or a browser session.
 | SSH | host's Tailscale IP, forwarded port | `virtctl ssh` API tunnel — works with zero exposure |
 | VNC | host's Tailscale IP, `vnc://…` | `virtctl vnc` proxy |
 | Published ports | — (host is already on the tailnet) | per-VM proxy Service tagged `tailscale.com/expose` → `<name>-vm.<tailnet>.ts.net` |
-| VM on the tailnet itself | — | automatic via cloud-init when an auth key is configured |
+| VM on the tailnet itself | — | not automatic; the proxy above is the tailnet device. Install Tailscale in the guest if you need it |
 
 Corral never binds anything to `0.0.0.0`. Ports of local VMs attach only to
 the host's Tailscale IP.
@@ -610,14 +611,15 @@ Container" could recognize Corral natively.
 ## Configuration
 
 ```yaml
-# ~/.config/tailvm/config.yaml
-tailscale:
-  auth_key: tskey-...   # or export TS_AUTHKEY; flag --ts-authkey overrides
+# ~/.config/corral/config.yaml ($XDG_CONFIG_HOME/corral/ when that is set)
+default:
+  backend: kubevirt   # or: corral config set-default-backend kubevirt
 ```
 
 `corral config` shows what's active. State lives in
-`~/.local/share/tailvm/` (registry + local VM disks). The legacy `tailvm`
-tool shares this directory, so existing VMs still work.
+`~/.local/share/corral/` (`registry.json` and local VM disks under `vms/`).
+Corral does not read the legacy `tailvm` directories (`~/.config/tailvm/`,
+`~/.local/share/tailvm/`).
 
 Environment overrides (handy for the in-cluster web deployment):
 
@@ -664,7 +666,7 @@ corral list             all VMs, every configured context
 corral context          get | use <name> | add <name> --backend <bck> | list | rm <name>
 corral create <name>    --kubevirt | (default: local qemu)
                         --mem 4G --cpu 2 --disk 20G --iso … --container-disk …
-                        --pvc … --node … --cloud-init … --instancetype … --ts-authkey …
+                        --pvc … --node … --cloud-init … --instancetype …
                         --storage-class … --ephemeral --ttl 4h
                         --lan | --network-nad ns/name [--bridge-iface net1]  (LAN bridge NIC)
 corral gc               [kubevirt] [--dry-run] [--delete-after 72h]
