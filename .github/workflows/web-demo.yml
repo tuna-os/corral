@@ -30,23 +30,22 @@ on:
       - "!pkg/testenv/**"
       - "!pkg/vdi/**"
       - "!pkg/vmtest/**"
+  # A pull request builds the site only when it touches the demo itself, the
+  # web client or the demo cluster. Other pkg/ changes are built by the push to
+  # main and by the nightly run: 0 failures in the last 53 PR runs, and it is
+  # not a required check.
   pull_request:
     paths:
       - "cmd/corral-wasm/**"
-      - "pkg/**"
+      - "pkg/web/**"
+      - "pkg/demo/**"
       - "web-demo/**"
       - "scripts/build-web-demo.sh"
       - "go.mod"
       - "go.sum"
       - ".github/workflows/web-demo.yml"
-      - "!**_test.go"
-      - "!pkg/device/**"
-      - "!pkg/lifecycle/**"
-      - "!pkg/schedule/**"
-      - "!pkg/setup/**"
-      - "!pkg/testenv/**"
-      - "!pkg/vdi/**"
-      - "!pkg/vmtest/**"
+  schedule:
+    - cron: "11 4 * * *"
   workflow_dispatch:
 
 permissions:

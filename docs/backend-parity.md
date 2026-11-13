@@ -312,7 +312,7 @@ Three layers, and each one catches what the others cannot:
   native command with the right arguments for each operation. "Does Incus LXC
   work at all" gets its answer here: the tests assert the commands, not the
   daemon's behaviour.
-- **Real-backend e2e** — `.github/workflows/e2e.yml` runs kind with emulated
+- **Real-backend e2e** — the `e2e-kind` job of `.github/workflows/ci.yml` runs kind with emulated
   KubeVirt. `.github/workflows/e2e-incus.yml` runs a real Incus daemon, a real
   libvirt, and local QEMU on one runner. It checks a triple-backend aggregate
   inventory and the snapshot/export/device adapters against the real tools. It

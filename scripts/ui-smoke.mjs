@@ -1,5 +1,5 @@
 // UI smoke test: drives the real dashboard against `corral web --demo` with
-// headless Chromium. Run by .github/workflows/ui-smoke.yml; locally:
+// headless Chromium. Run by the ui-smoke job of .github/workflows/ci.yml; locally:
 //
 //   corral web --demo --addr 127.0.0.1:8899 &
 //   npx playwright install chromium && node scripts/ui-smoke.mjs

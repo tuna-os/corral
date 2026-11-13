@@ -3,11 +3,19 @@ name: CI
 on:
   push:
     branches: [main]
-  # The fast gate (gofmt/vet/build/test -race) runs on EVERY PR — it is the
-  # required status check that auto-merge waits on, and a required check that
-  # gets path-filtered out never reports, deadlocking the merge. ~2 min on a
-  # docs-only PR is the price of auto-merge meaning something.
+  # The fast gate (gofmt/vet/build/test -race, lint) runs on every PR that
+  # changes more than prose or repository metadata. The heavy lanes run only
+  # when the change touches their inputs. The `changes` job holds every filter:
+  # a path filter under `on:` would keep a required check from ever reporting,
+  # while a job that its `if:` skips reports success.
+  #
+  # Draft PRs run only the fast gate; marking one ready runs the rest.
+  # Add the `run-heavy` label to a PR (and re-run, or push) to run every lane.
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  # The full set once a night, whatever changed: the backstop for path scoping.
+  schedule:
+    - cron: "47 3 * * *"
   workflow_dispatch:
 
 # Least privilege by default: the read-only token is all any job here needs
@@ -31,7 +39,83 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Path scoping: .github/scripts/ci-scope.sh owns the map. A pull request and a
+  # push to main select by the changed paths; the nightly run, a dispatch on
+  # main and a PR labelled run-heavy select every lane. A dispatch on another
+  # branch (the catalog refresh PR) selects by the diff against main.
+  changes:
+    name: select path-scoped jobs
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read # the run-heavy label, read live so a re-run sees it
+    outputs:
+      code: ${{ steps.scope.outputs.code }}
+      e2e: ${{ steps.scope.outputs.e2e }}
+      ui: ${{ steps.scope.outputs.ui }}
+      qemu: ${{ steps.scope.outputs.qemu }}
+      image: ${{ steps.scope.outputs.image }}
+      prose: ${{ steps.scope.outputs.prose }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BEFORE: ${{ github.event.before }}
+          PR: ${{ github.event.pull_request.number }}
+          DRAFT: ${{ github.event.pull_request.draft }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          scope=.github/scripts/ci-scope.sh
+          labels=
+          if [ "$EVENT" = pull_request ]; then
+            labels=$(gh pr view "$PR" --json labels --jq '.labels[].name')
+          fi
+          if grep -qx run-heavy <<<"$labels"; then
+            $scope --all >> "$GITHUB_OUTPUT"
+            cat "$GITHUB_OUTPUT"; exit 0
+          fi
+          case "$EVENT" in
+            pull_request)
+              out=$(git diff --name-only "$BASE_SHA"...HEAD | tee /dev/stderr | $scope) ;;
+            push)
+              # The pushed range only. A range that cannot be read (new branch,
+              # force push) runs everything. Main keeps test and lint on every
+              # push: they gate publishing.
+              if [ -n "$BEFORE" ] && [ "${BEFORE//0/}" != "" ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+                out=$(git diff --name-only "$BEFORE" HEAD | tee /dev/stderr | $scope | sed 's/^code=.*/code=true/')
+              else
+                out=$($scope --all)
+              fi ;;
+            workflow_dispatch)
+              if [ "$REF" = refs/heads/main ]; then
+                out=$($scope --all)
+              else
+                git fetch -q origin main
+                out=$(git diff --name-only "$(git merge-base origin/main HEAD)" HEAD | tee /dev/stderr | $scope)
+              fi ;;
+            *)
+              out=$($scope --all) ;;
+          esac
+          if [ "$DRAFT" = true ]; then
+            out=$(sed -E 's/^(e2e|ui|qemu|image)=.*/\1=false/' <<<"$out")
+          fi
+          echo "$out" >> "$GITHUB_OUTPUT"
+          cat "$GITHUB_OUTPUT"
+
   native-qemu-lifecycle:
+    # Four runners, two of them macOS: the costliest lane, and not a required
+    # check. A PR runs it when the change touches the QEMU backend.
+    needs: changes
+    if: needs.changes.outputs.qemu == 'true'
     name: Native QEMU lifecycle (${{ matrix.os }} / ${{ matrix.arch }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
@@ -259,6 +343,8 @@ jobs:
           path: native-qemu-evidence/
 
   test:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     concurrency:
       group: ${{ github.workflow }}-test-${{ github.event.pull_request.number || github.ref }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -334,6 +420,8 @@ jobs:
           path: cover.out
 
   lint:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     concurrency:
       group: ${{ github.workflow }}-lint-${{ github.event.pull_request.number || github.ref }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -380,7 +468,7 @@ jobs:
     # Only main may publish the rolling image. Manual dispatches on catalog
     # branches run verification without replacing production.
     needs: test
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    if: github.event_name != 'pull_request' && github.event_name != 'schedule' && github.ref == 'refs/heads/main'
     concurrency:
       group: ${{ github.workflow }}-publish-image-${{ github.ref }}
       cancel-in-progress: false
@@ -480,6 +568,10 @@ jobs:
           echo "Signed and attested $REF"
 
   web-image-smoke:
+    # Builds the web image and cross-builds arm64: a PR runs it when the change
+    # touches the image or the binary it ships.
+    needs: changes
+    if: needs.changes.outputs.image == 'true'
     concurrency:
       group: ${{ github.workflow }}-web-image-smoke-${{ github.event.pull_request.number || github.ref }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -512,7 +604,7 @@ jobs:
     # Main only: the binaries are signed as ci.yml@refs/heads/main, the
     # identity scripts/install.sh pins; a dispatch from a branch would put
     # binaries under the rolling URL that no verifier accepts.
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    if: github.event_name != 'pull_request' && github.event_name != 'schedule' && github.ref == 'refs/heads/main'
     concurrency:
       group: ${{ github.workflow }}-release-binaries-${{ github.ref }}
       cancel-in-progress: false
@@ -599,7 +691,7 @@ jobs:
     # only there: a dispatch from another branch would publish artifacts that
     # no verifier pinned to main accepts — and would move the rolling index.
     needs: test
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    if: github.event_name != 'pull_request' && github.event_name != 'schedule' && github.ref == 'refs/heads/main'
     # Its own group, so a publish that has started always finishes and the
     # newest pending one always runs next (a rolling release wants the newest).
     concurrency:
@@ -676,3 +768,194 @@ jobs:
             || gh release create plugins --title "Corral plugin channel" \
                  --notes "Rolling signed/checksummed marketplace manifest; artifacts are immutable releases." --latest=false
           gh release upload plugins plugins-dist/marketplace-index.json --clobber
+
+  # UI smoke: build corral, serve the dashboard against the built-in --demo
+  # fake cluster, and drive it with headless Chromium (scripts/ui-smoke.mjs).
+  # No cluster, no KVM. The regression net for the frontend + demo seam.
+  # A required check: when its scope is not touched the job is skipped, which
+  # reports success.
+  ui-smoke:
+    needs: changes
+    if: needs.changes.outputs.ui == 'true'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 26
+
+      # Before the Playwright step: its `npm init` writes a package.json at the
+      # root, and that would make Node load the client's .js files as CommonJS.
+      - name: Web client unit tests
+        run: node --test pkg/web/jstest/*.test.mjs
+
+      - name: Build corral
+        run: go build -o corral .
+
+      - name: Install Playwright Chromium
+        run: | # zizmor: ignore[adhoc-packages] repo has no npm lockfile, smoke test installs Playwright on purpose
+          npm init -y >/dev/null
+          npm install --no-save playwright >/dev/null
+          npx playwright install --with-deps chromium
+
+      - name: Serve demo dashboard
+        run: |
+          ./corral web --demo --addr 127.0.0.1:8899 &
+          for i in $(seq 1 30); do
+            curl -fsS -o /dev/null http://127.0.0.1:8899/ && break
+            sleep 1
+          done
+
+      - name: UI smoke
+        run: node scripts/ui-smoke.mjs
+
+      - name: Upload grid acceptance screenshot
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: grid-columns
+          path: grid-columns.png
+          if-no-files-found: ignore
+
+      # Named checks save what they saw (e.g. command-palette.png), so a
+      # reviewer can look at a UI change without running it.
+      - name: Upload smoke screenshots
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: ui-smoke-screenshots
+          path: ui-smoke-screenshots/
+          if-no-files-found: ignore
+
+  # Browser e2e against a real (emulated) KubeVirt: kind + KubeVirt with
+  # useEmulation (no KVM on GitHub runners) + CDI. Runs every Playwright test
+  # not tagged @live-only: wizard flows, catalog content, every create source
+  # type, scale, and one full boot lifecycle (cirros under TCG). The @live-only
+  # tier (consoles, SSH, RDP probe, snapshots, bootc, boot-from-import) needs
+  # the production cluster: see e2e/README in corral.spec.js.
+  #
+  # A required check: the `changes` job holds the path filter (see ci-scope.sh
+  # for what it drops), so a PR that cannot change the `corral web` this job
+  # drives skips it and the skipped job reports success.
+  e2e-kind:
+    needs: changes
+    if: needs.changes.outputs.e2e == 'true'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 45
+    env:
+      # Reverted v1.9.0-beta.0 (see git history on this line for that attempt):
+      # it made things worse. The containerDisk lifecycle test went from
+      # printableStatus stuck at "Starting" (v1.8.2) to the virt-launcher pod
+      # CrashLoopBackOff-ing under useEmulation, a real regression in the
+      # beta's software-emulation path that no timeout fixes. Root cause of the
+      # v1.8.2 "stuck at Starting" behavior is still open; see #77.
+      KUBEVIRT_VERSION: v1.8.2
+      CDI_VERSION: v1.62.0
+      KIND_VERSION: v0.30.0
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 26
+
+      - name: Create kind cluster
+        run: |
+          curl -fsSLo ./kind "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
+          chmod +x ./kind && sudo mv ./kind /usr/local/bin/kind
+          kind create cluster --wait 120s
+
+      - name: Install KubeVirt (software emulation)
+        run: |
+          kubectl create -f "https://github.com/kubevirt/kubevirt/releases/download/${KUBEVIRT_VERSION}/kubevirt-operator.yaml"
+          kubectl create -f "https://github.com/kubevirt/kubevirt/releases/download/${KUBEVIRT_VERSION}/kubevirt-cr.yaml"
+          kubectl -n kubevirt patch kubevirt kubevirt --type merge \
+            -p '{"spec":{"configuration":{"developerConfiguration":{"useEmulation":true}}}}'
+          kubectl -n kubevirt wait kv/kubevirt --for condition=Available --timeout=10m
+
+      - name: Install CDI
+        run: |
+          kubectl create -f "https://github.com/kubevirt/containerized-data-importer/releases/download/${CDI_VERSION}/cdi-operator.yaml"
+          kubectl create -f "https://github.com/kubevirt/containerized-data-importer/releases/download/${CDI_VERSION}/cdi-cr.yaml"
+          kubectl wait cdi cdi --for=condition=Available --timeout=10m
+
+      - name: Install virtctl
+        run: |
+          curl -fsSLo virtctl "https://github.com/kubevirt/kubevirt/releases/download/${KUBEVIRT_VERSION}/virtctl-${KUBEVIRT_VERSION}-linux-amd64"
+          chmod +x virtctl && sudo mv virtctl /usr/local/bin/virtctl
+
+      - name: Build and start corral web
+        run: |
+          go build -tags bootc -o corral .
+          kubectl create namespace corral-vms
+          CORRAL_DEFAULT_BACKEND=kubevirt ./corral web --addr 127.0.0.1:8006 > corral-web.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:8006/api/capabilities && break
+            sleep 1
+          done
+
+      - name: Install Playwright
+        working-directory: e2e
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Run e2e (CI tier)
+        working-directory: e2e
+        env:
+          # cirros boots fast enough under TCG; fedora would not
+          E2E_CONTAINERDISK: quay.io/kubevirt/cirros-container-disk-demo:latest
+          CORRAL_NS: corral-vms
+        run: npx playwright test --grep-invert "@live-only" --reporter=line
+
+      # The VDI broker (#227–#229) on its own corral web instance: claim,
+      # ownership, connect, release, and reclaim against real Leases.
+      - name: VDI broker e2e
+        env:
+          E2E_CONTAINERDISK: quay.io/kubevirt/cirros-container-disk-demo:latest
+          CORRAL_NS: corral-vms
+        run: scripts/e2e-vdi.sh ./corral
+
+      - name: Verify cleanup left nothing behind
+        if: always()
+        run: |
+          leftovers=$(kubectl get vm,dv -n corral-vms -o name 2>/dev/null || true)
+          ct_leftovers=$(kubectl get pvc,pod -n corral-vms -l corral.dev/ct=true -o name 2>/dev/null || true)
+          leftovers="$leftovers$ct_leftovers"
+          if [ -n "$leftovers" ]; then
+            echo "e2e left resources behind:"; echo "$leftovers"; exit 1
+          fi
+
+      - name: Server log
+        if: failure()
+        run: tail -100 corral-web.log
+
+      - uses: actions/upload-artifact@v7.0.2
+        if: failure()
+        with:
+          name: playwright-results
+          path: e2e/test-results/
+
+  # Simplified Technical English (ASD-STE100) over this repository's Markdown.
+  # The linter, its rules and its tests live in tuna-os/.github and are shared
+  # by every repo; this repo keeps only .ste-budget, the number it is measured
+  # against. That budget is a ratchet: lower it when a batch of prose lands,
+  # never raise it to make a PR pass. .ste-budget and ci.yml are in the prose
+  # scope on purpose: a change to the number a job is measured against must
+  # trigger that job.
+  ste:
+    needs: changes
+    if: needs.changes.outputs.prose == 'true'
+    uses: tuna-os/.github/.github/workflows/ste-lint.yml@4078f531ac74703f203bde835ef6c25e9321b97b # main # zizmor: ignore[ref-version-mismatch] pinned to a reviewed main commit; Renovate bumps the digest, so main may be ahead
