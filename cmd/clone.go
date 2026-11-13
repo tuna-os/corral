@@ -52,7 +52,8 @@ backend's own clone mechanism. Backends without one refuse by name.`,
 		}
 
 		if registryStore != nil {
-			if err := registryStore.Set(dst, types.RegistryEntry{
+			ref.Name = dst
+			if err := registryStore.SetRef(ref, types.RegistryEntry{
 				Backend:   ref.Backend,
 				Context:   ref.Context,
 				Namespace: ref.Namespace,

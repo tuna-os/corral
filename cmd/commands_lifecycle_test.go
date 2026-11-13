@@ -6,7 +6,11 @@ package cmd
 // operator's VM sees (#214, RFC-0004).
 
 import (
+	"encoding/json"
+	"encoding/xml"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -14,6 +18,7 @@ import (
 	"github.com/tuna-os/corral/pkg/shell"
 	"github.com/tuna-os/corral/pkg/types"
 	"github.com/tuna-os/corral/pkg/virtualbox"
+	"github.com/tuna-os/corral/pkg/xen"
 )
 
 // kubevirtVMScratch is remoteVMScratch for a KubeVirt VM: the client, package,
@@ -24,6 +29,7 @@ func kubevirtVMScratch(t *testing.T, name string, entry types.RegistryEntry) *sh
 	fake := remoteVMScratch(t, name, entry)
 	fake.AddPrefixResponse("kubectl", "", nil)
 	fake.AddPrefixResponse("/fake/bin/virtctl", "", nil)
+	listedKubevirtVMs(t, fake, types.VM{Name: name, Namespace: entry.Namespace})
 	kubevirt.SetDefaultRunner(fake)
 	kubevirt.SetPackageRunner(fake)
 	kubevirt.SetApplyRunner(fake)
@@ -33,6 +39,20 @@ func kubevirtVMScratch(t *testing.T, name string, entry types.RegistryEntry) *sh
 		kubevirt.SetApplyRunner(shell.Real{})
 	})
 	return fake
+}
+
+func listedKubevirtVMs(t *testing.T, fake *shell.Fake, vms ...types.VM) {
+	t.Helper()
+	items := make([]map[string]any, 0, len(vms))
+	for _, vm := range vms {
+		items = append(items, map[string]any{"metadata": map[string]string{"name": vm.Name, "namespace": vm.Namespace}})
+	}
+	data, err := json.Marshal(map[string]any{"items": items})
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"get", "vms", "-A", "-o", "json"}
+	fake.AddResponseKV("kubectl", args, string(data), nil)
 }
 
 func forceDeletes(t *testing.T) {
@@ -136,7 +156,7 @@ func TestLifecycleCommandsUseTheInstanceBackend(t *testing.T) {
 			if !ranCommandLine(fake, tc.delete) {
 				t.Errorf("delete did not run %q; calls were %v", tc.delete, fake.Calls())
 			}
-			if _, ok := registryStore.Get("web"); ok {
+			if len(registryStore.All()) != 0 {
 				t.Error("delete left the VM in the registry")
 			}
 		})
@@ -166,7 +186,7 @@ func TestDeleteFailureKeepsTheRegistryEntry(t *testing.T) {
 	if err := deleteCmd.RunE(deleteCmd, []string{"web"}); err == nil {
 		t.Fatal("delete reported success though incus failed")
 	}
-	if _, ok := registryStore.Get("web"); !ok {
+	if _, ok := registryStore.GetRef(types.InstanceRef{Backend: "incus", Context: "lab", Namespace: "incus", Name: "web"}); !ok {
 		t.Error("a failed delete removed the registry entry")
 	}
 }
@@ -238,7 +258,38 @@ func TestInfoAndSSHOnABackendWithoutThemAreRefusedByBackend(t *testing.T) {
 		"info": {"virtualbox", func() error { return infoCmd.RunE(infoCmd, []string{"web"}) }},
 		"ssh":  {"xen", func() error { return sshCmd.RunE(sshCmd, []string{"web"}) }},
 	} {
-		remoteVMScratch(t, "web", types.RegistryEntry{Backend: tc.backend})
+		entry := types.RegistryEntry{Backend: tc.backend}
+		if tc.backend == "xen" {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var request struct {
+					Method string `xml:"methodName"`
+				}
+				if err := xml.NewDecoder(r.Body).Decode(&request); err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
+				value := "<struct></struct>"
+				switch request.Method {
+				case "session.login_with_password":
+					value = "<string>OpaqueRef:test-session</string>"
+				case "VM.get_all":
+					value = "<array><data><value><string>OpaqueRef:web</string></value></data></array>"
+				case "VM.get_record":
+					value = "<struct><member><name>name_label</name><value><string>web</string></value></member><member><name>power_state</name><value><string>Halted</string></value></member></struct>"
+				}
+				w.Header().Set("Content-Type", "text/xml")
+				_, _ = w.Write([]byte("<methodResponse><params><param><value><struct><member><name>Status</name><value><string>Success</string></value></member><member><name>Value</name><value>" + value + "</value></member></struct></value></param></params></methodResponse>"))
+			}))
+			t.Cleanup(server.Close)
+			client, err := xen.New(xen.Config{Host: server.URL, Username: "root", Password: "test-password"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			xen.SetClientForContext(server.URL, client)
+			t.Cleanup(xen.ResetClients)
+			entry.Context = server.URL
+		}
+		remoteVMScratch(t, "web", entry)
 		err := tc.run()
 		if err == nil || !strings.Contains(err.Error(), tc.backend+" backend does not support "+action) {
 			t.Errorf("%s on a %s VM = %v, want a refusal naming %s", action, tc.backend, err, tc.backend)

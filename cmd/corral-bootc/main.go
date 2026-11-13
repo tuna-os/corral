@@ -42,6 +42,7 @@ import (
 // it on the tailnet, and records it in the registry — the part of `create`
 // that's shared between a fresh build and a resumed one (--resume).
 // placement adds dedicated CPUs and tags; the builder never gets them.
+// Registry failures leave the created VM and its disk intact and report that state.
 func finishVM(name, ns, pvcName, image, key, mem string, cpu int, node string, placement kubevirt.Placement) error {
 	vm := kubevirt.GenerateBootcVM(name, ns, pvcName, image, key, mem, cpu, node)
 	if vm == nil {
@@ -55,11 +56,15 @@ func finishVM(name, ns, pvcName, image, key, mem string, cpu int, node string, p
 	if err := kubevirt.ApplyProxy(name, ns, kubevirt.ConsolePorts); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: tailnet expose failed: %v\n", err)
 	}
-	if store, err := registry.NewStore(); err == nil {
-		store.Set(name, types.RegistryEntry{
-			Backend:   "kubevirt",
-			Namespace: ns,
-		})
+	store, err := registry.NewStore()
+	if err != nil {
+		return fmt.Errorf("VM %q created in ns/%s, but opening its registry failed (VM and disk retained): %w", name, ns, err)
+	}
+	if err := store.SetRef(types.InstanceRef{Backend: "kubevirt", Context: config.KubeContext(), Namespace: ns, Name: name}, types.RegistryEntry{
+		Backend:   "kubevirt",
+		Namespace: ns,
+	}); err != nil {
+		return fmt.Errorf("VM %q created in ns/%s, but saving its registry entry failed (VM and disk retained): %w", name, ns, err)
 	}
 	fmt.Fprintf(os.Stderr, "VM %q created in ns/%s — start: corral start %s\n", name, ns, name)
 	return nil
@@ -482,8 +487,12 @@ lists this same catalog alongside the OS image catalog in one place.`,
 		if err := kubevirt.BootcRebuild(name, ns, image, key, disk, provisionScript, os.Stderr); err != nil {
 			return err
 		}
-		if store, err := registry.NewStore(); err == nil {
-			store.Set(name, types.RegistryEntry{Backend: "kubevirt", Namespace: ns})
+		store, err := registry.NewStore()
+		if err != nil {
+			return fmt.Errorf("VM %q rebuilt from %s and restarted in ns/%s, but opening its registry failed (rebuilt VM retained): %w", name, image, ns, err)
+		}
+		if err := store.SetRef(types.InstanceRef{Backend: "kubevirt", Context: config.KubeContext(), Namespace: ns, Name: name}, types.RegistryEntry{}); err != nil {
+			return fmt.Errorf("VM %q rebuilt from %s and restarted in ns/%s, but saving its registry entry failed (rebuilt VM retained): %w", name, image, ns, err)
 		}
 		fmt.Fprintf(os.Stderr, "VM %q rebuilt from %s and restarted\n", name, image)
 		return nil

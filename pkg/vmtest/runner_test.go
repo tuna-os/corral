@@ -1,6 +1,7 @@
 package vmtest
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -11,7 +12,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tuna-os/corral/pkg/fleet"
 	"github.com/tuna-os/corral/pkg/qemu"
+	"github.com/tuna-os/corral/pkg/registry"
+	"github.com/tuna-os/corral/pkg/types"
 )
 
 // fakeHost implements every Runner collaborator and records the calls that
@@ -319,5 +323,56 @@ func TestRunner_Order(t *testing.T) {
 	}
 	if result.SSH.Port != 2222 || !strings.Contains(result.SSH.Command, "-p 2222") {
 		t.Errorf("SSH endpoint not recorded: %+v", result.SSH)
+	}
+}
+
+func TestRecordInRegistryStoresLocalCredentialsWithoutOverwritingAnotherTarget(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("KUBECONFIG", "")
+	t.Setenv("CORRAL_KUBE_CONTEXT", "")
+	t.Setenv("CORRAL_INCUS_REMOTE", "")
+	t.Setenv("CORRAL_LIBVIRT_URI", "")
+	t.Setenv("CORRAL_BACKEND", "qemu")
+	store, err := registry.NewStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := qemu.RecordCreating("vmtest", types.CreateOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	foreign := types.InstanceRef{Backend: "kubevirt", Context: "cluster", Namespace: "team", Name: "vmtest"}
+	if err := store.SetRef(foreign, types.RegistryEntry{Password: "preserved"}); err != nil {
+		t.Fatal(err)
+	}
+	var output strings.Builder
+	recordInRegistry(&Spec{Name: "vmtest", RootPassword: "local-test-secret"}, &output)
+	if output.Len() != 0 {
+		t.Fatalf("recording credentials failed: %s", output.String())
+	}
+	result := fleet.List(context.Background())
+	if len(result.Errors) != 0 {
+		t.Fatalf("actual local fleet lookup failed: %+v", result.Errors)
+	}
+	inventory := result.VMs
+	if len(inventory) != 1 || inventory[0].Name != "vmtest" {
+		t.Fatalf("expected the actual recorded local inventory, got %+v", inventory)
+	}
+	vm := inventory[0]
+	ref := types.InstanceRef{Backend: vm.Backend, Context: vm.Context, Namespace: vm.Namespace, Name: vm.Name, Peer: vm.Peer}
+	if entry, ok := store.GetRef(ref); !ok || entry.Password != "local-test-secret" {
+		t.Fatalf("actual local writer did not persist scoped credentials: %+v (found %v)", entry, ok)
+	}
+	if entry, ok := store.GetRef(foreign); !ok || entry.Password != "preserved" {
+		t.Fatalf("local writer overwrote another target's credentials: %+v (found %v)", entry, ok)
+	}
+	if err := store.RemoveRef(ref); err != nil {
+		t.Fatal(err)
+	}
+	if entry, ok := store.GetRef(ref); ok {
+		t.Fatalf("inventory-based retirement retained local credentials: %+v", entry)
+	}
+	if entry, ok := store.GetRef(foreign); !ok || entry.Password != "preserved" {
+		t.Fatalf("inventory-based retirement removed another target: %+v (found %v)", entry, ok)
 	}
 }

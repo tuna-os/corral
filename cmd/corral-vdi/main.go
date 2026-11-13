@@ -79,9 +79,14 @@ func poolCreateCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if store, rerr := registry.NewStore(); rerr == nil {
-				for _, m := range p.Members {
-					store.Set(m.Name, types.RegistryEntry{Backend: "kubevirt", Namespace: ns})
+			store, err := registry.NewStore()
+			if err != nil {
+				return fmt.Errorf("pool %q created with %d members in ns/%s, but opening its registry failed (all members retained): %w", name, len(p.Members), ns, err)
+			}
+			// Registration is not a rollback boundary: all clones already exist.
+			for i, m := range p.Members {
+				if err := store.SetRef(types.InstanceRef{Backend: "kubevirt", Context: config.KubeContext(), Namespace: ns, Name: m.Name}, types.RegistryEntry{}); err != nil {
+					return fmt.Errorf("pool %q created with %d members in ns/%s, but saving member %q failed (%d/%d entries saved; all members retained): %w", name, len(p.Members), ns, m.Name, i, len(p.Members), err)
 				}
 			}
 			fmt.Printf("pool %q created: %d members\n", name, len(p.Members))

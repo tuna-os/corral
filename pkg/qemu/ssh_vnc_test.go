@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -115,16 +116,40 @@ func TestSSHExplicitPortOverridesTheForward(t *testing.T) {
 	}
 }
 
-func TestSSHWithoutAnAddressIsARefusal(t *testing.T) {
-	// No Tailscale IP and no loopback tolerance here (unlike WaitSSH): an
-	// interactive session to 127.0.0.1:port would fail confusingly, so SSH
-	// refuses up front.
-	writeVM(t, vmMetadata{Name: "web", SSHPort: 2222})
-
-	if err := SSH("web", "debian", "", "", 0, "", nil); err == nil {
-		t.Fatal("expected a refusal for a VM with no Tailscale IP")
-	} else if !strings.Contains(err.Error(), "Tailscale") {
-		t.Errorf("refusal %q should name Tailscale", err)
+func TestSSHLoopbackUsesTheForwardedPort(t *testing.T) {
+	for _, host := range []string{"", "127.0.0.1"} {
+		for _, port := range []int{0, 22, 2022} {
+			t.Run(host+"/"+strconv.Itoa(port), func(t *testing.T) {
+				// Both old metadata without an address and explicitly local
+				// VMs must reach their own forward, never the host's port 22.
+				writeVM(t, vmMetadata{Name: "web", SSHPort: 2242, Tailscale: host})
+				log := stubSSH(t)
+				if err := SSH("web", "debian", "", "uptime", port, "", nil); err != nil {
+					t.Fatalf("SSH: %v", err)
+				}
+				raw, err := os.ReadFile(log)
+				if err != nil {
+					t.Fatalf("reading argv log: %v", err)
+				}
+				wantPort := 2242
+				if port == 2022 {
+					wantPort = port
+				}
+				argv := strings.Fields(string(raw))
+				foundPort, foundHost := false, false
+				for i, arg := range argv {
+					if arg == "-p" && i+1 < len(argv) {
+						foundPort = argv[i+1] == strconv.Itoa(wantPort)
+					}
+					if arg == "debian@127.0.0.1" {
+						foundHost = true
+					}
+				}
+				if !foundPort || !foundHost {
+					t.Errorf("argv %q should route to debian@127.0.0.1 on port %d", raw, wantPort)
+				}
+			})
+		}
 	}
 }
 

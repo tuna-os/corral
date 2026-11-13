@@ -194,12 +194,6 @@ func resolveBackend(name string) string {
 	}
 	vm, err := resolveVM(name)
 	if err != nil {
-		if registryStore != nil {
-			if entry, ok := registryStore.Get(name); ok {
-				activateVMContext(types.VM{Backend: entry.Backend, Context: entry.Context})
-				return entry.Backend
-			}
-		}
 		return ""
 	}
 	activateVMContext(vm)
@@ -213,12 +207,6 @@ func requireBackend(name string) (string, error) {
 	}
 	vm, err := resolveVM(name)
 	if err != nil {
-		if registryStore != nil {
-			if entry, ok := registryStore.Get(name); ok {
-				activateVMContext(types.VM{Backend: entry.Backend, Context: entry.Context})
-				return entry.Backend, nil
-			}
-		}
 		return "", err
 	}
 	activateVMContext(vm)
@@ -260,13 +248,6 @@ func instanceRef(name string) (types.InstanceRef, error) {
 	}
 	vm, err := resolveVM(name)
 	if err != nil {
-		if registryStore != nil {
-			if entry, ok := registryStore.Get(name); ok {
-				vm = types.VM{Name: name, Backend: entry.Backend, Context: entry.Context, Namespace: entry.Namespace}
-				activateVMContext(vm)
-				return vm.Ref(), nil
-			}
-		}
 		return types.InstanceRef{}, err
 	}
 	activateVMContext(vm)

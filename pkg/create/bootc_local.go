@@ -144,7 +144,7 @@ func (r request) runLocalBootcCreate(name string) error {
 	}
 	created = true
 	if r.Registry != nil {
-		_ = r.Registry.Set(name, types.RegistryEntry{Backend: "qemu"})
+		return r.Registry.SetRef(types.InstanceRef{Backend: "qemu", Namespace: "local", Name: name}, types.RegistryEntry{})
 	}
 	return nil
 }

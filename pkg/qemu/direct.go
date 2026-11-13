@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -136,6 +137,10 @@ func startDirect(name string) error {
 	}
 	pid := cmd.Process.Pid
 	if err := os.WriteFile(filepath.Join(vmDir, pidFile), []byte(strconv.Itoa(pid)+"\n"), 0o644); err != nil {
+		// This is still our child, not a PID recovered from disk. Never leave
+		// an untracked QEMU holding the disk when persisting ownership fails.
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
 		return fmt.Errorf("recording the QEMU pid: %w", err)
 	}
 
@@ -160,7 +165,8 @@ func startDirect(name string) error {
 	return nil
 }
 
-// directPID returns the recorded pid and whether that process is alive.
+// directPID returns the recorded pid and whether that process is alive and,
+// where the platform can show it, still running this VM's recorded command.
 func directPID(name string) (int, bool) {
 	data, err := os.ReadFile(filepath.Join(VMHome(), name, pidFile))
 	if err != nil {
@@ -184,36 +190,116 @@ func directPID(name string) (int, bool) {
 			return pid, false
 		}
 	}
+	// QEMU can crash and leave its pid file while the kernel gives the PID to
+	// an unrelated process. That process is not this VM.
+	if matches, known := recordedCommandRuns(name, pid); known && !matches {
+		return pid, false
+	}
 	return pid, true
 }
 
-// stopDirect terminates a directly started VM: ask, then insist.
+// procCmdline reads a process's argv where the platform exposes /proc.
+// A variable so tests can take the path a platform without /proc takes.
+var procCmdline = func(pid int) ([]byte, error) {
+	return os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+}
+
+// recordedCommandRuns reports whether pid runs this VM's recorded QEMU
+// command. known is false when the platform has no /proc or the VM has no
+// readable command.json, so the caller must ask QMP instead.
+func recordedCommandRuns(name string, pid int) (matches, known bool) {
+	raw, err := procCmdline(pid)
+	if err != nil {
+		return false, false
+	}
+	command, err := readLaunchCommand(name)
+	if err != nil {
+		return false, false
+	}
+	argv := strings.Split(strings.TrimSuffix(string(raw), "\x00"), "\x00")
+	if len(argv)-1 != len(command.Args) {
+		return false, true
+	}
+	for i, arg := range command.Args {
+		if argv[i+1] != arg {
+			return false, true
+		}
+	}
+	return true, true
+}
+
+// abandonedQMPEndpoint reports whether dialErr shows that no QEMU serves this
+// VM's QMP socket: the file is absent, or nothing listens on it. That proves
+// a stale PID only when the recorded command asks QEMU for that socket, since
+// such a QEMU listens there for its whole life. An older command without QMP
+// proves nothing.
+func abandonedQMPEndpoint(name, socket string, dialErr error) bool {
+	if !errors.Is(dialErr, fs.ErrNotExist) && !errors.Is(dialErr, syscall.ECONNREFUSED) {
+		return false
+	}
+	command, err := readLaunchCommand(name)
+	if err != nil {
+		return false
+	}
+	for _, arg := range command.Args {
+		if strings.HasPrefix(arg, "unix:"+socket+",") {
+			return true
+		}
+	}
+	return false
+}
+
+// stopDirect quits through this VM's QMP capability, never through a PID
+// recovered from disk: that PID may already belong to an unrelated process.
+// A recorded PID that runs a different command, or whose recorded QMP socket
+// is absent or abandoned, is stale state left by a QEMU that died: clear it
+// without signalling anything. Retain state on any other failure so Delete
+// cannot unlink a disk still held by QEMU.
 func stopDirect(name string) error {
 	pid, alive := directPID(name)
 	path := filepath.Join(VMHome(), name, pidFile)
 	if !alive {
-		_ = os.Remove(path)
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
 		return nil
 	}
-	process, err := os.FindProcess(pid)
+	socket := filepath.Join(VMHome(), name, "qmp.sock")
+	conn, reader, err := qmpDial(socket)
 	if err != nil {
-		return err
+		// When /proc confirmed the recorded command, a missing endpoint is
+		// a QEMU that cannot be asked to quit, not a stale PID.
+		if _, known := recordedCommandRuns(name, pid); !known && abandonedQMPEndpoint(name, socket, err) {
+			fmt.Fprintf(os.Stderr, "VM %q: pid %d does not serve the recorded QMP socket; clearing the stale pid file.\n", name, pid)
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+			return nil
+		}
+		return fmt.Errorf("refusing to signal an unverified PID for VM %q: %w", name, err)
 	}
-	if err := process.Signal(syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
-		return fmt.Errorf("stopping QEMU (pid %d): %w", pid, err)
+	defer func() { _ = conn.Close() }()
+	raw, err := qmpExecute(conn, reader, "query-name", nil)
+	if err != nil {
+		return fmt.Errorf("identifying QEMU for %q: %w", name, err)
+	}
+	var identity struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(raw, &identity); err != nil || identity.Name != name {
+		return fmt.Errorf("QMP socket does not identify VM %q", name)
+	}
+	if _, err := qmpExecute(conn, reader, "quit", nil); err != nil {
+		return fmt.Errorf("quitting QEMU for %q: %w", name, err)
 	}
 	deadline := time.Now().Add(20 * time.Second)
 	for time.Now().Before(deadline) {
 		if _, alive := directPID(name); !alive {
-			_ = os.Remove(path)
-			return nil
+			return os.Remove(path)
 		}
-		time.Sleep(250 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond)
 	}
-	// A guest that ignores ACPI shutdown is normal, not exceptional.
-	_ = process.Signal(syscall.SIGKILL)
-	_ = os.Remove(path)
-	return nil
+	return fmt.Errorf("QEMU for %q has not retired; retaining PID and disk state", name)
 }
 
 // lastLines is the tail of a QEMU log, for an error message.

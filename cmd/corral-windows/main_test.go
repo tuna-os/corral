@@ -123,6 +123,67 @@ func TestCreateWindowsVM_UnattendedAppliesConfigMapAndReturnsPassword(t *testing
 	}
 }
 
+func TestCreateWindowsVM_RegistryFailureReportsUnsavedCredentials(t *testing.T) {
+	for _, failure := range []string{"open", "write"} {
+		t.Run(failure, func(t *testing.T) {
+			fake := shell.NewFake()
+			fake.AddResponseKV("kubectl", []string{"apply", "-f", "-"}, "applied", nil)
+			fake.AddResponseKV("kubectl", []string{"get", "sc", "-o", "json"}, `{"items":[]}`, nil)
+			kubevirt.SetApplyRunner(fake)
+			kubevirt.SetPackageRunner(fake)
+			t.Cleanup(func() {
+				kubevirt.SetApplyRunner(shell.Real{})
+				kubevirt.SetPackageRunner(shell.Real{})
+			})
+			dir := t.TempDir()
+			home := ""
+			if failure == "write" {
+				home = filepath.Join(dir, "blocked-home")
+				if err := os.WriteFile(home, []byte("existing data"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			t.Setenv("HOME", home)
+			capturePath := filepath.Join(dir, "stderr")
+			capture, err := os.Create(capturePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			oldStderr := os.Stderr
+			os.Stderr = capture
+			t.Cleanup(func() {
+				os.Stderr = oldStderr
+				if err := capture.Close(); err != nil {
+					t.Error(err)
+				}
+			})
+
+			err = createWindowsVM("win11", "tailvm", "https://example.com/win11.iso", "64Gi", "8Gi", 4, true)
+			if err == nil || !strings.Contains(err.Error(), "created (stopped) in ns/tailvm") || !strings.Contains(err.Error(), "VM and disks retained") {
+				t.Fatalf("missing created-resource persistence error: %v", err)
+			}
+			out, err := os.ReadFile(capturePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(out), "Administrator password: ") || !strings.Contains(string(out), "NOT saved") || strings.Contains(string(out), "(saved") {
+				t.Fatalf("incorrect credential persistence report: %s", out)
+			}
+			var appliedVM, appliedCredentials bool
+			for _, call := range fake.Calls() {
+				appliedVM = appliedVM || strings.Contains(call.Stdin, `"kind":"VirtualMachine"`)
+				appliedCredentials = appliedCredentials || strings.Contains(call.Stdin, "autounattend.xml")
+				if len(call.Args) > 0 && call.Args[0] == "delete" {
+					t.Fatal("registry failure deleted a created resource")
+				}
+			}
+			if !appliedVM || !appliedCredentials {
+				t.Fatal("expected VM and credentials to exist before registry failure")
+			}
+		})
+	}
+}
+
 func TestCreateWindowsVM_ExposesConsolePorts(t *testing.T) {
 	fake := shell.NewFake()
 	fake.AddResponseKV("kubectl", []string{"apply", "-f", "-"}, "applied", nil)
