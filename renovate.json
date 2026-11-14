@@ -27,6 +27,17 @@
       "matchManagers": ["custom.regex"],
       "matchPackageNames": ["quay.io/containerdisks/ubuntu"],
       "allowedVersions": "/^[0-9]*[02468]\\.04$/"
+    },
+    {
+      "description": "CI and the release build install exactly the Go version the go directive names, so the directive follows Go releases",
+      "matchDatasources": ["golang-version"],
+      "rangeStrategy": "bump"
+    },
+    {
+      "description": "A new Go minor changes the language version; a person reviews it",
+      "matchDatasources": ["golang-version"],
+      "matchUpdateTypes": ["minor"],
+      "automerge": false
     }
   ]
 }
