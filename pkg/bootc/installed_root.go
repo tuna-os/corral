@@ -25,9 +25,20 @@ package bootc
 // is the builder's (Fedora 42 on KubeVirt), not the image's: an image whose
 // policy is newer (Fedora 43+, ELN, rawhide) labels types the builder's policy
 // lacks, and setfiles exits 255 on "invalid context". -c validates against
-// the image's own binary policy instead; the kernel still accepts the labels
-// as unmapped contexts, as it does for `bootc install`'s own labeling, because
-// the runner's container is privileged (CAP_MAC_ADMIN) and unconfined.
+// the image's own binary policy instead.
+//
+// Validation passing is not enough: setfiles then asks the builder kernel to
+// set each context, and the kernel refuses a type its loaded policy does not
+// know with EINVAL ("Could not set context for /etc/kmscon:  Invalid
+// argument"), labels everything else, and exits nonzero. That is expected:
+// such a type is unmapped on the builder, as it already was for `bootc
+// install`'s own labeling ("Context ...:kmscon_conf_t:s0 is not valid (left
+// unmapped)" on the same builder), and only the guest's own policy can map
+// it. The file keeps the label it had, and everything the builder policy does
+// know (passwd, shadow, group, home directories) is still relabeled. The
+// runner therefore accepts a nonzero setfiles whose entire stderr is such
+// EINVAL lines (setfilesTolerant), and fails on anything else: another errno,
+// an "invalid context", or a nonzero exit with no diagnosis.
 const InstalledRootRunner = `set -eu
 P=$1
 SCRIPT=$2
@@ -73,7 +84,7 @@ cp "$SCRIPT" "$R/tmp/corral-provision.sh"
 chmod 0700 "$R/tmp/corral-provision.sh"
 if [ -x "$R/usr/bin/bash" ]; then SH=/usr/bin/bash; else SH=/bin/sh; fi
 chroot "$R" "$SH" /tmp/corral-provision.sh
-chroot "$R" /bin/sh -c '
+chroot "$R" /bin/sh -c '` + setfilesTolerant + `
   T=$(sed -n "s/^SELINUXTYPE=//p" /etc/selinux/config 2>/dev/null || true)
   FC=/etc/selinux/$T/contexts/files/file_contexts
   if [ -n "$T" ] && [ -f "$FC" ] && command -v setfiles >/dev/null 2>&1; then
@@ -82,10 +93,34 @@ chroot "$R" /bin/sh -c '
       if [ -f "$f" ]; then POLICY=$f; fi
     done
     if [ -n "$POLICY" ]; then
-      setfiles -c "$POLICY" "$FC" /etc /var
+      corral_setfiles -c "$POLICY" "$FC" /etc /var
     else
-      setfiles "$FC" /etc /var
+      corral_setfiles "$FC" /etc /var
     fi
   fi
 '
+`
+
+// setfilesTolerant defines corral_setfiles, which runs the setfiles command
+// it is given and treats one failure as success: a nonzero exit whose whole
+// stderr is "Could not set context for <path>:  Invalid argument" lines (the
+// builder kernel does not know the image's type). stderr is always passed
+// through. It is POSIX sh and must not contain a single quote, because the
+// runner embeds it in a single-quoted chroot script.
+const setfilesTolerant = `
+  corral_setfiles() {
+    E=$(mktemp "${TMPDIR:-/tmp}/setfiles.err.XXXXXX") || return 1
+    RC=0
+    "$@" 2>"$E" || RC=$?
+    cat "$E" >&2
+    if [ "$RC" -ne 0 ] && [ -s "$E" ]; then
+      OTHER=$(grep -vc "^setfiles: Could not set context for .*:  *Invalid argument$" "$E" || true)
+      if [ "$OTHER" = 0 ]; then
+        echo "corral: setfiles could not set the contexts above on the builder kernel; they keep the label bootc install gave them" >&2
+        RC=0
+      fi
+    fi
+    rm -f "$E"
+    return "$RC"
+  }
 `

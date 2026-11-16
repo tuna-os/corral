@@ -556,6 +556,9 @@ write_files:
       # The runner executes in the image's own container (its /usr is the
       # deployment's /usr) and assembles the booted view: deployment /etc,
       # stateroot /var. The raw root partition is not a usable chroot.
+      # The runner's own output never reaches the console (the tee to ttyS0
+      # above can die early), so it is traced into a file and, on failure,
+      # its tail goes straight to ttyS0 as CORRAL_PROVISION_OUT lines.
       if [ -s /root/provision.b64 ]; then
         mkdir -p /root/corral-provision /mnt/root
         base64 -d /root/provision.b64 > /root/corral-provision/provision.sh
@@ -568,7 +571,8 @@ write_files:
         }
         if ! podman run --rm --privileged --network=none --security-opt label=type:unconfined_t \
           -v /mnt/root:/corral-sysroot -v /root/corral-provision:/corral-provision:ro \
-          "$IMG" sh /corral-provision/runner.sh /corral-sysroot /corral-provision/provision.sh; then
+          "$IMG" sh -x /corral-provision/runner.sh /corral-sysroot /corral-provision/provision.sh > /root/provision.out 2>&1; then
+          sed 's/^/CORRAL_PROVISION_OUT: /' /root/provision.out | tail -n 80 > /dev/ttyS0 2>/dev/null || true
           echo CORRAL_BUILD_FAIL provision
           echo CORRAL_BUILD_FAIL provision > /dev/ttyS0 2>/dev/null || true
           sync; sleep 2; poweroff; exit 1

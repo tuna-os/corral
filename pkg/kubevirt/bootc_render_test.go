@@ -252,12 +252,19 @@ func TestBuilderScript_AccountProvisioning(t *testing.T) {
 		`if [ -s /root/provision.b64 ]; then`,
 		`mount /dev/disk/by-id/virtio-target-part3 /mnt/root ||`,
 		`-v /mnt/root:/corral-sysroot -v /root/corral-provision:/corral-provision:ro`,
-		`"$IMG" sh /corral-provision/runner.sh /corral-sysroot /corral-provision/provision.sh`,
+		`"$IMG" sh -x /corral-provision/runner.sh /corral-sysroot /corral-provision/provision.sh > /root/provision.out 2>&1`,
 		"CORRAL_BUILD_FAIL provision",
 	} {
 		if !strings.Contains(build, want) {
 			t.Errorf("build.sh missing %q", want)
 		}
+	}
+	// A failed runner's trace reaches the serial console before the failure
+	// marker, so the caller sees why provisioning failed.
+	dump := strings.Index(build, `sed 's/^/CORRAL_PROVISION_OUT: /' /root/provision.out | tail -n 80 > /dev/ttyS0`)
+	fail := strings.Index(build, "echo CORRAL_BUILD_FAIL provision")
+	if dump < 0 || fail < dump {
+		t.Errorf("build.sh must dump the runner trace to ttyS0 before CORRAL_BUILD_FAIL provision (dump %d, fail %d)", dump, fail)
 	}
 	if strings.Contains(build, "chroot /mnt/root") {
 		t.Error("build.sh must not chroot into the raw root partition")
