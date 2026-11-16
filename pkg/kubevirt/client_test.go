@@ -252,6 +252,36 @@ func TestGenerateProxyDeployment(t *testing.T) {
 	_ = data
 }
 
+// A proxy pod serves one VM. Without resourceNames its Role would let it open
+// the console of every VM in the namespace.
+func TestGenerateProxyRBAC_RoleNamesItsVM(t *testing.T) {
+	type rule struct {
+		Resources     []string `yaml:"resources"`
+		ResourceNames []string `yaml:"resourceNames"`
+	}
+	var rules []rule
+	for _, doc := range strings.Split(GenerateProxyRBAC("bluefin", "default"), "\n---\n") {
+		var obj struct {
+			Kind  string `yaml:"kind"`
+			Rules []rule `yaml:"rules"`
+		}
+		if err := yaml.Unmarshal([]byte(doc), &obj); err != nil {
+			t.Fatalf("invalid YAML: %v\n%s", err, doc)
+		}
+		if obj.Kind == "Role" {
+			rules = obj.Rules
+		}
+	}
+	if len(rules) == 0 {
+		t.Fatal("the proxy RBAC has no Role rules")
+	}
+	for _, r := range rules {
+		if len(r.ResourceNames) != 1 || r.ResourceNames[0] != "bluefin" {
+			t.Errorf("rule for %v has resourceNames %v, want only the proxy's own VM", r.Resources, r.ResourceNames)
+		}
+	}
+}
+
 func TestParseVMList(t *testing.T) {
 	// Includes the regression case: a VM using spec.runStrategy (not spec.running)
 	// must still report running=true when its printableStatus is Running.
