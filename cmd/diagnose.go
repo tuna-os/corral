@@ -15,6 +15,15 @@ var (
 	diagJSON      bool
 )
 
+// diagScreenshotPath is where diagnose writes the frame it inspects and then
+// removes: the VM's own state directory, next to the screendump Capture
+// reads. The shared temp directory is the wrong place. Any local user can
+// create <name>-diag-screenshot.png there first as a symlink, and the
+// screenshot would overwrite the file it points at.
+func diagScreenshotPath(name string) string {
+	return filepath.Join(qemu.VMHome(), name, "diag-screenshot.png")
+}
+
 var diagnoseCmd = &cobra.Command{
 	Use:   "diagnose [name]",
 	Short: "Run diagnostics on a QEMU VM (serial, screenshot, QMP, host checks)",
@@ -61,7 +70,7 @@ warning; use --json for machine-readable output in gates.`,
 			}
 		}
 		// Screenshot
-		tmp := filepath.Join(os.TempDir(), name+"-diag-screenshot.png")
+		tmp := diagScreenshotPath(name)
 		if frame, err := qemu.Capture(name, tmp); err != nil {
 			fmt.Fprintf(os.Stderr, "screenshot: %v\n", err)
 		} else {
