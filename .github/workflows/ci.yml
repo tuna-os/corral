@@ -463,6 +463,17 @@ jobs:
           git fetch --quiet origin "$BASE_REF"
           golangci-lint run --default=none --enable=errcheck --new-from-merge-base="$base" ./...
 
+      # Known-vulnerability scan of the module's dependencies and the Go
+      # standard library, reporting only vulnerabilities the code can reach.
+      # Exits non-zero on any finding. Both tag sets, as the build has two.
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+
+      - name: Vulnerability scan
+        run: |
+          govulncheck ./...
+          govulncheck -tags bootc ./...
+
   publish-image:
     # corral-web image: the web UI served on the cluster (deploy/corral-web.yaml)
     # Only main may publish the rolling image. Manual dispatches on catalog
