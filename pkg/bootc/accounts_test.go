@@ -106,7 +106,8 @@ func TestInstalledRootRunnerTargetsDeployment(t *testing.T) {
 		`mount --bind "$ETC" "$R/etc"`,
 		`mount --bind "$VAR" "$R/var"`,
 		`chroot "$R" "$SH" /tmp/corral-provision.sh`,
-		`setfiles "$FC" /etc /var`,
+		// validated against the image's policy, not the builder kernel's
+		`setfiles -c "$POLICY" "$FC" /etc /var`,
 	} {
 		if !strings.Contains(InstalledRootRunner, want) {
 			t.Errorf("runner missing %q", want)

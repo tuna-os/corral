@@ -19,6 +19,15 @@ package bootc
 // into it. Afterwards it restores SELinux labels on /etc and /var from the
 // image's policy: tools such as useradd replace /etc/shadow by rename, and a
 // file the build left unlabeled breaks logins on an enforcing guest.
+//
+// setfiles validates every file_contexts entry before it labels anything.
+// Without -c it validates against the policy the running kernel loaded, which
+// is the builder's (Fedora 42 on KubeVirt), not the image's: an image whose
+// policy is newer (Fedora 43+, ELN, rawhide) labels types the builder's policy
+// lacks, and setfiles exits 255 on "invalid context". -c validates against
+// the image's own binary policy instead; the kernel still accepts the labels
+// as unmapped contexts, as it does for `bootc install`'s own labeling, because
+// the runner's container is privileged (CAP_MAC_ADMIN) and unconfined.
 const InstalledRootRunner = `set -eu
 P=$1
 SCRIPT=$2
@@ -68,7 +77,15 @@ chroot "$R" /bin/sh -c '
   T=$(sed -n "s/^SELINUXTYPE=//p" /etc/selinux/config 2>/dev/null || true)
   FC=/etc/selinux/$T/contexts/files/file_contexts
   if [ -n "$T" ] && [ -f "$FC" ] && command -v setfiles >/dev/null 2>&1; then
-    setfiles "$FC" /etc /var
+    POLICY=
+    for f in /etc/selinux/$T/policy/policy.*; do
+      if [ -f "$f" ]; then POLICY=$f; fi
+    done
+    if [ -n "$POLICY" ]; then
+      setfiles -c "$POLICY" "$FC" /etc /var
+    else
+      setfiles "$FC" /etc /var
+    fi
   fi
 '
 `
