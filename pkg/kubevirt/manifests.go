@@ -706,7 +706,9 @@ func DeleteProxy(name, ns string) error {
 	return nil
 }
 
-// GenerateProxyRBAC creates RBAC resources for the proxy.
+// GenerateProxyRBAC creates RBAC resources for the proxy. Each proxy serves
+// one VM, so both Role rules name that VM: a proxy pod cannot read another
+// VM in the namespace or open its console.
 func GenerateProxyRBAC(name, ns string) string {
 	return fmt.Sprintf(`apiVersion: v1
 kind: ServiceAccount
@@ -726,9 +728,11 @@ metadata:
 rules:
   - apiGroups: ["subresources.kubevirt.io"]
     resources: ["virtualmachineinstances/vnc"]
+    resourceNames: [%[1]q]
     verbs: ["get"]
   - apiGroups: ["kubevirt.io"]
     resources: ["virtualmachineinstances"]
+    resourceNames: [%[1]q]
     verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
