@@ -203,7 +203,7 @@ can't support, so the user does not see a failure at submit time.
 
 - Corral generates a cloud-init password for each VM and stores it in
   `~/.local/share/corral/registry.json` (mode 0600).
-- No Tailscale auth key reaches a guest. Cluster VMs join the tailnet through
+- A guest never receives a Tailscale auth key. Cluster VMs join the tailnet through
   the Tailscale operator's per-VM proxy, which holds its own credentials.
 - SSH public keys are read from `~/.ssh/id_ed25519.pub` (fallbacks:
   `id_rsa.pub`, `id_ecdsa.pub`).

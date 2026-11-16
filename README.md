@@ -100,11 +100,11 @@ Never post account credentials or API keys in issues or pull requests.
   `corral ssh` picks the right path: a Kubernetes API tunnel for cluster VMs,
   a Tailscale-bound port-forward for local ones. Or use `--vsock` for QEMU
   AF_VSOCK transport on live ISOs. It changes no config files.
-- **Cluster VMs on your tailnet, no agent in the guest.** When the cluster
+- **Cluster VMs on your tailnet, no agent in the guest**. When the cluster
   runs the Tailscale Kubernetes operator, `corral create` gives each KubeVirt
-  VM a proxy that shows up on your tailnet as `<name>-vm`, with SSH, VNC and
-  RDP. Guests do not run `tailscale up` themselves; install Tailscale in the
-  guest if you want it to be a tailnet node of its own.
+  VM a proxy. The proxy shows up on your tailnet as `<name>-vm`, with SSH, VNC
+  and RDP. Guests do not run `tailscale up` themselves. To make a guest a
+  tailnet node of its own, install Tailscale in the guest.
 - **Extensions with a marketplace.** Niche features ship as plugins:
   `corral plugin search`, then `corral plugin install bootc`. Then
   `corral bootc create dev --image ghcr.io/...` builds an OS disk *on the
