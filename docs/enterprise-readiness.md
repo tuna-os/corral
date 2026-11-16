@@ -114,7 +114,7 @@ tests each backend.
 
 | Tier | Requirement | Backends today | Evidence |
 |---|---|---|---|
-| Tier 1 | A real backend runs in CI on each push to `main`. | KubeVirt, Incus, libvirt, local QEMU | [e2e.yml](../.github/workflows/e2e.yml) (kind with emulated KubeVirt), [e2e-incus.yml](../.github/workflows/e2e-incus.yml) (Incus, libvirt and QEMU) |
+| Tier 1 | A real backend runs in CI on each push to `main`. | KubeVirt, Incus, libvirt, local QEMU | [ci.yml](../.github/workflows/ci.yml) job `e2e-kind` (kind with emulated KubeVirt), [e2e-incus.yml](../.github/workflows/e2e-incus.yml) (Incus, libvirt and QEMU) |
 | Tier 2 | Unit tests and fixture tests. No live backend in CI. | Proxmox VE | `pkg/proxmoxbe` tests |
 | Tier 3 | A proposal or a work in progress. | vSphere, Nutanix, XenServer, VirtualBox | [RFC-0003](rfc/0003-enterprise-backends.md), #507, [manual pass](runbooks/enterprise-backends-manual-pass.md) |
 
