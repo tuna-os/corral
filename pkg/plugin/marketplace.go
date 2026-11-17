@@ -142,10 +142,20 @@ var installMu sync.Mutex
 func configDir() string {
 	return config.ConfigDir()
 }
-func sourcesPath() string          { return filepath.Join(configDir(), "marketplaces.json") }
-func stateDir() string             { return filepath.Join(Dir(), ".installed") }
-func statePath(name string) string { return filepath.Join(stateDir(), name+".json") }
-func sbomPath(name string) string  { return filepath.Join(stateDir(), name+".spdx.json") }
+func sourcesPath() string          { return under(configDir(), "marketplaces.json") }
+func stateDir() string             { return under(Dir(), ".installed") }
+func statePath(name string) string { return under(stateDir(), name+".json") }
+func sbomPath(name string) string  { return under(stateDir(), name+".spdx.json") }
+
+// under joins elem onto dir. An unknown dir ("") stays unknown: joining onto
+// it would make a path relative to the working directory, and every file
+// operation on "" fails.
+func under(dir, elem string) string {
+	if dir == "" {
+		return ""
+	}
+	return filepath.Join(dir, elem)
+}
 
 func Sources() []Source {
 	if raw := strings.TrimSpace(os.Getenv("CORRAL_MARKETPLACE_URLS")); raw != "" {
@@ -173,7 +183,11 @@ func Sources() []Source {
 }
 
 func saveSources(sources []Source) error {
-	if err := os.MkdirAll(configDir(), 0700); err != nil {
+	dir, err := config.LocateConfigDir()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(sources, "", "  ")
@@ -520,6 +534,10 @@ func (e *Entry) InstallPinned(pin bool) error {
 	if !e.Unverified && len(b.SHA256) != 64 {
 		return fmt.Errorf("%s has no SHA-256 digest for %s: refusing to install an unverifiable artifact", e.Name, platformKey())
 	}
+	dir, err := LocateDir()
+	if err != nil {
+		return err
+	}
 	client := &http.Client{Timeout: 5 * time.Minute}
 	resp, err := client.Get(b.URL)
 	if err != nil {
@@ -529,10 +547,10 @@ func (e *Entry) InstallPinned(pin bool) error {
 	if resp.StatusCode != 200 {
 		return fmt.Errorf("downloading %s: %s", e.Name, resp.Status)
 	}
-	if err := os.MkdirAll(Dir(), 0755); err != nil {
+	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(Dir(), ".corral-"+e.Name+"-*.tmp")
+	tmp, err := os.CreateTemp(dir, ".corral-"+e.Name+"-*.tmp")
 	if err != nil {
 		return err
 	}
@@ -573,7 +591,7 @@ func (e *Entry) InstallPinned(pin bool) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	dst := filepath.Join(Dir(), "corral-"+e.Name)
+	dst := filepath.Join(dir, "corral-"+e.Name)
 	backup := dst + ".rollback"
 	_ = os.Remove(backup)
 	if _, err := os.Stat(dst); err == nil {
@@ -651,7 +669,11 @@ func Remove(name string) error {
 	if !validName.MatchString(name) {
 		return fmt.Errorf("invalid plugin name")
 	}
-	dst := filepath.Join(Dir(), "corral-"+name)
+	dir, err := LocateDir()
+	if err != nil {
+		return err
+	}
+	dst := filepath.Join(dir, "corral-"+name)
 	if _, err := os.Stat(dst); err != nil {
 		return fmt.Errorf("%s is not installed", name)
 	}

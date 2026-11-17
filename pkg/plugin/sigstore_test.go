@@ -292,3 +292,17 @@ func TestFirstPartySignerMatchesWorkflow(t *testing.T) {
 		t.Errorf("DefaultMarketplaceURL %s is not published by the repository FirstPartySigner names", DefaultMarketplaceURL)
 	}
 }
+
+// With no user cache directory the trust root is not fetched: its TUF cache
+// would otherwise sit in the shared temp directory, where another local user
+// can create it first.
+func TestTrustedMaterial_NoTempDirCache(t *testing.T) {
+	t.Setenv("CORRAL_SIGSTORE_TRUSTED_ROOT", "")
+	t.Setenv("XDG_CACHE_HOME", "")
+	t.Setenv("HOME", "")
+
+	_, err := trustedMaterial()
+	if err == nil || !strings.Contains(err.Error(), "Sigstore cache directory") {
+		t.Fatalf("trustedMaterial() error = %v, want the missing cache directory", err)
+	}
+}

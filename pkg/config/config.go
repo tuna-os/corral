@@ -520,21 +520,37 @@ type TailscaleConfig struct {
 
 // ConfigDir returns the directory containing config.yaml.
 // If XDG_CONFIG_HOME is set, it returns $XDG_CONFIG_HOME/corral.
-// Otherwise it defaults to ~/.config/corral.
+// Otherwise it defaults to ~/.config/corral. It returns "" when the home
+// directory is unknown; LocateConfigDir reports why.
 func ConfigDir() string {
+	dir, _ := LocateConfigDir()
+	return dir
+}
+
+// LocateConfigDir is ConfigDir with the failure reported. There is no
+// fallback when XDG_CONFIG_HOME is unset and the home directory is unknown:
+// the only other place is the shared temp directory, where another local
+// user can create the directory first and choose the configuration Corral
+// reads.
+func LocateConfigDir() (string, error) {
 	if d := os.Getenv("XDG_CONFIG_HOME"); d != "" {
-		return filepath.Join(d, "corral")
+		return filepath.Join(d, "corral"), nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		home = os.TempDir()
+		return "", fmt.Errorf("locate the config directory: %w; set XDG_CONFIG_HOME to name one", err)
 	}
-	return filepath.Join(home, ".config", "corral")
+	return filepath.Join(home, ".config", "corral"), nil
 }
 
-// DefaultPath returns the default config file path.
+// DefaultPath returns the default config file path, or "" when ConfigDir
+// does.
 func DefaultPath() string {
-	return filepath.Join(ConfigDir(), "config.yaml")
+	dir := ConfigDir()
+	if dir == "" {
+		return ""
+	}
+	return filepath.Join(dir, "config.yaml")
 }
 
 // Load reads the config file from path. Returns empty config if file doesn't

@@ -73,3 +73,15 @@ func TestConfigureLoggingFlagsAndEnv(t *testing.T) {
 		t.Error("configureLogging accepted --log-level shout")
 	}
 }
+
+// With no cache directory the TUI has nowhere private to log. It reports that
+// instead of logging under the shared temp directory or to stderr.
+func TestConfigureLoggingTUIWithoutCacheDirFails(t *testing.T) {
+	resetLogging(t)
+	t.Setenv("XDG_CACHE_HOME", "")
+	t.Setenv("HOME", "")
+
+	if err := configureLogging(true); err == nil {
+		t.Fatal("configureLogging(true) succeeded with no cache directory")
+	}
+}

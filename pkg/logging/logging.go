@@ -106,13 +106,24 @@ func OpenFile(path string) (*os.File, error) {
 }
 
 // DefaultTUIFile is where the TUI logs when CORRAL_LOG_FILE is not set: the
-// TUI owns the terminal, so a record on stderr would corrupt its frame.
+// TUI owns the terminal, so a record on stderr would corrupt its frame. It
+// returns "" when the user cache directory is unknown; LocateTUIFile reports
+// why.
 func DefaultTUIFile() string {
+	path, _ := LocateTUIFile()
+	return path
+}
+
+// LocateTUIFile is DefaultTUIFile with the failure reported. There is no
+// fallback when the user cache directory is unknown: the only other place is
+// the shared temp directory, where another local user can put a symlink
+// under the log's name and have the records appended to a file they chose.
+func LocateTUIFile() (string, error) {
 	dir, err := os.UserCacheDir()
 	if err != nil {
-		dir = os.TempDir()
+		return "", fmt.Errorf("locate the TUI log file: %w; set %s to name one", err, EnvFile)
 	}
-	return filepath.Join(dir, "corral", "tui.log")
+	return filepath.Join(dir, "corral", "tui.log"), nil
 }
 
 type nopCloser struct{}

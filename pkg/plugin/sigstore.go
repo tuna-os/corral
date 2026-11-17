@@ -27,9 +27,11 @@ var trustedMaterial = func() (root.TrustedMaterial, error) {
 	if path := os.Getenv("CORRAL_SIGSTORE_TRUSTED_ROOT"); path != "" {
 		return root.NewTrustedRootFromPath(path)
 	}
+	// No fallback to the shared temp directory: another local user could
+	// create the cache directory there first.
 	cache, err := os.UserCacheDir()
 	if err != nil {
-		cache = os.TempDir()
+		return nil, fmt.Errorf("locate the Sigstore cache directory: %w; set CORRAL_SIGSTORE_TRUSTED_ROOT to a trusted_root.json instead", err)
 	}
 	opts := tuf.DefaultOptions().WithCachePath(filepath.Join(cache, "corral", "sigstore-tuf"))
 	return root.FetchTrustedRootWithOptions(opts)

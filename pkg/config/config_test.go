@@ -620,3 +620,27 @@ func TestContextsDoNotDuplicateTheSelectedKubevirtTargetAsUnbound(t *testing.T) 
 		t.Fatalf("selected KubeVirt target was duplicated or lost: %+v", targets)
 	}
 }
+
+// With no home directory and no XDG_CONFIG_HOME there is no config directory.
+// The shared temp directory is not a substitute: another local user can
+// create the directory there first and choose the configuration that is read.
+func TestConfigDirHasNoTempDirFallback(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("HOME", "")
+
+	if dir, err := LocateConfigDir(); err == nil {
+		t.Fatalf("LocateConfigDir() = %q, want an error", dir)
+	}
+	if got := ConfigDir(); got != "" {
+		t.Errorf("ConfigDir() = %q, want empty", got)
+	}
+	if got := DefaultPath(); got != "" {
+		t.Errorf("DefaultPath() = %q, want empty", got)
+	}
+	if _, err := Load(""); err == nil {
+		t.Error("Load(\"\") succeeded with no config directory")
+	}
+	if err := SetDefaultBackend("qemu"); err == nil {
+		t.Error("SetDefaultBackend succeeded with no config directory")
+	}
+}
