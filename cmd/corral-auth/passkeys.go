@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,22 +17,35 @@ import (
 	wa "github.com/go-webauthn/webauthn/webauthn"
 )
 
+// passkeyUser is keyed by Name. For a user enrolled through a Basic or OIDC
+// session, Name is that session's login ("basic|<user>", "<issuer>|<sub>"),
+// never its display name, and Display holds the display name. A user created
+// with the bootstrap token has a Name without "|".
 type passkeyUser struct {
 	ID          []byte          `json:"id"`
 	Name        string          `json:"name"`
+	Display     string          `json:"display,omitempty"`
 	Credentials []wa.Credential `json:"credentials"`
+}
+
+func (u *passkeyUser) displayName() string {
+	if u.Display != "" {
+		return u.Display
+	}
+	return u.Name
 }
 
 func (u *passkeyUser) WebAuthnID() []byte                   { return u.ID }
 func (u *passkeyUser) WebAuthnName() string                 { return u.Name }
-func (u *passkeyUser) WebAuthnDisplayName() string          { return u.Name }
+func (u *passkeyUser) WebAuthnDisplayName() string          { return u.displayName() }
 func (u *passkeyUser) WebAuthnCredentials() []wa.Credential { return u.Credentials }
 
 type passkeyCeremony struct {
-	Kind    string
-	User    string
-	Data    wa.SessionData
-	Expires time.Time
+	Kind      string
+	User      string
+	Bootstrap bool // authorised by the enrollment token, not by a session
+	Data      wa.SessionData
+	Expires   time.Time
 }
 type passkeyManager struct {
 	mu          sync.Mutex
@@ -109,19 +123,47 @@ func randomID(n int) []byte {
 	return b
 }
 
-// ceremony stores a pending ceremony and returns its id. Callers hold p.mu.
-// login/begin needs no session, so every anonymous call lands here: expired
-// ceremonies are dropped on the way in, or the map grows without bound.
+// maxCeremonies caps pending ceremonies; login/begin is anonymous.
+const maxCeremonies = 10000
+
+// ceremony stores a pending ceremony and returns its id, or "" when too many
+// are pending. Callers hold p.mu. login/begin needs no session, so every
+// anonymous call lands here: expired ceremonies are dropped on the way in,
+// and the cap bounds what five minutes of calls can hold.
 func (p *passkeyManager) ceremony(kind, user string, data *wa.SessionData) string {
+	return p.ceremonyFor(passkeyCeremony{Kind: kind, User: user}, data)
+}
+
+func (p *passkeyManager) ceremonyFor(c passkeyCeremony, data *wa.SessionData) string {
 	now := time.Now()
 	for id, c := range p.ceremonies {
 		if now.After(c.Expires) {
 			delete(p.ceremonies, id)
 		}
 	}
+	if len(p.ceremonies) >= maxCeremonies {
+		return ""
+	}
 	id := base64.RawURLEncoding.EncodeToString(randomID(24))
-	p.ceremonies[id] = passkeyCeremony{Kind: kind, User: user, Data: *data, Expires: now.Add(5 * time.Minute)}
+	c.Data, c.Expires = *data, now.Add(5*time.Minute)
+	p.ceremonies[id] = c
 	return id
+}
+
+// nameByID finds the store key of the user with this base64url user handle.
+func (p *passkeyManager) nameByID(id string) (string, bool) {
+	raw, err := base64.RawURLEncoding.DecodeString(id)
+	if err != nil {
+		return "", false
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for name, u := range p.users {
+		if subtle.ConstantTimeCompare(u.ID, raw) == 1 {
+			return name, true
+		}
+	}
+	return "", false
 }
 func (p *passkeyManager) take(id, kind string) (passkeyCeremony, error) {
 	p.mu.Lock()
@@ -155,6 +197,10 @@ func (g *gateway) passkeyLoginBegin(w http.ResponseWriter, r *http.Request) {
 	g.passkeys.mu.Lock()
 	id := g.passkeys.ceremony("login", "", session)
 	g.passkeys.mu.Unlock()
+	if id == "" {
+		http.Error(w, "too many pending passkey ceremonies", http.StatusTooManyRequests)
+		return
+	}
 	passkeyJSON(w, 200, map[string]any{"ceremony": id, "publicKey": assertion.Response})
 }
 func (g *gateway) passkeyLoginFinish(w http.ResponseWriter, r *http.Request) {
@@ -205,35 +251,76 @@ func (g *gateway) passkeyLoginFinish(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "saving passkey", 500)
 		return
 	}
-	s, _ := g.session(r)
-	s.Values = map[interface{}]interface{}{"login": "passkey|" + base64.RawURLEncoding.EncodeToString(matched.ID), "name": matched.Name}
+	g.passkeys.mu.Lock()
+	display := matched.displayName()
+	g.passkeys.mu.Unlock()
+	s, _ := g.session(r) // a fresh session when the old cookie does not decode
+	s.Values = signedIn("passkey|"+base64.RawURLEncoding.EncodeToString(matched.ID), display, "")
 	if err := s.Save(r, w); err != nil {
 		http.Error(w, "saving session", 500)
 		return
 	}
 	passkeyJSON(w, 200, map[string]bool{"ok": true})
 }
-func (g *gateway) enrollmentIdentity(r *http.Request) (string, bool) {
-	if login, name, _ := g.identity(r); login != "" {
-		if name == "" {
-			name = login
+
+// errEnrollThrottled reports too many wrong enrollment tokens.
+var errEnrollThrottled = fmt.Errorf("too many wrong enrollment tokens; try again later")
+
+// enrollmentIdentity names the passkey user a request may enroll for. A
+// session enrolls under its authenticated login, never its display name: a
+// display name is whatever the identity provider, or its user, says it is. A
+// passkey session adds keys only to its own user.
+func (g *gateway) enrollmentIdentity(r *http.Request) (name, display string, viaToken bool, err error) {
+	if login, dn, _ := g.identity(r); login != "" {
+		if id, isPasskey := strings.CutPrefix(login, "passkey|"); isPasskey {
+			if name, ok := g.passkeys.nameByID(id); ok {
+				return name, "", false, nil
+			}
+			return "", "", false, fmt.Errorf("passkey user no longer exists")
 		}
-		return name, true
+		return login, dn, false, nil // "<issuer>|<sub>" or "basic|<user>"
 	}
 	provided, user := r.Header.Get("X-Corral-Enroll-Token"), r.URL.Query().Get("user")
 	expected := g.passkeys.enrollToken
-	return user, user != "" && expected != "" && len(provided) == len(expected) && subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) == 1
+	if user == "" || expected == "" || provided == "" {
+		return "", "", false, fmt.Errorf("authenticated session or enrollment token required")
+	}
+	if g.enrollFailures != nil && g.enrollFailures.blocked("enroll-token") {
+		return "", "", false, errEnrollThrottled
+	}
+	if len(provided) != len(expected) || subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) != 1 {
+		if g.enrollFailures != nil {
+			g.enrollFailures.fail("enroll-token")
+		}
+		return "", "", false, fmt.Errorf("authenticated session or enrollment token required")
+	}
+	// "|" separates a login's namespace; a token-chosen name must not spell one.
+	if strings.Contains(user, "|") {
+		return "", "", false, fmt.Errorf("enrollment name must not contain '|'")
+	}
+	return user, "", true, nil
 }
 func (g *gateway) passkeyEnrollBegin(w http.ResponseWriter, r *http.Request) {
-	name, ok := g.enrollmentIdentity(r)
-	if !ok {
-		http.Error(w, "authenticated session or enrollment token required", http.StatusUnauthorized)
+	name, display, viaToken, err := g.enrollmentIdentity(r)
+	if err != nil {
+		code := http.StatusUnauthorized
+		if err == errEnrollThrottled {
+			code = http.StatusTooManyRequests
+		}
+		http.Error(w, err.Error(), code)
 		return
 	}
 	g.passkeys.mu.Lock()
 	user := g.passkeys.users[name]
+	// The bootstrap token enrolls a user's first passkey only. Further keys
+	// are added from a session signed in as that user.
+	if viaToken && user != nil && len(user.Credentials) > 0 {
+		g.passkeys.mu.Unlock()
+		http.Error(w, "this user already has a passkey; sign in and add another from that session", http.StatusConflict)
+		return
+	}
 	if user == nil {
-		user = &passkeyUser{ID: randomID(32), Name: name}
+		user = &passkeyUser{ID: randomID(32), Name: name, Display: display}
 		g.passkeys.users[name] = user
 		if err := g.passkeys.saveLocked(); err != nil {
 			g.passkeys.mu.Unlock()
@@ -247,8 +334,12 @@ func (g *gateway) passkeyEnrollBegin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	id := g.passkeys.ceremony("enroll", name, session)
+	id := g.passkeys.ceremonyFor(passkeyCeremony{Kind: "enroll", User: name, Bootstrap: viaToken}, session)
 	g.passkeys.mu.Unlock()
+	if id == "" {
+		http.Error(w, "too many pending passkey ceremonies", http.StatusTooManyRequests)
+		return
+	}
 	passkeyJSON(w, 200, map[string]any{"ceremony": id, "publicKey": creation.Response})
 }
 func (g *gateway) passkeyEnrollFinish(w http.ResponseWriter, r *http.Request) {
@@ -270,6 +361,11 @@ func (g *gateway) passkeyEnrollFinish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	g.passkeys.mu.Lock()
+	if c.Bootstrap && len(user.Credentials) > 0 { // two token ceremonies raced
+		g.passkeys.mu.Unlock()
+		http.Error(w, "this user already has a passkey", http.StatusConflict)
+		return
+	}
 	user.Credentials = append(user.Credentials, *credential)
 	err = g.passkeys.saveLocked()
 	g.passkeys.mu.Unlock()

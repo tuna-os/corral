@@ -11,11 +11,15 @@ package vsphere
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
+	"net"
 	"net/url"
 	"strings"
 	"time"
 
+	"github.com/tuna-os/corral/pkg/tlspin"
 	"github.com/vmware/govmomi/session"
 	"github.com/vmware/govmomi/vim25"
 	"github.com/vmware/govmomi/vim25/soap"
@@ -71,11 +75,17 @@ func New(cfg Config) (*Client, error) {
 	if cfg.Password == "" {
 		return nil, fmt.Errorf("vsphere: password is required; set %s (see ConfigForContext)", PasswordEnv)
 	}
-	if _, err := endpointURL(cfg.Host); err != nil {
+	endpoint, err := endpointURL(cfg.Host)
+	if err != nil {
 		return nil, err
 	}
-	if fp := normaliseFingerprint(cfg.Fingerprint); cfg.Fingerprint != "" && fp == "" {
-		return nil, fmt.Errorf("vsphere: fingerprint %q is not usable", cfg.Fingerprint)
+	if cfg.Fingerprint != "" {
+		if _, err := tlspin.Parse(cfg.Fingerprint); err != nil {
+			return nil, fmt.Errorf("vsphere: fingerprint %q is not usable: %w", cfg.Fingerprint, err)
+		}
+	}
+	if cfg.Fingerprint != "" && endpoint.Scheme != "https" {
+		return nil, fmt.Errorf("vsphere: host %q is not https, so the pinned fingerprint could never be checked", cfg.Host)
 	}
 	return &Client{cfg: cfg}, nil
 }
@@ -104,9 +114,20 @@ func (c *Client) Connect(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	soapClient := soap.NewClient(endpoint, c.cfg.Insecure)
-	if fp := normaliseFingerprint(c.cfg.Fingerprint); fp != "" {
-		soapClient.SetThumbprint(endpoint.Host, fp)
+	var soapClient *soap.Client
+	if c.cfg.Fingerprint != "" {
+		pin, err := tlspin.Parse(c.cfg.Fingerprint)
+		if err != nil {
+			return fmt.Errorf("vsphere: %w", err)
+		}
+		// A pin wins over insecure, as on the other backends.
+		soapClient = soap.NewClient(endpoint, false)
+		pinEndpoint(soapClient, endpoint, pin)
+	} else {
+		soapClient = soap.NewClient(endpoint, c.cfg.Insecure)
+	}
+	if testRootCAs != nil {
+		soapClient.DefaultTransport().TLSClientConfig.RootCAs = testRootCAs
 	}
 	vimClient, err := vim25.NewClient(ctx, soapClient)
 	if err != nil {
@@ -137,6 +158,52 @@ func endpointURL(host string) (*url.URL, error) {
 	return parsed, nil
 }
 
-func normaliseFingerprint(s string) string {
-	return strings.ToLower(strings.NewReplacer(":", "", " ", "", "-", "").Replace(strings.TrimSpace(s)))
+// testRootCAs replaces the system trust store in tests, so a test can stand
+// up a server whose certificate the client would trust without a pin. nil in
+// production.
+var testRootCAs *x509.CertPool
+
+// pinEndpoint makes the vCenter endpoint trusted exactly when its leaf
+// certificate matches the pin, whatever the system trust store says.
+//
+// govmomi's own thumbprint support is not enough: its dialer verifies against
+// the system trust store first and consults the thumbprint only when that
+// fails, so a publicly trusted certificate that does not match the pin would
+// be accepted. Connections to the pinned host:port therefore dial with the
+// pin's own TLS config. Other hosts (ESXi hosts that an NFC export lease
+// points at, whose thumbprints vCenter reports over the pinned session) keep
+// govmomi's dialer. The VerifyConnection hook covers the remaining path, a
+// proxied request, where net/http does the handshake with the transport's
+// TLS config instead of calling the dialer: for the pinned host it requires
+// the pin as well (on top of normal verification, so it fails closed).
+func pinEndpoint(sc *soap.Client, endpoint *url.URL, pin tlspin.Pin) {
+	t := sc.DefaultTransport()
+	host := endpoint.Hostname()
+	port := endpoint.Port()
+	if port == "" {
+		port = "443"
+	}
+	pinnedAddr := net.JoinHostPort(host, port)
+
+	t.TLSClientConfig.VerifyConnection = func(cs tls.ConnectionState) error {
+		if !strings.EqualFold(cs.ServerName, host) {
+			return nil
+		}
+		raw := make([][]byte, 0, len(cs.PeerCertificates))
+		for _, cert := range cs.PeerCertificates {
+			raw = append(raw, cert.Raw)
+		}
+		return pin.Verify(raw, nil)
+	}
+
+	govmomiDial := t.DialTLSContext
+	t.DialTLSContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if !strings.EqualFold(addr, pinnedAddr) {
+			return govmomiDial(ctx, network, addr)
+		}
+		config := pin.ClientConfig()
+		config.ServerName = host
+		dialer := &tls.Dialer{Config: config}
+		return dialer.DialContext(ctx, network, addr)
+	}
 }

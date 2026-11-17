@@ -459,8 +459,13 @@ func TestVDI_ConsoleOfAClaimedDesktopIsTheHolders(t *testing.T) {
 	if err := dial("root@example.com", "/api/vnc/vdi/desk-1"); err != nil {
 		t.Errorf("admin: %v", err)
 	}
-	if err := dial("bob@example.com", "/api/vnc/vdi/desk-2"); err != nil {
-		t.Errorf("an unclaimed member must stay open: %v", err)
+	// A console is full control of the guest, so a read-only caller gets
+	// one only on a desktop they hold; admins still reach every console.
+	if err := dial("bob@example.com", "/api/vnc/vdi/desk-2"); err == nil {
+		t.Error("a read-only caller opened the console of a desktop they do not hold")
+	}
+	if err := dial("root@example.com", "/api/vnc/vdi/desk-2"); err != nil {
+		t.Errorf("admin, unclaimed member: %v", err)
 	}
 }
 

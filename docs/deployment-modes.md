@@ -48,8 +48,21 @@ corral-auth --addr 127.0.0.1:8443 \
 | `--basic-htpasswd` | Apache htpasswd file for simple logins |
 | `--issuer`, `--client-id`, `--client-secret`, `--redirect-url` | OIDC provider settings |
 | `--passkey-store`, `--passkey-rp-id`, `--passkey-origin` | Passkey settings |
+| `--passkey-enroll-token` | Bootstrap token for the first passkey of a new user (16+ characters) |
 
-Add `CORRAL_ADMINS` as a second lock. It names the tailnet logins that may change state. All others get read-only access.
+### Sign-in rules
+
+The gateway applies these rules to each sign-in method:
+
+- A session lasts 8 hours. The server refuses an older cookie. Logout ends the session on the server too.
+- OIDC sends the `email` claim to Corral only when the provider sets `email_verified`. Without it, put the `issuer|subject` login in `CORRAL_ADMINS`.
+- A passkey that you add from an OIDC or Basic session goes to that login. The display name does not choose the account.
+- The bootstrap token adds the first passkey of a new user only. To add more passkeys, sign in as that user. The token must have 16 or more characters.
+- To give a new passkey to a user who lost all passkeys, remove that user from the passkey store first.
+- After 10 wrong Basic passwords for one user in 5 minutes, the gateway refuses that user until the window ends. The same limit applies to wrong bootstrap tokens.
+- The gateway refuses state changes from other sites.
+
+Add `CORRAL_ADMINS` as a second lock. It names the tailnet logins that may change state. All others get read-only access. Read-only access includes no consoles and no disk export.
 
 ```bash
 CORRAL_ADMINS="alice@github,bob@github" corral web --addr 127.0.0.1:8006

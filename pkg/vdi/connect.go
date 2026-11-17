@@ -146,6 +146,26 @@ func (b *Broker) AuthorizeConsole(a Actor, namespace, member string) error {
 	return nil
 }
 
+// HoldsMember reports whether identity holds a claim on namespace/member.
+// It is how a non-admin earns a console on a brokered desktop: the web UI
+// keeps every other console to admins.
+func (b *Broker) HoldsMember(identity, namespace, member string) (bool, error) {
+	if identity == "" || !b.serves(namespace) {
+		return false, nil
+	}
+	for _, kind := range []PoolKind{PoolKindVM, PoolKindCT} {
+		ref := MemberRef{Kind: kind, Namespace: namespace, Name: member}
+		c, found, err := b.cluster.GetClaim(ref)
+		if err != nil {
+			return false, fmt.Errorf("read claim of %s: %w", ref.ID(), err)
+		}
+		if found && c.Holder != "" && c.Holder != CTReconcilerHolder && c.Holder == identity {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // DialRDP is the TCP dial of ProbeRDP; tests replace it.
 var DialRDP = func(addr string) (net.Conn, error) {
 	return net.DialTimeout("tcp", addr, 1500*time.Millisecond)

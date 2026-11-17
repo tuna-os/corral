@@ -76,7 +76,8 @@ type ContextConfig struct {
 type ProxmoxContextConfig struct {
 	// Token is a PVE API token, "USER@REALM!TOKENID=UUID".
 	Token string `yaml:"token,omitempty" json:"-"`
-	// Fingerprint pins the server certificate (SHA-256 hex). Self-signed certs
+	// Fingerprint pins the server's own (leaf) certificate, not a CA, as a
+	// SHA-256 hex digest; the host must be https. Self-signed certs
 	// are the norm on PVE, and pinning trusts one specifically rather than
 	// trusting anything presented.
 	Fingerprint string `yaml:"fingerprint,omitempty" json:"fingerprint,omitempty"`
@@ -92,7 +93,8 @@ type ProxmoxContextConfig struct {
 type VsphereContextConfig struct {
 	// Username is the vSphere user, e.g. "administrator@vsphere.local".
 	Username string `yaml:"username,omitempty" json:"username,omitempty"`
-	// Fingerprint pins the server certificate (SHA-256 hex). Self-signed
+	// Fingerprint pins the server's own (leaf) certificate, not a CA, as a
+	// SHA-256 hex digest; the host must be https. Self-signed
 	// certs are common on vCenter, and pinning trusts one specifically
 	// rather than trusting anything presented.
 	Fingerprint string `yaml:"fingerprint,omitempty" json:"fingerprint,omitempty"`
@@ -105,7 +107,8 @@ type VsphereContextConfig struct {
 type XenContextConfig struct {
 	// Username is the XenAPI user, usually "root".
 	Username string `yaml:"username,omitempty" json:"username,omitempty"`
-	// Fingerprint pins the server certificate (SHA-256 hex). Self-signed
+	// Fingerprint pins the server's own (leaf) certificate, not a CA, as a
+	// SHA-256 hex digest; the host must be https. Self-signed
 	// certs are the norm on XenServer, and pinning trusts one specifically
 	// rather than trusting anything presented.
 	Fingerprint string `yaml:"fingerprint,omitempty" json:"fingerprint,omitempty"`
@@ -118,7 +121,8 @@ type XenContextConfig struct {
 type NutanixContextConfig struct {
 	// Username is the Prism Central user, usually "admin".
 	Username string `yaml:"username,omitempty" json:"username,omitempty"`
-	// Fingerprint pins the server certificate (SHA-256 hex). Self-signed
+	// Fingerprint pins the server's own (leaf) certificate, not a CA, as a
+	// SHA-256 hex digest; the host must be https. Self-signed
 	// certs are the norm on Prism Central, and pinning trusts one
 	// specifically rather than trusting anything presented.
 	Fingerprint string `yaml:"fingerprint,omitempty" json:"fingerprint,omitempty"`

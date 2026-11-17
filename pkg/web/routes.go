@@ -131,7 +131,7 @@ func routes(useDemoConsole bool) (*http.ServeMux, error) {
 	mux.HandleFunc("GET /api/vms/{ns}/{name}/events", handleEvents)
 	mux.HandleFunc("GET /api/vms/{ns}/{name}/metrics", handleMetrics)
 	mux.HandleFunc("GET /api/vms/{ns}/{name}/metrics/history", handleMetricsHistory)
-	mux.HandleFunc("GET /api/vms/{ns}/{name}/export", noLocal(handleExport))
+	mux.Handle("GET /api/vms/{ns}/{name}/export", requireAdmin(noLocal(handleExport)))
 	mux.HandleFunc("POST /api/vms/{ns}/{name}/volumes", noLocal(handleAddVolume))
 	mux.HandleFunc("DELETE /api/vms/{ns}/{name}/volumes/{vol}", noLocal(handleRemoveVolume))
 	mux.HandleFunc("GET /api/vms/{ns}/{name}/snapschedule", handleGetSnapSchedule)
@@ -152,9 +152,9 @@ func routes(useDemoConsole bool) (*http.ServeMux, error) {
 			serveDemoVNC(ws)
 		}
 	}
-	mux.Handle("GET /api/vnc/{ns}/{name}", vdiConsoleGate(consoleWebSocket(trackConsole(vncHandler))))
-	mux.Handle("GET /api/tty/{ns}/{name}", vdiConsoleGate(consoleWebSocket(trackConsole(ttyBridge))))
-	mux.Handle("GET /api/rdp/{ns}/{name}", vdiConsoleGate(consoleWebSocket(trackConsole(rdpBridge))))
+	mux.Handle("GET /api/vnc/{ns}/{name}", requireConsole(vdiConsoleGate(consoleWebSocket(trackConsole(vncHandler)))))
+	mux.Handle("GET /api/tty/{ns}/{name}", requireConsole(vdiConsoleGate(consoleWebSocket(trackConsole(ttyBridge)))))
+	mux.Handle("GET /api/rdp/{ns}/{name}", requireConsole(vdiConsoleGate(consoleWebSocket(trackConsole(rdpBridge)))))
 
 	return mux, nil
 }

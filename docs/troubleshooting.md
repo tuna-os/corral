@@ -86,6 +86,8 @@ also when you do not use that feature.
   The role of the token needs `VM.Audit` and `VM.PowerMgmt`.
 - Proxmox: `TLS trust` fails when your system does not trust the server
   certificate. Pin it with `proxmox.fingerprint`.
+  The pin is the SHA-256 fingerprint of the server certificate itself, not of a CA.
+  Corral refuses a pin on an `http://` host.
 
 ## Collect evidence
 

@@ -645,6 +645,10 @@ name work together: `node=corral-1 web` searches only that node.
 The one-key shortcuts do not operate when you type in a field or in a console.
 A read-only user does not see the actions that change a guest.
 
+The server also refuses these actions to a read-only user. A read-only user
+cannot open a console or export a disk. The one exception is a VDI desktop that
+the user holds.
+
 #### Theme & Branding
 
 In Corral's web UI, you can fully customize the accent colour, the header

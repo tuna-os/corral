@@ -15,8 +15,8 @@ main binary would grow and every deployment would depend on optional auth.
 Ship `corral-auth` as a separate reverse-proxy plugin in front of `corral web`.
 It uses `coreos/go-oidc` for discovery and ID-token verification. It uses the
 authorization code flow of OAuth2, with PKCE and nonce. It keeps sessions in
-encrypted Gorilla cookies. It removes client-supplied identity headers and sets
-the existing identity contract only after authentication. Go's reverse proxy keeps
+signed Gorilla cookies, and the server refuses a cookie older than 8 hours.
+It removes client-supplied identity headers and sets the existing identity contract only after authentication. Go's reverse proxy keeps
 API streams and WebSocket upgrades intact.
 
 Tailscale ingress remains a supported identity adapter, and it is

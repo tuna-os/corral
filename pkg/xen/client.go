@@ -15,10 +15,7 @@
 package xen
 
 import (
-	"crypto/sha256"
 	"crypto/tls"
-	"crypto/x509"
-	"encoding/hex"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -28,6 +25,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/tuna-os/corral/pkg/tlspin"
 )
 
 // Config is one XenServer/XCP-ng pool endpoint, as a Corral context carries
@@ -96,6 +95,9 @@ func New(cfg Config) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("xen: host %q: %w", cfg.Host, err)
 	}
+	if cfg.Fingerprint != "" && parsed.Scheme != "https" {
+		return nil, fmt.Errorf("xen: host %q is not https, so the pinned fingerprint could never be checked", cfg.Host)
+	}
 	parsed.Path = "/"
 
 	transport, err := transportFor(cfg)
@@ -122,34 +124,19 @@ func (c *Client) Host() string { return c.cfg.Host }
 func transportFor(cfg Config) (http.RoundTripper, error) {
 	switch {
 	case cfg.Fingerprint != "":
-		want := normaliseFingerprint(cfg.Fingerprint)
-		if len(want) != 64 {
-			return nil, fmt.Errorf("xen: fingerprint must be a SHA-256 hex digest, got %d hex chars", len(want))
+		// The pin replaces chain verification, which is what allows a
+		// self-signed certificate to be trusted *specifically* rather than
+		// trusting anything a MITM presents. See pkg/tlspin.
+		pin, err := tlspin.Parse(cfg.Fingerprint)
+		if err != nil {
+			return nil, fmt.Errorf("xen: %w", err)
 		}
-		// Verification is done by hand against the pin, which is what
-		// allows a self-signed certificate to be trusted *specifically*
-		// rather than trusting anything a MITM presents.
-		return &http.Transport{TLSClientConfig: &tls.Config{
-			InsecureSkipVerify: true, //nolint:gosec // replaced by the pin below
-			VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
-				for _, raw := range rawCerts {
-					sum := sha256.Sum256(raw)
-					if hex.EncodeToString(sum[:]) == want {
-						return nil
-					}
-				}
-				return fmt.Errorf("xen: server certificate does not match the pinned fingerprint")
-			},
-		}}, nil
+		return &http.Transport{TLSClientConfig: pin.ClientConfig()}, nil
 	case cfg.Insecure:
 		return &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}, nil //nolint:gosec // explicit per-context opt-in
 	default:
 		return http.DefaultTransport, nil
 	}
-}
-
-func normaliseFingerprint(s string) string {
-	return strings.ToLower(strings.NewReplacer(":", "", " ", "", "-", "").Replace(strings.TrimSpace(s)))
 }
 
 // APIError is a XenAPI failure response: the method ran, and the pool said
