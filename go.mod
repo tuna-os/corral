@@ -21,8 +21,8 @@ require (
 	// vSphere backend (RFC-0003): github.com/vmware/govmomi v0.56.0 (Apache-2.0, latest stable;
 	// VMware's supported SDK for https://<vc>/sdk/vim25). Fixtures run against govmomi/simulator.
 	github.com/vmware/govmomi v0.56.2
-	golang.org/x/crypto v0.58.0 // GO-2026-5932: openpgp subpackage is unmaintained/unfixable; this repo only uses x/crypto/bcrypt (cmd/corral-auth), openpgp is not imported — see #193
-	golang.org/x/net v0.62.0
+	golang.org/x/crypto v0.59.0 // GO-2026-5932: openpgp subpackage is unmaintained/unfixable; this repo only uses x/crypto/bcrypt (cmd/corral-auth), openpgp is not imported — see #193
+	golang.org/x/net v0.63.0
 	golang.org/x/oauth2 v0.38.0
 	golang.org/x/sys v0.50.0
 	golang.org/x/term v0.48.0
@@ -124,8 +124,8 @@ require (
 	go.opentelemetry.io/otel/trace v1.47.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/mod v0.42.0 // indirect
-	golang.org/x/sync v0.24.0 // indirect
-	golang.org/x/text v0.43.0 // indirect
+	golang.org/x/sync v0.25.0 // indirect
+	golang.org/x/text v0.44.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20261012220534-4341edf3f941 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20261005182115-fad411399dd8 // indirect
 	google.golang.org/grpc v1.84.0 // indirect
