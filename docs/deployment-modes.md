@@ -49,7 +49,7 @@ corral-auth --addr 127.0.0.1:8443 \
 | `--issuer`, `--client-id`, `--client-secret`, `--redirect-url` | OIDC provider settings |
 | `--passkey-store`, `--passkey-rp-id`, `--passkey-origin` | Passkey settings |
 
-Add `CORRAL_ADMINS` as a second lock. It names the tailnet logins that may change state. All others get read-only access.
+Add `CORRAL_ADMINS` as a second lock. It names the tailnet logins that may change state. All others get read-only access. Read-only access includes no consoles and no disk export.
 
 ```bash
 CORRAL_ADMINS="alice@github,bob@github" corral web --addr 127.0.0.1:8006

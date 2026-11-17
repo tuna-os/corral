@@ -28,13 +28,16 @@ type middleware func(http.Handler) http.Handler
 //  3. adminGate refuses unauthenticated /api calls (when auth is required)
 //     and mutations from non-admins, except the VDI self-service routes,
 //     which authorize against the desktop's owner (selfServiceMutation).
-//  4. activityTracker records accepted, non-machinery requests as activity.
-//  5. peerGate proxies VM subresources on a peer Corral before the route
+//     It also refuses cross-origin mutations and disk exports.
+//  4. targetGate refuses guest routes whose name, namespace or libvirt/Incus
+//     context would choose more than a configured guest.
+//  5. activityTracker records accepted, non-machinery requests as activity.
+//  6. peerGate proxies VM subresources on a peer Corral before the route
 //     table can resolve them against a local backend.
 //
 // Add new cross-cutting request behaviour here, not in individual handlers.
 func requestPipeline() []middleware {
-	return []middleware{requestTracer, peerServiceAuth, adminGate, activityTracker, peerGate}
+	return []middleware{requestTracer, peerServiceAuth, adminGate, targetGate, activityTracker, peerGate}
 }
 
 // chain wraps h in mws so that mws[0] sees the request first.

@@ -123,6 +123,18 @@ func adminGate(next http.Handler) http.Handler {
 			errResp(w, http.StatusUnauthorized, fmt.Errorf("authentication required"))
 			return
 		}
+		// A browser marks a request another site made it send. Refuse
+		// those mutations: the identity header the ingress adds, and a
+		// cached Basic credential, travel with them all the same. Clients
+		// that send neither Sec-Fetch-Site nor Origin (CLI, peers) pass.
+		if err := crossOriginProtection.Check(r); err != nil {
+			errResp(w, http.StatusForbidden, fmt.Errorf("cross-origin request refused"))
+			return
+		}
+		if isDiskExport(r) && crossSiteGET(r) {
+			errResp(w, http.StatusForbidden, fmt.Errorf("cross-origin disk export refused"))
+			return
+		}
 		switch r.Method {
 		case http.MethodGet, http.MethodHead, http.MethodOptions:
 			next.ServeHTTP(w, r)
@@ -143,6 +155,79 @@ func adminGate(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// crossOriginProtection is the standard library's Sec-Fetch-Site / Origin
+// check for unsafe methods.
+var crossOriginProtection = http.NewCrossOriginProtection()
+
+// isDiskExport reports the export route, a GET that hands out a guest's disk.
+func isDiskExport(r *http.Request) bool {
+	return strings.HasPrefix(r.URL.Path, "/api/vms/") && strings.HasSuffix(r.URL.Path, "/export")
+}
+
+// crossSiteGET reports a safe-method request that a browser says another
+// origin started, or whose Origin names another host. A link the user
+// typed or bookmarked carries Sec-Fetch-Site: none and passes.
+func crossSiteGET(r *http.Request) bool {
+	switch r.Header.Get("Sec-Fetch-Site") {
+	case "", "same-origin", "none":
+	default:
+		return true
+	}
+	if origin := r.Header.Get("Origin"); origin != "" {
+		u, err := url.Parse(origin)
+		if err != nil || !strings.EqualFold(u.Host, r.Host) {
+			return true
+		}
+	}
+	return false
+}
+
+// requireAdmin keeps a safe-method route to admins once an admin allowlist
+// is configured. adminGate lets every GET through; the disk export is a GET
+// that hands out the whole disk, so it needs this on top.
+func requireAdmin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(r) {
+			errResp(w, http.StatusForbidden, errReadOnly(callerOrAnonymous(r)))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// requireConsole keeps interactive consoles to admins once an admin
+// allowlist is configured: a console is full control of the guest. The one
+// exception is a VDI desktop the caller holds, which the broker hands out
+// to non-admins by design; vdiConsoleGate still applies after this.
+func requireConsole(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if isAdmin(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if b := vdiBroker; b != nil {
+			login, _ := caller(r)
+			holds, err := b.HoldsMember(login, r.PathValue("ns"), r.PathValue("name"))
+			if err != nil {
+				errResp(w, http.StatusInternalServerError, err)
+				return
+			}
+			if holds {
+				next.ServeHTTP(w, r)
+				return
+			}
+		}
+		errResp(w, http.StatusForbidden, errReadOnly(callerOrAnonymous(r)))
+	})
+}
+
+func callerOrAnonymous(r *http.Request) string {
+	if login, _ := caller(r); login != "" {
+		return login
+	}
+	return "an unauthenticated caller"
 }
 
 // selfServiceMutation reports a mutation that a non-admin may send because

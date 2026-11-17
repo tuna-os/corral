@@ -125,6 +125,7 @@ func TestRequestID_PropagatesFromRequestToBackendCommand(t *testing.T) {
 // A request without an ID, or with one that could forge log lines, gets one
 // minted by the server; per-VM handlers bind it into their backend client.
 func TestRequestID_MintedWhenAbsentOrMalformed(t *testing.T) {
+	t.Setenv("CORRAL_INCUS_REMOTE", "lab") // targetGate accepts only a configured remote
 	fx := NewTestFixture()
 	defer fx.Close()
 
