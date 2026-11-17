@@ -11,6 +11,8 @@ package vsphere
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net/url"
 	"strings"
@@ -71,11 +73,15 @@ func New(cfg Config) (*Client, error) {
 	if cfg.Password == "" {
 		return nil, fmt.Errorf("vsphere: password is required; set %s (see ConfigForContext)", PasswordEnv)
 	}
-	if _, err := endpointURL(cfg.Host); err != nil {
+	endpoint, err := endpointURL(cfg.Host)
+	if err != nil {
 		return nil, err
 	}
 	if fp := normaliseFingerprint(cfg.Fingerprint); cfg.Fingerprint != "" && fp == "" {
-		return nil, fmt.Errorf("vsphere: fingerprint %q is not usable", cfg.Fingerprint)
+		return nil, fmt.Errorf("vsphere: fingerprint %q is not usable: it must be a SHA-256 hex digest (64 hex characters)", cfg.Fingerprint)
+	}
+	if cfg.Fingerprint != "" && endpoint.Scheme != "https" {
+		return nil, fmt.Errorf("vsphere: host %q is not https, so the pinned fingerprint could never be checked", cfg.Host)
 	}
 	return &Client{cfg: cfg}, nil
 }
@@ -104,8 +110,11 @@ func (c *Client) Connect(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	soapClient := soap.NewClient(endpoint, c.cfg.Insecure)
-	if fp := normaliseFingerprint(c.cfg.Fingerprint); fp != "" {
+	// A pin wins over insecure, as on the other backends: with both set,
+	// the certificate must still match the pin.
+	fp := normaliseFingerprint(c.cfg.Fingerprint)
+	soapClient := soap.NewClient(endpoint, c.cfg.Insecure && fp == "")
+	if fp != "" {
 		soapClient.SetThumbprint(endpoint.Host, fp)
 	}
 	vimClient, err := vim25.NewClient(ctx, soapClient)
@@ -137,6 +146,18 @@ func endpointURL(host string) (*url.URL, error) {
 	return parsed, nil
 }
 
+// normaliseFingerprint turns a configured SHA-256 pin into the form govmomi's
+// dialer compares against (upper-case hex pairs joined by colons, as
+// soap.ThumbprintSHA256 renders it). Anything that is not a SHA-256 hex
+// digest yields "", which New reports as unusable.
 func normaliseFingerprint(s string) string {
-	return strings.ToLower(strings.NewReplacer(":", "", " ", "", "-", "").Replace(strings.TrimSpace(s)))
+	digits := strings.ToUpper(strings.NewReplacer(":", "", " ", "", "-", "").Replace(strings.TrimSpace(s)))
+	if raw, err := hex.DecodeString(digits); err != nil || len(raw) != sha256.Size {
+		return ""
+	}
+	pairs := make([]string, 0, sha256.Size)
+	for i := 0; i < len(digits); i += 2 {
+		pairs = append(pairs, digits[i:i+2])
+	}
+	return strings.Join(pairs, ":")
 }

@@ -2,8 +2,17 @@ package vsphere
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"io"
+	"log"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+
+	"github.com/vmware/govmomi/vim25/soap"
 )
 
 func TestNewRejectsUnusableConfig(t *testing.T) {
@@ -51,8 +60,73 @@ func TestConnectIsANoOpWithAnInjectedSession(t *testing.T) {
 	}
 }
 
-func TestFingerprintNormalisation(t *testing.T) {
-	if got := normaliseFingerprint("AA:BB cc-dd"); got != "aabbccdd" {
-		t.Fatalf("normaliseFingerprint = %q", got)
+// govmomi's dialer compares the stored thumbprint for string equality with
+// soap.ThumbprintSHA256 (upper-case hex pairs joined by colons), so every
+// accepted spelling of a SHA-256 pin must be handed to it in that form.
+func TestFingerprintIsHandedToGovmomiInItsOwnForm(t *testing.T) {
+	srv := httptest.NewTLSServer(http.NotFoundHandler())
+	defer srv.Close()
+	cert := srv.Certificate()
+	want := soap.ThumbprintSHA256(cert)
+	sum := sha256.Sum256(cert.Raw)
+	for _, in := range []string{want, strings.ToLower(want), hex.EncodeToString(sum[:]), " " + strings.ReplaceAll(want, ":", "-") + " "} {
+		if got := normaliseFingerprint(in); got != want {
+			t.Errorf("normaliseFingerprint(%q) = %q; govmomi compares against %q", in, got, want)
+		}
+	}
+	for _, junk := range []string{"AA:BB cc-dd", strings.Repeat("zz", 32), hex.EncodeToString(sum[:20])} {
+		if got := normaliseFingerprint(junk); got != "" {
+			t.Errorf("normaliseFingerprint(%q) = %q, want \"\" (not a SHA-256 digest)", junk, got)
+		}
+	}
+}
+
+// Connect against a self-signed server: the pinned certificate must get the
+// SOAP request through the TLS handshake, and a different pin, with or
+// without insecure, must stop it before any request (and so the login) is
+// sent.
+func TestConnectHonoursThePinnedFingerprint(t *testing.T) {
+	var requests atomic.Int32
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		http.Error(w, "not a vCenter", http.StatusNotFound)
+	}))
+	srv.Config.ErrorLog = log.New(io.Discard, "", 0) // refused handshakes are the point
+	srv.StartTLS()
+	defer srv.Close()
+	pin := soap.ThumbprintSHA256(srv.Certificate())
+	other := strings.Repeat("AB:", 31) + "AB"
+
+	for _, tc := range []struct {
+		name     string
+		pin      string
+		insecure bool
+		reached  bool
+	}{
+		{"pinned certificate", strings.ToLower(strings.ReplaceAll(pin, ":", "")), false, true},
+		{"different pin", other, false, false},
+		{"different pin with insecure", other, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requests.Store(0)
+			c, err := New(Config{Host: srv.URL, Username: "u", Password: "p", Fingerprint: tc.pin, Insecure: tc.insecure})
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = c.Connect(context.Background())
+			if err == nil {
+				t.Fatal("Connect succeeded against a server that is not a vCenter")
+			}
+			if got := requests.Load() > 0; got != tc.reached {
+				t.Fatalf("request reached the server = %v, want %v (Connect error: %v)", got, tc.reached, err)
+			}
+		})
+	}
+}
+
+func TestPinIsRefusedOverPlainHTTP(t *testing.T) {
+	pin := strings.Repeat("ab", 32)
+	if _, err := New(Config{Host: "http://vc.example.com", Username: "u", Password: "p", Fingerprint: pin}); err == nil {
+		t.Fatal("a fingerprint was accepted for an http:// endpoint, where it can never be checked")
 	}
 }

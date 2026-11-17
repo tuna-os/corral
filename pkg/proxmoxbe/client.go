@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
@@ -122,6 +123,9 @@ func New(cfg Config) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("proxmox: host %q: %w", cfg.Host, err)
 	}
+	if cfg.Fingerprint != "" && parsed.Scheme != "https" {
+		return nil, fmt.Errorf("proxmox: host %q is not https, so the pinned fingerprint could never be checked", cfg.Host)
+	}
 	if parsed.Port() == "" {
 		parsed.Host += ":8006"
 	}
@@ -151,9 +155,10 @@ func (c *Client) Node() string { return c.cfg.Node }
 func transportFor(cfg Config) (http.RoundTripper, error) {
 	switch {
 	case cfg.Fingerprint != "":
-		want := normaliseFingerprint(cfg.Fingerprint)
-		if len(want) != 64 {
-			return nil, fmt.Errorf("proxmox: fingerprint must be a SHA-256 hex digest, got %d hex chars", len(want))
+		normalised := normaliseFingerprint(cfg.Fingerprint)
+		want, err := hex.DecodeString(normalised)
+		if err != nil || len(want) != sha256.Size {
+			return nil, fmt.Errorf("proxmox: fingerprint must be a SHA-256 hex digest (64 hex characters), got %d characters", len(normalised))
 		}
 		// Verification is done by hand against the pin, which is what allows a
 		// self-signed certificate to be trusted *specifically* rather than
@@ -161,9 +166,14 @@ func transportFor(cfg Config) (http.RoundTripper, error) {
 		return &http.Transport{TLSClientConfig: &tls.Config{
 			InsecureSkipVerify: true, //nolint:gosec // replaced by the pin below
 			VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
-				for _, raw := range rawCerts {
-					sum := sha256.Sum256(raw)
-					if hex.EncodeToString(sum[:]) == want {
+				// Only the leaf counts. It is the one certificate whose
+				// private key the handshake proves the server holds; any
+				// later entry is bytes the peer chose to send, and the
+				// genuine certificate is public, so matching it anywhere in
+				// the list would let a MITM append it behind its own leaf.
+				if len(rawCerts) > 0 {
+					sum := sha256.Sum256(rawCerts[0])
+					if subtle.ConstantTimeCompare(sum[:], want) == 1 {
 						return nil
 					}
 				}
