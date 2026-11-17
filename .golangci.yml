@@ -16,7 +16,16 @@ issues:
 
 linters:
   default: standard
+  # RATCHET: funlen caps a function at 150 lines (#729). The functions that
+  # were already longer are allowlisted under exclusions, one rule each, so
+  # only new growth fails. Delete a rule in the PR that splits its function.
+  enable:
+    - funlen
   settings:
+    funlen:
+      lines: 150
+      # A line cap only; a statement cap would be a second threshold.
+      statements: -1
     staticcheck:
       # SA/ST/S1 are defect and convention checks and stay on. QF* are
       # editor "quickfix" refactors — tagged switches, De Morgan rewrites —
@@ -32,3 +41,13 @@ linters:
         # ST1000 wants a package comment on every package. Worth doing, but as
         # documentation work, not as a merge gate.
         - -ST1000
+  exclusions:
+    rules:
+      - { linters: [funlen], path: ^cmd/corral-bootc/main\.go$, text: "'newRootCmd'" }
+      - { linters: [funlen], path: ^cmd/corral-gpu/main\.go$, text: "'main'" }
+      - { linters: [funlen], path: ^cmd/corral-schedule/main\.go$, text: "'main'" }
+      - { linters: [funlen], path: ^pkg/doctor/doctor\.go$, text: "'clusterChecks'" }
+      - { linters: [funlen], path: ^pkg/kubevirt/manifests\.go$, text: "'GenerateVM'" }
+      - { linters: [funlen], path: ^pkg/qemu/qemu\.go$, text: "'Create'" }
+      - { linters: [funlen], path: ^pkg/vmtest/run\.go$, text: "'Run'" }
+      - { linters: [funlen], path: ^pkg/vmtest/runner_test\.go$, text: "'TestRunner_Run'" }
