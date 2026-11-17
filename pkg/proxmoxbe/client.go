@@ -16,11 +16,7 @@ package proxmoxbe
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"crypto/subtle"
 	"crypto/tls"
-	"crypto/x509"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -31,6 +27,7 @@ import (
 	"time"
 
 	"github.com/tuna-os/corral/pkg/logging"
+	"github.com/tuna-os/corral/pkg/tlspin"
 )
 
 // Config is one PVE cluster endpoint, as a Corral context carries it.
@@ -155,40 +152,19 @@ func (c *Client) Node() string { return c.cfg.Node }
 func transportFor(cfg Config) (http.RoundTripper, error) {
 	switch {
 	case cfg.Fingerprint != "":
-		normalised := normaliseFingerprint(cfg.Fingerprint)
-		want, err := hex.DecodeString(normalised)
-		if err != nil || len(want) != sha256.Size {
-			return nil, fmt.Errorf("proxmox: fingerprint must be a SHA-256 hex digest (64 hex characters), got %d characters", len(normalised))
-		}
-		// Verification is done by hand against the pin, which is what allows a
+		// The pin replaces chain verification, which is what allows a
 		// self-signed certificate to be trusted *specifically* rather than
-		// trusting anything a MITM presents.
-		return &http.Transport{TLSClientConfig: &tls.Config{
-			InsecureSkipVerify: true, //nolint:gosec // replaced by the pin below
-			VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
-				// Only the leaf counts. It is the one certificate whose
-				// private key the handshake proves the server holds; any
-				// later entry is bytes the peer chose to send, and the
-				// genuine certificate is public, so matching it anywhere in
-				// the list would let a MITM append it behind its own leaf.
-				if len(rawCerts) > 0 {
-					sum := sha256.Sum256(rawCerts[0])
-					if subtle.ConstantTimeCompare(sum[:], want) == 1 {
-						return nil
-					}
-				}
-				return fmt.Errorf("proxmox: server certificate does not match the pinned fingerprint")
-			},
-		}}, nil
+		// trusting anything a MITM presents. See pkg/tlspin.
+		pin, err := tlspin.Parse(cfg.Fingerprint)
+		if err != nil {
+			return nil, fmt.Errorf("proxmox: %w", err)
+		}
+		return &http.Transport{TLSClientConfig: pin.ClientConfig()}, nil
 	case cfg.Insecure:
 		return &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}, nil //nolint:gosec // explicit per-context opt-in
 	default:
 		return http.DefaultTransport, nil
 	}
-}
-
-func normaliseFingerprint(s string) string {
-	return strings.ToLower(strings.NewReplacer(":", "", " ", "", "-", "").Replace(strings.TrimSpace(s)))
 }
 
 // redactToken keeps the identity and drops the secret, so an error message is

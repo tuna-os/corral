@@ -2,8 +2,7 @@ package vsphere
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
+	"crypto/x509"
 	"io"
 	"log"
 	"net/http"
@@ -60,27 +59,6 @@ func TestConnectIsANoOpWithAnInjectedSession(t *testing.T) {
 	}
 }
 
-// govmomi's dialer compares the stored thumbprint for string equality with
-// soap.ThumbprintSHA256 (upper-case hex pairs joined by colons), so every
-// accepted spelling of a SHA-256 pin must be handed to it in that form.
-func TestFingerprintIsHandedToGovmomiInItsOwnForm(t *testing.T) {
-	srv := httptest.NewTLSServer(http.NotFoundHandler())
-	defer srv.Close()
-	cert := srv.Certificate()
-	want := soap.ThumbprintSHA256(cert)
-	sum := sha256.Sum256(cert.Raw)
-	for _, in := range []string{want, strings.ToLower(want), hex.EncodeToString(sum[:]), " " + strings.ReplaceAll(want, ":", "-") + " "} {
-		if got := normaliseFingerprint(in); got != want {
-			t.Errorf("normaliseFingerprint(%q) = %q; govmomi compares against %q", in, got, want)
-		}
-	}
-	for _, junk := range []string{"AA:BB cc-dd", strings.Repeat("zz", 32), hex.EncodeToString(sum[:20])} {
-		if got := normaliseFingerprint(junk); got != "" {
-			t.Errorf("normaliseFingerprint(%q) = %q, want \"\" (not a SHA-256 digest)", junk, got)
-		}
-	}
-}
-
 // Connect against a self-signed server: the pinned certificate must get the
 // SOAP request through the TLS handshake, and a different pin, with or
 // without insecure, must stop it before any request (and so the login) is
@@ -104,6 +82,7 @@ func TestConnectHonoursThePinnedFingerprint(t *testing.T) {
 		reached  bool
 	}{
 		{"pinned certificate", strings.ToLower(strings.ReplaceAll(pin, ":", "")), false, true},
+		{"pinned certificate, govmomi spelling", pin, false, true},
 		{"different pin", other, false, false},
 		{"different pin with insecure", other, true, false},
 	} {
@@ -128,5 +107,50 @@ func TestPinIsRefusedOverPlainHTTP(t *testing.T) {
 	pin := strings.Repeat("ab", 32)
 	if _, err := New(Config{Host: "http://vc.example.com", Username: "u", Password: "p", Fingerprint: pin}); err == nil {
 		t.Fatal("a fingerprint was accepted for an http:// endpoint, where it can never be checked")
+	}
+}
+
+// A pin is enforced even when the certificate would be trusted without it.
+// govmomi's own thumbprint check only runs after normal verification fails,
+// so a publicly trusted certificate that does not match the pin would get
+// through; the pin must refuse it before any request (and so the login) is
+// sent.
+func TestConnectRefusesATrustedCertificateThatDoesNotMatchThePin(t *testing.T) {
+	var requests atomic.Int32
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		http.Error(w, "not a vCenter", http.StatusNotFound)
+	}))
+	srv.Config.ErrorLog = log.New(io.Discard, "", 0)
+	srv.StartTLS()
+	defer srv.Close()
+
+	// Trust the server's certificate the way a public CA would be trusted.
+	roots := x509.NewCertPool()
+	roots.AddCert(srv.Certificate())
+	testRootCAs = roots
+	defer func() { testRootCAs = nil }()
+
+	// Control: without a pin the trusted certificate is accepted, so the
+	// refusal below is the pin's doing and not a trust failure.
+	c, err := New(Config{Host: srv.URL, Username: "u", Password: "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = c.Connect(context.Background())
+	if requests.Load() == 0 {
+		t.Fatal("control: the trusted certificate was not accepted without a pin")
+	}
+
+	requests.Store(0)
+	c, err = New(Config{Host: srv.URL, Username: "u", Password: "p", Fingerprint: strings.Repeat("ab", 32)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Connect(context.Background()); err == nil {
+		t.Fatal("Connect succeeded against a trusted server whose certificate does not match the pin")
+	}
+	if n := requests.Load(); n != 0 {
+		t.Fatalf("%d request(s) reached a trusted server whose certificate does not match the pin", n)
 	}
 }
