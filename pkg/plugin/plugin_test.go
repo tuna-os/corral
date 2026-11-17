@@ -488,3 +488,50 @@ func TestEntryValidateChecksUI(t *testing.T) {
 		t.Fatalf("err = %v, want the missing command refused", err)
 	}
 }
+
+// With no home directory and neither override there is no plugin directory.
+// The shared temp directory is not a substitute: another local user can
+// create the directory there first, and `corral <name>` runs what it finds.
+func TestDir_NoTempDirFallback(t *testing.T) {
+	t.Setenv("CORRAL_PLUGIN_DIR", "")
+	t.Setenv("XDG_DATA_HOME", "")
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("HOME", "")
+	t.Setenv("PATH", t.TempDir())
+	t.Setenv("CORRAL_MARKETPLACE_URLS", "")
+	t.Setenv("CORRAL_MARKETPLACE_URL", "")
+
+	if dir, err := LocateDir(); err == nil {
+		t.Fatalf("LocateDir() = %q, want an error", dir)
+	}
+	if got := Dir(); got != "" {
+		t.Errorf("Dir() = %q, want empty", got)
+	}
+	// An unknown directory must not turn into a path relative to the
+	// working directory either.
+	for name, got := range map[string]string{
+		"sourcesPath": sourcesPath(), "stateDir": stateDir(),
+		"statePath": statePath("demo"), "sbomPath": sbomPath("demo"),
+	} {
+		if got != "" {
+			t.Errorf("%s = %q, want empty", name, got)
+		}
+	}
+	if got := Installed(); len(got) != 0 {
+		t.Errorf("Installed() = %v, want none", got)
+	}
+	if got := Resolve("demo"); got != "" {
+		t.Errorf("Resolve(demo) = %q, want empty", got)
+	}
+	if err := Remove("demo"); err == nil || !strings.Contains(err.Error(), "plugin directory") {
+		t.Errorf("Remove(demo) = %v, want the missing plugin directory", err)
+	}
+	e := v2Entry("demo", Build{URL: "http://127.0.0.1:1/demo", SHA256: strings.Repeat("a", 64)})
+	if err := e.Install(); err == nil || !strings.Contains(err.Error(), "plugin directory") {
+		t.Errorf("Install() = %v, want the missing plugin directory", err)
+	}
+	source := Source{Name: "mine", URL: "https://example.com/index.json"}
+	if err := AddSource(source); err == nil || !strings.Contains(err.Error(), "config directory") {
+		t.Errorf("AddSource() = %v, want the missing config directory", err)
+	}
+}

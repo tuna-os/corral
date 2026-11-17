@@ -39,7 +39,11 @@ func configureLogging(tui bool) error {
 		opts.File = os.Getenv(logging.EnvFile)
 	}
 	if tui && opts.File == "" {
-		opts.File = logging.DefaultTUIFile()
+		file, err := logging.LocateTUIFile()
+		if err != nil {
+			return err
+		}
+		opts.File = file
 	}
 	closer, err := logging.Configure(opts, os.Stderr)
 	if err != nil {

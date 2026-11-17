@@ -129,3 +129,32 @@ func TestRequestIDs(t *testing.T) {
 		}
 	}
 }
+
+// With no user cache directory there is no default TUI log file. The shared
+// temp directory is not a substitute: another local user can put a symlink
+// there under the log's name.
+func TestTUIFileHasNoTempDirFallback(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", "")
+	t.Setenv("HOME", "")
+
+	if path, err := LocateTUIFile(); err == nil {
+		t.Fatalf("LocateTUIFile() = %q, want an error", path)
+	}
+	if got := DefaultTUIFile(); got != "" {
+		t.Errorf("DefaultTUIFile() = %q, want empty", got)
+	}
+}
+
+func TestTUIFileUnderTheUserCacheDir(t *testing.T) {
+	cache := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", cache)
+	t.Setenv("HOME", t.TempDir())
+
+	got, err := LocateTUIFile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(cache, "corral", "tui.log"); got != want {
+		t.Errorf("LocateTUIFile() = %q, want %q", got, want)
+	}
+}

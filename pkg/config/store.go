@@ -53,6 +53,9 @@ func (s *configStore) loadDefault() (*Config, error) {
 
 // loadLocked is loadDefault's body. Callers must already hold s.mu.
 func (s *configStore) loadLocked() (*Config, error) {
+	if _, err := LocateConfigDir(); err != nil {
+		return nil, err
+	}
 	path := DefaultPath()
 	info, statErr := statTolerant(path)
 	if statErr != nil || !s.freshLocked(path, info) {
@@ -111,7 +114,11 @@ func (s *configStore) saveLocked(cfg *Config) error {
 func withLock(fn func() error) error {
 	store.mu.Lock()
 	defer store.mu.Unlock()
-	unlock, err := lockConfigDir(ConfigDir())
+	dir, err := LocateConfigDir()
+	if err != nil {
+		return err
+	}
+	unlock, err := lockConfigDir(dir)
 	if err != nil {
 		return err
 	}

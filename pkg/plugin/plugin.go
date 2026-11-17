@@ -32,26 +32,40 @@ type Plugin struct {
 	SupportedBackends []string `json:"supportedBackends,omitempty"`
 }
 
-// Dir is where Corral installs plugins. Override with CORRAL_PLUGIN_DIR.
+// Dir is where Corral installs plugins. Override with CORRAL_PLUGIN_DIR. It
+// returns "" when the home directory is unknown; LocateDir reports why.
 func Dir() string {
+	dir, _ := LocateDir()
+	return dir
+}
+
+// LocateDir is Dir with the failure reported. There is no fallback when
+// neither variable is set and the home directory is unknown: the only other
+// place is the shared temp directory, where another local user can create
+// the directory first and Corral would run the executables they put in it.
+func LocateDir() (string, error) {
 	if d := os.Getenv("CORRAL_PLUGIN_DIR"); d != "" {
-		return d
+		return d, nil
 	}
 	base := os.Getenv("XDG_DATA_HOME")
 	if base == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			home = os.TempDir()
+			return "", fmt.Errorf("locate the plugin directory: %w; set CORRAL_PLUGIN_DIR to name one", err)
 		}
 		base = filepath.Join(home, ".local", "share")
 	}
-	return filepath.Join(base, "corral", "plugins")
+	return filepath.Join(base, "corral", "plugins"), nil
 }
 
 // Installed lists plugins found in the plugin dir (executables named corral-*).
 func Installed() []Plugin {
 	var ps []Plugin
-	entries, _ := os.ReadDir(Dir())
+	dir, err := LocateDir()
+	if err != nil {
+		return nil
+	}
+	entries, _ := os.ReadDir(dir)
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasPrefix(e.Name(), "corral-") {
 			continue
@@ -64,7 +78,7 @@ func Installed() []Plugin {
 		state, _ := ReadState(name)
 		ps = append(ps, Plugin{
 			Name:      name,
-			Path:      filepath.Join(Dir(), e.Name()),
+			Path:      filepath.Join(dir, e.Name()),
 			Installed: true,
 			Version:   state.Version, Source: state.Source, Pinned: state.Pinned,
 			Capabilities: state.Capabilities, Permissions: state.Permissions,
@@ -78,9 +92,11 @@ func Installed() []Plugin {
 // Resolve returns the executable path for a plugin name, preferring the plugin
 // dir, then $PATH. Empty if not found.
 func Resolve(name string) string {
-	p := filepath.Join(Dir(), "corral-"+name)
-	if fi, err := os.Stat(p); err == nil && !fi.IsDir() && fi.Mode()&0o111 != 0 {
-		return p
+	if dir, err := LocateDir(); err == nil {
+		p := filepath.Join(dir, "corral-"+name)
+		if fi, err := os.Stat(p); err == nil && !fi.IsDir() && fi.Mode()&0o111 != 0 {
+			return p
+		}
 	}
 	if p, err := exec.LookPath("corral-" + name); err == nil {
 		return p

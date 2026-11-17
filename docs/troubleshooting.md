@@ -109,7 +109,8 @@ corral list --log-level debug --log-format json 2>corral.log
 
 The TUI draws on the terminal, so it always writes its log to a file. The
 default file is `~/.cache/corral/tui.log` (`$XDG_CACHE_HOME/corral` when
-that variable is set).
+that variable is set). When Corral can find neither directory, the TUI does
+not start: name a file with `--log-file` or `CORRAL_LOG_FILE`.
 
 `corral web` gives each HTTP request an ID and sends it back in the
 `X-Request-ID` response header (see [Request IDs](api.md#request-ids)). Each
