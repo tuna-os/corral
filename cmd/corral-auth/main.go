@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -33,6 +34,129 @@ type gateway struct {
 	basic     *htpasswd.File
 	passkeys  *passkeyManager
 	peerToken string
+
+	revokedMu sync.Mutex
+	revoked   map[string]time.Time // session id -> when its cookie expires anyway
+
+	basicFailures  *failures
+	enrollFailures *failures
+}
+
+// sessionTTL is how long a signed-in session lasts, in seconds. It is both
+// the cookie's Max-Age and the server-side limit on the signed timestamp.
+const sessionTTL = 8 * 60 * 60
+
+func (g *gateway) sessionOptions() *sessions.Options {
+	return &sessions.Options{Path: "/", MaxAge: sessionTTL, HttpOnly: true, Secure: g.secure, SameSite: http.SameSiteLaxMode}
+}
+
+// signedIn is the only place a signed-in session's values are minted. The
+// random sid is what logout revokes.
+func signedIn(login, name, email string) map[interface{}]interface{} {
+	return map[interface{}]interface{}{"login": login, "name": name, "email": email, "sid": randomToken()}
+}
+
+func (g *gateway) revoke(sid string) {
+	g.revokedMu.Lock()
+	defer g.revokedMu.Unlock()
+	now := time.Now()
+	for id, until := range g.revoked {
+		if now.After(until) {
+			delete(g.revoked, id)
+		}
+	}
+	if g.revoked == nil {
+		g.revoked = map[string]time.Time{}
+	}
+	g.revoked[sid] = now.Add(sessionTTL * time.Second)
+}
+
+func (g *gateway) isRevoked(sid string) bool {
+	g.revokedMu.Lock()
+	defer g.revokedMu.Unlock()
+	_, ok := g.revoked[sid]
+	return ok
+}
+
+// failures counts failed guesses per key (a Basic user name, or the
+// enrollment token) in a fixed window. A key with failureLimit failures is
+// refused until the window ends. Keys are what is being guessed, not client
+// addresses: behind the edge proxy every client has the proxy's address.
+type failures struct {
+	mu    sync.Mutex
+	count map[string]int
+	reset time.Time
+}
+
+const (
+	failureLimit  = 10
+	failureWindow = 5 * time.Minute
+	failureKeys   = 10000 // beyond this many distinct keys in a window, new keys are refused
+)
+
+func (f *failures) rollLocked() {
+	if now := time.Now(); f.count == nil || now.After(f.reset) {
+		f.count, f.reset = map[string]int{}, now.Add(failureWindow)
+	}
+}
+
+func (f *failures) blocked(key string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.rollLocked()
+	n, seen := f.count[key]
+	return n >= failureLimit || (!seen && len(f.count) >= failureKeys)
+}
+
+func (f *failures) fail(key string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.rollLocked()
+	if _, seen := f.count[key]; seen || len(f.count) < failureKeys {
+		f.count[key]++
+	}
+}
+
+type identityKey struct{}
+
+// forwardedIdentity is what serve hands the proxy, through the request
+// context, to set on the outbound request.
+type forwardedIdentity struct {
+	login, name, email string
+	peer               bool
+}
+
+// identityHeaders are set only by the gateway. They are removed from the
+// outbound request after hop-by-hop processing, so a client Connection
+// header cannot strip the gateway's own values.
+var identityHeaders = []string{"Tailscale-User-Login", "Tailscale-User-Name", "Tailscale-User-Email", "Corral-Service-Identity"}
+
+func newProxy(u *url.URL) *httputil.ReverseProxy {
+	return &httputil.ReverseProxy{Rewrite: func(pr *httputil.ProxyRequest) {
+		pr.SetURL(u)
+		pr.Out.Host = pr.In.Host // corral web pins Host and compares the WebSocket Origin with it
+		pr.SetXForwarded()
+		for _, h := range identityHeaders {
+			pr.Out.Header.Del(h)
+		}
+		id, _ := pr.In.Context().Value(identityKey{}).(forwardedIdentity)
+		if id.peer {
+			return // Authorization: Bearer <peer token> goes through for corral web to verify
+		}
+		pr.Out.Header.Del("Authorization")
+		if id.login == "" {
+			return
+		}
+		pr.Out.Header.Set("Tailscale-User-Login", id.login)
+		pr.Out.Header.Set("Tailscale-User-Name", id.name)
+		if id.email != "" {
+			pr.Out.Header.Set("Tailscale-User-Email", id.email)
+		}
+	}}
+}
+
+func (g *gateway) forward(w http.ResponseWriter, r *http.Request, id forwardedIdentity) {
+	g.proxy.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), identityKey{}, id)))
 }
 
 func randomToken() string {
@@ -49,8 +173,12 @@ func newGateway(ctx context.Context, issuer, clientID, clientSecret, redirectURL
 		return nil, fmt.Errorf("upstream must be an http(s) URL")
 	}
 	store := sessions.NewCookieStore(cookieKey)
+	// The codec rejects a cookie whose signed timestamp is older than this,
+	// so a copied cookie stops working after 8 hours, not the library's 30 days.
+	store.MaxAge(sessionTTL)
 	secure := strings.HasPrefix(redirectURL, "https://")
-	g := &gateway{sessions: store, proxy: httputil.NewSingleHostReverseProxy(u), secure: secure}
+	g := &gateway{sessions: store, proxy: newProxy(u), secure: secure, basicFailures: &failures{}, enrollFailures: &failures{}}
+	store.Options = g.sessionOptions()
 	if issuer != "" {
 		if clientID == "" || redirectURL == "" {
 			return nil, fmt.Errorf("OIDC client ID and redirect URL are required with an issuer")
@@ -67,8 +195,12 @@ func newGateway(ctx context.Context, issuer, clientID, clientSecret, redirectURL
 
 func (g *gateway) session(r *http.Request) (*sessions.Session, error) {
 	s, err := g.sessions.Get(r, "corral_oidc")
-	if err == nil {
-		s.Options = &sessions.Options{Path: "/", MaxAge: 8 * 60 * 60, HttpOnly: true, Secure: g.secure, SameSite: http.SameSiteLaxMode}
+	// Get returns a fresh session even when the presented cookie does not
+	// decode, and the sign-in handlers save it, so it always gets these
+	// options rather than the library defaults (30 days, SameSite=None, no
+	// HttpOnly).
+	if s != nil {
+		s.Options = g.sessionOptions()
 	}
 	return s, err
 }
@@ -77,8 +209,8 @@ func (g *gateway) login(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "OIDC is not configured", http.StatusNotFound)
 		return
 	}
-	s, err := g.session(r)
-	if err != nil {
+	s, _ := g.session(r) // an undecodable cookie is replaced by a fresh session
+	if s == nil {
 		http.Error(w, "invalid session", 400)
 		return
 	}
@@ -135,12 +267,27 @@ func (g *gateway) callback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "OIDC identity has no usable subject", http.StatusUnauthorized)
 		return
 	}
-	s.Values = map[interface{}]interface{}{"login": login, "name": name, "email": claim(claims, "email")}
+	// The email is forwarded as Tailscale-User-Email, and corral web grants
+	// admin by email, so keep it only when the provider says it is verified.
+	email := ""
+	if verified(claims["email_verified"]) {
+		email = claim(claims, "email")
+	}
+	s.Values = signedIn(login, name, email)
 	if err := s.Save(r, w); err != nil {
 		http.Error(w, "saving session", 500)
 		return
 	}
 	http.Redirect(w, r, "/", http.StatusFound)
+}
+func verified(v any) bool {
+	switch v := v.(type) {
+	case bool:
+		return v
+	case string:
+		return v == "true" // some providers send the claim as a string
+	}
+	return false
 }
 func claim(m map[string]any, keys ...string) string {
 	for _, k := range keys {
@@ -151,7 +298,12 @@ func claim(m map[string]any, keys ...string) string {
 	return ""
 }
 func (g *gateway) logout(w http.ResponseWriter, r *http.Request) {
-	s, _ := g.session(r)
+	s, err := g.session(r)
+	if err == nil {
+		if sid, _ := s.Values["sid"].(string); sid != "" {
+			g.revoke(sid) // copies of the cookie stop working too
+		}
+	}
 	s.Options.MaxAge = -1
 	_ = s.Save(r, w)
 	http.Redirect(w, r, "/auth/login", http.StatusFound)
@@ -159,15 +311,14 @@ func (g *gateway) logout(w http.ResponseWriter, r *http.Request) {
 func (g *gateway) serve(w http.ResponseWriter, r *http.Request) {
 	provided := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
 	if g.peerToken != "" && len(provided) == len(g.peerToken) && subtle.ConstantTimeCompare([]byte(provided), []byte(g.peerToken)) == 1 {
-		r.Header.Del("Tailscale-User-Login")
-		r.Header.Del("Tailscale-User-Name")
-		r.Header.Del("Tailscale-User-Email")
-		g.proxy.ServeHTTP(w, r)
+		g.forward(w, r, forwardedIdentity{peer: true})
 		return
 	}
 	login, name, email := g.identity(r)
 	if login == "" {
-		if g.basic != nil {
+		if g.basicThrottled(r) {
+			http.Error(w, "too many failed sign-in attempts; try again later", http.StatusTooManyRequests)
+		} else if g.basic != nil {
 			w.Header().Set("WWW-Authenticate", `Basic realm="Corral", charset="UTF-8"`)
 			http.Error(w, "authentication required", http.StatusUnauthorized)
 		} else if g.passkeys != nil {
@@ -177,29 +328,39 @@ func (g *gateway) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	r.Header.Del("Tailscale-User-Login")
-	r.Header.Del("Tailscale-User-Name")
-	r.Header.Del("Tailscale-User-Email")
-	r.Header.Set("Tailscale-User-Login", login)
-	r.Header.Set("Tailscale-User-Name", name)
-	if email != "" {
-		r.Header.Set("Tailscale-User-Email", email)
-	}
-	r.Header.Del("Authorization")
-	g.proxy.ServeHTTP(w, r)
+	g.forward(w, r, forwardedIdentity{login: login, name: name, email: email})
+}
+
+func (g *gateway) basicThrottled(r *http.Request) bool {
+	user, _, ok := r.BasicAuth()
+	return ok && g.basic != nil && g.basicFailures != nil && g.basicFailures.blocked("basic|"+user)
 }
 func (g *gateway) identity(r *http.Request) (login, name, email string) {
 	if s, err := g.session(r); err == nil {
 		login, _ = s.Values["login"].(string)
 		name, _ = s.Values["name"].(string)
 		email, _ = s.Values["email"].(string)
+		// A session without a sid predates revocation, and a revoked one
+		// was logged out: neither is a signed-in session.
+		if sid, _ := s.Values["sid"].(string); sid == "" || g.isRevoked(sid) {
+			login, name, email = "", "", ""
+		}
 		if login != "" {
 			return
 		}
 	}
 	if g.basic != nil {
-		if user, password, ok := r.BasicAuth(); ok && g.basic.Match(user, password) {
-			return "basic|" + user, user, ""
+		if user, password, ok := r.BasicAuth(); ok {
+			key := "basic|" + user
+			if g.basicFailures != nil && g.basicFailures.blocked(key) {
+				return "", "", ""
+			}
+			if g.basic.Match(user, password) {
+				return key, user, ""
+			}
+			if g.basicFailures != nil {
+				g.basicFailures.fail(key)
+			}
 		}
 	}
 	return "", "", ""
@@ -213,7 +374,10 @@ func (g *gateway) handler() http.Handler {
 		g.registerPasskeyRoutes(m)
 	}
 	m.HandleFunc("/", g.serve)
-	return securityHeaders(m)
+	// Refuse state-changing requests a browser marks as cross-origin (CSRF
+	// through cached Basic credentials, login CSRF on the passkey finish).
+	// Clients that send neither Sec-Fetch-Site nor Origin are unaffected.
+	return securityHeaders(http.NewCrossOriginProtection().Handler(m))
 }
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -232,6 +396,14 @@ func cookieKey(raw string) ([]byte, error) {
 	}
 	return nil, fmt.Errorf("cookie secret must be at least 32 bytes (literal or base64url)")
 }
+
+// checkEnrollToken refuses a bootstrap token short enough to guess online.
+func checkEnrollToken(token string) error {
+	if token != "" && len(token) < 16 {
+		return fmt.Errorf("--passkey-enroll-token must be at least 16 characters")
+	}
+	return nil
+}
 func env(name, fallback string) string {
 	if v := os.Getenv(name); v != "" {
 		return v
@@ -240,7 +412,7 @@ func env(name, fallback string) string {
 }
 
 func main() {
-	if sdk.HandleMetadata(sdk.Metadata{Name: "auth", Version: "0.2.0", Description: "OIDC, Basic Auth, and passkey gateway", Capabilities: []string{"auth-gateway", "oidc", "basic-auth", "passkeys"}, Permissions: []string{"listen on network", "proxy Corral HTTP traffic", "store encrypted sessions and passkeys"}, SupportedBackends: []string{"all"}}) {
+	if sdk.HandleMetadata(sdk.Metadata{Name: "auth", Version: "0.2.0", Description: "OIDC, Basic Auth, and passkey gateway", Capabilities: []string{"auth-gateway", "oidc", "basic-auth", "passkeys"}, Permissions: []string{"listen on network", "proxy Corral HTTP traffic", "store signed sessions and passkeys"}, SupportedBackends: []string{"all"}}) {
 		return
 	}
 	var addr, upstream, issuer, clientID, clientSecret, redirectURL, secret, basicFile, passkeyFile, passkeyRPID, passkeyOrigin, enrollToken, peerToken string
@@ -260,6 +432,9 @@ func main() {
 			}
 		}
 		if passkeyFile != "" {
+			if err := checkEnrollToken(enrollToken); err != nil {
+				return err
+			}
 			g.passkeys, err = newPasskeyManager(passkeyFile, passkeyRPID, passkeyOrigin, enrollToken)
 			if err != nil {
 				return err
@@ -283,7 +458,7 @@ func main() {
 	f.StringVar(&clientID, "client-id", env("CORRAL_OIDC_CLIENT_ID", ""), "OIDC client ID")
 	f.StringVar(&clientSecret, "client-secret", env("CORRAL_OIDC_CLIENT_SECRET", ""), "OIDC client secret")
 	f.StringVar(&redirectURL, "redirect-url", env("CORRAL_OIDC_REDIRECT_URL", ""), "OIDC callback URL")
-	f.StringVar(&secret, "cookie-secret", env("CORRAL_AUTH_COOKIE_SECRET", ""), "32+ byte session encryption key")
+	f.StringVar(&secret, "cookie-secret", env("CORRAL_AUTH_COOKIE_SECRET", ""), "32+ byte session signing key")
 	f.StringVar(&basicFile, "basic-htpasswd", env("CORRAL_BASIC_HTPASSWD", ""), "Apache htpasswd file for HTTP Basic authentication")
 	f.StringVar(&passkeyFile, "passkey-store", env("CORRAL_PASSKEY_STORE", ""), "Passkey credential JSON store")
 	f.StringVar(&passkeyRPID, "passkey-rp-id", env("CORRAL_PASSKEY_RP_ID", ""), "WebAuthn relying-party domain")
