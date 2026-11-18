@@ -4,7 +4,7 @@ go 1.27.4
 
 require (
 	charm.land/bubbles/v2 v2.2.1
-	charm.land/bubbletea/v2 v2.1.1
+	charm.land/bubbletea/v2 v2.1.2
 	charm.land/lipgloss/v2 v2.1.1
 	// SHA-512 crypt for the test-account passwords pkg/vmtest writes into a
 	// derived image's /etc/shadow. Already present as an indirect dependency
