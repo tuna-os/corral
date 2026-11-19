@@ -115,3 +115,29 @@ jobs:
           # there is no report directory to collect.
           path: e2e/test-results/
           if-no-files-found: ignore
+
+  govulncheck:
+    # Known-vulnerability scan of the module's dependencies and the Go standard
+    # library, reporting only vulnerabilities the code can reach. Both tag
+    # sets, as the build has two (plain and -tags bootc). Installed from source
+    # rather than through the marketplace action: the binary must be built with
+    # a Go at least as new as go.mod's directive, and this way the toolchain
+    # already set up above is the one used. Nightly (#708) so a new advisory in
+    # a transitive dependency surfaces without waiting for a push.
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+
+      - name: Vulnerability scan
+        run: |
+          govulncheck ./...
+          govulncheck -tags bootc ./...
