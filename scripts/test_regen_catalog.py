@@ -5,6 +5,7 @@ import importlib.util
 import io
 import json
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 import urllib.error
@@ -190,6 +191,23 @@ class CommittedCatalogTests(unittest.TestCase):
         for name, url, *_ in catalog.ISO_CANDIDATES:
             if name in isos:
                 self.assertEqual(isos[name][2], url, name)
+
+
+class TrackedFilesTests(unittest.TestCase):
+    """What the repository tracks beside these scripts."""
+
+    def test_no_compiled_python_is_tracked(self):
+        # Python loads a compiled file from __pycache__ in place of the source
+        # beside it, without reading the source when the file says so (PEP 552,
+        # unchecked hash). A review sees such a file only as a binary change.
+        root = Path(__file__).resolve().parent.parent
+        try:
+            listed = subprocess.run(
+                ["git", "-C", str(root), "ls-files", "-z", "--", "*.pyc", "*.pyo", "*.pyd"],
+                capture_output=True, text=True, check=True).stdout
+        except (OSError, subprocess.CalledProcessError):
+            self.skipTest("not a git checkout")
+        self.assertEqual([name for name in listed.split("\0") if name], [])
 
 
 if __name__ == "__main__":

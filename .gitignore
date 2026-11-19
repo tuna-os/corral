@@ -12,6 +12,11 @@
 build/
 dist/
 
+# Compiled Python. Python can load a file from __pycache__ in place of the
+# source beside it, and a review cannot read one, so none is tracked.
+__pycache__/
+*.py[cod]
+
 # Playwright e2e artifacts
 test/e2e/node_modules/
 test/e2e/test-results/
