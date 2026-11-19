@@ -60,8 +60,8 @@ SOURCE = {"ublue-os": "universal-blue.org", "projectbluefin": "projectbluefin.io
 ISO_CANDIDATES = [
     ("bluefin-iso", "https://download.projectbluefin.io/bluefin-stable-x86_64.iso", "Bluefin — GNOME bootc desktop (installer ISO)", "projectbluefin.io", "gnome"),
     ("bluefin-gts-iso", "https://download.projectbluefin.io/bluefin-gts-x86_64.iso", "Bluefin GTS — GNOME desktop (installer ISO)", "projectbluefin.io", "gnome"),
-    ("aurora-iso", "https://dl.getaurora.dev/aurora-stable-webui-x86_64.iso", "Aurora — KDE Plasma bootc desktop (installer ISO)", "getaurora.dev", "kde"),
-    ("aurora-nvidia-open-iso", "https://dl.getaurora.dev/aurora-nvidia-open-stable-webui-x86_64.iso", "Aurora — KDE, NVIDIA open driver (installer ISO)", "getaurora.dev", "kde"),
+    ("aurora-iso", "https://dl.getaurora.dev/aurora-stable-x86_64.iso", "Aurora — KDE Plasma bootc desktop (installer ISO)", "getaurora.dev", "kde"),
+    ("aurora-nvidia-open-iso", "https://dl.getaurora.dev/aurora-nvidia-open-stable-x86_64.iso", "Aurora — KDE, NVIDIA open driver (installer ISO)", "getaurora.dev", "kde"),
     ("bazzite-iso", "https://download.bazzite.gg/bazzite-stable-amd64.iso", "Bazzite — gaming desktop (installer ISO)", "bazzite.gg", "steam"),
     ("bazzite-deck-iso", "https://download.bazzite.gg/bazzite-deck-stable-amd64.iso", "Bazzite Deck — handheld (installer ISO)", "bazzite.gg", "steam"),
 ]

@@ -172,5 +172,25 @@ class CatalogRefreshTests(unittest.TestCase):
                 catalog.image_release("tuna-os/example", "latest", "public-token")
 
 
+class CommittedCatalogTests(unittest.TestCase):
+    """The checked-in candidate list and generated catalog, unpatched."""
+
+    def test_aurora_isos_use_upstream_names(self):
+        # Aurora dropped "-webui" from its ISO names; the old URLs return 404
+        # and abort the weekly refresh.
+        urls = {name: url for name, url, *_ in catalog.ISO_CANDIDATES if name.startswith("aurora")}
+        self.assertEqual(urls, {
+            "aurora-iso": "https://dl.getaurora.dev/aurora-stable-x86_64.iso",
+            "aurora-nvidia-open-iso": "https://dl.getaurora.dev/aurora-nvidia-open-stable-x86_64.iso"})
+
+    def test_generated_isos_match_candidates(self):
+        # A candidate whose URL differs from its generated row fails the
+        # refresh with an ISO name collision, so the two must change together.
+        _, isos = catalog.existing_catalog()
+        for name, url, *_ in catalog.ISO_CANDIDATES:
+            if name in isos:
+                self.assertEqual(isos[name][2], url, name)
+
+
 if __name__ == "__main__":
     unittest.main()

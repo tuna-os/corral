@@ -102,9 +102,9 @@ var generatedBootcImages = []BootcImage{
 }
 
 var generatedISOs = []Image{
-	// upstream: 2026-09-08T05:37:42+00:00
-	{Name: "aurora-iso", Description: "Aurora — KDE Plasma bootc desktop (installer ISO)", ISO: "https://dl.getaurora.dev/aurora-stable-webui-x86_64.iso", Source: "getaurora.dev", Logo: "kde", Variant: "desktop"},
-	// upstream: 2026-09-08T05:39:05+00:00
-	{Name: "aurora-nvidia-open-iso", Description: "Aurora — KDE, NVIDIA open driver (installer ISO)", ISO: "https://dl.getaurora.dev/aurora-nvidia-open-stable-webui-x86_64.iso", Source: "getaurora.dev", Logo: "kde", Variant: "desktop"},
+	// upstream: 2026-10-31T12:49:58+00:00
+	{Name: "aurora-iso", Description: "Aurora — KDE Plasma bootc desktop (installer ISO)", ISO: "https://dl.getaurora.dev/aurora-stable-x86_64.iso", Source: "getaurora.dev", Logo: "kde", Variant: "desktop"},
+	// upstream: 2026-10-31T12:51:13+00:00
+	{Name: "aurora-nvidia-open-iso", Description: "Aurora — KDE, NVIDIA open driver (installer ISO)", ISO: "https://dl.getaurora.dev/aurora-nvidia-open-stable-x86_64.iso", Source: "getaurora.dev", Logo: "kde", Variant: "desktop"},
 	{Name: "bluefin-iso", Description: "Bluefin — GNOME bootc desktop (installer ISO)", ISO: "https://download.projectbluefin.io/bluefin-stable-x86_64.iso", Source: "projectbluefin.io", Logo: "gnome", Variant: "desktop"},
 }
