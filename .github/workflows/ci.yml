@@ -399,7 +399,9 @@ jobs:
 
       - name: coverage
         run: |
-          go test -count=1 -timeout 300s -coverprofile=cover.out ./...
+          # -tags bootc: no file is excluded by !bootc, so this is a superset of the
+          # untagged build and brings bootc-tagged code into the profile.
+          go test -tags bootc -count=1 -timeout 300s -coverprofile=cover.out ./...
           # Ratchet: fails if the total slips below .coverage-budget.
           scripts/coverage-gate.sh cover.out | tee -a "$GITHUB_STEP_SUMMARY"
           {
