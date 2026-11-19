@@ -65,12 +65,14 @@ export async function renderMultiview(main) {
   if (!reuse) disconnectMultiview();
 
   main.innerHTML = `
-    <div class="page-head"><h1>${icon('cube')} Multiview</h1>
-      <span class="muted">${running.length} running VM${running.length === 1 ? '' : 's'}${running.length > 6 ? ' — showing first 6' : ''}</span>
-    </div>
-    ${shown.length ? `<p class="muted mv-help">Drag titles to rearrange, or use Move and Size. Layout is saved in this browser.</p>
-      <div id="mv-grid" class="mv-grid"></div>`
-      : `<p class="console-msg">No running VMs. Start some and they appear here, live.</p>`}`;
+    <div class="mv-page">
+      <div class="page-head"><h1>${icon('cube')} Multiview</h1>
+        <span class="muted">${running.length} running VM${running.length === 1 ? '' : 's'}${running.length > 6 ? ' — showing first 6' : ''}</span>
+      </div>
+      ${shown.length ? `<p class="muted mv-help">Drag titles to rearrange, or use Move and Size. Layout is saved in this browser.</p>
+        <div id="mv-grid" class="mv-grid"></div>`
+        : `<p class="console-msg">No running VMs. Start some and they appear here, live.</p>`}
+    </div>`;
   if (!shown.length) return;
 
   if (reuse) {
