@@ -48,6 +48,7 @@ corral-auth --addr 127.0.0.1:8443 \
 | `--basic-htpasswd` | Apache htpasswd file for simple logins |
 | `--issuer`, `--client-id`, `--client-secret`, `--redirect-url` | OIDC provider settings |
 | `--passkey-store`, `--passkey-rp-id`, `--passkey-origin` | Passkey settings |
+| `--revocation-store` | File that keeps logged-out sessions revoked across gateway restarts (`CORRAL_AUTH_REVOCATION_STORE`). Defaults to `<passkey-store>.revoked` when a passkey store is set. Unset otherwise, so revocations live in memory and a cookie copied before logout works again after a restart until its 8-hour cap. Set it on OIDC and Basic-auth gateways |
 | `--passkey-enroll-token` | Bootstrap token for the first passkey of a new user (16+ characters) |
 
 ### Sign-in rules
