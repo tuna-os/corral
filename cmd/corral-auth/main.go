@@ -37,6 +37,8 @@ type gateway struct {
 
 	revokedMu sync.Mutex
 	revoked   map[string]time.Time // session id -> when its cookie expires anyway
+	// revokeFile, when set, persists revoked so logouts survive a restart.
+	revokeFile string
 
 	basicFailures  *failures
 	enrollFailures *failures
@@ -69,6 +71,51 @@ func (g *gateway) revoke(sid string) {
 		g.revoked = map[string]time.Time{}
 	}
 	g.revoked[sid] = now.Add(sessionTTL * time.Second)
+	if g.revokeFile != "" {
+		if err := g.saveRevoked(); err != nil {
+			fmt.Fprintln(os.Stderr, "corral-auth: persist revoked sessions:", err)
+		}
+	}
+}
+
+// useRevokeFile enables persistence at path and loads the entries that have
+// not yet expired. A missing file is an empty list.
+func (g *gateway) useRevokeFile(path string) error {
+	g.revokedMu.Lock()
+	defer g.revokedMu.Unlock()
+	g.revokeFile = path
+	b, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("revocation file: %w", err)
+	}
+	var m map[string]time.Time
+	if err := json.Unmarshal(b, &m); err != nil {
+		return fmt.Errorf("revocation file: %w", err)
+	}
+	now := time.Now()
+	g.revoked = map[string]time.Time{}
+	for id, until := range m {
+		if now.Before(until) {
+			g.revoked[id] = until
+		}
+	}
+	return nil
+}
+
+// saveRevoked writes the revoked set atomically. Caller holds revokedMu.
+func (g *gateway) saveRevoked() error {
+	b, err := json.Marshal(g.revoked)
+	if err != nil {
+		return err
+	}
+	tmp := g.revokeFile + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, g.revokeFile)
 }
 
 func (g *gateway) isRevoked(sid string) bool {
@@ -415,7 +462,7 @@ func main() {
 	if sdk.HandleMetadata(sdk.Metadata{Name: "auth", Version: "0.2.0", Description: "OIDC, Basic Auth, and passkey gateway", Capabilities: []string{"auth-gateway", "oidc", "basic-auth", "passkeys"}, Permissions: []string{"listen on network", "proxy Corral HTTP traffic", "store signed sessions and passkeys"}, SupportedBackends: []string{"all"}}) {
 		return
 	}
-	var addr, upstream, issuer, clientID, clientSecret, redirectURL, secret, basicFile, passkeyFile, passkeyRPID, passkeyOrigin, enrollToken, peerToken string
+	var addr, upstream, issuer, clientID, clientSecret, redirectURL, secret, basicFile, passkeyFile, passkeyRPID, passkeyOrigin, enrollToken, peerToken, revokeFile string
 	c := &cobra.Command{Use: "corral-auth", Short: "OIDC authentication gateway for corral web", RunE: func(*cobra.Command, []string) error {
 		k, err := cookieKey(secret)
 		if err != nil {
@@ -443,6 +490,14 @@ func main() {
 				g.secure = true
 			}
 		}
+		if revokeFile == "" && passkeyFile != "" {
+			revokeFile = passkeyFile + ".revoked"
+		}
+		if revokeFile != "" {
+			if err := g.useRevokeFile(revokeFile); err != nil {
+				return err
+			}
+		}
 		g.peerToken = peerToken
 		if g.oauth == nil && g.basic == nil && g.passkeys == nil {
 			return fmt.Errorf("configure at least one of OIDC, --basic-htpasswd, or --passkey-store")
@@ -464,6 +519,7 @@ func main() {
 	f.StringVar(&passkeyRPID, "passkey-rp-id", env("CORRAL_PASSKEY_RP_ID", ""), "WebAuthn relying-party domain")
 	f.StringVar(&passkeyOrigin, "passkey-origin", env("CORRAL_PASSKEY_ORIGIN", ""), "WebAuthn HTTPS origin")
 	f.StringVar(&enrollToken, "passkey-enroll-token", env("CORRAL_PASSKEY_ENROLL_TOKEN", ""), "Bootstrap token for first passkey enrollment")
+	f.StringVar(&revokeFile, "revocation-store", env("CORRAL_AUTH_REVOCATION_STORE", ""), "File that keeps logged-out sessions revoked across restarts (default: <passkey-store>.revoked when a passkey store is set; otherwise in-memory only)")
 	f.StringVar(&peerToken, "peer-token", env("CORRAL_PEER_TOKEN", ""), "Scoped Corral-to-Corral service token passed to core")
 	_ = c.MarkFlagRequired("cookie-secret")
 	if err := c.Execute(); err != nil {
