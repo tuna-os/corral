@@ -52,6 +52,25 @@ code path, install them locally, or rely on CI to run them.
 
 For bootc image verification, run `just vmtest-layer` to test the generated layer or `just vmtest-e2e` for complete VM boot tests.
 
+### CI checks outside `just ci`
+
+CI also runs these checks. `just ci` does not run them.
+
+- **Prose (the `ste` job).** CI lints each changed Markdown file for
+  Simplified Technical English. `.ste-budget` sets the number of findings
+  that CI accepts, and that number is 0. Write short sentences in the active
+  voice. Do not raise the budget to make a PR pass.
+- **Ratchet (the `Ratchet` workflow).** `.ratchet.toml` sets a budget for
+  statements in non-test Go that discard a call's results (`_ = f()`). A PR
+  that adds one fails. A PR that removes one also fails until you write the
+  lower budget in `.ratchet.toml`. The error message gives that number. A PR
+  that raises a budget needs the `ratchet-raise` label.
+- **Path-scoped jobs.** CI selects jobs from the files that a PR changes
+  (`.github/scripts/ci-scope.sh`). A PR that changes only Markdown runs `ste`
+  but not `test` or `lint`. `docs/backend-parity.md` is the exception, because
+  tests read it. A draft PR skips the e2e, UI, QEMU and image jobs. The
+  `run-heavy` label runs all jobs.
+
 ## Pull Requests
 
 - Keep PRs focused — one change per PR.
