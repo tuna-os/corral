@@ -34,6 +34,9 @@ workflows:
         - 'actions/setup-go@v7.0.0'
         - 'actions/setup-node@v7.1.0'
         - 'actions/upload-artifact@v7.0.2'
+    '.github/workflows/ratchet.yml':
+        - 'actions/checkout@v7.0.1'
+        - 'tuna-os/.github@main'
     '.github/workflows/release-brew.yml':
         - 'mislav/bump-homebrew-formula-action@v4.2'
     '.github/workflows/release.yml':
@@ -150,6 +153,11 @@ dependencies:
         commit: 'sha1-756fe2d284c7292c4e9b62c8a28f1e5629c59532'
         owner_id: 71096353
         repo_id: 351211695
+    'tuna-os/.github@main':
+        ref: 'main'
+        commit: 'sha1-8ecf20e5800fd80bde03d572ab1e3bbcb5b2cf17'
+        owner_id: 223733964
+        repo_id: 1187761922
     'zizmorcore/zizmor-action@v0.8.1':
         ref: 'v0.8.1'
         commit: 'sha1-45d7276c9ca790aabd705e31ca99c6185c3e76dd'

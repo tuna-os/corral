@@ -1,0 +1,18 @@
+# Counted metrics that only go down. Checked by .github/workflows/ratchet.yml
+# with tuna-os/.github's count-ratchet action (see its README for the format).
+#
+# A count over budget fails. A count under budget also fails, with the new
+# number to write here, so an improvement stays locked in. Raising a budget
+# needs the `ratchet-raise` label on the pull request.
+#
+# Local count: python3 <tuna-os/.github>/.github/actions/count-ratchet/ratchet.py check
+# Seeded 2026-11-20 from main.
+
+[metrics.discarded-errors]
+description = "non-test Go statements that discard a call's results with _ = / _, _ ="
+# A call on the right-hand side: `_ = f.Close()`, `_, _ = fmt.Fprintf(...)`.
+# `_ = unusedVar` is not an error discard and does not count.
+pattern = '^[ \t]*_[ \t]*(?:,[ \t]*_[ \t]*)?=[ \t]*[\w.]+\('
+include = ["**/*.go"]
+exclude = ["**/vendor/**", "**/testdata/**", "**/*_test.go", "**/e2e/**", "**/tests/**", "**/test/**"]
+budget = 174
