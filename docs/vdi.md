@@ -221,9 +221,10 @@ annotations. Every 30 seconds it applies this policy:
 A reclaim does the same as a release. A persistent VM member stops and
 keeps its disks. The broker destroys an ephemeral member and creates it again
 from its source: a VM from its golden VM, a CT from its image. To make a VM pool
-ephemeral, create it with `corral vdi pool create --ephemeral`. If the stop or
-the recreate fails, the user keeps the desktop, the task log records the
-failure, and the next pass tries again. Before the recreate starts, the broker
+ephemeral, create it with `corral vdi pool create --ephemeral`.
+
+If the stop or the recreate fails, the user keeps the desktop, the task log
+records the failure, and the next pass tries again. Before the recreate starts, the broker
 writes the golden VM on the claim. Thus the next pass also recreates the
 member when the failed recreate left a clone without the ephemeral mark.
 
