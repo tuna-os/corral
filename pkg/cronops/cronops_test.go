@@ -205,7 +205,7 @@ func TestBackupScript(t *testing.T) {
 		"virtctl vmexport download web-export",
 		"--namespace=tailvm", "--vm=web",
 		`rclone copyto /tmp/"$FNAME" "r2:backups/corral/$FNAME"`,
-		`grep "^web-"`,
+		`grep -E '^web-[0-9]{14}\.img\.gz$'`,
 		"head -n -5",
 		"rclone deletefile",
 	} {
@@ -221,6 +221,19 @@ func TestBackupScript(t *testing.T) {
 				t.Errorf("script contains %q:\n%s", bad, script)
 			}
 		}
+	}
+}
+
+// The prune filter must match only this VM's own backup files: a "." in the
+// name is literal, and "web" must not match "web-db-<ts>.img.gz".
+func TestBackupScriptPruneAnchored(t *testing.T) {
+	s := BackupScript("web.v1", "tailvm", "r2:backups/corral", 5)
+	want := `grep -E '^web\.v1-[0-9]{14}\.img\.gz$'`
+	if !strings.Contains(s, want) {
+		t.Errorf("BackupScript prune filter missing %q:\n%s", want, s)
+	}
+	if strings.Contains(s, `grep "^`) {
+		t.Errorf("BackupScript uses unanchored prune grep:\n%s", s)
 	}
 }
 
