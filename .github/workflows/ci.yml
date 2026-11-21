@@ -512,6 +512,16 @@ jobs:
             curl -fsSLo "build/$arch/virtctl" \
               "https://github.com/kubevirt/kubevirt/releases/download/${VIRTCTL_VERSION}/virtctl-${VIRTCTL_VERSION}-linux-$arch"
           done
+          # The image is signed after this step, so check what goes into it.
+          # These are the SHA-256 of kubectl KUBECTL_VERSION (as published in
+          # kubectl.sha256 on dl.k8s.io) and of virtctl VIRTCTL_VERSION. Change
+          # them together with the two versions at the top of this file.
+          sha256sum -c - <<'SUMS'
+          629d3f410e09bf49b64ae7079f7f0bda1191efed311f7d37fdbab0ad5b0ec2b7  build/amd64/kubectl
+          59f7ee8e477fae658447607dc3c8790ac17a1b016c01c622c12070e969e2d4e7  build/arm64/kubectl
+          745f3c58c6a77be65b828e67b6ad930e9039ab293ed5b2bef6d44c8681af5b75  build/amd64/virtctl
+          345b29874d3c98801ad022ef3074b21e2b21a386b22a2779997ab7c74c7e6f57  build/arm64/virtctl
+          SUMS
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4.4.0
@@ -803,19 +813,19 @@ jobs:
         with:
           node-version: 26
 
-      # Before the Playwright step: its `npm init` writes a package.json at the
-      # root, and that would make Node load the client's .js files as CommonJS.
       - name: Web client unit tests
         run: node --test pkg/web/jstest/*.test.mjs
 
       - name: Build corral
         run: go build -o corral .
 
+      # Playwright comes from e2e/package-lock.json, the version and hashes
+      # that the e2e and screenshot jobs use. scripts/ui-smoke.mjs imports it
+      # from e2e/node_modules.
       - name: Install Playwright Chromium
-        run: | # zizmor: ignore[adhoc-packages] repo has no npm lockfile, smoke test installs Playwright on purpose
-          npm init -y >/dev/null
-          npm install --no-save playwright >/dev/null
-          npx playwright install --with-deps chromium
+        run: |
+          npm ci --prefix e2e
+          (cd e2e && npx playwright install --with-deps chromium)
 
       - name: Serve demo dashboard
         run: |

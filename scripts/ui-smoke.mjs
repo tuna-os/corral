@@ -2,7 +2,8 @@
 // headless Chromium. Run by the ui-smoke job of .github/workflows/ci.yml; locally:
 //
 //   corral web --demo --addr 127.0.0.1:8899 &
-//   npx playwright install chromium && node scripts/ui-smoke.mjs
+//   npm ci --prefix e2e && (cd e2e && npx playwright install chromium)
+//   node scripts/ui-smoke.mjs
 //
 // Asserts the load-bearing screens render and a stateful action round-trips.
 // Fails (exit 1) on any assertion or page error.
@@ -10,7 +11,7 @@
 
 import { mkdir } from 'node:fs/promises';
 import { mkdirSync } from 'node:fs';
-import { chromium } from 'playwright';
+import { chromium } from '../e2e/node_modules/playwright/index.mjs';
 
 const BASE = process.env.CORRAL_URL || 'http://127.0.0.1:8899/';
 // Named checks save a screenshot here; the workflow uploads the directory.
