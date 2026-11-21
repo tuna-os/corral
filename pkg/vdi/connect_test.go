@@ -181,3 +181,54 @@ func TestProbeRDP(t *testing.T) {
 		t.Fatalf("open port: %q, %v", addr, err)
 	}
 }
+
+func TestHoldsMember(t *testing.T) {
+	b, c, _ := newBroker(t)
+	mustClaim(t, b, alice, vmPool)
+	d := mustClaim(t, b, bob, ctPool)
+	// A claim left by the CT reconciler must never read as a user's hold,
+	// even for a caller who sends the reconciler's own name.
+	c.SetClaim(vdi.MemberClaim{Member: desk2, Pool: vmPool.Name, Holder: vdi.CTReconcilerHolder})
+
+	cases := []struct {
+		name     string
+		identity string
+		ns, mem  string
+		want     bool
+	}{
+		{"holder of a VM member", alice.Identity, "vdi", "desk-1", true},
+		{"holder of a CT member", bob.Identity, "vdi", d.Member, true},
+		{"another user's VM member", bob.Identity, "vdi", "desk-1", false},
+		{"another user's CT member", alice.Identity, "vdi", d.Member, false},
+		{"anonymous caller", "", "vdi", "desk-1", false},
+		{"unclaimed member", alice.Identity, "vdi", "desk-3", false},
+		{"namespace the broker does not serve", alice.Identity, "kube-system", "desk-1", false},
+		{"reconciler claim", vdi.CTReconcilerHolder, "vdi", "desk-2", false},
+	}
+	for _, tc := range cases {
+		got, err := b.HoldsMember(tc.identity, tc.ns, tc.mem)
+		if err != nil || got != tc.want {
+			t.Errorf("%s: HoldsMember = %v, %v; want %v, nil", tc.name, got, err, tc.want)
+		}
+	}
+}
+
+// failingClaims is a Cluster whose claim reads fail.
+type failingClaims struct {
+	vdi.Cluster
+	err error
+}
+
+func (f failingClaims) GetClaim(vdi.MemberRef) (vdi.MemberClaim, bool, error) {
+	return vdi.MemberClaim{}, false, f.err
+}
+
+func TestHoldsMember_ClaimReadFailureIsAnErrorNotADenial(t *testing.T) {
+	_, c, _ := newBroker(t)
+	boom := errors.New("apiserver down")
+	b := vdi.NewBroker(failingClaims{Cluster: c, err: boom}, vdi.BrokerConfig{Namespaces: []string{"vdi"}})
+	held, err := b.HoldsMember(alice.Identity, "vdi", "desk-1")
+	if held || !errors.Is(err, boom) {
+		t.Fatalf("HoldsMember = %v, %v; want false and an error wrapping the read failure", held, err)
+	}
+}
