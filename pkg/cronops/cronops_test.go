@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/tuna-os/corral/pkg/kubevirt"
 )
 
 // marshal round-trips a manifest so tests can navigate it as generic JSON.
@@ -139,15 +141,29 @@ func TestBackupCronJob_NonRootWithToolsVolume(t *testing.T) {
 func TestToolsScript(t *testing.T) {
 	s := ToolsScript()
 	for _, want := range []string{
-		"observedKubeVirtVersion",
-		"aarch64|arm64) ARCH=arm64",
+		"aarch64|arm64) VIRTCTL_ARCH=arm64",
 		"curl -fsSL -o /tools/virtctl",
-		"virtctl-${KV_VERSION}-linux-${ARCH}",
+		"virtctl-" + kubevirt.VirtctlVersion + "-linux-${VIRTCTL_ARCH}",
 		"chmod +x /tools/virtctl",
 		`cp "$(command -v kubectl)" /tools/kubectl`,
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("ToolsScript missing %q:\n%s", want, s)
+		}
+	}
+}
+
+// The backup pod can export VM disks and mounts the rclone credentials, so
+// the virtctl it downloads must pass the digest check before it can run. A
+// version read from the cluster has no digest to check against.
+func TestToolsScript_InstallsCheckedVirtctl(t *testing.T) {
+	s := ToolsScript()
+	if !strings.Contains(s, kubevirt.VirtctlInstallScript(ToolsDir+"/virtctl")) {
+		t.Errorf("ToolsScript does not use the checked virtctl install:\n%s", s)
+	}
+	for _, bad := range []string{"observedKubeVirtVersion", "KV_VERSION"} {
+		if strings.Contains(s, bad) {
+			t.Errorf("ToolsScript takes the virtctl version from the cluster (%q):\n%s", bad, s)
 		}
 	}
 }
