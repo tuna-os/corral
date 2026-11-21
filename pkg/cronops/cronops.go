@@ -5,7 +5,11 @@
 // the scheduling, so the plugins work even when no workstation is online.
 package cronops
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/tuna-os/corral/pkg/kubevirt"
+)
 
 // KubectlImage runs the CronJob pods. bitnami/kubectl is multi-arch and ships
 // a shell, which the snapshot-prune pipeline needs. Digest-pinned (see #66)
@@ -256,21 +260,18 @@ kubectl get vmsnapshot -n %[2]s -l corral.dev/auto-snap=%[1]s \
 }
 
 // ToolsScript runs in BackupCronJob's init container (KubectlImage). It
-// copies the image's kubectl into ToolsDir and downloads the virtctl that
-// matches the cluster's KubeVirt version and the node's architecture.
-// `curl -f` makes an HTTP error fail the job. Without it, curl would save
-// the error page as virtctl.
+// copies the image's kubectl into ToolsDir and downloads the virtctl release
+// that Corral pins (kubevirt.VirtctlVersion) for the node's architecture.
+// The download must have the SHA-256 that Corral expects, or the job stops:
+// this pod can export VM disks and mounts the rclone credentials.
+//
+// The version is the pinned one, not the cluster's own KubeVirt version. A
+// version read from the cluster has no digest to check against, and the
+// Role of this pod does not grant a read of the KubeVirt object. The corral
+// web image runs the same pinned virtctl against the cluster.
 func ToolsScript() string {
-	return fmt.Sprintf(`case "$(uname -m)" in
-  x86_64) ARCH=amd64 ;;
-  aarch64|arm64) ARCH=arm64 ;;
-  *) echo "unsupported architecture $(uname -m)" >&2; exit 1 ;;
-esac
-KV_VERSION=$(kubectl get kubevirt kubevirt -n kubevirt -o jsonpath='{.status.observedKubeVirtVersion}')
-if [ -z "$KV_VERSION" ]; then echo "cannot read the KubeVirt version" >&2; exit 1; fi
-curl -fsSL -o %[1]s/virtctl "https://github.com/kubevirt/kubevirt/releases/download/${KV_VERSION}/virtctl-${KV_VERSION}-linux-${ARCH}"
-chmod +x %[1]s/virtctl
-cp "$(command -v kubectl)" %[1]s/kubectl`, ToolsDir)
+	return fmt.Sprintf(`%s
+cp "$(command -v kubectl)" %s/kubectl`, kubevirt.VirtctlInstallScript(ToolsDir+"/virtctl"), ToolsDir)
 }
 
 // BackupScript exports the VM's primary disk (gzip), rclone-copies it to

@@ -455,7 +455,7 @@ func GenerateProxyDeployment(name, namespace string, ports []int) map[string]any
 				"capabilities":             map[string]any{"drop": []string{"ALL"}},
 				"seccompProfile":           map[string]any{"type": "RuntimeDefault"},
 			},
-			"command": []string{"sh", "-c", "apk add --no-cache curl >/dev/null 2>&1\ncurl -sSL \"https://github.com/kubevirt/kubevirt/releases/download/v1.8.2/virtctl-v1.8.2-linux-amd64\" -o /tmp/virtctl\nchmod +x /tmp/virtctl"},
+			"command": []string{"sh", "-c", "apk add --no-cache curl >/dev/null 2>&1\n" + VirtctlInstallScript("/tmp/virtctl")},
 			"volumeMounts": []map[string]any{
 				{"name": "tools", "mountPath": "/tmp"},
 			},

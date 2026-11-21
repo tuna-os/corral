@@ -459,7 +459,9 @@ corral backup unschedule web
 Needs `rclone` configured for your remote (`rclone config`) and `virtctl`.
 Scheduled backups run as non-root in the pinned `rclone/rclone` image.
 An init container copies `kubectl` and downloads `virtctl` into a
-shared volume, so no corral-owned image is necessary. Your local rclone
+shared volume, so no corral-owned image is necessary. The init container
+downloads the `virtctl` release that Corral pins and checks its SHA-256.
+If the check fails, the job stops. Your local rclone
 config goes into a namespaced Secret that the CronJob mounts.
 
 ### The Windows plugin
