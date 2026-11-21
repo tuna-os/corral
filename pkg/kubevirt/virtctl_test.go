@@ -120,3 +120,59 @@ func TestGenerateProxyDeployment_InitContainerChecksVirtctl(t *testing.T) {
 		t.Errorf("init container hard-codes amd64:\n%s", script)
 	}
 }
+
+// The corral web image ships the virtctl that ci.yml downloads, and the
+// in-cluster pods download VirtctlVersion and check it against
+// virtctlSHA256. The two must be one release: a bump on one side only would
+// run two virtctl versions against one cluster, and the digests here would no
+// longer be those of the image's virtctl. ci.yml selects every job when it
+// changes (.github/scripts/ci-scope.sh), so this runs on the PRs that can
+// cause the drift.
+func TestVirtctlPinMatchesWorkflow(t *testing.T) {
+	read := func(parts ...string) string {
+		t.Helper()
+		raw, err := os.ReadFile(filepath.Join(append([]string{"..", ".."}, parts...)...))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(raw)
+	}
+	workflow := read(".github", "workflows", "ci.yml")
+	script := read("scripts", "smoke-web-image.sh")
+
+	// The workflow-wide env block is indented two spaces; job-level keys such
+	// as the e2e job's KUBEVIRT_VERSION are indented further.
+	workflowEnv := func(name string) string {
+		t.Helper()
+		m := regexp.MustCompile(`(?m)^  `+name+`: (\S+)$`).FindAllStringSubmatch(workflow, -1)
+		if len(m) != 1 {
+			t.Fatalf("ci.yml: want one workflow-level %s, found %d", name, len(m))
+		}
+		return m[0][1]
+	}
+	scriptDefault := func(name string) string {
+		t.Helper()
+		m := regexp.MustCompile(name + `="\$\{` + name + `:-([^}]+)\}"`).FindStringSubmatch(script)
+		if m == nil {
+			t.Fatalf("scripts/smoke-web-image.sh: no default for %s", name)
+		}
+		return m[1]
+	}
+
+	if got := workflowEnv("VIRTCTL_VERSION"); got != VirtctlVersion {
+		t.Errorf("ci.yml VIRTCTL_VERSION = %s, VirtctlVersion = %s: change them together, with virtctlSHA256", got, VirtctlVersion)
+	}
+	if got := scriptDefault("VIRTCTL_VERSION"); got != VirtctlVersion {
+		t.Errorf("scripts/smoke-web-image.sh VIRTCTL_VERSION default = %s, VirtctlVersion = %s", got, VirtctlVersion)
+	}
+	if got, want := scriptDefault("KUBECTL_VERSION"), workflowEnv("KUBECTL_VERSION"); got != want {
+		t.Errorf("scripts/smoke-web-image.sh KUBECTL_VERSION default = %s, ci.yml KUBECTL_VERSION = %s", got, want)
+	}
+
+	// Every digest the workflow checks virtctl against is the one compiled in.
+	for _, m := range regexp.MustCompile(`(?m)^\s*([0-9a-f]{64})  build/([a-z0-9]+)/virtctl$`).FindAllStringSubmatch(workflow, -1) {
+		if want := virtctlSHA256[m[2]]; m[1] != want {
+			t.Errorf("ci.yml checks build/%s/virtctl against %s, virtctlSHA256[%q] = %q", m[2], m[1], m[2], want)
+		}
+	}
+}

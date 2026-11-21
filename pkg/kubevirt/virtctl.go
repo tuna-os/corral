@@ -5,7 +5,8 @@ import "fmt"
 // VirtctlVersion is the virtctl release that Corral's in-cluster pods
 // download: the VNC proxy's init container and the backup CronJob. It is the
 // version the corral web image ships (VIRTCTL_VERSION in
-// .github/workflows/ci.yml). Change both together, with virtctlSHA256.
+// .github/workflows/ci.yml). Change both together, with virtctlSHA256;
+// TestVirtctlPinMatchesWorkflow fails when they differ.
 const VirtctlVersion = "v1.8.2"
 
 // virtctlSHA256 is the SHA-256 of virtctl-<VirtctlVersion>-linux-<arch>, by
