@@ -89,6 +89,36 @@ func TestSSHInvokesVirtctlSSH(t *testing.T) {
 	}
 }
 
+// The password path runs virtctl through sshpass. It must name the instance's
+// kube context as the key path does: otherwise virtctl uses the kubeconfig's
+// current context, and the stored password goes to a guest of the same name
+// in another cluster.
+func TestSSHWithPasswordKeepsKubeContext(t *testing.T) {
+	log := stubTools(t)
+	dir := filepath.Dir(log)
+	// A stand-in sshpass: record the command it would run, without the -e flag.
+	sshpass := "#!/bin/sh\nshift\necho \"$@\" >> \"$ARGV_LOG\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "sshpass"), []byte(sshpass), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	virtctl := filepath.Join(dir, "virtctl")
+	c := NewClientForContext("default", "lab-b")
+	c.Runner = lookPathRunner{Runner: shell.NewFake(), bin: virtctl}
+
+	if err := c.SSH("web-1", "debian", "", "uptime", 0, "hunter2", nil); err != nil {
+		t.Fatalf("SSH: %v", err)
+	}
+	argv := recordedArgv(t)
+	for _, want := range []string{virtctl + " --context=lab-b ssh", "--namespace=default", "vm/web-1"} {
+		if !strings.Contains(argv, want) {
+			t.Errorf("argv %q should contain %q", argv, want)
+		}
+	}
+	if strings.Contains(argv, "hunter2") {
+		t.Errorf("the password must not be on the command line: %q", argv)
+	}
+}
+
 // stubDialler records the proxy argv Dial builds and returns a process that
 // exits at once without listening, so Dial takes its timeout path. A stub
 // binary on PATH cannot do this job: Dial kills the proxy on timeout, which

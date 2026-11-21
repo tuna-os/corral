@@ -579,11 +579,13 @@ func (c *Client) SSH(name, username, identityFile, command string, port int, pas
 
 	args := virtctlSSHArgs(c.Namespace, username, identityFile, command, port, localForwards, name)
 
-	if password != "" {
-		return shell.RunWithSSHPass(password, virtctl, args...)
-	}
-
 	cmd := shell.CommandForContext(c.Context, virtctl, args...)
+	if password != "" {
+		// cmd.Args carries --context for the instance's cluster. Without it
+		// virtctl uses the kubeconfig's current context, and the password
+		// goes to a guest of the same name in that cluster.
+		return shell.RunWithSSHPass(password, virtctl, cmd.Args[1:]...)
+	}
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
