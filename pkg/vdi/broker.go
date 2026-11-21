@@ -77,6 +77,10 @@ type MemberClaim struct {
 	Version string
 	// Session is the console presence the broker recorded on the Lease.
 	Session SessionMarks
+	// Golden is the golden VM that a Release of an ephemeral VM member
+	// recorded on the Lease before it began to recycle the member. Empty
+	// for all other claims.
+	Golden string
 }
 
 // SessionMarks is the console presence of a claim, as the broker records

@@ -710,7 +710,13 @@ func Release(namespace, member, identity string) error {
 		pool = l.Metadata.Labels[labelPool]
 	}
 	golden, ephemeral := vm.Metadata.Annotations[annoGolden], vm.Metadata.Labels[labelMode] == PoolModeEphemeral
-	if !found && pool != "" {
+	if g := l.Metadata.Annotations[annoGolden]; held && g != "" {
+		// An earlier recycle failed after it began. The clone that it left
+		// carries only the golden VM's labels, so the claim says what the
+		// member is.
+		golden, ephemeral = g, true
+	}
+	if !found && !ephemeral && pool != "" {
 		// A failed recycle can leave the member deleted; its siblings
 		// still say how to recreate it.
 		golden, ephemeral, err = poolGolden(namespace, pool)
@@ -720,6 +726,11 @@ func Release(namespace, member, identity string) error {
 	}
 	switch {
 	case ephemeral:
+		if held && golden != "" && l.Metadata.Annotations[annoGolden] != golden {
+			if l, err = markLeaseEphemeral(namespace, l, golden); err != nil {
+				return fmt.Errorf("release %s: %w (the claim is kept; retry the release)", member, err)
+			}
+		}
 		if err := recycleVM(namespace, member, pool, golden, found); err != nil {
 			return fmt.Errorf("release %s: recreate from %q: %w (the claim is kept; retry the release)", member, golden, err)
 		}
@@ -767,6 +778,32 @@ func poolGolden(namespace, pool string) (golden string, ephemeral bool, err erro
 		}
 	}
 	return "", false, nil
+}
+
+// markLeaseEphemeral records golden on the claim Lease before a recycle
+// starts. The Lease outlives a recycle that fails after the delete or the
+// clone, so a retried Release still recycles the member. It returns the
+// Lease as it is after the write.
+func markLeaseEphemeral(namespace string, l lease, golden string) (lease, error) {
+	annotations := map[string]string{annoGolden: golden}
+	for k, v := range l.Metadata.Annotations {
+		if k != annoGolden {
+			annotations[k] = v
+		}
+	}
+	marked := l
+	marked.Metadata.Annotations = annotations
+	if !updateLease(namespace, marked) {
+		return l, fmt.Errorf("record ephemeral mode on claim lease %s: the claim changed", l.Metadata.Name)
+	}
+	current, err := readLease(namespace, l.Metadata.Name)
+	if err != nil {
+		return l, fmt.Errorf("read claim lease %s: %w", l.Metadata.Name, err)
+	}
+	if current.Spec.HolderIdentity != l.Spec.HolderIdentity {
+		return l, fmt.Errorf("claim lease %s changed holder to %q", l.Metadata.Name, current.Spec.HolderIdentity)
+	}
+	return current, nil
 }
 
 // recycleVM deletes an ephemeral member and clones it again from golden,

@@ -50,6 +50,7 @@ func claimOf(namespace string, l lease) MemberClaim {
 	c.RenewedAt, _ = time.Parse(time.RFC3339Nano, l.Spec.RenewTime)
 	c.Session.ConnectedAt, _ = time.Parse(time.RFC3339Nano, l.Metadata.Annotations[annoConnectedAt])
 	c.Session.DisconnectedAt, _ = time.Parse(time.RFC3339Nano, l.Metadata.Annotations[annoDisconnectedAt])
+	c.Golden = l.Metadata.Annotations[annoGolden]
 	return c
 }
 
@@ -71,6 +72,9 @@ func claimLease(c MemberClaim) lease {
 	}
 	if !c.Session.DisconnectedAt.IsZero() {
 		marks[annoDisconnectedAt] = c.Session.DisconnectedAt.UTC().Format(time.RFC3339Nano)
+	}
+	if c.Golden != "" {
+		marks[annoGolden] = c.Golden
 	}
 	if len(marks) > 0 {
 		l.Metadata.Annotations = marks

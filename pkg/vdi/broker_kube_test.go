@@ -323,6 +323,7 @@ func scriptRecycle(fake interface {
 	AddPrefixResponse(string, string, error)
 }) {
 	fake.AddPrefixResponse("/fake/bin/virtctl stop devpool-1", "", nil)
+	fake.AddResponseKV("kubectl", []string{"replace", "-f", "-"}, "", nil)
 	fake.AddPrefixResponse("kubectl delete", "", nil)
 	fake.AddPrefixResponse("kubectl get pvc -n corral-vms -l corral.dev/vm=devpool-1", "", nil)
 	fake.AddPrefixResponse("kubectl get datavolume -n corral-vms -l corral.dev/vm=devpool-1", "", nil)
@@ -402,6 +403,88 @@ func TestRelease_RetryRecreatesAMemberAFailedRecycleDeleted(t *testing.T) {
 	}
 	if !cloned {
 		t.Fatal("the deleted member was not recreated from the golden VM of its siblings")
+	}
+}
+
+// A recycle that fails after the clone leaves a VM with only the golden
+// VM's labels. The claim Lease must say that the member is ephemeral
+// before the recycle starts, because the Lease is what survives (#757).
+func TestRelease_EphemeralRecycleMarksTheClaimBeforeItStarts(t *testing.T) {
+	fake := withFake(t)
+	fake.AddResponse("kubectl "+leaseGetArgs, leaseJSON("alice", time.Now().UTC().Format(time.RFC3339Nano), "7"), nil)
+	fake.AddResponseKV("kubectl", []string{"get", "vm", "devpool-1", "-n", "corral-vms", "--ignore-not-found", "-o", "json"}, ephemeralVMJSON("devpool-1"), nil)
+	scriptRecycle(fake)
+	fake.AddPrefixResponse("kubectl label vm devpool-1", "", &fakeErr{"etcdserver: request timed out"})
+
+	if err := Release("corral-vms", "devpool-1", "alice"); err == nil || !strings.Contains(err.Error(), "claim is kept") {
+		t.Fatalf("Release = %v, want a retryable failure after the clone", err)
+	}
+	var marked, cloned bool
+	for _, c := range fake.Calls() {
+		all := strings.Join(c.Args, " ")
+		switch {
+		case all == "replace -f -":
+			var l lease
+			if err := json.Unmarshal([]byte(c.Stdin), &l); err != nil {
+				t.Fatal(err)
+			}
+			if l.Metadata.Annotations[annoGolden] != "golden" || l.Metadata.ResourceVersion != "7" {
+				t.Fatalf("lease write = %+v, want the golden VM under version 7", l.Metadata)
+			}
+			marked = true
+		case strings.HasPrefix(all, "delete vm devpool-1 "), all == "apply -f -":
+			cloned = cloned || all == "apply -f -"
+			if !marked {
+				t.Fatalf("%q ran before the claim recorded the ephemeral mode", all)
+			}
+		case strings.HasPrefix(all, "delete --raw"):
+			t.Fatal("a failed recycle ended the claim")
+		}
+	}
+	if !marked || !cloned {
+		t.Fatalf("marked=%v cloned=%v", marked, cloned)
+	}
+}
+
+// The retry finds the clone that the failed recycle left: it has the
+// golden VM's labels and no ephemeral mark, and the pool has no sibling to
+// ask. The mark on the claim must still make the release recycle it (#757).
+func TestRelease_RetryRecyclesACloneThatLostItsEphemeralMark(t *testing.T) {
+	fake := withFake(t)
+	fake.AddResponse("kubectl "+leaseGetArgs, `{"metadata":{"name":"corral-vdi-devpool-1","resourceVersion":"8","labels":{"corral.dev/vdi-pool":"devpool"},`+
+		`"annotations":{"corral.dev/vdi-golden":"golden"}},"spec":{"holderIdentity":"alice","renewTime":"2099-01-01T00:00:00Z","leaseDurationSeconds":3600}}`, nil)
+	fake.AddResponseKV("kubectl", []string{"get", "vm", "devpool-1", "-n", "corral-vms", "--ignore-not-found", "-o", "json"},
+		`{"metadata":{"name":"devpool-1","labels":{"app":"desktop"}},"status":{"printableStatus":"Running"}}`, nil)
+	scriptRecycle(fake)
+
+	if err := Release("corral-vms", "devpool-1", "alice"); err != nil {
+		t.Fatal(err)
+	}
+	var cloned, remarked, deletedLease bool
+	for _, c := range fake.Calls() {
+		all := strings.Join(c.Args, " ")
+		cloned = cloned || (all == "apply -f -" && strings.Contains(c.Stdin, `"name":"golden"`))
+		remarked = remarked || strings.HasPrefix(all, "label vm devpool-1 -n corral-vms "+labelMode+"="+PoolModeEphemeral)
+		deletedLease = deletedLease || (strings.HasPrefix(all, "delete --raw") && strings.Contains(all, leaseName("devpool-1")))
+		if all == "replace -f -" {
+			t.Fatal("rewrote a claim that already has the mark")
+		}
+	}
+	if !cloned || !remarked || !deletedLease {
+		t.Fatalf("cloned=%v remarked=%v deletedLease=%v: the member went back to the pool as persistent", cloned, remarked, deletedLease)
+	}
+}
+
+// A presence update between a failed release and its retry must keep the
+// ephemeral mark on the claim (#757).
+func TestKubeCluster_ClaimRoundTripKeepsTheEphemeralMark(t *testing.T) {
+	var l lease
+	l.Metadata.Labels = map[string]string{labelPool: "devpool", labelVDIMember: "devpool-1"}
+	l.Metadata.Annotations = map[string]string{annoGolden: "golden"}
+	c := claimOf("corral-vms", l)
+	c.Session.ConnectedAt = time.Date(2026, 10, 15, 9, 0, 0, 0, time.UTC)
+	if got := claimLease(c).Metadata.Annotations[annoGolden]; got != "golden" {
+		t.Fatalf("golden after round trip = %q", got)
 	}
 }
 

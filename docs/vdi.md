@@ -223,7 +223,9 @@ keeps its disks. The broker destroys an ephemeral member and creates it again
 from its source: a VM from its golden VM, a CT from its image. To make a VM pool
 ephemeral, create it with `corral vdi pool create --ephemeral`. If the stop or
 the recreate fails, the user keeps the desktop, the task log records the
-failure, and the next pass tries again.
+failure, and the next pass tries again. Before the recreate starts, the broker
+writes the golden VM on the claim. Thus the next pass also recreates the
+member when the failed recreate left a clone without the ephemeral mark.
 
 A desktop response shows the session: `connected`, `disconnectedAt`, and
 `reclaimAt` with `reclaimReason` (`disconnect-grace` or `max-duration`).
