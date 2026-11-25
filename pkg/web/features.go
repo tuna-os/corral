@@ -111,9 +111,13 @@ func handleInstallPlugin(w http.ResponseWriter, r *http.Request) {
 	if source := r.URL.Query().Get("source"); source != "" {
 		lookup = source + "/" + name
 	}
-	e := idx.Find(lookup)
-	if e == nil {
+	e, err := idx.Resolve(lookup)
+	if errors.Is(err, plugin.ErrPluginNotFound) {
 		errResp(w, http.StatusNotFound, fmt.Errorf("no plugin %q in the marketplace", name))
+		return
+	}
+	if err != nil {
+		errResp(w, http.StatusConflict, err)
 		return
 	}
 	var consent struct {

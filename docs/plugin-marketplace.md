@@ -120,7 +120,9 @@ operator who accepts that danger can add the source with
 a warning when it reads the index and again at install time, and
 `corral marketplace list` shows the source as `unverified`.
 
-To select a plugin with a duplicate name, use `source/name`. Installation
+To select a plugin with a duplicate name, use `source/name`. If Corral cannot
+read a marketplace, it does not install or update a plugin by its name only.
+Use `source/name`, or try again. Installation
 shows the publisher and the requested permissions, and it needs explicit
 consent to those permissions. Corral verifies compatibility, digest, and any
 supplied signature before it atomically replaces an installed plugin; failed state writes roll the
