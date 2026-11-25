@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -86,6 +87,9 @@ type Index struct {
 	Name          string    `json:"name,omitempty"`
 	Publisher     Publisher `json:"publisher,omitempty"`
 	Plugins       []Entry   `json:"plugins"`
+	// Unread names the enabled sources that FetchAll could not read. It is
+	// never read from index JSON.
+	Unread []string `json:"-"`
 }
 
 type Source struct {
@@ -323,6 +327,7 @@ func FetchAll() (*Index, []error) {
 		idx, err := fetchSource(source)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", source.Name, err))
+			merged.Unread = append(merged.Unread, source.Name)
 			continue
 		}
 		for _, e := range idx.Plugins {
@@ -402,6 +407,43 @@ func (idx *Index) Find(name string) *Entry {
 	}
 	return match
 }
+
+// ErrPluginNotFound reports that no source that was read publishes the name.
+var ErrPluginNotFound = errors.New("no such plugin in the marketplace")
+
+// Resolve returns the entry to install or update for name, or the reason
+// there is none. Find resolves a bare name when exactly one source that was
+// read publishes it. That is not enough to install from: the rule that a name
+// from two sources resolves to neither needs every source. While a source is
+// unread, a second source that publishes the same name would be the only
+// match, and its build would install under the name the operator asked the
+// first source for. So Resolve refuses a bare name until every enabled source
+// is read. A source/name selects one source and does not need the others.
+func (idx *Index) Resolve(name string) (*Entry, error) {
+	if strings.Contains(name, "/") {
+		if e := idx.Find(name); e != nil {
+			return e, nil
+		}
+		return nil, fmt.Errorf("%w: %q", ErrPluginNotFound, name)
+	}
+	if len(idx.Unread) > 0 {
+		return nil, fmt.Errorf("marketplace %s could not be read, so %q cannot be matched to one source; select the source as source/%s or try again", strings.Join(idx.Unread, ", "), name, name)
+	}
+	var sources []string
+	for i := range idx.Plugins {
+		if idx.Plugins[i].Name == name {
+			sources = append(sources, idx.Plugins[i].Source)
+		}
+	}
+	switch len(sources) {
+	case 0:
+		return nil, fmt.Errorf("%w: %q", ErrPluginNotFound, name)
+	case 1:
+		return idx.Find(name), nil
+	}
+	return nil, fmt.Errorf("plugin %q is published by %s; select one as source/%s", name, strings.Join(sources, " and "), name)
+}
+
 func platformKey() string { return runtime.GOOS + "/" + runtime.GOARCH }
 
 func (e *Entry) Validate() error {

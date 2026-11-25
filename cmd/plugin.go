@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -79,9 +80,12 @@ var pluginInstallCmd = &cobra.Command{
 		if len(idx.Plugins) == 0 && len(errs) > 0 {
 			return errs[0]
 		}
-		e := idx.Find(args[0])
-		if e == nil {
+		e, err := idx.Resolve(args[0])
+		if errors.Is(err, plugin.ErrPluginNotFound) {
 			return fmt.Errorf("no plugin %q in the marketplace (corral plugin search)", args[0])
+		}
+		if err != nil {
+			return err
 		}
 		pin, _ := cmd.Flags().GetBool("pin")
 		accept, _ := cmd.Flags().GetBool("accept-permissions")
@@ -144,9 +148,13 @@ var pluginUpdateCmd = &cobra.Command{Use: "update [name]", Short: "Update one pl
 		if state.Source != "" {
 			key = state.Source + "/" + p.Name
 		}
-		e := idx.Find(key)
-		if e == nil {
+		e, err := idx.Resolve(key)
+		if errors.Is(err, plugin.ErrPluginNotFound) {
 			fmt.Fprintf(os.Stderr, "warning: %s not found in source %s\n", p.Name, state.Source)
+			continue
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: %s not updated: %v\n", p.Name, err)
 			continue
 		}
 		old, _ := semver.NewVersion(state.Version)

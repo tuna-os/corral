@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -330,6 +331,59 @@ func TestFetchAll_SameNameFromTwoSourcesIsFlaggedAndAmbiguous(t *testing.T) {
 	}
 	if e := idx.Find("env-2/bootc"); e == nil || e.Source != "env-2" {
 		t.Errorf("Find(env-2/bootc) = %+v, want the env-2 entry", e)
+	}
+}
+
+// A bare name resolves only when every enabled source was read. With one
+// source unread, the name-from-two-sources check cannot run, and the other
+// source's entry would install under the name asked of the first.
+func TestResolve_BareNameIsRefusedWhileASourceIsUnread(t *testing.T) {
+	isolateSources(t)
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	t.Cleanup(bad.Close)
+	other := indexServer(t, "bootc")
+	t.Setenv("CORRAL_MARKETPLACE_URLS", bad.URL+","+other.URL)
+
+	idx, _ := FetchAll()
+	if strings.Join(idx.Unread, ",") != "env-1" {
+		t.Fatalf("Unread = %v, want [env-1]", idx.Unread)
+	}
+	e, err := idx.Resolve("bootc")
+	if e != nil || err == nil {
+		t.Fatalf("Resolve(bootc) = %+v, %v; want no entry while env-1 is unread", e, err)
+	}
+	if errors.Is(err, ErrPluginNotFound) || !strings.Contains(err.Error(), "env-1") || !strings.Contains(err.Error(), "source/bootc") {
+		t.Errorf("Resolve(bootc) error = %q, want one that names the unread source and the source/name form", err)
+	}
+	if e, err := idx.Resolve("env-2/bootc"); err != nil || e == nil || e.Source != "env-2" {
+		t.Errorf("Resolve(env-2/bootc) = %+v, %v; want the env-2 entry", e, err)
+	}
+	if _, err := idx.Resolve("env-1/bootc"); !errors.Is(err, ErrPluginNotFound) {
+		t.Errorf("Resolve(env-1/bootc) = %v, want ErrPluginNotFound", err)
+	}
+}
+
+func TestResolve_AllSourcesRead(t *testing.T) {
+	isolateSources(t)
+	a := indexServer(t, "bootc", "vdi")
+	b := indexServer(t, "bootc")
+	t.Setenv("CORRAL_MARKETPLACE_URLS", a.URL+","+b.URL)
+
+	idx, _ := FetchAll()
+	if len(idx.Unread) != 0 {
+		t.Fatalf("Unread = %v, want none", idx.Unread)
+	}
+	if e, err := idx.Resolve("vdi"); err != nil || e == nil || e.Source != "env-1" {
+		t.Errorf("Resolve(vdi) = %+v, %v; want the env-1 entry", e, err)
+	}
+	if _, err := idx.Resolve("missing"); !errors.Is(err, ErrPluginNotFound) {
+		t.Errorf("Resolve(missing) = %v, want ErrPluginNotFound", err)
+	}
+	_, err := idx.Resolve("bootc")
+	if err == nil || errors.Is(err, ErrPluginNotFound) || !strings.Contains(err.Error(), "env-1 and env-2") {
+		t.Errorf("Resolve(bootc) = %v, want an error that names both sources", err)
 	}
 }
 
