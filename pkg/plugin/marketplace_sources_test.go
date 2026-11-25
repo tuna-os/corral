@@ -387,6 +387,34 @@ func TestResolve_AllSourcesRead(t *testing.T) {
 	}
 }
 
+func TestEntrySupersedes(t *testing.T) {
+	a, b := strings.Repeat("a", 64), strings.Repeat("b", 64)
+	entry := func(version, sha string) *Entry {
+		return &Entry{Name: "bootc", Version: version, Platforms: map[string]Build{platformKey(): {URL: "https://example.com/bootc", SHA256: sha}}}
+	}
+	cases := []struct {
+		name  string
+		entry *Entry
+		state InstalledState
+		want  bool
+	}{
+		{"higher version", entry("0.3.0", a), InstalledState{Version: "0.2.0", SHA256: a}, true},
+		{"same version, same build", entry("0.2.0", a), InstalledState{Version: "0.2.0", SHA256: a}, false},
+		{"same version, same build in upper case", entry("0.2.0", strings.ToUpper(a)), InstalledState{Version: "0.2.0", SHA256: a}, false},
+		{"same version, new build", entry("0.2.0", b), InstalledState{Version: "0.2.0", SHA256: a}, true},
+		{"lower version, other build", entry("0.1.0", b), InstalledState{Version: "0.2.0", SHA256: a}, false},
+		{"same version, installed digest unknown", entry("0.2.0", b), InstalledState{Version: "0.2.0"}, false},
+		{"same version, index has no digest", entry("0.2.0", ""), InstalledState{Version: "0.2.0", SHA256: a}, false},
+		{"same version, no build for this platform", &Entry{Name: "bootc", Version: "0.2.0", Platforms: map[string]Build{"other/arch": {SHA256: b}}}, InstalledState{Version: "0.2.0", SHA256: a}, false},
+		{"installed version does not parse", entry("0.2.0", a), InstalledState{Version: "", SHA256: a}, true},
+	}
+	for _, tc := range cases {
+		if got := tc.entry.Supersedes(tc.state); got != tc.want {
+			t.Errorf("%s: Supersedes = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
 func TestSetPinned(t *testing.T) {
 	isolateSources(t)
 	if err := SetPinned("bootc", true); err == nil || !strings.Contains(err.Error(), "no installed-state manifest") {

@@ -556,6 +556,24 @@ func (e *Entry) Compatible() error {
 	return nil
 }
 
+// Supersedes reports whether e is an update for the installed plugin that
+// state records: a higher version, or the same version with a different
+// build. An index can publish a new build without a new version. The
+// first-party index does so on every commit to main, so a fix reaches an
+// installed plugin as a new digest under the version it already has.
+func (e *Entry) Supersedes(state InstalledState) bool {
+	installed, _ := semver.NewVersion(state.Version)
+	offered, _ := semver.NewVersion(e.Version)
+	if installed == nil || offered == nil || offered.GreaterThan(installed) {
+		return true
+	}
+	if !offered.Equal(installed) {
+		return false
+	}
+	b, ok := e.Platforms[platformKey()]
+	return ok && len(b.SHA256) == 64 && state.SHA256 != "" && !strings.EqualFold(b.SHA256, state.SHA256)
+}
+
 func (e *Entry) Install() error { return e.InstallPinned(false) }
 func (e *Entry) InstallPinned(pin bool) error {
 	installMu.Lock()
