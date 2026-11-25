@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 
-	semver "github.com/Masterminds/semver/v3"
 	"github.com/spf13/cobra"
 	"github.com/tuna-os/corral/pkg/plugin"
 )
@@ -157,15 +156,17 @@ var pluginUpdateCmd = &cobra.Command{Use: "update [name]", Short: "Update one pl
 			fmt.Fprintf(os.Stderr, "warning: %s not updated: %v\n", p.Name, err)
 			continue
 		}
-		old, _ := semver.NewVersion(state.Version)
-		next, _ := semver.NewVersion(e.Version)
-		if old != nil && next != nil && !next.GreaterThan(old) {
+		if !e.Supersedes(state) {
 			continue
 		}
 		if err := e.InstallPinned(false); err != nil {
 			return err
 		}
-		fmt.Printf("Updated %s %s → %s\n", p.Name, state.Version, e.Version)
+		if e.Version == state.Version {
+			fmt.Printf("Updated %s %s (new build)\n", p.Name, e.Version)
+		} else {
+			fmt.Printf("Updated %s %s → %s\n", p.Name, state.Version, e.Version)
+		}
 		updated++
 	}
 	if updated == 0 {
