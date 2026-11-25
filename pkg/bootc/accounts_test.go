@@ -141,3 +141,111 @@ func TestHashPassword(t *testing.T) {
 		t.Fatal("hash contains the plaintext password")
 	}
 }
+
+func TestValidateLoginUser(t *testing.T) {
+	cases := []struct {
+		name string
+		ok   bool
+	}{
+		{"tuna", true},
+		{"_svc", true},
+		{"a-b_c9", true},
+		{"machine$", true},
+		{strings.Repeat("a", 32), true},
+		{strings.Repeat("a", 33), false},
+		{"", false},
+		{"Tuna", false},
+		{"1tuna", false},
+		{"-tuna", false},
+		{"tu$na", false},
+		{"tuna$$", false},
+		{"tuna\n", false},
+		{"tuna name", false},
+		{"../etc", false},
+		{"tuna;id", false},
+	}
+	for _, tc := range cases {
+		err := ValidateLoginUser(tc.name)
+		if tc.ok && err != nil {
+			t.Errorf("ValidateLoginUser(%q) = %v, want nil", tc.name, err)
+		}
+		if !tc.ok && err == nil {
+			t.Errorf("ValidateLoginUser(%q) = nil, want an error", tc.name)
+		}
+	}
+}
+
+func TestValidatePasswordHash(t *testing.T) {
+	cases := []struct {
+		hash string
+		ok   bool
+	}{
+		{"", true},
+		{"$6$example$abcdefghijklmnopqrstuv", true},
+		{"$6$rounds=5000$example$abcdefghijklmnopqrstuv", true},
+		{"$6$" + strings.Repeat("a", 16) + "$abc./", true},
+		{"$6$" + strings.Repeat("a", 17) + "$abc", false},
+		{"$5$example$abcdefghijklmnopqrstuv", false},
+		{"$6$example$", false},
+		{"$6$$abcdef", false},
+		{"$6$rounds=x$example$abcdef", false},
+		{"plaintext", false},
+		{"$6$example$abc'; id; '", false},
+		{"$6$example$abcdef\n", false},
+		{"$6$example$abc def", false},
+	}
+	for _, tc := range cases {
+		err := ValidatePasswordHash(tc.hash)
+		if tc.ok && err != nil {
+			t.Errorf("ValidatePasswordHash(%q) = %v, want nil", tc.hash, err)
+		}
+		if !tc.ok && err == nil {
+			t.Errorf("ValidatePasswordHash(%q) = nil, want an error", tc.hash)
+		}
+	}
+}
+
+func TestAccountProvisionScriptWithoutUserIsEmpty(t *testing.T) {
+	script, err := AccountProvisionScript("", "")
+	if err != nil || script != "" {
+		t.Fatalf("AccountProvisionScript(\"\", \"\") = %q, %v; want empty script and no error", script, err)
+	}
+}
+
+func TestAccountProvisionScriptWithoutHashLeavesPasswordUntouched(t *testing.T) {
+	script, err := AccountProvisionScript("tuna", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(script, "hash=''\n") {
+		t.Errorf("account script should carry an empty hash:\n%s", script)
+	}
+}
+
+func TestHashPasswordProducesAcceptedUniqueHashes(t *testing.T) {
+	first, err := HashPassword("hunter2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := HashPassword("hunter2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, hash := range []string{first, second} {
+		if err := ValidatePasswordHash(hash); err != nil {
+			t.Errorf("HashPassword produced %q, rejected by ValidatePasswordHash: %v", hash, err)
+		}
+	}
+	if first == second {
+		t.Errorf("two hashes of the same password are identical (%q): the salt is not random", first)
+	}
+}
+
+func TestShellQuoteEscapesSingleQuotes(t *testing.T) {
+	if got, want := shellQuote(`a'b`), `'a'\''b'`; got != want {
+		t.Errorf("shellQuote = %s, want %s", got, want)
+	}
+	if got := shellQuote(""); got != "''" {
+		t.Errorf("shellQuote(\"\") = %s, want ''", got)
+	}
+}
