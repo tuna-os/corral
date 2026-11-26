@@ -1,7 +1,18 @@
 name: actions-security
 
+# Both jobs read only .github/ (workflows, local composite actions, the lock
+# file, dependabot/zizmor config) plus any nested .github/ tree or action.yml
+# zizmor may discover, so a pull request that changes none of those cannot
+# change either result and the run is not started. Pushes to main and
+# manual runs are unfiltered. Not a required check, so a skipped run blocks
+# nothing.
 on:
   pull_request:
+    paths:
+      - '.github/**'
+      - '**/.github/**'
+      - '**/action.yml'
+      - '**/action.yaml'
   push:
     branches:
       - main
