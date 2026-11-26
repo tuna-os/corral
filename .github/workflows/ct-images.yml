@@ -43,7 +43,7 @@ jobs:
   # Publish runs only outside pull requests so PR code never gets a
   # packages:write token.
   publish-ct-debian:
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     needs: ct-debian
     runs-on: ubuntu-26.04
     timeout-minutes: 20
